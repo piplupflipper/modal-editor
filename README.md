@@ -14,6 +14,9 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 - Go（バージョンは [go.mod](go.mod) を参照）
 - make
 - C コンパイラ（gcc など）。tree-sitter の拡張機能（`cmd/modal-editor-ext-treesitter/`）が cgo で文法をコンパイルするので、`make check`、`make test`、`make build` に要る。本体は cgo を使わない
+- musl-gcc（Debian と Ubuntu では `musl-tools`）。`make build` が tree-sitter の拡張機能を musl で静的にリンクするので要る。別の場所にあるなら `make build MUSL_CC=<パス>` で指定する
+
+配布物の利用者には、C コンパイラも Go も要らない。
 
 リンターなどの開発ツールは、`make` が `go run` でバージョンを固定して実行するので、インストールは不要である。
 初回の実行時だけ、ツールのビルドに数分かかる。
@@ -36,6 +39,10 @@ make check   # 整形の検査、型チェック、リント、テストをま�
 | `make test` | テストを実行する（データ競合の検出つき） |
 | `make vuln` | 依存ライブラリの既知の脆弱性を調べる |
 | `make build` | 実行ファイルを `bin/` に作る |
+| `make build-check` | `make build` の後に、本体の `CGO_ENABLED=0` と全ての実行ファイルの静的リンクを検査する |
+| `make dist` | 配布物（実行ファイルと宣言ファイル）を `dist/` にディレクトリと `tar.gz` で作る |
+| `make dist-check` | `make dist` の後に、配布物の形を検査する |
+| `make dist-smoke` | `make dist` の後に、ビルド用の道具の無いコンテナで配布物を起動する。Docker が要る |
 
 Go はコンパイル言語なので、型チェックはコンパイルの一部として行われる。
 `make typecheck` は、実行ファイルを残さずにコンパイルだけを行う。
@@ -52,6 +59,7 @@ Go はコンパイル言語なので、型チェックはコンパイルの一�
 | `cmd/modal-editor-ext-dap/` | 標準の拡張機能（DAP によるデバッグ）の実行ファイルと宣言ファイル。デバッグアダプター（既定は delve の `dlv dap`）を子プロセスとして起動する |
 | `cmd/modal-editor-ext-lsp/` | 標準の拡張機能（LSP のクライアント。診断、定義へ移動、ホバー、整形）の実行ファイルと宣言ファイル。言語サーバー（既定は Go の gopls）を子プロセスとして起動する |
 | `cmd/reqtrace/` | 要件ごとの進捗を生成するツール |
+| `internal/distcheck/` | `make build` と `make dist` の生成物を検査するテスト |
 | `internal/` | このリポジトリの中だけで使うパッケージ |
 | `docs/` | 要件定義などの文書 |
 | `docs/measurements/` | 計測の手順と結果 |

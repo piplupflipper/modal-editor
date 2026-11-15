@@ -83,7 +83,7 @@ func TestScanAndBuild(t *testing.T) {
 		"FR-01":  StatusDone,
 		"FR-02":  StatusImplOnly,
 		"FR-03":  StatusImplOnly,
-		"FR-04":  StatusNotStarted,
+		"FR-04":  StatusImplOnly, // Makefile の注釈は実装として数える
 		"NFR-01": StatusTestOnly,
 	}
 	for _, e := range report.Entries {
@@ -92,7 +92,7 @@ func TestScanAndBuild(t *testing.T) {
 		}
 	}
 
-	// 文字列の中の FR-99 は拾わず、コメントの FR-77 だけが未知の ID になる。
+	// 文字列の中と Makefile のレシピの行の FR-99 は拾わず、コメントの FR-77 だけが未知の ID になる。
 	if len(report.Unknown) != 1 || report.Unknown[0].ID != "FR-77" {
 		t.Errorf("Unknown = %+v, want FR-77 の 1 件", report.Unknown)
 	}
@@ -102,6 +102,11 @@ func TestScanAndBuild(t *testing.T) {
 		if e.Requirement.ID == "FR-03" {
 			if got, want := e.Impl[0].Line, 12; got != want {
 				t.Errorf("FR-03 の行番号 = %d, want %d", got, want)
+			}
+		}
+		if e.Requirement.ID == "FR-04" {
+			if got := e.Impl[0]; got.File != "Makefile" || got.Line != 2 {
+				t.Errorf("FR-04 の注釈 = %s:%d, want Makefile:2", got.File, got.Line)
 			}
 		}
 	}

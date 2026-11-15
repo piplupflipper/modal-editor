@@ -18,5 +18,15 @@ jobs:
           go-version-file: go.mod
       - name: make check
         run: make check
-      - name: make build
-        run: make build
+      # tree-sitter の拡張機能を musl で静的にリンクするための musl-gcc（NFR-01）。
+      - name: install musl-tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: make build-check
+        run: make build-check
+      - name: make dist-check
+        run: make dist-check
+      # イメージの取得の失敗と、配布物の起動の失敗を、別のステップとして見分ける。
+      - name: make dist-smoke-images
+        run: make dist-smoke-images
+      - name: make dist-smoke
+        run: make dist-smoke

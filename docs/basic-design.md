@@ -987,6 +987,38 @@ func TestNextWord(t *testing.T) {
 
 NFR-01 や NFR-05 のように、Go のテストで検証しにくい要件は、検証の方法が決まるまで「未着手」または「実装のみ」のままになる。
 
+### 9.1 ビルドと配布で満たす要件の検証
+
+NFR-01、NFR-02、NFR-06 は、Go のソースではなく Makefile のビルドの指定（`CGO_ENABLED=0`、静的リンク、配布物の形）で満たす。
+reqtrace は Makefile のコメントの注釈も実装として数える。
+行頭が `#` の行に、Go と同じ形で `req:` を書く。
+タブで始まるレシピの行は拾わない。
+
+```makefile
+# req: NFR-02
+CGO_EXTENSIONS := modal-editor-ext-treesitter
+```
+
+検証は、ビルドの生成物を読む Go のテスト（`internal/distcheck`）に書く。
+テストは生成物のディレクトリを環境変数で受け取り、指定が無ければ飛ばすので、`make check` では実行されない。
+CI は `make check` の後に、次のターゲットを実行する。
+
+| ターゲット | 検証すること | 要件 |
+|---|---|---|
+| `make build-check` | 本体が `CGO_ENABLED=0` でビルドされ（`debug/buildinfo`）、全ての実行ファイルの ELF に動的リンカーと共有ライブラリの指定が無い（`debug/elf`） | NFR-01、NFR-02 |
+| `make dist-check` | `make dist` の配布物で、宣言ファイルの `command` が同じディレクトリの静的な実行ファイルを指す | NFR-01、NFR-06 |
+| `make dist-smoke` | C コンパイラと Go の無いコンテナ（glibc の版の違うもの、musl、busybox）に配布物を置き、全ての実行ファイルが起動する | NFR-01、NFR-06 |
+
+cgo を使う tree-sitter の拡張機能も、musl を C の標準ライブラリとして静的にリンクする。
+動的にリンクすると、ビルドしたマシンより古い glibc や musl の環境で起動しない。
+glibc を静的にリンクすると LGPL の再リンクの義務を伴うので、MIT の musl を使う。
+配布物には、静的にリンクするサードパーティのライセンスの文面を `licenses/` に同梱する。
+理由と、2026-11-16 の結果は [measurements/nfr-dist.md](measurements/nfr-dist.md) に書く。
+
+NFR-05 は目標値が未定なので、検証のテストを置かず、注釈も付けない。
+起動時間、メモリの使用量、実行ファイルのサイズの測り方と値を [measurements/nfr05-footprint.md](measurements/nfr05-footprint.md) に書く。
+目標値が決まったら、同じ手順で測る検査を置く。
+
 ## 10. 未決の項目
 
 要件定義の「7. 未決事項」に加えて、この文書で新しく生じた未決の項目は次のとおりである。
