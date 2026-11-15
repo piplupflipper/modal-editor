@@ -3,26 +3,9 @@ package input
 import (
 	"slices"
 	"strings"
+
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
-
-// Status は、Parser が返す結果の種類を表す。
-type Status int
-
-// 結果の種類。
-const (
-	// StatusDone は、編集コマンドの値が 1 つ完成したことを表す。
-	StatusDone Status = iota + 1
-	// StatusInvalid は、どの操作にも当たらない列（dq など）を受け取り、解釈を捨てて初期状態に戻ったことを表す。
-	StatusInvalid
-	// StatusCanceled は、Esc で解釈を捨てて初期状態に戻ったことを表す。
-	StatusCanceled
-)
-
-// Result は、Parser の結果の 1 件である。Command は Status が StatusDone のときだけ意味を持つ。
-type Result struct {
-	Command Command
-	Status  Status
-}
 
 // MaxCount は、回数の上限である。これを超える回数は MaxCount に丸める。
 const MaxCount = 999_999_999
@@ -74,14 +57,14 @@ type Parser struct {
 	visual    bool // ビジュアルモードか。reset で消さない
 
 	st          state
-	seq         []Key // 操作を引くために溜めているキーの列
-	opKeys      []Key // stOperator のときのオペレーターのキーの列
-	opTakesChar bool  // オペレーターが対象の後に文字を取り、まだ受け取っていないか
+	seq         []editcmd.Key // 操作を引くために溜めているキーの列
+	opKeys      []editcmd.Key // stOperator のときのオペレーターのキーの列
+	opTakesChar bool          // オペレーターが対象の後に文字を取り、まだ受け取っていないか
 	charFor     charFor
 
 	count int // 終わった回数の積。0 は回数の指定なし
 	cur   int // 入力の途中の回数。0 は入力中でない
-	cmd   Command
+	cmd   editcmd.Command
 }
 
 // NewParser は、km を引く Parser を返す。km に後から登録した操作も、次のキーから引かれる。
@@ -119,13 +102,13 @@ func (p *Parser) Pending() bool {
 // オペレーターの後の Esc（y<Esc>、拡張機能の ys があっても同じ）は、オペレーターごと捨てる。
 //
 // req: FR-02
-func (p *Parser) Feed(k Key) []Result {
-	if k.Code == CodeEsc {
+func (p *Parser) Feed(k editcmd.Key) []editcmd.Result {
+	if k.Code == editcmd.CodeEsc {
 		rs := p.Flush()
 		p.reset()
-		return append(rs, Result{Status: StatusCanceled})
+		return append(rs, editcmd.Result{Status: editcmd.StatusCanceled})
 	}
-	return p.run([]Key{k})
+	return p.run([]editcmd.Key{k})
 }
 
 // Flush は、時間切れ（Vim の timeoutlen に当たる）で、待っている曖昧なキーの列を確定させる。
@@ -136,7 +119,7 @@ func (p *Parser) Feed(k Key) []Result {
 // 本体の操作の途中（g、di、ci、3、"a、f）のように完成した候補が無い場合は、何もせず nil を返し、
 // 次のキーを待ち続ける。本体の操作だけの表では、完成した候補とより長い候補が両方ある列は無いので、
 // Flush は常に何もしない。
-func (p *Parser) Flush() []Result {
+func (p *Parser) Flush() []editcmd.Result {
 	n := p.longestExact()
 	if n == 0 {
 		return nil
@@ -145,8 +128,8 @@ func (p *Parser) Flush() []Result {
 	return append(rs, p.run(rest)...)
 }
 
-func (p *Parser) run(queue []Key) []Result {
-	var out []Result
+func (p *Parser) run(queue []editcmd.Key) []editcmd.Result {
+	var out []editcmd.Result
 	for len(queue) > 0 {
 		k := queue[0]
 		queue = queue[1:]
@@ -158,10 +141,10 @@ func (p *Parser) run(queue []Key) []Result {
 }
 
 // step は、キーを 1 個解釈する。rest は、短い登録に決めたために解釈し直すキーの列である。
-func (p *Parser) step(k Key) (results []Result, rest []Key) {
+func (p *Parser) step(k editcmd.Key) (results []editcmd.Result, rest []editcmd.Key) {
 	switch p.st {
 	case stRegister:
-		if !k.isPlain() || !isRegisterName(k.Rune) {
+		if !k.Plain() || !isRegisterName(k.Rune) {
 			return p.fail(), nil
 		}
 		p.cmd.Register = k.Rune
@@ -172,7 +155,7 @@ func (p *Parser) step(k Key) (results []Result, rest []Key) {
 	case stNormal, stOperator:
 	}
 
-	if len(p.seq) == 0 && k.isPlain() {
+	if len(p.seq) == 0 && k.Plain() {
 		if d, ok := countDigit(k.Rune, p.cur > 0); ok {
 			p.cur = min(p.cur*10+d, MaxCount)
 			return nil, nil
@@ -200,25 +183,25 @@ func (p *Parser) step(k Key) (results []Result, rest []Key) {
 }
 
 // special は、キーマップより先に読むキー（"、q、@、.）を扱う。扱ったかを ok で返す。
-func (p *Parser) special(r rune) (results []Result, ok bool) {
+func (p *Parser) special(r rune) (results []editcmd.Result, ok bool) {
 	switch r {
 	case '"':
 		p.endCount()
 		p.st = stRegister
 		return nil, true
 	case '.':
-		p.cmd.Kind = KindRepeat
+		p.cmd.Kind = editcmd.KindRepeat
 		return p.complete(), true
 	case 'q':
 		if p.recording {
-			p.cmd.Kind = KindRecordStop
+			p.cmd.Kind = editcmd.KindRecordStop
 			return p.complete(), true
 		}
-		p.cmd.Kind = KindRecordStart
+		p.cmd.Kind = editcmd.KindRecordStart
 		p.st, p.charFor = stChar, charRecord
 		return nil, true
 	case '@':
-		p.cmd.Kind = KindPlay
+		p.cmd.Kind = editcmd.KindPlay
 		p.st, p.charFor = stChar, charPlay
 		return nil, true
 	}
@@ -226,10 +209,10 @@ func (p *Parser) special(r rune) (results []Result, ok bool) {
 }
 
 // takeChar は、stChar で文字の引数を受け取る。
-func (p *Parser) takeChar(k Key) []Result {
+func (p *Parser) takeChar(k editcmd.Key) []editcmd.Result {
 	switch p.charFor {
 	case charRecord, charPlay:
-		ok := k.isPlain() && (isRecordRegister(k.Rune) ||
+		ok := k.Plain() && (isRecordRegister(k.Rune) ||
 			p.charFor == charPlay && (k.Rune == '@' || isRegisterName(k.Rune)))
 		if !ok {
 			return p.fail()
@@ -261,7 +244,7 @@ func (p *Parser) longestExact() int {
 }
 
 // resolve は、溜めた列の先頭 n 個（登録に一致する）に決め、残りを rest で返す。
-func (p *Parser) resolve(n int) (results []Result, rest []Key) {
+func (p *Parser) resolve(n int) (results []editcmd.Result, rest []editcmd.Key) {
 	exact, _ := p.match(p.seq[:n])
 	rest = slices.Clone(p.seq[n:])
 	p.seq = nil
@@ -271,7 +254,7 @@ func (p *Parser) resolve(n int) (results []Result, rest []Key) {
 // match は、現在の状態で引く操作のうち、seq に一致するものと、より長い登録があるかを返す。
 // オペレーターの後では、重ね押し（オペレーターのキーの列そのものか、その最後のキー）も候補にする。
 // 重ね押しとモーションの両方に一致する場合は重ね押しを優先する。
-func (p *Parser) match(seq []Key) (exact *Binding, longer bool) {
+func (p *Parser) match(seq []editcmd.Key) (exact *Binding, longer bool) {
 	if p.st == stNormal {
 		if p.visual {
 			return p.km.match(MapVisual, seq)
@@ -279,7 +262,7 @@ func (p *Parser) match(seq []Key) (exact *Binding, longer bool) {
 		return p.km.match(MapNormal, seq)
 	}
 	exact, longer = p.km.match(MapOperatorPending, seq)
-	for _, form := range [][]Key{p.opKeys, p.opKeys[len(p.opKeys)-1:]} {
+	for _, form := range [][]editcmd.Key{p.opKeys, p.opKeys[len(p.opKeys)-1:]} {
 		switch {
 		case slices.Equal(form, seq):
 			exact = &Binding{Kind: bindLine}
@@ -291,11 +274,11 @@ func (p *Parser) match(seq []Key) (exact *Binding, longer bool) {
 }
 
 // apply は、引いた操作を組み立て中の値に反映する。値が完成すれば結果を返す。
-func (p *Parser) apply(b Binding) []Result {
+func (p *Parser) apply(b Binding) []editcmd.Result {
 	p.endCount()
 	switch b.Kind {
 	case BindOperator:
-		p.cmd.Kind = KindOperator
+		p.cmd.Kind = editcmd.KindOperator
 		p.cmd.Operator = b.Ref
 		p.cmd.Mode = b.NextMode
 		p.opKeys = b.Keys
@@ -306,13 +289,13 @@ func (p *Parser) apply(b Binding) []Result {
 		p.st = stOperator
 		return nil
 	case BindMotion, BindTextObject:
-		tk := TargetMotion
+		tk := editcmd.TargetMotion
 		if b.Kind == BindTextObject {
-			tk = TargetTextObject
+			tk = editcmd.TargetTextObject
 		}
-		p.cmd.Target = Target{Kind: tk, Ref: b.Ref}
+		p.cmd.Target = editcmd.Target{Kind: tk, Ref: b.Ref}
 		if p.st == stNormal {
-			p.cmd.Kind = KindMotion
+			p.cmd.Kind = editcmd.KindMotion
 			p.cmd.Mode = b.NextMode
 		}
 		if b.TakesChar {
@@ -320,7 +303,7 @@ func (p *Parser) apply(b Binding) []Result {
 			return nil
 		}
 	case BindAction:
-		p.cmd.Kind = KindAction
+		p.cmd.Kind = editcmd.KindAction
 		p.cmd.Action = b.Ref
 		p.cmd.Mode = b.NextMode
 		if b.TakesChar {
@@ -328,15 +311,15 @@ func (p *Parser) apply(b Binding) []Result {
 			return nil
 		}
 	case bindLine:
-		p.cmd.Target = Target{Kind: TargetLine}
+		p.cmd.Target = editcmd.Target{Kind: editcmd.TargetLine}
 	}
 	return p.complete()
 }
 
 // complete は、対象までそろった値を仕上げる。
 // 対象の後に文字を取るオペレーターなら、その文字を待つ。そうでなければ値を返す。
-func (p *Parser) complete() []Result {
-	if p.cmd.Kind == KindOperator && p.opTakesChar {
+func (p *Parser) complete() []editcmd.Result {
+	if p.cmd.Kind == editcmd.KindOperator && p.opTakesChar {
 		p.opTakesChar = false
 		p.st, p.charFor = stChar, charCommand
 		return nil
@@ -348,7 +331,7 @@ func (p *Parser) complete() []Result {
 		cmd.Count, cmd.CountGiven = p.count, true
 	}
 	p.reset()
-	return []Result{{Command: cmd, Status: StatusDone}}
+	return []editcmd.Result{{Command: cmd, Status: editcmd.StatusDone}}
 }
 
 // endCount は、入力の途中の回数を、終わった回数の積に掛ける。
@@ -364,9 +347,9 @@ func (p *Parser) endCount() {
 	p.cur = 0
 }
 
-func (p *Parser) fail() []Result {
+func (p *Parser) fail() []editcmd.Result {
 	p.reset()
-	return []Result{{Status: StatusInvalid}}
+	return []editcmd.Result{{Status: editcmd.StatusInvalid}}
 }
 
 func (p *Parser) reset() {
@@ -384,19 +367,19 @@ func countDigit(r rune, inCount bool) (int, bool) {
 
 // charArg は、f や r の文字の引数として受け付けるキーを文字にする。
 // 修飾キーの無い文字のほか、<CR> を '\n'、<Tab> を '\t' として受け付ける（Vim の r<CR>、f<Tab>）。
-func charArg(k Key) (rune, bool) {
+func charArg(k editcmd.Key) (rune, bool) {
 	if k.Mod != 0 {
 		return 0, false
 	}
 	switch k.Code {
-	case CodeRune:
+	case editcmd.CodeRune:
 		return k.Rune, true
-	case CodeEnter:
+	case editcmd.CodeEnter:
 		return '\n', true
-	case CodeTab:
+	case editcmd.CodeTab:
 		return '\t', true
-	case CodeEsc, CodeBackspace, CodeDelete, CodeUp, CodeDown, CodeLeft, CodeRight,
-		CodeHome, CodeEnd, CodePageUp, CodePageDown:
+	case editcmd.CodeEsc, editcmd.CodeBackspace, editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
+		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown:
 	}
 	return 0, false
 }

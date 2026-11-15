@@ -5,11 +5,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // actionFunc は、本体の対象を取らない操作 1 つの実装である。
-type actionFunc func(s *State, cmd input.Command) error
+type actionFunc func(s *State, cmd editcmd.Command) error
 
 // actions は、本体の対象を取らない操作の表である。キーは input の表の ID である。
 //
@@ -54,7 +54,7 @@ func init() {
 }
 
 // action は、対象を取らない操作を実行する。拡張機能の操作なら問い合わせる（FR-12）。
-func (s *State) action(cmd input.Command) error {
+func (s *State) action(cmd editcmd.Command) error {
 	if !cmd.Action.Builtin() {
 		return s.extAction(cmd)
 	}
@@ -66,7 +66,7 @@ func (s *State) action(cmd input.Command) error {
 }
 
 // extAction は、拡張機能の操作を問い合わせ、返った編集を適用する。
-func (s *State) extAction(cmd input.Command) error {
+func (s *State) extAction(cmd editcmd.Command) error {
 	if s.Extensions == nil {
 		return ErrNoExtensions
 	}
@@ -81,7 +81,7 @@ func (s *State) extAction(cmd input.Command) error {
 			return err
 		}
 	}
-	if cmd.Mode == input.ModeInsert {
+	if cmd.Mode == editcmd.ModeInsert {
 		s.cursor = s.clampPos(s.cursor)
 		s.startInsert(cmd, 1)
 		return nil
@@ -91,7 +91,7 @@ func (s *State) extAction(cmd input.Command) error {
 }
 
 // actDeleteChar は、x である。カーソルから回数の文字を消す。行末を越えては消さない。空の行では何もしない。
-func actDeleteChar(s *State, cmd input.Command) error {
+func actDeleteChar(s *State, cmd editcmd.Command) error {
 	if !writable(cmd.Register) {
 		return failf("invalid register %q", cmd.Register)
 	}
@@ -104,7 +104,7 @@ func actDeleteChar(s *State, cmd input.Command) error {
 }
 
 // actDeleteCharBefore は、X である。カーソルの前の回数の文字を消す。行の先頭では失敗する。
-func actDeleteCharBefore(s *State, cmd input.Command) error {
+func actDeleteCharBefore(s *State, cmd editcmd.Command) error {
 	if !writable(cmd.Register) {
 		return failf("invalid register %q", cmd.Register)
 	}
@@ -123,7 +123,7 @@ func actDeleteCharBefore(s *State, cmd input.Command) error {
 }
 
 // deleteInLine は、カーソルの行の [from, to) を消してレジスターに入れる。
-func (s *State) deleteInLine(cmd input.Command, from, to int) error {
+func (s *State) deleteInLine(cmd editcmd.Command, from, to int) error {
 	l := s.cursor.Line
 	rg := region{r: buffer.Range{Start: pos(l, from), End: pos(l, to)}}
 	reg, edit, err := s.cut(rg)
@@ -140,7 +140,7 @@ func (s *State) deleteInLine(cmd input.Command, from, to int) error {
 
 // actReplaceChar は、r である。カーソルから回数の文字を、指定した文字に置き換える。
 // 行に残りの文字が回数より少なければ失敗する。r<CR> は、回数の文字をまとめて 1 つの改行に置き換える。
-func actReplaceChar(s *State, cmd input.Command) error {
+func actReplaceChar(s *State, cmd editcmd.Command) error {
 	n := max(cmd.Count, 1)
 	l := s.cursor.Line
 	line := s.line(l)
@@ -165,7 +165,7 @@ func actReplaceChar(s *State, cmd input.Command) error {
 }
 
 // actToggleCase は、~ である（'tildeop' がオフ）。カーソルから回数の文字の大文字と小文字を入れ替え、その後ろへ進む。
-func actToggleCase(s *State, cmd input.Command) error {
+func actToggleCase(s *State, cmd editcmd.Command) error {
 	l := s.cursor.Line
 	line := s.line(l)
 	if line == "" {
@@ -189,7 +189,7 @@ func actToggleCase(s *State, cmd input.Command) error {
 // ただし、次の行が空か ')' で始まる場合、それまでにつないだテキストが空の場合、前の行がタブで終わる場合は入れない。
 // 前の行がスペースで終わる場合はスペースを足さない。'joinspaces' がオンなので、'.'、'?'、'!' の後には 2 つ入れる。
 // カーソルは、最後につないだ箇所（入れたスペースの始まり）へ移る。
-func actJoin(s *State, cmd input.Command) error {
+func actJoin(s *State, cmd editcmd.Command) error {
 	l := s.cursor.Line
 	if l == s.lastLine() {
 		return failf("cannot join the last line")
@@ -253,7 +253,7 @@ const maxPutBytes = 64 << 20
 // 行単位のテキストは、カーソルの行の下（P は上）に入れ、入れた最初の行の最初の空白でない文字へ移る。
 // レジスターが空なら失敗する。_ は何もしない。
 func actPut(after bool) actionFunc {
-	return func(s *State, cmd input.Command) error {
+	return func(s *State, cmd editcmd.Command) error {
 		if cmd.Register == '_' {
 			return nil
 		}
@@ -310,7 +310,7 @@ func emptyRange(p buffer.Position) buffer.Range { return buffer.Range{Start: p, 
 
 // actOpen は、o（below が true）と O である。下か上に空の行を開いてインサートモードへ移る。
 func actOpen(below bool) actionFunc {
-	return func(s *State, cmd input.Command) error {
+	return func(s *State, cmd editcmd.Command) error {
 		l := s.cursor.Line
 		if below {
 			if err := s.apply(buffer.Edit{Range: emptyRange(s.lineEnd(l)), Text: "\n"}); err != nil {
@@ -330,7 +330,7 @@ func actOpen(below bool) actionFunc {
 
 // actInsert は、i、a、I、A である。カーソルを挿入の位置へ移してインサートモードへ移る。
 // I は行の最初の空白でない文字の前、A は行末である。
-func actInsert(s *State, cmd input.Command) error {
+func actInsert(s *State, cmd editcmd.Command) error {
 	l := s.cursor.Line
 	line := s.line(l)
 	switch cmd.Action.ID {
@@ -355,7 +355,7 @@ func actInsert(s *State, cmd input.Command) error {
 //
 // req: FR-07
 func actUndo(redo bool) actionFunc {
-	return func(s *State, cmd input.Command) error {
+	return func(s *State, cmd editcmd.Command) error {
 		var (
 			last buffer.Change
 			done int
@@ -412,7 +412,7 @@ func (s *State) changeCursor(ch buffer.Change) buffer.Position {
 
 // actCommandLine は、: である。コマンドラインモードへ移る。
 // ビジュアルモードからは、選択を抜けて、選択した行の範囲 '<,'> を入力した状態で始める（Vim と同じ）。
-func actCommandLine(s *State, _ input.Command) error {
+func actCommandLine(s *State, _ editcmd.Command) error {
 	s.cmdline = s.cmdline[:0]
 	if s.mode.visual() {
 		s.exitVisual()

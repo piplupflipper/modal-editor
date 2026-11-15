@@ -5,13 +5,13 @@ import (
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // ErrNoExtensions は、拡張機能の操作を実行しようとしたが、State.Extensions が nil であることを表す。
 var ErrNoExtensions = errors.New("command: no extension host")
 
-// Extensions は、拡張機能が提供する操作（提供元が拡張機能の input.Ref）を問い合わせる口である（基本設計 3 章、5.4）。
+// Extensions は、拡張機能が提供する操作（提供元が拡張機能の editcmd.Ref）を問い合わせる口である（基本設計 3 章、5.4）。
 //
 // 問い合わせの実装（exthost への RPC、期限の扱い、拡張機能の状態）は、呼び出し側（internal/editor）が差し込む。
 // このパッケージは、結果が返るまで待つ同期の呼び出しとして扱う。
@@ -21,14 +21,14 @@ var ErrNoExtensions = errors.New("command: no extension host")
 // このため、拡張機能の側に繰り返しのための処理は要らない。
 type Extensions interface {
 	// Motion は、モーションの移動先を問い合わせる（motion/resolve）。req は本体のモーションと同じ形で渡す。
-	Motion(ref input.Ref, b *buffer.Buffer, req target.Request) (target.Result, error)
+	Motion(ref editcmd.Ref, b *buffer.Buffer, req target.Request) (target.Result, error)
 	// TextObject は、テキストオブジェクトの範囲を問い合わせる（textObject/resolve）。
-	TextObject(ref input.Ref, b *buffer.Buffer, req target.Request) (target.Span, error)
+	TextObject(ref editcmd.Ref, b *buffer.Buffer, req target.Request) (target.Span, error)
 	// Operator は、範囲に対するオペレーターの編集を問い合わせる（operator/apply）。
 	// 返すトランザクションの BaseVersion は、問い合わせたときの b.Version() である必要がある（FR-15）。
-	Operator(ref input.Ref, b *buffer.Buffer, q OperatorQuery) (buffer.Transaction, error)
+	Operator(ref editcmd.Ref, b *buffer.Buffer, q OperatorQuery) (buffer.Transaction, error)
 	// Action は、対象を取らない操作を実行する（command/execute）。編集しない操作は、Edits が空のトランザクションを返す。
-	Action(ref input.Ref, b *buffer.Buffer, q ActionQuery) (buffer.Transaction, error)
+	Action(ref editcmd.Ref, b *buffer.Buffer, q ActionQuery) (buffer.Transaction, error)
 }
 
 // OperatorQuery は、拡張機能のオペレーターへ渡す引数である。
@@ -55,7 +55,7 @@ type ActionQuery struct {
 }
 
 // resolveMotion は、モーションを本体の表か拡張機能で解決する。f、F、t、T の検索は、失敗しても ; と , のために記録する。
-func (s *State) resolveMotion(t input.Target, cmd input.Command, op target.Operator) (target.Result, error) {
+func (s *State) resolveMotion(t editcmd.Target, cmd editcmd.Command, op target.Operator) (target.Result, error) {
 	req := s.request(cmd, op)
 	var (
 		res target.Result
@@ -83,7 +83,7 @@ func (s *State) resolveMotion(t input.Target, cmd input.Command, op target.Opera
 }
 
 // resolveTextObject は、テキストオブジェクトを本体の表か拡張機能で解決する。
-func (s *State) resolveTextObject(t input.Target, cmd input.Command, from buffer.Position) (target.Span, error) {
+func (s *State) resolveTextObject(t editcmd.Target, cmd editcmd.Command, from buffer.Position) (target.Span, error) {
 	req := s.request(cmd, target.NoOperator)
 	req.Cursor = from
 	var (
@@ -109,7 +109,7 @@ func (s *State) resolveTextObject(t input.Target, cmd input.Command, from buffer
 }
 
 // request は、モーションとテキストオブジェクトへの入力を作る。
-func (s *State) request(cmd input.Command, op target.Operator) target.Request {
+func (s *State) request(cmd editcmd.Command, op target.Operator) target.Request {
 	return target.Request{
 		Cursor:     s.cursor,
 		Count:      cmd.Count,

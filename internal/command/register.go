@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // Register は、レジスター 1 つの内容である（FR-04）。
@@ -18,7 +18,7 @@ type Register struct {
 
 	// keys は、q で記録したキーの列である。Text からキーへ戻すと失われるキー（矢印キーなど）を保つ。
 	// 記録したもの以外では nil である。
-	keys []input.Key
+	keys []editcmd.Key
 }
 
 // empty は、内容が無いかを返す。
@@ -168,21 +168,21 @@ func (r *Registers) delete(name rune, reg Register, small, forceOne bool) {
 // rawText は、マクロとして記録したキーの列を、Vim のレジスターと同じ生のテキストにする。
 // <Esc> は "\x1b"、<CR> は "\r"、<Tab> は "\t"、<BS> は "\x08"、Ctrl つきの英字は制御文字にする。
 // 生の文字にできないキー（矢印キーなど）は、Vim の表記（<Up> など）で書く。
-func rawText(keys []input.Key) string {
+func rawText(keys []editcmd.Key) string {
 	var sb strings.Builder
 	for _, k := range keys {
 		switch {
-		case k.Code == input.CodeRune && k.Mod == 0:
+		case k.Code == editcmd.CodeRune && k.Mod == 0:
 			sb.WriteRune(k.Rune)
-		case k.Code == input.CodeRune && k.Mod == input.ModCtrl && k.Rune >= 'a' && k.Rune <= 'z':
+		case k.Code == editcmd.CodeRune && k.Mod == editcmd.ModCtrl && k.Rune >= 'a' && k.Rune <= 'z':
 			sb.WriteRune(k.Rune - 'a' + 1)
-		case k.Mod == 0 && k.Code == input.CodeEsc:
+		case k.Mod == 0 && k.Code == editcmd.CodeEsc:
 			sb.WriteByte(0x1b)
-		case k.Mod == 0 && k.Code == input.CodeEnter:
+		case k.Mod == 0 && k.Code == editcmd.CodeEnter:
 			sb.WriteByte('\r')
-		case k.Mod == 0 && k.Code == input.CodeTab:
+		case k.Mod == 0 && k.Code == editcmd.CodeTab:
 			sb.WriteByte('\t')
-		case k.Mod == 0 && k.Code == input.CodeBackspace:
+		case k.Mod == 0 && k.Code == editcmd.CodeBackspace:
 			sb.WriteByte(0x08)
 		default:
 			sb.WriteString(k.String())
@@ -193,29 +193,29 @@ func rawText(keys []input.Key) string {
 
 // keysFromText は、レジスターのテキストをキーの列にする（rawText の逆）。
 // "\n" は <CR> として読む（行単位のレジスターを @ で再生するとき、行の区切りは <CR> に当たる）。
-func keysFromText(text string) []input.Key {
-	keys := make([]input.Key, 0, len(text))
+func keysFromText(text string) []editcmd.Key {
+	keys := make([]editcmd.Key, 0, len(text))
 	for _, r := range text {
 		switch {
 		case r == 0x1b:
-			keys = append(keys, input.Special(input.CodeEsc))
+			keys = append(keys, editcmd.Special(editcmd.CodeEsc))
 		case r == '\r' || r == '\n':
-			keys = append(keys, input.Special(input.CodeEnter))
+			keys = append(keys, editcmd.Special(editcmd.CodeEnter))
 		case r == '\t':
-			keys = append(keys, input.Special(input.CodeTab))
+			keys = append(keys, editcmd.Special(editcmd.CodeTab))
 		case r == 0x08 || r == 0x7f:
-			keys = append(keys, input.Special(input.CodeBackspace))
+			keys = append(keys, editcmd.Special(editcmd.CodeBackspace))
 		case r >= 1 && r <= 26:
-			keys = append(keys, input.Key{Code: input.CodeRune, Rune: 'a' + r - 1, Mod: input.ModCtrl}.Normalize())
+			keys = append(keys, editcmd.Key{Code: editcmd.CodeRune, Rune: 'a' + r - 1, Mod: editcmd.ModCtrl}.Normalize())
 		default:
-			keys = append(keys, input.Rune(r))
+			keys = append(keys, editcmd.Rune(r))
 		}
 	}
 	return keys
 }
 
 // macroKeys は、レジスターの内容を、再生するキーの列にする。
-func (r Register) macroKeys() []input.Key {
+func (r Register) macroKeys() []editcmd.Key {
 	if r.keys != nil {
 		return r.keys
 	}

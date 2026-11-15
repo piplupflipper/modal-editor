@@ -354,7 +354,7 @@ func setup(t *testing.T, text string) *State {
 		after, before = before, ""
 	}
 	lines := strings.Split(before, "\n")
-	s := New(newBuffer(before+after), input.DefaultKeymap())
+	s := New(newBuffer(before+after), input.NewParser(input.DefaultKeymap()))
 	s.SetCursor(pos(len(lines)-1, len(lines[len(lines)-1])))
 	return s
 }

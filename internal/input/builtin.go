@@ -1,14 +1,18 @@
 package input
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
+)
 
 // spec は、本体の操作の表の 1 行である。
 type spec struct {
 	keys      string // ParseKeys の表記
 	id        string
 	takesChar bool
-	next      Mode    // 実行の後のモード
-	modes     MapMode // 有効なモード。0 なら種類ごとの既定（defaultModes）
+	next      editcmd.Mode // 実行の後のモード
+	modes     MapMode      // 有効なモード。0 なら種類ごとの既定（defaultModes）
 }
 
 // 本体の操作の一覧。
@@ -52,7 +56,7 @@ var (
 
 	builtinOperators = []spec{
 		{keys: "d", id: "delete"},
-		{keys: "c", id: "change", next: ModeInsert},
+		{keys: "c", id: "change", next: editcmd.ModeInsert},
 		{keys: "y", id: "yank"},
 		{keys: ">", id: "indent"},
 		{keys: "<", id: "dedent"},
@@ -61,7 +65,7 @@ var (
 		{keys: "gU", id: "uppercase"},
 		// ビジュアルモードだけの別名。x は d、s は c に当たる。~、u、U は選択の大文字と小文字を変える。
 		{keys: "x", id: "delete", modes: MapVisual},
-		{keys: "s", id: "change", next: ModeInsert, modes: MapVisual},
+		{keys: "s", id: "change", next: editcmd.ModeInsert, modes: MapVisual},
 		{keys: "~", id: "toggle-case", modes: MapVisual},
 		{keys: "u", id: "lowercase", modes: MapVisual},
 		{keys: "U", id: "uppercase", modes: MapVisual},
@@ -105,17 +109,17 @@ var (
 		{keys: "X", id: "delete-char-before"},
 		{keys: "r", id: "replace-char", takesChar: true},
 		{keys: "J", id: "join-lines"},
-		{keys: "o", id: "open-below", next: ModeInsert},
-		{keys: "O", id: "open-above", next: ModeInsert},
-		{keys: "i", id: "insert", next: ModeInsert},
-		{keys: "a", id: "append", next: ModeInsert},
-		{keys: "I", id: "insert-line-start", next: ModeInsert},
-		{keys: "A", id: "append-line-end", next: ModeInsert},
+		{keys: "o", id: "open-below", next: editcmd.ModeInsert},
+		{keys: "O", id: "open-above", next: editcmd.ModeInsert},
+		{keys: "i", id: "insert", next: editcmd.ModeInsert},
+		{keys: "a", id: "append", next: editcmd.ModeInsert},
+		{keys: "I", id: "insert-line-start", next: editcmd.ModeInsert},
+		{keys: "A", id: "append-line-end", next: editcmd.ModeInsert},
 		{keys: "u", id: "undo"},
 		{keys: "<C-r>", id: "redo"},
 		// Ex コマンド（:w など）の一覧と解釈はコマンドラインの担当で、ここでは切り替えだけを持つ。
 		// ビジュアルモードの : は、選択した行の範囲（'<,'>）を入力した状態で始める。
-		{keys: ":", id: "command-line", next: ModeCommandLine, modes: MapNormal | MapVisual},
+		{keys: ":", id: "command-line", next: editcmd.ModeCommandLine, modes: MapNormal | MapVisual},
 		// ビジュアルモードへの出入り。ビジュアルモードの中では、同じ種類なら抜け、違う種類なら切り替える。
 		{keys: "v", id: "visual", modes: MapNormal | MapVisual},
 		{keys: "V", id: "visual-line", modes: MapNormal | MapVisual},
@@ -144,8 +148,8 @@ func DefaultKeymap() *Keymap {
 			err := m.Bind(Binding{
 				Kind:      t.kind,
 				Modes:     s.modes,
-				Keys:      MustParseKeys(s.keys),
-				Ref:       Ref{ID: s.id},
+				Keys:      editcmd.MustParseKeys(s.keys),
+				Ref:       editcmd.Ref{ID: s.id},
 				TakesChar: s.takesChar,
 				NextMode:  s.next,
 			})

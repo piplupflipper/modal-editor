@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // q{reg} で記録を始め、q で止める。記録したキーの列はレジスターに入り、@ で 1 個ずつ再生される。
@@ -92,8 +92,8 @@ func TestMacroRecordAppend(t *testing.T) {
 	}
 }
 
-func equalKeys(keys []input.Key, s string) bool {
-	want := input.MustParseKeys(s)
+func equalKeys(keys []editcmd.Key, s string) bool {
+	want := editcmd.MustParseKeys(s)
 	if len(keys) != len(want) {
 		return false
 	}

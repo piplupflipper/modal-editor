@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // CommandLine は、コマンドラインモードで入力中の文字列（先頭の ":" を除く）を返す。
@@ -18,26 +18,26 @@ func (s *State) CommandLine() string { return string(s.cmdline) }
 // ここで最小の編集を持つのは、マクロの再生（@a）で記録した :s/a/b/<CR> のようなキーを、State の中だけで再生するためである。
 //
 // req: FR-01
-func (s *State) cmdlineKey(k input.Key) {
+func (s *State) cmdlineKey(k editcmd.Key) {
 	switch {
 	case k.Mod != 0:
-	case k.Code == input.CodeEsc:
+	case k.Code == editcmd.CodeEsc:
 		s.mode = ModeNormal
 		s.cmdline = s.cmdline[:0]
-	case k.Code == input.CodeEnter:
+	case k.Code == editcmd.CodeEnter:
 		line := string(s.cmdline)
 		s.mode = ModeNormal
 		s.cmdline = s.cmdline[:0]
 		s.runCommandLine(line)
-	case k.Code == input.CodeBackspace:
+	case k.Code == editcmd.CodeBackspace:
 		if len(s.cmdline) == 0 {
 			s.mode = ModeNormal
 			return
 		}
 		s.cmdline = s.cmdline[:len(s.cmdline)-1]
-	case k.Code == input.CodeTab:
+	case k.Code == editcmd.CodeTab:
 		s.cmdline = append(s.cmdline, '\t')
-	case k.Code == input.CodeRune:
+	case k.Code == editcmd.CodeRune:
 		s.cmdline = append(s.cmdline, k.Rune)
 	}
 }

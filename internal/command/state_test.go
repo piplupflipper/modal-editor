@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // errOf は、結果の列の最初のエラーを返す。
@@ -56,19 +56,19 @@ func TestFeedOperator(t *testing.T) {
 // 編集した結果の Changes は、適用した順に、バージョン番号がつながって並ぶ（拡張機能へ差分を送る材料）。
 func TestFeedChanges(t *testing.T) {
 	s := setup(t, "|a\nb\nc")
-	r := s.Feed(input.Rune('J'))
+	r := s.Feed(editcmd.Rune('J'))
 	if len(r.Changes) != 1 || r.Changes[0].Before != 0 || r.Changes[0].After != 1 {
 		t.Fatalf("J の Changes = %+v", r.Changes)
 	}
 	// インサートモードでは、キーごとに変更が返る。
 	feedKeys(s, "A")
-	for i, k := range input.MustParseKeys("xy<BS>") {
+	for i, k := range editcmd.MustParseKeys("xy<BS>") {
 		r := s.Feed(k)
 		if len(r.Changes) != 1 || r.Changes[0].Before != uint64(i+1) {
 			t.Errorf("インサートモードの %v の Changes = %+v", k, r.Changes)
 		}
 	}
-	if r := s.Feed(input.Esc); len(r.Changes) != 0 {
+	if r := s.Feed(editcmd.Esc); len(r.Changes) != 0 {
 		t.Errorf("<Esc> の Changes = %+v", r.Changes)
 	}
 	if got := s.buf.Text(); got != "a bx\nc" {

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // BindingKind は、キーマップに登録する操作の種類を表す。
@@ -76,14 +78,14 @@ type Binding struct {
 	Kind BindingKind
 	// Modes は、登録が有効なモードの集合である。0 なら種類ごとの既定（defaultModes）にする。
 	Modes MapMode
-	Keys  []Key
-	Ref   Ref
+	Keys  []editcmd.Key
+	Ref   editcmd.Ref
 	// TakesChar は、文字の引数を 1 つ取るかを表す。
 	// モーション（f、t）と操作（r）ではキーの列の直後に、オペレーターでは対象の後に取る
 	// （拡張機能の surround の ysiw) の ')'）。テキストオブジェクトではキーの列の直後に取る。
 	TakesChar bool
 	// NextMode は、実行の後に移るモードである（i や c ならインサートモード）。
-	NextMode Mode
+	NextMode editcmd.Mode
 }
 
 // Keymap は、キーの列から操作を引く対応表である。
@@ -126,15 +128,15 @@ func (m *Keymap) Bind(b Binding) error {
 		return fmt.Errorf("%v は、指定したモード（%04b）に登録できない", b.Kind, b.Modes)
 	}
 	if len(b.Keys) == 0 || b.Ref.ID == "" {
-		return fmt.Errorf("キーの列と ID は空にできない: %q %q", KeysString(b.Keys), b.Ref.ID)
+		return fmt.Errorf("キーの列と ID は空にできない: %q %q", editcmd.KeysString(b.Keys), b.Ref.ID)
 	}
 	if reservedFirstKey(b.Keys[0], b.Modes) {
-		return fmt.Errorf("%q は、回数、レジスター、マクロ、ドットリピートとして先に読まれるキーで始まる", KeysString(b.Keys))
+		return fmt.Errorf("%q は、回数、レジスター、マクロ、ドットリピートとして先に読まれるキーで始まる", editcmd.KeysString(b.Keys))
 	}
 	for _, old := range m.bindings {
 		if old.Modes&b.Modes != 0 && slices.Equal(old.Keys, b.Keys) {
 			return fmt.Errorf("%w: %q は %v の %s（拡張機能 %q）", ErrConflict,
-				KeysString(b.Keys), old.Kind, old.Ref.ID, old.Ref.Extension)
+				editcmd.KeysString(b.Keys), old.Kind, old.Ref.ID, old.Ref.Extension)
 		}
 	}
 	b.Keys = slices.Clone(b.Keys)
@@ -142,8 +144,8 @@ func (m *Keymap) Bind(b Binding) error {
 	return nil
 }
 
-func reservedFirstKey(k Key, modes MapMode) bool {
-	if !k.isPlain() {
+func reservedFirstKey(k editcmd.Key, modes MapMode) bool {
+	if !k.Plain() {
 		return false
 	}
 	switch r := k.Rune; {
@@ -159,7 +161,7 @@ func reservedFirstKey(k Key, modes MapMode) bool {
 
 // Unbind は、mode（1 つ以上のモード）で有効な、キーの列が keys の登録を、そのモードから取り除く。
 // 有効なモードが無くなった登録は表から消す。取り除いたかを返す。
-func (m *Keymap) Unbind(mode MapMode, keys []Key) bool {
+func (m *Keymap) Unbind(mode MapMode, keys []editcmd.Key) bool {
 	removed := false
 	for i := range m.bindings {
 		b := &m.bindings[i]
@@ -174,7 +176,7 @@ func (m *Keymap) Unbind(mode MapMode, keys []Key) bool {
 
 // Lookup は、mode で有効な、キーの列が keys の登録を返す。
 // 同じモードで同じキーの列の登録は Bind が拒むので、高々 1 件である。
-func (m *Keymap) Lookup(mode MapMode, keys []Key) (Binding, bool) {
+func (m *Keymap) Lookup(mode MapMode, keys []editcmd.Key) (Binding, bool) {
 	for _, b := range m.bindings {
 		if b.Modes&mode != 0 && slices.Equal(b.Keys, keys) {
 			return b, true
@@ -185,7 +187,7 @@ func (m *Keymap) Lookup(mode MapMode, keys []Key) (Binding, bool) {
 
 // match は、mode で有効な登録のうち、キーの列が seq と一致するものと、
 // seq を真の接頭辞とするより長い登録があるかを返す。
-func (m *Keymap) match(mode MapMode, seq []Key) (exact *Binding, longer bool) {
+func (m *Keymap) match(mode MapMode, seq []editcmd.Key) (exact *Binding, longer bool) {
 	for i := range m.bindings {
 		b := &m.bindings[i]
 		if b.Modes&mode == 0 {

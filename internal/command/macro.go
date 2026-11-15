@@ -1,7 +1,7 @@
 package command
 
 import (
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // maxPlayDepth は、マクロの再生の入れ子の上限である。マクロが自分を呼ぶ（qa@aq）と、失敗するまで再帰するための歯止めである。
@@ -38,7 +38,7 @@ func (s *State) stopRecording() {
 	if n := len(keys); n > 0 {
 		keys = keys[:n-1]
 	}
-	reg := Register{Text: rawText(keys), keys: append([]input.Key{}, keys...)}
+	reg := Register{Text: rawText(keys), keys: append([]editcmd.Key{}, keys...)}
 	name := s.recording
 	if p := s.registers.slot(name); p != nil {
 		if name >= 'A' && name <= 'Z' {
@@ -55,7 +55,7 @@ func (s *State) stopRecording() {
 // 途中の操作が失敗したら、そこで再生を止める（Vim と同じ）。@: は、直前のコマンドラインを実行し直す。
 //
 // req: FR-05
-func (s *State) play(cmd input.Command) error {
+func (s *State) play(cmd editcmd.Command) error {
 	name := cmd.Char
 	if name == '@' {
 		name = s.lastPlayed
@@ -104,8 +104,8 @@ func (s *State) play(cmd input.Command) error {
 
 // recordDot は、実行した値を、ドットリピートの対象であれば記録する（FR-06）。
 // インサートモードへ移る値は、インサートモードを抜けるときに finishInsert が記録する。
-func (s *State) recordDot(cmd input.Command) {
-	if cmd.Mode == input.ModeInsert || !repeatable(cmd) {
+func (s *State) recordDot(cmd editcmd.Command) {
+	if cmd.Mode == editcmd.ModeInsert || !repeatable(cmd) {
 		return
 	}
 	c := cmd
@@ -114,13 +114,13 @@ func (s *State) recordDot(cmd input.Command) {
 
 // repeatable は、ドットリピートで繰り返す値であるかを返す。
 // ヤンク、移動、アンドゥ、モードの切り替えは繰り返さない。拡張機能のオペレーターと操作は、全て繰り返す（FR-12）。
-func repeatable(cmd input.Command) bool {
+func repeatable(cmd editcmd.Command) bool {
 	switch cmd.Kind {
-	case input.KindOperator:
+	case editcmd.KindOperator:
 		return !isYank(cmd.Operator)
-	case input.KindAction:
+	case editcmd.KindAction:
 		return !cmd.Action.Builtin() || repeatableActions[cmd.Action.ID]
-	case input.KindMotion, input.KindRecordStart, input.KindRecordStop, input.KindPlay, input.KindRepeat:
+	case editcmd.KindMotion, editcmd.KindRecordStart, editcmd.KindRecordStop, editcmd.KindPlay, editcmd.KindRepeat:
 	}
 	return false
 }
@@ -133,7 +133,7 @@ func repeatable(cmd input.Command) bool {
 // 拡張機能の操作は、記録した Ref と引数で同じ拡張機能へ問い合わせ直す（FR-12）。
 //
 // req: FR-06, FR-12
-func (s *State) repeat(cmd input.Command) error {
+func (s *State) repeat(cmd editcmd.Command) error {
 	if s.dot == nil {
 		return failf("no previous change")
 	}
@@ -141,13 +141,13 @@ func (s *State) repeat(cmd input.Command) error {
 	if cmd.CountGiven {
 		d.Count, d.CountGiven = cmd.Count, true
 	}
-	if d.Kind == input.KindAction && d.Action.Builtin() && (d.Action.ID == "put-after" || d.Action.ID == "put-before") &&
+	if d.Kind == editcmd.KindAction && d.Action.Builtin() && (d.Action.ID == "put-after" || d.Action.ID == "put-before") &&
 		d.Register >= '1' && d.Register <= '8' {
 		d.Register++
 	}
 	s.replaying = true
 	defer func() { s.replaying = false }()
-	if d.Kind == input.KindOperator && d.Target.Kind == input.TargetNone {
+	if d.Kind == editcmd.KindOperator && d.Target.Kind == editcmd.TargetNone {
 		rg := s.regionFromExtent(s.dotVisual)
 		return s.change(d, func() error { return s.regionOperator(d, rg) })
 	}

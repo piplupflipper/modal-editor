@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // 名前ごとの読み書きの規則（大文字の追記、_、読み出しだけの名前、クリップボードの未対応）。
@@ -81,7 +81,7 @@ func TestRegistersReadOnly(t *testing.T) {
 //
 // req: FR-04, FR-05
 func TestRawText(t *testing.T) {
-	keys := input.MustParseKeys("ix<Tab><CR><BS><Esc><C-r>")
+	keys := editcmd.MustParseKeys("ix<Tab><CR><BS><Esc><C-r>")
 	text := rawText(keys)
 	if text != "ix\t\r\x08\x1b\x12" {
 		t.Errorf("rawText = %q", text)
@@ -90,7 +90,7 @@ func TestRawText(t *testing.T) {
 		t.Errorf("keysFromText = %v, want %v", got, keys)
 	}
 	// 生の文字にできないキーは Vim の表記で書くが、記録したキーの列はそのまま保つ。
-	up := input.MustParseKeys("<Up>")
+	up := editcmd.MustParseKeys("<Up>")
 	if got := rawText(up); got != "<Up>" {
 		t.Errorf("rawText(<Up>) = %q", got)
 	}
@@ -98,7 +98,7 @@ func TestRawText(t *testing.T) {
 		t.Errorf("macroKeys = %v", got)
 	}
 	// 行単位のレジスターを再生すると、最後に <CR> が付く。
-	if got := (Register{Text: "x", Linewise: true}).macroKeys(); !reflect.DeepEqual(got, input.MustParseKeys("x<CR>")) {
+	if got := (Register{Text: "x", Linewise: true}).macroKeys(); !reflect.DeepEqual(got, editcmd.MustParseKeys("x<CR>")) {
 		t.Errorf("行単位の macroKeys = %v", got)
 	}
 }

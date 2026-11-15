@@ -2,13 +2,13 @@ package command
 
 import (
 	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // insertState は、インサートモードの 1 回分の入力の状態である。
 type insertState struct {
 	// cmd は、インサートモードへ移った編集コマンドの値である。抜けるときに Text を埋めてドットリピートに記録する。
-	cmd input.Command
+	cmd editcmd.Command
 	// text は、入力した文字の列である。<CR> は '\n'、<BS> は '\b' として記録する。
 	text []rune
 	// repeat は、入力したテキストを入れる回数である（3ix<Esc> なら 3）。c では 1 である。
@@ -17,7 +17,7 @@ type insertState struct {
 
 // startInsert は、インサートモードへ移る。アンドゥのグループは呼び出し側（change）が開いたままにしておく。
 // ドットリピートの再実行では、記録したテキストを入力してすぐに抜ける。
-func (s *State) startInsert(cmd input.Command, repeat int) {
+func (s *State) startInsert(cmd editcmd.Command, repeat int) {
 	s.mode = ModeInsert
 	s.insert = insertState{cmd: cmd, repeat: repeat}
 	if s.replaying {
@@ -32,23 +32,23 @@ func (s *State) startInsert(cmd input.Command, repeat int) {
 // 文字、<CR>、<Tab>、<BS>、<Esc> を扱い、それ以外のキー（矢印キー、Ctrl つきの文字など）は無視する。
 //
 // req: FR-01
-func (s *State) insertKey(k input.Key) {
+func (s *State) insertKey(k editcmd.Key) {
 	if k.Mod != 0 {
 		return
 	}
 	switch k.Code {
-	case input.CodeEsc:
+	case editcmd.CodeEsc:
 		s.finishInsert()
-	case input.CodeEnter:
+	case editcmd.CodeEnter:
 		s.insertRune('\n')
-	case input.CodeTab:
+	case editcmd.CodeTab:
 		s.insertRune('\t')
-	case input.CodeBackspace:
+	case editcmd.CodeBackspace:
 		s.insertRune('\b')
-	case input.CodeRune:
+	case editcmd.CodeRune:
 		s.insertRune(k.Rune)
-	case input.CodeDelete, input.CodeUp, input.CodeDown, input.CodeLeft, input.CodeRight,
-		input.CodeHome, input.CodeEnd, input.CodePageUp, input.CodePageDown:
+	case editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
+		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown:
 	}
 }
 

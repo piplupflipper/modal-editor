@@ -27,7 +27,7 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // Mode は、エディタのモードである（FR-01）。
@@ -104,7 +104,7 @@ type State struct {
 	want   int
 	mode   Mode
 
-	parser    *input.Parser
+	parser    KeyParser
 	registers Registers
 	lastFind  target.Find
 
@@ -112,7 +112,7 @@ type State struct {
 	res Result
 
 	// ドットリピート（FR-06）。
-	dot        *input.Command
+	dot        *editcmd.Command
 	dotVisual  visualExtent
 	replaying  bool // ドットリピートの再実行中
 	insert     insertState
@@ -120,15 +120,27 @@ type State struct {
 	cmdline    []rune
 	lastCmd    string // @: が繰り返す直前のコマンドライン
 	recording  rune   // マクロの記録先。0 なら記録していない
-	recorded   []input.Key
+	recorded   []editcmd.Key
 	lastPlayed rune // @@ が再生するレジスター
 	playDepth  int
 }
 
+// KeyParser は、キーを 1 個ずつ受け取り、編集コマンドの値に解釈する口である（基本設計 3 章の「入力の解釈」）。
+// internal/input の *Parser が満たす。internal/input は同じ層のパッケージなので、このパッケージは import せず、
+// 呼び出し側（internal/editor）が New に渡す。各メソッドの意味は input.Parser の同じ名前のメソッドと同じである。
+type KeyParser interface {
+	Feed(k editcmd.Key) []editcmd.Result
+	Flush() []editcmd.Result
+	Pending() bool
+	SetRecording(on bool)
+	SetVisual(on bool)
+}
+
 // New は、バッファ b を編集する State を、ノーマルモード、カーソルは先頭で作る。
-// km は、キーを解釈するキーマップである（ふつうは input.DefaultKeymap に拡張機能の操作を足したもの）。
-func New(b *buffer.Buffer, km *input.Keymap) *State {
-	s := &State{buf: b, parser: input.NewParser(km)}
+// p は、キーを解釈する口である（ふつうは input.NewParser に、拡張機能の操作を足したキーマップを渡したもの）。
+// マクロの再生も p を通すので、p は State 専用のものを渡す。
+func New(b *buffer.Buffer, p KeyParser) *State {
+	s := &State{buf: b, parser: p}
 	s.Ex.Mark = s.mark
 	return s
 }
@@ -168,7 +180,7 @@ func (s *State) Recording() rune { return s.recording }
 // Pending は、ノーマルモードかビジュアルモードで、キーの列の解釈が途中であるかを返す。
 func (s *State) Pending() bool { return s.parser.Pending() }
 
-// Flush は、時間切れで、待っている曖昧なキーの列を確定させて実行する（input.Parser.Flush）。
+// Flush は、時間切れで、待っている曖昧なキーの列を確定させて実行する（KeyParser.Flush）。
 // イベントループは、キーが一定の時間来なかったときに呼ぶ。
 func (s *State) Flush() Result {
 	s.res = Result{}
@@ -189,7 +201,7 @@ func (s *State) take() Result {
 // マクロの記録中は、受け取ったキーを記録する（FR-05）。
 //
 // req: FR-01, FR-05
-func (s *State) Feed(k input.Key) Result {
+func (s *State) Feed(k editcmd.Key) Result {
 	s.res = Result{}
 	if s.recording != 0 {
 		s.recorded = append(s.recorded, k)
@@ -199,7 +211,7 @@ func (s *State) Feed(k input.Key) Result {
 }
 
 // feed は、キーを 1 個解釈する。マクロの再生もここを通るので、記録はしない。
-func (s *State) feed(k input.Key) {
+func (s *State) feed(k editcmd.Key) {
 	switch s.mode {
 	case ModeInsert:
 		s.insertKey(k)
@@ -208,7 +220,7 @@ func (s *State) feed(k input.Key) {
 		s.cmdlineKey(k)
 		return
 	case ModeVisual, ModeVisualLine:
-		if k.Code == input.CodeEsc && !s.parser.Pending() {
+		if k.Code == editcmd.CodeEsc && !s.parser.Pending() {
 			s.exitVisual()
 			return
 		}
@@ -218,16 +230,16 @@ func (s *State) feed(k input.Key) {
 }
 
 // runResults は、Parser の結果を順に実行する。
-func (s *State) runResults(rs []input.Result) {
+func (s *State) runResults(rs []editcmd.Result) {
 	for _, r := range rs {
 		switch r.Status {
-		case input.StatusDone:
+		case editcmd.StatusDone:
 			if err := s.execute(r.Command); err != nil {
 				s.fail(err)
 			}
-		case input.StatusInvalid:
+		case editcmd.StatusInvalid:
 			s.fail(failf("invalid key sequence"))
-		case input.StatusCanceled:
+		case editcmd.StatusCanceled:
 		}
 	}
 }
@@ -241,7 +253,7 @@ func (s *State) fail(err error) {
 
 // Execute は、編集コマンドの値 cmd を実行する。
 // キーを通さずに値を実行したいとき（拡張機能の操作をコマンドから呼ぶなど）に使う。Feed も内部でこれと同じ処理を通る。
-func (s *State) Execute(cmd input.Command) Result {
+func (s *State) Execute(cmd editcmd.Command) Result {
 	s.res = Result{}
 	if err := s.execute(cmd); err != nil {
 		s.fail(err)
@@ -252,28 +264,28 @@ func (s *State) Execute(cmd input.Command) Result {
 // execute は、編集コマンドの値を 1 つ実行する。
 //
 // req: FR-02
-func (s *State) execute(cmd input.Command) error {
+func (s *State) execute(cmd editcmd.Command) error {
 	switch cmd.Kind {
-	case input.KindMotion:
+	case editcmd.KindMotion:
 		if s.mode.visual() {
 			return s.visualMotion(cmd)
 		}
 		return s.moveMotion(cmd)
-	case input.KindOperator:
+	case editcmd.KindOperator:
 		if s.mode.visual() {
 			return s.visualOperator(cmd)
 		}
 		return s.change(cmd, func() error { return s.operator(cmd) })
-	case input.KindAction:
+	case editcmd.KindAction:
 		return s.change(cmd, func() error { return s.action(cmd) })
-	case input.KindRecordStart:
+	case editcmd.KindRecordStart:
 		return s.startRecording(cmd.Char)
-	case input.KindRecordStop:
+	case editcmd.KindRecordStop:
 		s.stopRecording()
 		return nil
-	case input.KindPlay:
+	case editcmd.KindPlay:
 		return s.play(cmd)
-	case input.KindRepeat:
+	case editcmd.KindRepeat:
 		return s.repeat(cmd)
 	}
 	return failf("unknown command kind %d", cmd.Kind)
@@ -283,7 +295,7 @@ func (s *State) execute(cmd input.Command) error {
 // インサートモードへ移った場合は、グループを開いたままにし、インサートモードを抜けるときに閉じる。
 //
 // req: FR-07
-func (s *State) change(cmd input.Command, f func() error) error {
+func (s *State) change(cmd editcmd.Command, f func() error) error {
 	s.buf.BeginUndoGroup()
 	err := f()
 	if s.mode == ModeInsert && err == nil {

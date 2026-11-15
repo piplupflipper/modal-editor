@@ -1,4 +1,4 @@
-package input
+package editcmd
 
 // Kind は、編集コマンドの値の種類を表す。
 type Kind int
@@ -104,4 +104,23 @@ type Command struct {
 	// Text は、c や i のように挿入を伴うコマンドで入力された文字列である。
 	// Parser は埋めない。インサートモードを抜けた時点で internal/command が埋め、ドットリピートに使う。
 	Text string
+}
+
+// Status は、キーの列の解釈（internal/input の Parser）が返す結果の種類を表す。
+type Status int
+
+// 結果の種類。
+const (
+	// StatusDone は、編集コマンドの値が 1 つ完成したことを表す。
+	StatusDone Status = iota + 1
+	// StatusInvalid は、どの操作にも当たらない列（dq など）を受け取り、解釈を捨てて初期状態に戻ったことを表す。
+	StatusInvalid
+	// StatusCanceled は、Esc で解釈を捨てて初期状態に戻ったことを表す。
+	StatusCanceled
+)
+
+// Result は、Parser の結果の 1 件である。Command は Status が StatusDone のときだけ意味を持つ。
+type Result struct {
+	Command Command
+	Status  Status
 }

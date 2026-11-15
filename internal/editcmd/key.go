@@ -1,8 +1,9 @@
-// Package input は、キーの列を編集コマンドの値に解釈する（基本設計 3 章）。
+// Package editcmd は、キー入力（Key）と、キーの列から解釈した編集コマンドの値（Command）の型を持つ（基本設計 3 章）。
 //
-// 端末のバイト列からキーへの解読は、端末ライブラリの裁定（issue #9）を待つため、まだ持たない。
-// このパッケージはバッファを変更しない。解釈した値の実行は internal/command が受け持つ。
-package input
+// 基本設計 2 章の土台の層にあり、このリポジトリの他のパッケージを import しない。
+// キーの列を値に解釈する internal/input と、値を実行する internal/command は同じ層にあり、互いを import しないので、
+// 両方が使う型をここに置く。このパッケージは型と、その表記の読み書きだけを持ち、解釈と実行はしない。
+package editcmd
 
 import (
 	"fmt"
@@ -110,9 +111,9 @@ func (k Key) Normalize() Key {
 	return k
 }
 
-// isPlain は、修飾キーの無い文字のキーであるかを返す。
+// Plain は、修飾キーの無い文字のキーであるかを返す。
 // レジスター名と回数には、この種類のキーだけを受け付ける。
-func (k Key) isPlain() bool { return k.Code == CodeRune && k.Mod == 0 }
+func (k Key) Plain() bool { return k.Code == CodeRune && k.Mod == 0 }
 
 // String は、キーを Vim の表記で返す（例: a、<Esc>、<C-w>、<lt>、<Space>）。
 // 結果を ParseKeys に渡すと元のキーに戻る。

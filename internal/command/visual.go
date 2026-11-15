@@ -3,7 +3,7 @@ package command
 import (
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // visualState は、ビジュアルモードの状態である。
@@ -41,7 +41,7 @@ func (s *State) Selection() (start, end buffer.Position, linewise, ok bool) {
 // actVisual は、v と V である。ノーマルモードではビジュアルモードへ入り、
 // ビジュアルモードでは、同じ種類なら抜け、違う種類なら切り替える（選択の端はそのまま）。
 func actVisual(m Mode) actionFunc {
-	return func(s *State, _ input.Command) error {
+	return func(s *State, _ editcmd.Command) error {
 		switch {
 		case s.mode == m:
 			s.exitVisual()
@@ -57,7 +57,7 @@ func actVisual(m Mode) actionFunc {
 }
 
 // actVisualSwap は、ビジュアルモードの o である。カーソルを選択の反対の端へ移す。
-func actVisualSwap(s *State, _ input.Command) error {
+func actVisualSwap(s *State, _ editcmd.Command) error {
 	if !s.mode.visual() {
 		return failf("not in visual mode")
 	}
@@ -91,8 +91,8 @@ func (s *State) mark(name rune) (int, bool) {
 }
 
 // visualMotion は、ビジュアルモードのモーションとテキストオブジェクトで、選択を動かす。
-func (s *State) visualMotion(cmd input.Command) error {
-	if cmd.Target.Kind == input.TargetTextObject {
+func (s *State) visualMotion(cmd editcmd.Command) error {
+	if cmd.Target.Kind == editcmd.TargetTextObject {
 		return s.visualTextObject(cmd)
 	}
 	return s.moveMotion(cmd)
@@ -105,7 +105,7 @@ func (s *State) visualMotion(cmd input.Command) error {
 //
 // Vim は、選択を広げる方向（カーソルが端より前か）や、i( を重ねたときの外側の括弧への広げ方を細かく扱うが、
 // ここでは前へ広げることだけを扱う。
-func (s *State) visualTextObject(cmd input.Command) error {
+func (s *State) visualTextObject(cmd editcmd.Command) error {
 	from := s.cursor
 	extend := s.cursor != s.visual.anchor
 	if extend {
@@ -205,7 +205,7 @@ func (s *State) regionFromExtent(ex visualExtent) region {
 // 回数は、> と < では字下げを繰り返す回数で、それ以外のオペレーターでは使わない。
 //
 // req: FR-01
-func (s *State) visualOperator(cmd input.Command) error {
+func (s *State) visualOperator(cmd editcmd.Command) error {
 	rg := s.visualRegion()
 	ext := s.extentOf(rg)
 	s.exitVisual()
@@ -214,7 +214,7 @@ func (s *State) visualOperator(cmd input.Command) error {
 }
 
 // regionOperator は、ビジュアルモードの選択（またはその繰り返し）の範囲に対してオペレーターを実行する。
-func (s *State) regionOperator(cmd input.Command, rg region) error {
+func (s *State) regionOperator(cmd editcmd.Command, rg region) error {
 	sp := target.Span{Start: rg.r.Start, End: rg.r.End, Kind: target.Exclusive}
 	if rg.linewise {
 		sp.Kind = target.Linewise

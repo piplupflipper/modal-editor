@@ -1,4 +1,4 @@
-package input
+package editcmd
 
 import (
 	"reflect"

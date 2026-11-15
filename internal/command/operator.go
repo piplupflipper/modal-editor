@@ -6,7 +6,7 @@ import (
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // region は、オペレーターが働く範囲である。
@@ -35,7 +35,7 @@ type opOptions struct {
 }
 
 // operatorFunc は、本体のオペレーター 1 つの実装である。
-type operatorFunc func(s *State, cmd input.Command, rg region, o opOptions) error
+type operatorFunc func(s *State, cmd editcmd.Command, rg region, o opOptions) error
 
 // operators は、本体のオペレーターの表である。キーは input の表の ID である。
 // 一覧は issue #9 の案で、裁定で増減しうるので、行の足し引きで済むようにしておく。
@@ -56,8 +56,8 @@ var operators = map[string]operatorFunc{
 var forceOneMotions = map[string]bool{"match-pair": true, "paragraph-prev": true, "paragraph-next": true}
 
 // moveMotion は、モーションだけの移動を実行する。
-func (s *State) moveMotion(cmd input.Command) error {
-	if cmd.Target.Kind != input.TargetMotion {
+func (s *State) moveMotion(cmd editcmd.Command) error {
+	if cmd.Target.Kind != editcmd.TargetMotion {
 		return failf("text object without operator")
 	}
 	res, err := s.resolveMotion(cmd.Target, cmd, target.NoOperator)
@@ -72,25 +72,25 @@ func (s *State) moveMotion(cmd input.Command) error {
 // operator は、ノーマルモードのオペレーターと対象の組を実行する。
 //
 // req: FR-02
-func (s *State) operator(cmd input.Command) error {
+func (s *State) operator(cmd editcmd.Command) error {
 	sp, err := s.operatorSpan(cmd)
 	if err != nil {
 		return err
 	}
 	o := opOptions{times: 1}
-	if cmd.Target.Kind == input.TargetMotion && cmd.Target.Ref.Builtin() {
+	if cmd.Target.Kind == editcmd.TargetMotion && cmd.Target.Ref.Builtin() {
 		o.forceOne = forceOneMotions[cmd.Target.Ref.ID]
 	}
 	return s.runOperator(cmd, sp, s.regionOf(sp), o)
 }
 
 // isYank は、本体の y であるかを返す。
-func isYank(ref input.Ref) bool { return ref.Builtin() && ref.ID == "yank" }
+func isYank(ref editcmd.Ref) bool { return ref.Builtin() && ref.ID == "yank" }
 
 // operatorSpan は、オペレーターの対象を範囲に解決する。
-func (s *State) operatorSpan(cmd input.Command) (target.Span, error) {
+func (s *State) operatorSpan(cmd editcmd.Command) (target.Span, error) {
 	switch cmd.Target.Kind {
-	case input.TargetLine:
+	case editcmd.TargetLine:
 		// dd は d と (count-1)j の組に当たる。最後の行で回数が 2 以上なら j が失敗するので、全体が失敗する。
 		n := max(cmd.Count, 1)
 		if n > 1 && s.cursor.Line == s.lastLine() {
@@ -103,7 +103,7 @@ func (s *State) operatorSpan(cmd input.Command) (target.Span, error) {
 			start = s.firstNonBlankPos(start.Line)
 		}
 		return target.Span{Start: start, End: pos(end, 0), Kind: target.Linewise}, nil
-	case input.TargetMotion:
+	case editcmd.TargetMotion:
 		op := target.AnyOperator
 		if cmd.Operator.Builtin() && cmd.Operator.ID == "change" {
 			op = target.ChangeOperator
@@ -113,19 +113,19 @@ func (s *State) operatorSpan(cmd input.Command) (target.Span, error) {
 			return target.Span{}, err
 		}
 		return target.OperatorSpan(s.buf, s.cursor, res), nil
-	case input.TargetTextObject:
+	case editcmd.TargetTextObject:
 		sp, err := s.resolveTextObject(cmd.Target, cmd, s.cursor)
 		if err != nil {
 			return target.Span{}, err
 		}
 		return target.AdjustExclusive(s.buf, sp), nil
-	case input.TargetNone:
+	case editcmd.TargetNone:
 	}
 	return target.Span{}, failf("operator without target")
 }
 
 // runOperator は、範囲に対してオペレーターを実行する。拡張機能のオペレーターなら問い合わせる（FR-12）。
-func (s *State) runOperator(cmd input.Command, sp target.Span, rg region, o opOptions) error {
+func (s *State) runOperator(cmd editcmd.Command, sp target.Span, rg region, o opOptions) error {
 	if !cmd.Operator.Builtin() {
 		return s.extOperator(cmd, sp)
 	}
@@ -137,7 +137,7 @@ func (s *State) runOperator(cmd input.Command, sp target.Span, rg region, o opOp
 }
 
 // extOperator は、拡張機能のオペレーターを問い合わせ、返った編集を適用する。
-func (s *State) extOperator(cmd input.Command, sp target.Span) error {
+func (s *State) extOperator(cmd editcmd.Command, sp target.Span) error {
 	if s.Extensions == nil {
 		return ErrNoExtensions
 	}
@@ -150,7 +150,7 @@ func (s *State) extOperator(cmd input.Command, sp target.Span) error {
 	if err := s.applyTx(tx); err != nil {
 		return err
 	}
-	if cmd.Mode == input.ModeInsert {
+	if cmd.Mode == editcmd.ModeInsert {
 		s.cursor = s.clampPos(sp.Start)
 		s.startInsert(cmd, 1)
 		return nil
@@ -194,7 +194,7 @@ func smallDelete(rg region) bool {
 //
 // `:help d` の例外に合わせ、ノーマルモードで、文字単位の範囲が 2 行以上にわたり、
 // 始まりの前が空白だけで、終わりの後に空白でない文字が無い場合は、行単位の削除にする。
-func opDelete(s *State, cmd input.Command, rg region, o opOptions) error {
+func opDelete(s *State, cmd editcmd.Command, rg region, o opOptions) error {
 	if !writable(cmd.Register) {
 		return failf("invalid register %q", cmd.Register)
 	}
@@ -225,7 +225,7 @@ func opDelete(s *State, cmd input.Command, rg region, o opOptions) error {
 // opChange は、c である。範囲を消してインサートモードへ移る。
 // 行単位の範囲は、行の内容を消して空の行を 1 つ残す（'autoindent' がオフなので字下げも残さない）。
 // cw が ce のように動く例外（`:help cw`）は、モーションの解決（target.ChangeOperator）が扱う。
-func opChange(s *State, cmd input.Command, rg region, _ opOptions) error {
+func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if !writable(cmd.Register) {
 		return failf("invalid register %q", cmd.Register)
 	}
@@ -246,7 +246,7 @@ func opChange(s *State, cmd input.Command, rg region, _ opOptions) error {
 }
 
 // opYank は、y である。カーソルは範囲の始まりへ移る（yy では動かない）。
-func opYank(s *State, cmd input.Command, rg region, _ opOptions) error {
+func opYank(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if !writable(cmd.Register) {
 		return failf("invalid register %q", cmd.Register)
 	}
@@ -269,7 +269,7 @@ const (
 // > は空の行を字下げしない。字下げはタブで作り、端数をスペースで埋める（'expandtab' がオフ）。
 // カーソルは最初の行の、最初の空白でない文字へ移る。
 func opShift(dir int) operatorFunc {
-	return func(s *State, _ input.Command, rg region, o opOptions) error {
+	return func(s *State, _ editcmd.Command, rg region, o opOptions) error {
 		times := max(o.times, 1)
 		var edits []buffer.Edit
 		for l := rg.r.Start.Line; l <= rg.r.End.Line; l++ {
@@ -322,7 +322,7 @@ func mapCase(str string, f func(rune) rune) string { return strings.Map(f, str) 
 
 // opCase は、g~、gu、gU（ビジュアルモードの ~、u、U）である。カーソルは範囲の始まりへ移る。
 func opCase(f func(rune) rune) operatorFunc {
-	return func(s *State, _ input.Command, rg region, _ opOptions) error {
+	return func(s *State, _ editcmd.Command, rg region, _ opOptions) error {
 		text, err := s.buf.Slice(rg.r)
 		if err != nil {
 			return err

@@ -7,6 +7,7 @@ import (
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command/target"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/input"
 )
 
@@ -22,7 +23,7 @@ type fakeExt struct {
 	failing bool
 }
 
-func (f *fakeExt) Motion(ref input.Ref, b *buffer.Buffer, req target.Request) (target.Result, error) {
+func (f *fakeExt) Motion(ref editcmd.Ref, b *buffer.Buffer, req target.Request) (target.Result, error) {
 	f.calls = append(f.calls, "motion "+ref.ID)
 	line := b.Line(req.Cursor.Line)
 	i := strings.IndexByte(line[req.Cursor.Byte+1:], 'x')
@@ -32,13 +33,13 @@ func (f *fakeExt) Motion(ref input.Ref, b *buffer.Buffer, req target.Request) (t
 	return target.Result{Pos: pos(req.Cursor.Line, req.Cursor.Byte+1+i), Kind: target.Inclusive}, nil
 }
 
-func (f *fakeExt) TextObject(ref input.Ref, b *buffer.Buffer, req target.Request) (target.Span, error) {
+func (f *fakeExt) TextObject(ref editcmd.Ref, b *buffer.Buffer, req target.Request) (target.Span, error) {
 	f.calls = append(f.calls, "textObject "+ref.ID)
 	n := len(b.Line(req.Cursor.Line))
 	return target.Span{Start: pos(req.Cursor.Line, 0), End: pos(req.Cursor.Line, n), Kind: target.Exclusive}, nil
 }
 
-func (f *fakeExt) Operator(ref input.Ref, b *buffer.Buffer, q OperatorQuery) (buffer.Transaction, error) {
+func (f *fakeExt) Operator(ref editcmd.Ref, b *buffer.Buffer, q OperatorQuery) (buffer.Transaction, error) {
 	f.calls = append(f.calls, "operator "+ref.ID+" "+string(q.Char))
 	if f.failing {
 		return buffer.Transaction{}, errors.New("timeout")
@@ -55,7 +56,7 @@ func (f *fakeExt) Operator(ref input.Ref, b *buffer.Buffer, q OperatorQuery) (bu
 	return tx, nil
 }
 
-func (f *fakeExt) Action(ref input.Ref, b *buffer.Buffer, q ActionQuery) (buffer.Transaction, error) {
+func (f *fakeExt) Action(ref editcmd.Ref, b *buffer.Buffer, q ActionQuery) (buffer.Transaction, error) {
 	f.calls = append(f.calls, "action "+ref.ID)
 	l := q.Cursor.Line
 	return buffer.Transaction{BaseVersion: b.Version(), Edits: []buffer.Edit{
@@ -68,10 +69,10 @@ func extKeymap(t *testing.T) *input.Keymap {
 	t.Helper()
 	km := input.DefaultKeymap()
 	for _, b := range []input.Binding{
-		{Kind: input.BindOperator, Keys: input.MustParseKeys("ys"), Ref: input.Ref{Extension: "surround", ID: "add"}, TakesChar: true},
-		{Kind: input.BindMotion, Keys: input.MustParseKeys("gx"), Ref: input.Ref{Extension: "jump", ID: "x"}},
-		{Kind: input.BindTextObject, Keys: input.MustParseKeys("il"), Ref: input.Ref{Extension: "line", ID: "inner"}},
-		{Kind: input.BindAction, Keys: input.MustParseKeys("gD"), Ref: input.Ref{Extension: "dup", ID: "line"}},
+		{Kind: input.BindOperator, Keys: editcmd.MustParseKeys("ys"), Ref: editcmd.Ref{Extension: "surround", ID: "add"}, TakesChar: true},
+		{Kind: input.BindMotion, Keys: editcmd.MustParseKeys("gx"), Ref: editcmd.Ref{Extension: "jump", ID: "x"}},
+		{Kind: input.BindTextObject, Keys: editcmd.MustParseKeys("il"), Ref: editcmd.Ref{Extension: "line", ID: "inner"}},
+		{Kind: input.BindAction, Keys: editcmd.MustParseKeys("gD"), Ref: editcmd.Ref{Extension: "dup", ID: "line"}},
 	} {
 		if err := km.Bind(b); err != nil {
 			t.Fatal(err)
@@ -98,7 +99,7 @@ func TestExtensionRepeat(t *testing.T) {
 	}
 	for _, tt := range tests {
 		ext := &fakeExt{}
-		s := New(newBuffer("ab cd ex f"), extKeymap(t))
+		s := New(newBuffer("ab cd ex f"), input.NewParser(extKeymap(t)))
 		s.Extensions = ext
 		if err := errOf(feedKeys(s, tt.keys)); err != nil {
 			t.Errorf("%s: err = %v", tt.keys, err)
@@ -125,7 +126,7 @@ func TestExtensionFailure(t *testing.T) {
 		{"古いバージョン番号", &fakeExt{stale: true}, buffer.ErrVersionMismatch},
 		{"問い合わせ先が無い", nil, ErrNoExtensions},
 	} {
-		s := New(newBuffer("ab cd"), extKeymap(t))
+		s := New(newBuffer("ab cd"), input.NewParser(extKeymap(t)))
 		s.Extensions = tt.ext
 		err := errOf(feedKeys(s, "ysiw)"))
 		if err == nil || tt.want != nil && !errors.Is(err, tt.want) {
