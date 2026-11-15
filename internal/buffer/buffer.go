@@ -27,6 +27,12 @@
 // 行単位の削除で全ての行を消したバッファも、Vim では行の無いバッファになる。
 // Buffer は行の削除と行の中の削除をテキストから見分けられないので、編集した側が MarkNoLines で知らせる。
 //
+// 末尾の改行の記録は読み込み時に決まるが、外から書き換えたファイルを読み直したのと同じ状態にするために、
+// SetTrailingNewline、MarkNoLines、MarkHasLines で後から変えられる（拡張機能の buffer/edit の endOfLine と noLines）。
+// バージョン番号はテキストの変更だけを数え、これらの状態の変更では進まない。
+// このため、テキストを変えずにこれらだけを変えると、バージョン番号が同じまま書き出す内容が変わる（"\n" が "" になる、など）。
+// 拡張機能の buffer/edit でこれらだけを変えたときは、result の Applied が false になる。
+//
 // 位置と編集（Position、Edit）は、行を "\n" でつないだテキスト（Text が返すもの）に対して数える。
 // 末尾の改行はこのテキストに含まれず、編集で消したり足したりすることはできない。
 // CR（"\r"）は特別に扱わず、行の中の 1 バイトとして保持する。
@@ -248,6 +254,14 @@ func (b *Buffer) Line(i int) string {
 // 書き出すときに改行を付けるかどうかは FinalNewline が返す。
 func (b *Buffer) HasTrailingNewline() bool {
 	return b.eol
+}
+
+// SetTrailingNewline は、読み込んだテキストの最後の行の後に改行があったかどうか（HasTrailingNewline。Vim の 'endofline'）を設定する。
+// テキストを変えずに、ファイルを読み直したのと同じ末尾の改行の記録にするときに呼ぶ（拡張機能の buffer/edit の endOfLine）。
+// 設定はアンドゥの履歴に記録しない（Vim の 'endofline' も、アンドゥで戻らない）。
+// 設定はバージョン番号、アンドゥの履歴、保存済みの記録を変えない。
+func (b *Buffer) SetTrailingNewline(on bool) {
+	b.eol = on
 }
 
 // SetFixEndOfLine は、書き出すときに末尾の改行を補うかどうか（Vim の 'fixendofline'）を設定する。

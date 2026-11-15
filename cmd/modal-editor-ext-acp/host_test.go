@@ -55,16 +55,21 @@ func TestMain(m *testing.M) {
 type hostBuffer struct {
 	path string
 	text string
-	// finalNewline は、本体の buffer.Buffer の FinalNewline（書き出すときに改行を足すか）である。
-	finalNewline bool
-	// noLines は、行の無いバッファ（無いファイルを開いた空のバッファ）かどうかである。書き出すと空のファイルになる。
+	// eol は、本体の buffer.Buffer の HasTrailingNewline（読み込んだファイルが末尾の改行を持っていたか。Vim の 'endofline'）である。
+	eol bool
+	// fixEOL は、末尾の改行を補う設定（Vim の 'fixendofline'）である。開いたときの host.fixEOL を写す。
+	fixEOL bool
+	// noLines は、行の無いバッファ（無いファイルか空のファイルを開いた空のバッファ）かどうかである。書き出すと空のファイルになる。
 	// 拡張機能へは、行の無いバッファの FinalNewline を false で送る（ext.BufferOpenParams の FinalNewline）。
 	noLines bool
 	version ext.Version
 }
 
+// finalNewline は、本体の buffer.Buffer の FinalNewline（書き出すときに改行を足すか）である。
+func (b *hostBuffer) finalNewline() bool { return b.eol || b.fixEOL }
+
 // sentFinalNewline は、拡張機能へ送る FinalNewline である。
-func (b *hostBuffer) sentFinalNewline() bool { return b.finalNewline && !b.noLines }
+func (b *hostBuffer) sentFinalNewline() bool { return b.finalNewline() && !b.noLines }
 
 // host は、本体の役である。拡張機能の Server と io.Pipe でつなぎ、editor/open、buffer/edit、buffer/save、choice/ask に答える。
 // バッファの編集は、本体と同じく、適用したら buffer/change を送ってから応答する。
@@ -76,11 +81,14 @@ type host struct {
 	mu      sync.Mutex
 	bufs    map[ext.BufferID]*hostBuffer
 	nextBuf ext.BufferID
-	output  strings.Builder
-	msgs    []ext.MessageShowParams
-	opens   []ext.EditorOpenParams
-	edits   []ext.BufferEditParams
-	saves   []ext.BufferSaveParams
+	// fixEOL は、これから開くバッファの末尾の改行を補う設定である。本体と同じく既定は有効で、
+	// 無効にした本体（設定ファイルの項目は #9 の後）の役を試すときだけ false にする。
+	fixEOL bool
+	output strings.Builder
+	msgs   []ext.MessageShowParams
+	opens  []ext.EditorOpenParams
+	edits  []ext.BufferEditParams
+	saves  []ext.BufferSaveParams
 	// asks は、届いた choice/ask である。answers に積んだ応答で答える。
 	asks    chan ext.ChoiceAskParams
 	answers chan ext.ChoiceAskResult
@@ -127,7 +135,7 @@ func newHost(t *testing.T, s settings, getenv func(string) string) *host {
 func newHostState(t *testing.T) *host {
 	return &host{
 		t:    t,
-		bufs: map[ext.BufferID]*hostBuffer{}, nextBuf: 100,
+		bufs: map[ext.BufferID]*hostBuffer{}, nextBuf: 100, fixEOL: true,
 		asks: make(chan ext.ChoiceAskParams, 16), answers: make(chan ext.ChoiceAskResult, 16), withdrawn: make(chan struct{}, 16),
 	}
 }
@@ -219,7 +227,7 @@ func (h *host) request(ctx context.Context, req *rpc.Request, reply rpc.Replier)
 func (h *host) open(id ext.BufferID, path, text string) {
 	h.t.Helper()
 	h.mu.Lock()
-	h.bufs[id] = &hostBuffer{path: path, text: text, finalNewline: true, version: 1}
+	h.bufs[id] = &hostBuffer{path: path, text: text, eol: true, fixEOL: h.fixEOL, version: 1}
 	h.mu.Unlock()
 	if err := h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: id, Path: path, Version: 1, Text: text}); err != nil {
 		h.t.Fatalf("buffer/open: %v", err)
@@ -258,20 +266,20 @@ func (h *host) editorOpen(p ext.EditorOpenParams) (ext.BufferID, ext.Version, er
 			return id, b.version, nil
 		}
 	}
-	b := &hostBuffer{path: p.Path, finalNewline: true, version: 1}
+	b := &hostBuffer{path: p.Path, eol: true, fixEOL: h.fixEOL, version: 1}
 	data, err := os.ReadFile(p.Path)
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-		// 本体と同じく、無いファイルは行の無いバッファにし、末尾の改行を付けない（ext.BufferOpenParams の FinalNewline）。
+	case errors.Is(err, os.ErrNotExist) || (err == nil && len(data) == 0):
+		// 本体と同じく、無いファイルと空のファイルは行の無いバッファにし、末尾の改行を付けない（ext.BufferOpenParams の FinalNewline）。
 		b.noLines = true
 	case err != nil:
 		h.mu.Unlock()
 		return 0, 0, err
 	default:
-		// 末尾の改行の無いファイルは、FinalNewline が false のバッファにする。
-		// 末尾の改行を補う設定（既定で有効）を無効にした本体と同じで、編集しても FinalNewline は変わらない。
+		// 本体の buffer.New と同じく、末尾の改行の有無を記録する。
+		// 末尾の改行を補う設定を無効にした本体の役（fixEOL が false）では、末尾の改行の無いファイルは FinalNewline が false のバッファになる。
 		s := string(data)
-		b.finalNewline = strings.HasSuffix(s, "\n")
+		b.eol = strings.HasSuffix(s, "\n")
 		b.text = strings.TrimSuffix(s, "\n")
 	}
 	h.nextBuf++
@@ -284,6 +292,9 @@ func (h *host) editorOpen(p ext.EditorOpenParams) (ext.BufferID, ext.Version, er
 }
 
 // edit は、本体の buffer/edit の役である。BaseVersion が一致すれば適用し、応答より先に buffer/change を送る。
+// 本体と同じく、Edits が空ならバージョン番号を進めず Applied を false で答え、
+// 編集すると行の無いバッファでなくし、その後に noLines と endOfLine を反映する（internal/editor の applyLineState）。
+// 拡張機能へ送る FinalNewline が変われば、buffer/open で送り直す。
 func (h *host) edit(p ext.BufferEditParams) ext.BufferEditResult {
 	h.mu.Lock()
 	h.edits = append(h.edits, p)
@@ -296,26 +307,32 @@ func (h *host) edit(p ext.BufferEditParams) ext.BufferEditResult {
 		h.mu.Unlock()
 		return ext.BufferEditResult{Applied: false, Version: v}
 	}
-	for _, e := range p.Transaction.Edits {
-		start, end := offset(b.text, e.Range.Start), offset(b.text, e.Range.End)
-		b.text = b.text[:start] + e.Text + b.text[end:]
-	}
+	sent := b.sentFinalNewline()
+	applied := len(p.Transaction.Edits) > 0
 	from := b.version
-	b.version++
-	to := b.version
-	// 本体と同じく、行の無いバッファに入力したら行の無いバッファでなくし、buffer/open で FinalNewline を送り直す。
-	reopen := b.noLines && b.text != ""
-	if reopen {
+	if applied {
+		for _, e := range p.Transaction.Edits {
+			start, end := offset(b.text, e.Range.Start), offset(b.text, e.Range.End)
+			b.text = b.text[:start] + e.Text + b.text[end:]
+		}
+		b.version++
 		b.noLines = false
 	}
-	text, path, fn := b.text, b.path, b.sentFinalNewline()
+	if p.EndOfLine != nil {
+		b.eol = *p.EndOfLine
+	}
+	if p.NoLines != nil {
+		b.noLines = *p.NoLines && b.text == ""
+	}
+	text, path, to, fn := b.text, b.path, b.version, b.sentFinalNewline()
 	h.mu.Unlock()
-	if reopen {
-		_ = h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: p.Buffer, Path: path, Version: to, Text: text, FinalNewline: &fn})
-	} else {
+	if applied {
 		_ = h.conn.Notify(ext.MethodBufferChange, ext.BufferChangeParams{Buffer: p.Buffer, FromVersion: from, ToVersion: to, Edits: p.Transaction.Edits})
 	}
-	return ext.BufferEditResult{Applied: true, Version: to}
+	if fn != sent {
+		_ = h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: p.Buffer, Path: path, Version: to, Text: text, FinalNewline: &fn})
+	}
+	return ext.BufferEditResult{Applied: applied, Version: to}
 }
 
 // offset は、位置をテキストの先頭からのバイト数にする。
@@ -343,7 +360,7 @@ func (h *host) save(p ext.BufferSaveParams) (ext.BufferSaveResult, error) {
 	switch {
 	case b.noLines:
 		data = ""
-	case b.finalNewline:
+	case b.finalNewline():
 		data += "\n"
 	}
 	if err := os.WriteFile(b.path, []byte(data), 0o600); err != nil {

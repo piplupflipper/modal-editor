@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -416,72 +417,74 @@ func TestWriteUnopenedFile(t *testing.T) {
 	}
 }
 
-// TestWriteFinalNewline は、fs/write_text_file で書き出したファイルの末尾の改行が、バッファの FinalNewline によらず
-// content と一致することを確かめる。
+// TestWriteFinalNewline は、fs/write_text_file で書き出したファイルが、Vim 9.1 で外から content に書き換えたファイルを
+// :e! で読み直して :w した結果と一致することを確かめる。
 //
-// 本体の役は、末尾の改行の無いファイルを FinalNewline が false のバッファとして開く。これは末尾の改行を補う設定を無効にした本体の役である。
-// 今の本体は、この設定をバッファごとに無効にする手段をまだ持たず（基本設計 4.1 のバッファごとの設定は未実装）、
-// "old" のファイルも FinalNewline が true のバッファとして届くので、"no eol" のケースは今の本体では通らない経路である。
-//
-// 最後の 2 つのケースは、Vim と結果が違う現状を固定する（bufferText の doc、基本設計 6.5）。
+// 期待値は、開いていたファイル（"x\n"、""、無いファイル、"x"）と content（""、"\n"、"a"、"a\n"、"a\n\n"、"\n\n"）の全ての組と、
+// 末尾の改行を補う設定の有効と無効の両方を、vim -Nu NONE -n --not-a-term で取った（2026-11-16）。
+// Vim の結果は開いていたファイルによらず、content と設定だけで決まる。
+// 設定が無効の本体の役は、設定ファイルの項目（#9 の後）を持つ本体を写したもので、今の本体は常に有効である。
 //
 // req: FR-34
 func TestWriteFinalNewline(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		initial  *string
-		content  string
-		wantFile string
-	}{
-		// FinalNewline が false のバッファへ、改行で終わる content を書く。
-		{"no eol, content with eol", ptr("old"), "a\nb\n", "a\nb\n"},
-		{"no eol, content without eol", ptr("old"), "a\nb", "a\nb"},
-		{"no eol, content of one newline", ptr("old"), "\n", "\n"},
-		// FinalNewline が true のバッファ。
-		{"eol, content with eol", ptr("old\n"), "a\nb\n", "a\nb\n"},
-		{"eol, content with two eols", ptr("old\n"), "a\n\n", "a\n\n"},
-		// 行の無いバッファ（無いファイル）は、編集で行ができると改行を補うので、true と同じに扱う。
-		{"new file, content with eol", nil, "a\nb\n", "a\nb\n"},
-		// 現状の結果。Vim なら、1 つ目は空のファイル、2 つ目は "\n" になる。
-		{"eol, empty content (differs from Vim)", ptr("x\n"), "", "\n"},
-		{"new file, content of one newline (differs from Vim)", nil, "\n", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "file.txt")
-			if tc.initial != nil {
-				if err := os.WriteFile(path, []byte(*tc.initial), 0o600); err != nil {
-					t.Fatal(err)
+	// vim は、content ごとの Vim の結果である（設定が有効、無効の順）。
+	vim := []struct{ content, fix, nofix string }{
+		{"", "", ""},
+		{"\n", "\n", "\n"},
+		{"a", "a\n", "a"},
+		{"a\n", "a\n", "a\n"},
+		{"a\n\n", "a\n\n", "a\n\n"},
+		{"\n\n", "\n\n", "\n\n"},
+	}
+	initials := []struct {
+		name string
+		data *string
+	}{{"eol", ptr("x\n")}, {"empty", ptr("")}, {"new", nil}, {"noeol", ptr("x")}}
+	for _, fix := range []bool{true, false} {
+		for _, in := range initials {
+			for _, v := range vim {
+				want := v.nofix
+				if fix {
+					want = v.fix
 				}
+				t.Run(fmt.Sprintf("fixeol=%v/%s/%q", fix, in.name, v.content), func(t *testing.T) {
+					path := filepath.Join(t.TempDir(), "file.txt")
+					if in.data != nil {
+						if err := os.WriteFile(path, []byte(*in.data), 0o600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					h := newHost(t, fakeSettings(), nil)
+					h.mu.Lock()
+					h.fixEOL = fix
+					h.mu.Unlock()
+					h.prompt(map[string]any{"op": "write", "path": path, "content": v.content})
+					out := h.waitOutput("[end_turn]")
+					if !strings.Contains(out, "write={}") {
+						t.Fatalf("output = %q, want write={}", out)
+					}
+					assertFile(t, path, want)
+				})
 			}
-			h := newHost(t, fakeSettings(), nil)
-			h.prompt(map[string]any{"op": "write", "path": path, "content": tc.content})
-			out := h.waitOutput("[end_turn]")
-			if !strings.Contains(out, "write={}") {
-				t.Fatalf("output = %q, want write={}", out)
-			}
-			assertFile(t, path, tc.wantFile)
-		})
+		}
 	}
 }
 
-// TestBufferText は、fs/write_text_file の content から作るバッファのテキストを、FinalNewline ごとに確かめる。
-// FinalNewline が true のバッファへ改行で終わらない content を書くと、本体が書き出すときに改行を足す（Vim の 'fixendofline'）。
-func TestBufferText(t *testing.T) {
+// TestFileState は、fs/write_text_file の content から作るバッファの状態を確かめる。
+func TestFileState(t *testing.T) {
 	for _, tc := range []struct {
-		content, cur string
-		finalNewline bool
-		want         string
+		content, text      string
+		noLines, endOfLine bool
 	}{
-		{"a\nb\n", "x", true, "a\nb"},
-		{"a\nb", "x", true, "a\nb"},
-		{"", "x", true, ""},
-		{"a\nb\n", "x", false, "a\nb\n"},
-		{"a\nb", "x", false, "a\nb"},
-		{"a\nb\n", "", false, "a\nb"},
-		{"a\nb\n", "", true, "a\nb"},
+		{"", "", true, true},
+		{"\n", "", false, true},
+		{"a", "a", false, false},
+		{"a\nb\n", "a\nb", false, true},
+		{"a\n\n", "a\n", false, true},
 	} {
-		if got := bufferText(tc.content, tc.cur, tc.finalNewline); got != tc.want {
-			t.Errorf("bufferText(%q, %q, %v) = %q, want %q", tc.content, tc.cur, tc.finalNewline, got, tc.want)
+		text, noLines, endOfLine := fileState(tc.content)
+		if text != tc.text || noLines != tc.noLines || endOfLine != tc.endOfLine {
+			t.Errorf("fileState(%q) = %q, %v, %v; want %q, %v, %v", tc.content, text, noLines, endOfLine, tc.text, tc.noLines, tc.endOfLine)
 		}
 	}
 }
