@@ -35,9 +35,8 @@ func parseEncoding(s string) encoding {
 
 // units は、文字 r を enc で数えたコード単位の数を返す。size は r の UTF-8 のバイト数である。
 // 不正な UTF-8 のバイトは、1 バイトを 1 文字として数え、U+FFFD として扱う。
-// ただし、本体は全文を JSON の文字列で送り、Go の encoding/json は不正なバイトを U+FFFD（UTF-8 で 3 バイト）に置き換えるので、
+// ただし、本体は不正な UTF-8 を含むバッファを拡張機能へ送らない（基本設計 4.1、5.3。ext.BufferOpenParams）ので、
 // ext/server の複製と、この拡張機能の写しには不正なバイトが現れない。
-// このため、不正な UTF-8 を含むバッファでは、複製の行のバイト数が本体と違い、位置がずれる（ext の契約の問題で、別に扱う）。
 func (enc encoding) units(r rune, size int) int {
 	switch enc {
 	case encUTF8:

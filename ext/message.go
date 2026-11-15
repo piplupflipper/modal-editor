@@ -113,6 +113,12 @@ type InitializeResult struct {
 // 再起動した拡張機能にも、開いているバッファの全文を送り直す（基本設計 5.2）。
 // buffer/resync を受け取ったときも、そのバッファについて送り直す。
 // 拡張機能は、既に持っているバッファについて受け取った場合、持っている内容を Text で置き換える。
+//
+// 本体は、不正な UTF-8 を含むバッファを拡張機能へ送らない（基本設計 4.1、5.3）。
+// JSON の文字列は不正なバイトを表せず、送ると本体と拡張機能で行頭からのバイト数がずれるためである。
+// そうしたバッファには buffer/open も buffer/change も届かず、送った後に不正なバイトが入ったら buffer/close が届く。
+// 不正なバイトが無くなったら、新しい全文の buffer/open が届く。
+// このため Text と、buffer/change の Edit の Text は、常に正しい UTF-8 である。
 type BufferOpenParams struct {
 	Buffer BufferID `json:"buffer"`
 	// Path は、バッファに対応するファイルの絶対パスである。ファイルに対応しないバッファでは空。
@@ -163,6 +169,9 @@ type BufferChangeParams struct {
 }
 
 // BufferCloseParams は、buffer/close の params である。
+// 本体は、バッファを閉じたときのほか、送ったバッファに不正な UTF-8 が入ったとき（[BufferOpenParams]）にも送る。
+// 拡張機能が editor/open で不正な UTF-8 を含むバッファを開いた場合は、その拡張機能へ応答より先に送る。
+// このため、拡張機能は持っていないバッファの buffer/close を受け取ることがあり、そのときは何もしなくてよい。
 type BufferCloseParams struct {
 	Buffer BufferID `json:"buffer"`
 }
@@ -274,6 +283,11 @@ type CommandExecuteParams struct {
 	// 後から buffer/edit で届けた編集は、再生の次の操作でバージョン番号が進んだ後に届いて破棄されるためである。
 	// 再生の結果を変えない表示（popup/show、output/append、message/show）は、true でも後から届けてよい。
 	Sync bool `json:"sync,omitempty"`
+	// Withheld は、本体が Buffer を不正な UTF-8 のために拡張機能へ送っていない（[BufferOpenParams]）ことを表す。
+	// 拡張機能は Buffer の複製を持っていないが、バッファを使わないコマンド（デバッグの再開など）は実行できる。
+	// バッファを使うコマンドは、OK を false で返す。本体は、送っていないために使えないことを利用者へ知らせる。
+	// ext/server は、true のとき、ハンドラーへ複製の代わりに nil を渡す。
+	Withheld bool `json:"withheld,omitempty"`
 }
 
 // CommandExecuteResult は、command/execute の result である。

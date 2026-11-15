@@ -107,6 +107,7 @@ func (r *EditorStateRequest) Reply(result ext.EditorStateResult) error {
 // イベントループは、まだ開いていないファイルなら開いて [Host.OpenBuffer] を呼んでから Reply する。
 // OpenBuffer の buffer/open と応答は同じ接続で送るので、拡張機能には buffer/open が応答より先に届く。
 // 拡張機能の側は、応答を受け取った後に ext/server の WaitBuffer で複製を待つ。
+// 開いたバッファが拡張機能へ送っていないもの（不正な UTF-8 を含むもの）なら、Reply は応答より先に buffer/close を送り、待ちを誤りで終わらせる。
 type EditorOpenRequest struct {
 	Extension string
 	Params    ext.EditorOpenParams

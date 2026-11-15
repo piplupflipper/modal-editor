@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -42,6 +43,28 @@ type document struct {
 	lines []string
 	// finalNewline は、書き出したときに最後の行の後に改行が付くかどうかである。
 	finalNewline bool
+	// invalid は、lines のうち不正な UTF-8 を含む行の数である。
+	// 0 より大きい間は、拡張機能へバッファを送らない（withheld）。
+	invalid int
+}
+
+// withheld は、写しが不正な UTF-8 を含み、拡張機能へ送らないバッファかどうかを返す（基本設計 4.1、5.3）。
+//
+// JSON の文字列は不正なバイトを表せず、encoding/json は U+FFFD（3 バイト）に置き換えて送るので、
+// 送ると本体と拡張機能の複製で行頭からのバイト数がずれる。
+// 送らなければ、拡張機能はそのバッファの複製を持たないので、位置が食い違うことは無い。
+func (d *document) withheld() bool { return d.invalid > 0 }
+
+// countInvalid は、lines のうち不正な UTF-8 を含む行の数を返す。
+// "\n" は多バイト文字の一部にならないので、テキスト全体が正しい UTF-8 であることと、各行が正しいことは同じである。
+func countInvalid(lines []string) int {
+	n := 0
+	for _, l := range lines {
+		if !utf8.ValidString(l) {
+			n++
+		}
+	}
+	return n
 }
 
 func (d *document) openParams() ext.BufferOpenParams {
@@ -56,9 +79,23 @@ func (d *document) openParams() ext.BufferOpenParams {
 	}
 }
 
+// Withheld は、開いているバッファ id が不正な UTF-8 を含み、拡張機能へ送っていないかどうかを返す（基本設計 4.1、5.3）。
+// 開いていないバッファなら false を返す。
+//
+// イベントループは、送っていないバッファについて、拡張機能の表示のデータ（色、診断、印）を消して受け取らず、
+// motion/resolve などの問い合わせを送らずに失敗させ、command/execute には params の Withheld を立てて送る。
+func (h *Host) Withheld(id ext.BufferID) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	d, ok := h.docs[id]
+	return ok && d.withheld()
+}
+
 // OpenBuffer は、バッファを開いたことを知らせる。
 // 稼働中の拡張機能へ buffer/open で全文を送り、ファイルの種類の契機が成り立つ未起動の拡張機能を起動する（FR-14）。
 // 起動中の拡張機能には、稼働中になった時点で全文を送る。
+// 全文が不正な UTF-8 を含むなら、buffer/open を送らない（[document.withheld]。基本設計 4.1、5.3）。
+// 起動の契機は、送るかどうかに依らず同じに扱う。
 // 同じ ID のバッファが既に開いていれば、何もせずに [ErrBufferState] を包んだ誤りを返す。
 //
 // req: FR-14, FR-16
@@ -80,8 +117,11 @@ func (h *Host) OpenBuffer(s BufferSnapshot) error {
 
 		finalNewline: !s.NoFinalNewline,
 	}
+	d.invalid = countInvalid(d.lines)
 	h.docs[s.ID] = d
-	h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	if !d.withheld() {
+		h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	}
 	h.activateLocked(ext.ActivationFileType, s.FileType)
 	return nil
 }
@@ -93,6 +133,13 @@ func (h *Host) OpenBuffer(s BufferSnapshot) error {
 // c.Before が Host の知っているバージョン番号と一致しないか、c.Edits を写しに適用できなければ、
 // 何も送らずに [ErrBufferState] を包んだ誤りを返す。
 // c.Before と c.After が等しい（何も変わらなかった）なら何もしない。
+//
+// 不正な UTF-8 を含むバッファは拡張機能へ送らない（[document.withheld]。基本設計 4.1、5.3）ので、送るものは変更の前後で次のように変わる。
+//
+//   - 前後とも正しい UTF-8: buffer/change で差分を送る。ただし途中の編集の Text が不正なバイトを含むなら、buffer/open で全文を送る
+//   - 変更で不正なバイトが入った: buffer/close を送り、拡張機能に複製を捨てさせる
+//   - 変更で不正なバイトが無くなった: buffer/open で全文を送る
+//   - 前後とも不正なバイトを含む: 何も送らない
 //
 // req: FR-16
 func (h *Host) ChangeBuffer(id ext.BufferID, c buffer.Change) error {
@@ -118,34 +165,66 @@ func (h *Host) ChangeBuffer(id ext.BufferID, c buffer.Change) error {
 	if c.After < c.Before {
 		return fmt.Errorf("%w: buffer %d: version goes back from %d to %d", ErrBufferState, id, c.Before, c.After)
 	}
-	// 失敗しても applyEdits は内容を戻すが、配列を取り替えていることがあるので、戻り値を常に写しにする。
-	lines, err := applyEdits(d.lines, edits)
+	// 失敗しても applyEditsCounting は内容を戻すが、配列を取り替えていることがあるので、戻り値を常に写しにする。
+	wasWithheld := d.withheld()
+	lines, delta, err := applyEditsCounting(d.lines, edits)
 	d.lines = lines
 	if err != nil {
 		return fmt.Errorf("%w: buffer %d: %w", ErrBufferState, id, err)
 	}
+	d.invalid += delta
 	d.version = ext.Version(c.After)
-	h.broadcastLocked(ext.MethodBufferChange, ext.BufferChangeParams{
-		Buffer:      id,
-		FromVersion: ext.Version(c.Before),
-		ToVersion:   ext.Version(c.After),
-		Edits:       edits,
-	})
+	switch {
+	case wasWithheld && d.withheld():
+		// 送っていないバッファのまま。何も送らない。
+	case wasWithheld:
+		// 不正なバイトが無くなった。拡張機能は複製を持っていないので、全文を送る。
+		h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	case d.withheld():
+		// 不正なバイトが入った。拡張機能に複製を捨てさせる。
+		h.broadcastLocked(ext.MethodBufferClose, ext.BufferCloseParams{Buffer: id})
+	case !validEditTexts(edits):
+		// 前後とも正しいが、途中の編集が不正なバイトを挿入して後の編集で消している。
+		// その編集の Text は JSON で置き換わるので、差分ではなく全文を送る。
+		h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	default:
+		h.broadcastLocked(ext.MethodBufferChange, ext.BufferChangeParams{
+			Buffer:      id,
+			FromVersion: ext.Version(c.Before),
+			ToVersion:   ext.Version(c.After),
+			Edits:       edits,
+		})
+	}
 	return nil
+}
+
+// validEditTexts は、編集の列のすべての Text が正しい UTF-8 かどうかを返す。
+func validEditTexts(edits []ext.Edit) bool {
+	for _, e := range edits {
+		if !utf8.ValidString(e.Text) {
+			return false
+		}
+	}
+	return true
 }
 
 // CloseBuffer は、バッファを閉じたことを知らせ、稼働中の拡張機能へ buffer/close を送る。
 // 開いていないバッファなら [ErrBufferState] を包んだ誤りを返す。
+// 拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの）なら、buffer/close も送らない。
 func (h *Host) CloseBuffer(id ext.BufferID) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closing {
 		return ErrClosed
 	}
-	if _, ok := h.docs[id]; !ok {
+	d, ok := h.docs[id]
+	if !ok {
 		return fmt.Errorf("%w: buffer %d is not open", ErrBufferState, id)
 	}
 	delete(h.docs, id)
+	if d.withheld() {
+		return nil
+	}
 	h.broadcastLocked(ext.MethodBufferClose, ext.BufferCloseParams{Buffer: id})
 	return nil
 }
@@ -153,6 +232,7 @@ func (h *Host) CloseBuffer(id ext.BufferID) error {
 // UpdateBuffer は、開いているバッファのパスとファイルの種類が変わったことを知らせる（別名での保存、:set filetype= など）。
 // 稼働中の拡張機能へ、新しいパスとファイルの種類で buffer/open を送り直す（拡張機能は持っている内容を置き換える。[ext.BufferOpenParams]）。
 // 新しいファイルの種類の契機が成り立つ未起動の拡張機能を起動する（FR-14）。
+// 拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの）なら、記録だけ変えて buffer/open は送らない。
 // 開いていないバッファなら [ErrBufferState] を包んだ誤りを返す。
 //
 // req: FR-14
@@ -170,7 +250,9 @@ func (h *Host) UpdateBuffer(id ext.BufferID, path, fileType string) error {
 		return nil
 	}
 	d.path, d.fileType = path, fileType
-	h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	if !d.withheld() {
+		h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	}
 	h.activateLocked(ext.ActivationFileType, fileType)
 	return nil
 }
@@ -179,7 +261,8 @@ func (h *Host) UpdateBuffer(id ext.BufferID, path, fileType string) error {
 // （末尾の改行を補う設定を利用者が切り替えた場合など）。
 // finalNewline は、BufferSnapshot の NoFinalNewline の逆で、行の無いバッファになったとき、そうでなくなったときにも変わる。
 // 値が変わったなら、稼働中の拡張機能へ buffer/open を送り直す（拡張機能は持っている内容を置き換える。[ext.BufferOpenParams]）。
-// 変わらなければ何もしない。開いていないバッファなら [ErrBufferState] を包んだ誤りを返す。
+// 変わらなければ何もしない。拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの）なら、記録だけ変えて送らない。
+// 開いていないバッファなら [ErrBufferState] を包んだ誤りを返す。
 func (h *Host) SetFinalNewline(id ext.BufferID, finalNewline bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -194,12 +277,15 @@ func (h *Host) SetFinalNewline(id ext.BufferID, finalNewline bool) error {
 		return nil
 	}
 	d.finalNewline = finalNewline
-	h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	if !d.withheld() {
+		h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	}
 	return nil
 }
 
 // resync は、拡張機能からの buffer/resync に応じ、そのバッファの全文を buffer/open で送り直す。
-// 閉じたバッファか、既に終わらせたプロセスからの要求なら何もしない。
+// 閉じたバッファか、拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの）か、既に終わらせたプロセスからの要求なら何もしない。
+// 送っていないバッファへの要求は、不正なバイトが入る前の差分の欠けで、buffer/close と行き違ったものである。
 //
 // req: FR-16
 func (h *Host) resync(e *extension, r *run, p ext.BufferResyncParams) {
@@ -209,7 +295,7 @@ func (h *Host) resync(e *extension, r *run, p ext.BufferResyncParams) {
 		return
 	}
 	d, ok := h.docs[p.Buffer]
-	if !ok {
+	if !ok || d.withheld() {
 		return
 	}
 	id := e.spec.Manifest.ID
@@ -272,18 +358,28 @@ func toExtEdit(e buffer.Edit) ext.Edit {
 }
 
 // applyEdits は、行の配列 lines に、逐次の数え方の編集の列を先頭から順に適用した結果を返す。
+// 誤りの扱いと lines の配列の扱いは [applyEditsCounting] と同じである。
+func applyEdits(lines []string, edits []ext.Edit) ([]string, error) {
+	lines, _, err := applyEditsCounting(lines, edits)
+	return lines, err
+}
+
+// applyEditsCounting は、行の配列 lines に、逐次の数え方の編集の列を先頭から順に適用した結果と、
+// 不正な UTF-8 を含む行の数の増減を返す。
 // lines の配列をその場で書き換える（返す値は lines と同じ配列を指すことがある）。
 // 編集ごとに、触る行だけを置き換えるので、手間は触る行の数と、行の数が変わるときの後ろの行の移動に比例する。
+// 増減も、置き換えた行と置き換える前の行だけを調べて数える。
 //
 // 位置が行の外を指すか、終わりが始まりより前にあれば、それまでの編集を戻して誤りを返す。
-// このとき lines の内容は呼んだ前と同じである。
+// このとき lines の内容は呼んだ前と同じで、増減は 0 である。
 // UTF-8 の文字の途中かどうかは検査しない（写しに送る変更は、本体のバッファが検査済みである）。
-func applyEdits(lines []string, edits []ext.Edit) ([]string, error) {
+func applyEditsCounting(lines []string, edits []ext.Edit) ([]string, int, error) {
 	type undo struct {
 		at, n int
 		old   []string
 	}
 	var undos []undo
+	delta := 0
 	for i, e := range edits {
 		s, end := e.Range.Start, e.Range.End
 		var err error
@@ -298,14 +394,16 @@ func applyEdits(lines []string, edits []ext.Edit) ([]string, error) {
 				u := undos[k]
 				lines = slices.Replace(lines, u.at, u.at+u.n, u.old...)
 			}
-			return lines, err
+			return lines, 0, err
 		}
 		joined := lines[s.Line][:s.Byte] + e.Text + lines[end.Line][end.Byte:]
 		repl := strings.Split(joined, "\n")
-		undos = append(undos, undo{at: s.Line, n: len(repl), old: slices.Clone(lines[s.Line : end.Line+1])})
+		old := slices.Clone(lines[s.Line : end.Line+1])
+		delta += countInvalid(repl) - countInvalid(old)
+		undos = append(undos, undo{at: s.Line, n: len(repl), old: old})
 		lines = slices.Replace(lines, s.Line, end.Line+1, repl...)
 	}
-	return lines, nil
+	return lines, delta, nil
 }
 
 func validPos(lines []string, p ext.Position) bool {

@@ -20,7 +20,8 @@ import (
 // 1 から 3 の間は、すべての拡張機能から届いたリクエストを処理せずに取っておく（[Event] の doc）。
 
 // SaveHookExtensions は、宣言ファイルの saveHook が true で、稼働中の拡張機能の ID を、[New] に渡した順に返す。
-// 稼働中のすべての拡張機能はすべての開いているバッファの複製を持つので、バッファを問わない。
+// 稼働中のすべての拡張機能は、拡張機能へ送っていないもの（不正な UTF-8 を含むもの）を除く開いているバッファの複製を持つので、バッファを問わない。
+// 送っていないバッファには、[Host.SendWillSave] が送らずに誤りを返す。
 func (h *Host) SaveHookExtensions() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -40,6 +41,7 @@ func (h *Host) SaveHookExtensions() []string {
 //
 // Send と違い、稼働中でない拡張機能は起動せず、何も送らずに [ErrUnavailable] を包んだ誤りを返す。
 // 宣言ファイルの saveHook が false の拡張機能と、開いていないバッファ（[ErrBufferState]）にも送らない。
+// 拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの。基本設計 4.1、5.3）にも送らず、[ErrUnavailable] を包んだ誤りを返す。
 func (h *Host) SendWillSave(id string, p ext.BufferWillSaveParams, opts SendOptions) (*Query, error) {
 	return h.send(id, ext.MethodBufferWillSave, p, opts, h.cfg.WillSaveTimeout, h.willSaveCheck(p.Buffer))
 }
@@ -74,8 +76,13 @@ func (h *Host) willSaveCheck(buf ext.BufferID) func(*extension) error {
 		case e.state != StateRunning:
 			return fmt.Errorf("%w: state %s", ErrUnavailable, e.state)
 		}
-		if _, ok := h.docs[buf]; !ok {
+		d, ok := h.docs[buf]
+		if !ok {
 			return fmt.Errorf("%w: buffer %d is not open", ErrBufferState, buf)
+		}
+		if d.withheld() {
+			// 拡張機能は複製を持っていないので、保存の前の編集を計算できない（基本設計 4.1、5.3）。
+			return fmt.Errorf("%w: buffer %d contains invalid UTF-8 and is not sent to extensions", ErrUnavailable, buf)
 		}
 		return nil
 	}
@@ -85,6 +92,7 @@ func (h *Host) willSaveCheck(buf ext.BufferID) func(*extension) error {
 // p.Version は、Host の知っている現在のバージョン番号と一致しなければならない（書き出す前の編集は [Host.ChangeBuffer] で知らせておく）。
 // 別名で保存した場合は、先に [Host.UpdateBuffer] でパスを知らせる。
 // 開いていないバッファか、バージョン番号が食い違うなら、何も送らずに [ErrBufferState] を包んだ誤りを返す。
+// 拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの）なら、何も送らずに nil を返す。
 func (h *Host) DidSave(p ext.BufferDidSaveParams) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -97,6 +105,10 @@ func (h *Host) DidSave(p ext.BufferDidSaveParams) error {
 	}
 	if d.version != p.Version {
 		return fmt.Errorf("%w: buffer %d: saved version %d, host has %d", ErrBufferState, p.Buffer, p.Version, d.version)
+	}
+	if d.withheld() {
+		// 拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの）は、拡張機能が扱わないので知らせない。
+		return nil
 	}
 	h.broadcastLocked(ext.MethodBufferDidSave, p)
 	return nil

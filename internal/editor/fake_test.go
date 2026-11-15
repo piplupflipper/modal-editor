@@ -98,6 +98,10 @@ func runFakeExt(mode string) int {
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
 		s.Command("fake.dump", func(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			if b == nil {
+				// 本体がバッファを送っていない（p.Withheld。基本設計 5.3）。
+				return ext.CommandExecuteResult{OK: false}, nil
+			}
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("v%d:%q", b.Version(), b.Text()))
 			return ext.CommandExecuteResult{OK: true}, nil
 		})

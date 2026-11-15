@@ -318,6 +318,42 @@ func TestStdExtRequestsRoundTrip(t *testing.T) {
 		}
 	})
 
+	// 不正な UTF-8 を含むバッファは拡張機能へ送らない。editor/open で開いたら、応答より先に buffer/close を送り、
+	// 拡張機能の WaitBuffer は複製を待ち続けずに ErrBufferClosed で終わる（基本設計 5.3、6.7）。
+	t.Run("editor/open invalid UTF-8", func(t *testing.T) {
+		for _, tt := range []struct {
+			name string
+			open bool // true なら応答の前に開く（まだ開いていないファイル）。false なら開いてある
+			id   ext.BufferID
+		}{
+			{"new file", true, 3},
+			{"already open", false, 4},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				path := fmt.Sprintf("/w/bad%d.txt", tt.id)
+				snap := BufferSnapshot{ID: tt.id, Path: path, Version: 1, Text: "a\xffb"}
+				if !tt.open {
+					if err := hs.h.OpenBuffer(snap); err != nil {
+						t.Fatal(err)
+					}
+				}
+				hs.execute(cmdOpen, ext.EditorOpenParams{Path: path}, false)
+				req := hs.waitEvent("editor/open", func(ev Event) bool { _, ok := ev.(*EditorOpenRequest); return ok }).(*EditorOpenRequest)
+				if tt.open {
+					if err := hs.h.OpenBuffer(snap); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := req.Reply(ext.EditorOpenResult{Buffer: tt.id, Version: 1}); err != nil {
+					t.Fatal(err)
+				}
+				if got := hs.waitOutput(cmdOpen); !strings.Contains(got, server.ErrBufferClosed.Error()) {
+					t.Errorf("extension output %q, want ErrBufferClosed", got)
+				}
+			})
+		}
+	})
+
 	t.Run("buffer/save", func(t *testing.T) {
 		v := ext.Version(1)
 		hs.execute(cmdSave, ext.BufferSaveParams{Buffer: 1, Version: &v, SkipHooks: true}, false)

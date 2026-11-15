@@ -342,6 +342,10 @@ func (d *debugger) sendBreakpoints(s *session, path string) {
 //
 // req: FR-31
 func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+	if b == nil {
+		// 本体が不正な UTF-8 のためにバッファを送っていない（p.Withheld）。本体が理由を利用者へ知らせる。
+		return ext.CommandExecuteResult{OK: false}, nil
+	}
 	path := b.Path()
 	if path == "" {
 		return d.fail("ファイルに対応しないバッファにはブレークポイントを置けない")
@@ -382,11 +386,16 @@ func (d *debugger) start(_ context.Context, b *server.Buffer, _ *ext.CommandExec
 	if launch == nil {
 		launch = map[string]any{}
 	}
+	// 本体が不正な UTF-8 のためにバッファを送っていない（p.Withheld）なら b は nil で、ファイルに対応しないバッファと同じに扱う。
+	path := ""
+	if b != nil {
+		path = b.Path()
+	}
 	if _, ok := launch["program"]; !ok {
-		if b.Path() == "" {
-			return d.fail("デバッグする対象が決まらない（ファイルに対応しないバッファで、設定の launch に program も無い）")
+		if path == "" {
+			return d.fail("デバッグする対象が決まらない（ファイルに対応しないか、拡張機能へ送っていないバッファで、設定の launch に program も無い）")
 		}
-		launch["program"] = filepath.Dir(b.Path())
+		launch["program"] = filepath.Dir(path)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -394,9 +403,9 @@ func (d *debugger) start(_ context.Context, b *server.Buffer, _ *ext.CommandExec
 		return d.fail("デバッグは既に始まっている")
 	}
 	cfg := d.settings.Adapter
-	if cfg.Cwd == "" && b.Path() != "" {
-		if fi, err := os.Stat(filepath.Dir(b.Path())); err == nil && fi.IsDir() {
-			cfg.Cwd = filepath.Dir(b.Path())
+	if cfg.Cwd == "" && path != "" {
+		if fi, err := os.Stat(filepath.Dir(path)); err == nil && fi.IsDir() {
+			cfg.Cwd = filepath.Dir(path)
 		}
 	}
 	s, err := spawn(d, cfg)

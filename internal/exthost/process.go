@@ -293,7 +293,9 @@ func (h *Host) initialize(e *extension, r *run, p *process, stop <-chan struct{}
 	r.runningSince = time.Now()
 	h.setStateLocked(e, StateRunning, nil)
 	for _, d := range h.sortedDocsLocked() {
-		h.notifyLocked(id, r, ext.MethodBufferOpen, d.openParams())
+		if !d.withheld() {
+			h.notifyLocked(id, r, ext.MethodBufferOpen, d.openParams())
+		}
 	}
 	return nil
 }
@@ -359,6 +361,9 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 	id := e.spec.Manifest.ID
 	return rpc.HandlerFuncs{
 		Request: func(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
+			if req.Method == ext.MethodEditorOpen {
+				reply = h.closeWithheldBeforeReply(e, r, reply)
+			}
 			ev, rerr := requestEvent(ctx, id, req, reply)
 			if rerr != nil {
 				_ = reply(nil, rerr)
@@ -434,6 +439,25 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 				r.fail(err)
 			}
 		},
+	}
+}
+
+// closeWithheldBeforeReply は、editor/open の応答の関数 reply を包み、
+// 開いたバッファが拡張機能へ送っていないもの（不正な UTF-8 を含むもの）なら、応答より先に要求した拡張機能へ buffer/close を送る。
+//
+// 拡張機能は、editor/open の応答を受け取った後に複製を待つ（ext/server の WaitBuffer）。
+// 送っていないバッファの buffer/open は届かないので、代わりに buffer/close を同じ接続で先に送り、待ちを誤りで終わらせる（基本設計 5.3、6.7）。
+// 拡張機能はそのバッファの複製を持っていないので、buffer/close で捨てるものは無い。
+func (h *Host) closeWithheldBeforeReply(e *extension, r *run, reply rpc.Replier) rpc.Replier {
+	return func(result any, err error) error {
+		if res, ok := result.(ext.EditorOpenResult); ok && err == nil {
+			h.mu.Lock()
+			if d, open := h.docs[res.Buffer]; open && d.withheld() && e.run == r && e.state == StateRunning {
+				h.notifyLocked(e.spec.Manifest.ID, r, ext.MethodBufferClose, ext.BufferCloseParams{Buffer: res.Buffer})
+			}
+			h.mu.Unlock()
+		}
+		return reply(result, err)
 	}
 }
 
