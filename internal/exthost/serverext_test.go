@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -38,11 +40,15 @@ const (
 	cmdArgs   = "srv.args"   // 起動したときの引数を書き出す
 	// cmdChoiceCancel は、choice/ask を送り、100 ms で取り消す。
 	cmdChoiceCancel = "srv.choiceCancel"
+	// cmdSpawn は、別のプロセスグループで子プロセス（sleep）を起動し、その pid と拡張機能の pid を書き出す。
+	// DAP のデバッグ対象のように、本体がプロセスグループへ送るシグナルの届かない子プロセスを演じる。
+	// 拡張機能は shutdown を受け取ると、OnShutdown でこれを終わらせてから終わる。
+	cmdSpawn = "srv.spawn"
 	// argSlow を引数に渡すと、buffer/willSave に応答せず、取り消されたら記録してから遅れて応答する。
 	argSlow = "slow"
 )
 
-var serverCommands = []string{cmdState, cmdOpen, cmdSave, cmdDiag, cmdChoice, cmdNotify, cmdSync, cmdArgs, cmdChoiceCancel}
+var serverCommands = []string{cmdState, cmdOpen, cmdSave, cmdDiag, cmdChoice, cmdNotify, cmdSync, cmdArgs, cmdChoiceCancel, cmdSpawn}
 
 func runServerExt() int {
 	s := server.New()
@@ -143,6 +149,23 @@ func runServerExt() int {
 	} else {
 		registerFormatter(s)
 	}
+	var children []*exec.Cmd
+	s.Command(cmdSpawn, func(context.Context, *server.Buffer, *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+		cmd := exec.Command("sleep", "1000")
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := cmd.Start(); err != nil {
+			return ext.CommandExecuteResult{}, err
+		}
+		children = append(children, cmd)
+		out("%s %d %d", cmdSpawn, cmd.Process.Pid, os.Getpid())
+		return ext.CommandExecuteResult{OK: true}, nil
+	})
+	s.OnShutdown(func(context.Context, *server.ShutdownEvent) {
+		for _, c := range children {
+			_ = c.Process.Signal(syscall.SIGTERM)
+			_ = c.Wait()
+		}
+	})
 	s.OnBufferDidSave(func(_ context.Context, e *server.BufferDidSaveEvent) {
 		out("didSave %d %d %s %q", e.Params.Buffer, e.Params.Version, e.Params.Path, e.Buffer.Text())
 	})
