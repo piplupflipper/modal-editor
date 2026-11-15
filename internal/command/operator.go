@@ -143,7 +143,7 @@ func (s *State) extOperator(cmd editcmd.Command, sp target.Span) error {
 	}
 	tx, err := s.Extensions.Operator(cmd.Operator, s.buf, OperatorQuery{
 		Span: sp, Cursor: s.cursor, Count: cmd.Count, Char: cmd.Char, Register: cmd.Register,
-	})
+	}, s.queryInfo())
 	if err != nil {
 		return err
 	}

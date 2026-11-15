@@ -83,6 +83,9 @@ type Result struct {
 	Changes []buffer.Change
 	// Actions は、Ex コマンドが求めるエディタの動作（保存、終了、ファイルを開く）である。呼び出し側が先頭から順に行う。
 	Actions []ex.Action
+	// Deferred は、拡張機能が結果を保留した（ErrDeferred）操作である。無ければ nil。
+	// 呼び出し側は、結果が届いた時点で State.ApplyDeferred に渡す（FR-18）。
+	Deferred *Deferred
 	// Err は、操作の失敗である。マクロの再生は、失敗した時点で止める。
 	// 失敗までに適用した変更は Changes に残る。
 	Err error
@@ -238,9 +241,7 @@ func (s *State) runResults(rs []editcmd.Result) {
 	for _, r := range rs {
 		switch r.Status {
 		case editcmd.StatusDone:
-			if err := s.execute(r.Command); err != nil {
-				s.fail(err)
-			}
+			s.run(r.Command)
 		case editcmd.StatusInvalid:
 			s.fail(failf("invalid key sequence"))
 		case editcmd.StatusCanceled:
@@ -259,10 +260,26 @@ func (s *State) fail(err error) {
 // キーを通さずに値を実行したいとき（拡張機能の操作をコマンドから呼ぶなど）に使う。Feed も内部でこれと同じ処理を通る。
 func (s *State) Execute(cmd editcmd.Command) Result {
 	s.res = Result{}
-	if err := s.execute(cmd); err != nil {
+	s.run(cmd)
+	return s.take()
+}
+
+// run は、値を実行し、失敗を結果に記録する。
+// 拡張機能が結果を保留した（ErrDeferred）場合は、再生中でなければ失敗にせず、Result.Deferred に記録する。
+// ドットリピートとマクロの再生の中で保留が返った場合は、失敗として扱う（FR-19）。
+func (s *State) run(cmd editcmd.Command) {
+	d := Deferred{Command: cmd, Version: s.buf.Version(), Cursor: s.cursor, mode: s.mode, anchor: s.visual.anchor, want: s.want}
+	err := s.execute(cmd)
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrDeferred) && !s.Replaying() && s.res.Deferred == nil &&
+		cmd.Kind != editcmd.KindRepeat && cmd.Kind != editcmd.KindPlay:
+		// 保留した操作は、まだ行っていないものとして扱う。ビジュアルモードのオペレーターが動かしたカーソルを戻す。
+		s.cursor, s.want = d.Cursor, d.want
+		s.res.Deferred = &d
+	default:
 		s.fail(err)
 	}
-	return s.take()
 }
 
 // execute は、編集コマンドの値を 1 つ実行する。

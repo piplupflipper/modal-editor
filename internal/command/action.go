@@ -72,7 +72,7 @@ func (s *State) extAction(cmd editcmd.Command) error {
 	}
 	tx, err := s.Extensions.Action(cmd.Action, s.buf, ActionQuery{
 		Cursor: s.cursor, Count: cmd.Count, CountGiven: cmd.CountGiven, Char: cmd.Char, Register: cmd.Register,
-	})
+	}, s.queryInfo())
 	if err != nil {
 		return err
 	}
