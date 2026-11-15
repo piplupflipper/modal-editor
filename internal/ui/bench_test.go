@@ -69,3 +69,42 @@ func BenchmarkRenderDenseDecorationsScrolled(b *testing.B) {
 		r.Render(&f)
 	}
 }
+
+// spanning は、perLine(lines, 8, 4) の一覧に、ranges 個の行をまたぐ範囲を足した一覧である。
+// i 個目の範囲は、i 行目の途中から、末尾から i 行目の途中までにまたがる（ほぼ全体）。
+func spanning(lines, ranges int) []Highlight {
+	styles := []string{StyleKeyword, StyleString, StyleComment, StyleType}
+	var hs []Highlight
+	for n := range lines {
+		for i := range 8 {
+			hs = append(hs, Highlight{Range: buffer.Range{Start: pos(n, i*4), End: pos(n, i*4+2)}, Style: styles[i%len(styles)]})
+		}
+	}
+	for i := range ranges {
+		hs = append(hs, Highlight{Range: buffer.Range{Start: pos(i, 3), End: pos(lines-1-i, 5)}, Style: styles[i%len(styles)]})
+	}
+	return hs
+}
+
+// 1 行の中の範囲だけの一覧（行をまたぐ範囲が無い、ふつうの場合）。
+func BenchmarkNewDecorationsSingleLine100k(b *testing.B) {
+	hs := spanning(100_000, 0)
+	b.ReportAllocs()
+	for b.Loop() {
+		NewDecorations(hs, 100_000)
+	}
+}
+
+// ほぼ全体にまたがる範囲が 100 個ある一覧。前は行ごとに展開したので、表が 100 × 10 万要素になった（#80）。
+func BenchmarkNewDecorationsMultiline100k(b *testing.B) {
+	hs := spanning(100_000, 100)
+	b.ReportAllocs()
+	for b.Loop() {
+		NewDecorations(hs, 100_000)
+	}
+}
+
+func BenchmarkRenderMultilineDecorations(b *testing.B) {
+	line := strings.Repeat("abcd ", 40)
+	benchRender(b, Frame{Text: sameLines{line, 10000}, Decorations: NewDecorations(spanning(10000, 100), 10000)})
+}

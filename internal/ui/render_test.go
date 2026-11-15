@@ -456,3 +456,46 @@ func TestDefaultTheme(t *testing.T) {
 		t.Errorf("選択は反転で表示する: %+v", th[StyleVisual])
 	}
 }
+
+// 行をまたぐ範囲が重なり合っても、行をまたがない範囲と同じ順に重ねる。
+// 表示の上の端より前の行から始まる範囲、下の端より後の行で終わる範囲、行の途中で終わる範囲を含む。
+// 飾りだけの名前（下線）と色だけの名前を重ね、下の範囲の飾りが上の範囲の色の下に残ることも見る。
+//
+// req: FR-35
+func TestGoldenMultilineDecorations(t *testing.T) {
+	var text strings.Builder
+	for n := range 16 {
+		fmt.Fprintf(&text, "line %02d abcdefgh\n", n)
+	}
+	b := buffer.New(text.String())
+	theme := testTheme()
+	theme[StyleType] = Attr{Underline: true}
+	theme[StyleNumber] = Attr{Fg: Indexed(7)}
+	r := &Renderer{Width: 20, Height: 8, Theme: theme}
+	hs := []Highlight{
+		{Range: buffer.Range{Start: pos(0, 3), End: pos(15, 4)}, Style: StyleType},    // ほぼ全体に下線
+		{Range: buffer.Range{Start: pos(1, 5), End: pos(9, 2)}, Style: StyleComment},  // 長い範囲
+		{Range: buffer.Range{Start: pos(3, 0), End: pos(4, 0)}, Style: StyleKeyword},  // 次の行の先頭で終わる
+		{Range: buffer.Range{Start: pos(4, 9), End: pos(4, 11)}, Style: StyleString},  // 1 行の中
+		{Range: buffer.Range{Start: pos(6, 12), End: pos(2, 6)}, Style: StyleString},  // 終わりが開始より前
+		{Range: buffer.Range{Start: pos(5, 2), End: pos(5, 6)}, Style: StyleKeyword},  // 長い範囲の下に隠れる
+		{Range: buffer.Range{Start: pos(7, 0), End: pos(30, 0)}, Style: StyleNumber},  // 最終行より後で終わる
+		{Range: buffer.Range{Start: pos(8, 1), End: pos(11, 3)}, Style: StyleComment}, // 後の要素を上に重ねる
+		{Range: buffer.Range{Start: pos(10, 0), End: pos(12, 0)}, Style: "unknown"},   // テーマに無い名前
+		{Range: buffer.Range{Start: pos(-5, 0), End: pos(1, 2)}, Style: StyleKeyword}, // 0 行目より前から
+		{Range: buffer.Range{Start: pos(13, 4), End: pos(13, 8)}, Style: StyleString},
+	}
+	decos := NewDecorations(hs, b.LineCount())
+	diags := []Diagnostic{
+		{Range: buffer.Range{Start: pos(2, 2), End: pos(8, 3)}, Severity: SeverityError},
+	}
+	golden(t, "multiline", renderSteps(r, []step{
+		{"先頭", Frame{Text: b, Cursor: pos(0, 0), Decorations: decos, Diagnostics: diags}},
+		{"中ほど", Frame{Text: b, Cursor: pos(10, 0), Decorations: decos, Diagnostics: diags}},
+		{"末尾", Frame{Text: b, Cursor: pos(15, 0), Decorations: decos}},
+		{"選択を重ねる", Frame{
+			Text: b, Mode: ModeVisual, Cursor: pos(12, 3), Decorations: decos,
+			Selection: Selection{Active: true, Start: pos(11, 2), End: pos(12, 3)},
+		}},
+	}))
+}

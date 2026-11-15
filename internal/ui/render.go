@@ -297,10 +297,11 @@ func (d *drawer) collectSpans(rows int) {
 // sweep は、1 行の範囲を左から順に重ねるための作業の領域である。
 // 文字を左から順に渡すと、その文字に掛かる範囲だけを active に持つので、文字ごとに行の範囲の全部をなめずに済む。
 type sweep struct {
-	spans  []span // 開始の順に並べた、その行の範囲
-	next   int    // まだ active に入れていない最初の範囲
-	active []span // いま見ている文字に掛かる範囲
-	dirty  bool   // active の並びを重ねる順に直す必要があるか
+	spans  []span     // 開始の順に並べた、その行の範囲
+	next   int        // まだ active に入れていない最初の範囲
+	active []span     // いま見ている文字に掛かる範囲
+	dirty  bool       // active の並びを重ねる順に直す必要があるか
+	decos  []decoSpan // その行の構文の色の範囲（Decorations.appendLine の結果）
 }
 
 // reset は、行の範囲を空にする。
@@ -346,7 +347,8 @@ func (w *sweep) attr(base Attr) Attr {
 func (d *drawer) prepare(row, line, ln int) {
 	w := &d.sweep
 	w.reset()
-	for _, ds := range d.f.Decorations.line(line) {
+	w.decos = d.f.Decorations.appendLine(w.decos[:0], line)
+	for _, ds := range w.decos {
 		a := d.theme.attr(d.f.Decorations.style(ds))
 		start, end := min(ds.start, ln), min(ds.end, ln)
 		if a == (Attr{}) || start >= end {
