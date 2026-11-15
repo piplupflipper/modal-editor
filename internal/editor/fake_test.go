@@ -101,6 +101,11 @@ func runFakeExt(mode string) int {
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("v%d:%q", b.Version(), b.Text()))
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.eol は、複製の FinalNewline（buffer/open の finalNewline）を表示する。
+		s.Command("fake.eol", func(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("b%d finalNewline=%v", b.ID(), b.FinalNewline()))
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.Command("fake.ask", func(_ context.Context, _ *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			go func() {
 				r, err := s.AskChoice(hostCtx, ext.ChoiceAskParams{Title: "どれ?", Choices: []ext.Choice{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
@@ -203,7 +208,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				Commands: []ext.Contribution{
 					contrib("fake.upper", `\u`), contrib("fake.jump", `\j`), contrib("fake.later", `\l`),
 					contrib("fake.dump", `\d`), contrib("fake.ask", `\a`), contrib("fake.state", `\s`),
-					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`),
+					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
 				},
 			},
 		},

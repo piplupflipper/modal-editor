@@ -729,10 +729,14 @@ func TestWriteFinalNewline(t *testing.T) {
 		in   string
 		// edits は、Vim で行った操作に当たる編集である。nil なら編集しない。
 		edits []Edit
+		// mark は、edits の適用の後に MarkNoLines を呼ぶかどうか（Vim の行単位の削除で全ての行を消した操作）である。
+		mark bool
 		// undo は、編集の後にアンドゥするかどうかである。
 		undo bool
-		fix  string // fixendofline が有効のときの書き出しの結果
-		nofx string // fixendofline が無効のときの書き出しの結果
+		// after は、mark と undo の後に適用する編集である。
+		after []Edit
+		fix   string // fixendofline が有効のときの書き出しの結果
+		nofx  string // fixendofline が無効のときの書き出しの結果
 	}{
 		{name: "末尾の改行なし", in: "a\nb", fix: "a\nb\n", nofx: "a\nb"},
 		{name: "末尾の改行あり", in: "a\nb\n", fix: "a\nb\n", nofx: "a\nb\n"},
@@ -753,6 +757,18 @@ func TestWriteFinalNewline(t *testing.T) {
 		{name: "末尾の改行なしの行を空にする", in: "abc", edits: []Edit{{Range: rng(0, 0, 0, 3)}}, fix: "\n", nofx: ""},
 		// 0D
 		{name: "末尾の改行ありの行を空にする", in: "abc\n", edits: []Edit{{Range: rng(0, 0, 0, 3)}}, fix: "\n", nofx: "\n"},
+		// dd
+		{name: "改行だけのファイルで dd", in: "\n", edits: []Edit{}, mark: true, fix: "", nofx: ""},
+		{name: "末尾の改行なしで dd", in: "a", edits: []Edit{{Range: rng(0, 0, 0, 1)}}, mark: true, fix: "", nofx: ""},
+		// ggdG
+		{name: "末尾の改行ありで ggdG", in: "a\nb\n", edits: []Edit{{Range: rng(0, 0, 1, 1)}}, mark: true, fix: "", nofx: ""},
+		{name: "末尾の改行なしで ggdG", in: "a\nb", edits: []Edit{{Range: rng(0, 0, 1, 1)}}, mark: true, fix: "", nofx: ""},
+		// ddu
+		{name: "dd を戻す", in: "a", edits: []Edit{{Range: rng(0, 0, 0, 1)}}, mark: true, undo: true, fix: "a\n", nofx: "a"},
+		// ggdGix
+		{name: "ggdG の後に入力", in: "a\nb", edits: []Edit{{Range: rng(0, 0, 1, 1)}}, mark: true, after: []Edit{{Range: rng(0, 0, 0, 0), Text: "x"}}, fix: "x\n", nofx: "x"},
+		// ddo<Esc>
+		{name: "dd の後に o", in: "a", edits: []Edit{{Range: rng(0, 0, 0, 1)}}, mark: true, after: []Edit{{Range: rng(0, 0, 0, 0), Text: "\n"}}, fix: "\n\n", nofx: "\n"},
 	}
 	for _, tt := range tests {
 		for _, fix := range []bool{true, false} {
@@ -763,8 +779,16 @@ func TestWriteFinalNewline(t *testing.T) {
 					t.Fatalf("%s: Apply() error = %v", tt.name, err)
 				}
 			}
+			if tt.mark {
+				b.MarkNoLines()
+			}
 			if tt.undo {
 				b.Undo()
+			}
+			if tt.after != nil {
+				if _, err := b.Apply(Transaction{BaseVersion: b.Version(), Edits: tt.after}); err != nil {
+					t.Fatalf("%s: Apply() error = %v", tt.name, err)
+				}
 			}
 			want := tt.nofx
 			if fix {
@@ -775,6 +799,44 @@ func TestWriteFinalNewline(t *testing.T) {
 				t.Errorf("%s (fixendofline=%v): WriteTo() = %q, %v; want %q", tt.name, fix, out.String(), err, want)
 			}
 		}
+	}
+}
+
+// MarkNoLines の記録は、アンドゥの履歴の位置に付く。編集で外れ、アンドゥとリドゥで戻ると付く。テキストが空でなければ付かない。
+func TestMarkNoLines(t *testing.T) {
+	b := New("a\nb")
+	b.MarkNoLines()
+	if b.NoLines() {
+		t.Fatal("空でないテキストで NoLines() = true")
+	}
+	if _, err := b.Apply(Transaction{BaseVersion: b.Version(), Edits: []Edit{{Range: rng(0, 0, 1, 1)}}}); err != nil {
+		t.Fatal(err)
+	}
+	if b.NoLines() {
+		t.Fatal("MarkNoLines の前に NoLines() = true")
+	}
+	b.MarkNoLines()
+	v := b.Version()
+	if !b.NoLines() || b.Version() != v || !b.Modified() {
+		t.Fatalf("MarkNoLines の後: NoLines() = %v, Version() = %d（前は %d）, Modified() = %v", b.NoLines(), b.Version(), v, b.Modified())
+	}
+	b.Undo()
+	if b.NoLines() {
+		t.Error("アンドゥの後に NoLines() = true")
+	}
+	b.Redo()
+	if !b.NoLines() {
+		t.Error("リドゥの後に NoLines() = false")
+	}
+	if _, err := b.Apply(Transaction{BaseVersion: b.Version(), Edits: []Edit{{Range: rng(0, 0, 0, 0), Text: "x"}}}); err != nil {
+		t.Fatal(err)
+	}
+	b.Undo()
+	if !b.NoLines() {
+		t.Error("入力を戻した後に NoLines() = false（Vim は行の無いバッファに戻る）")
+	}
+	if !New("").NoLines() || New("\n").NoLines() {
+		t.Error(`New("") は行の無いバッファで、New("\n") は空の行 1 つのバッファである`)
 	}
 }
 

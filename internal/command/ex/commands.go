@@ -248,12 +248,17 @@ func runDelete(c *execCtx, inv *invocation) error {
 	}
 
 	l1, l2 := inv.line1, inv.line2
+	all := l1 == 0 && l2 == c.b.LineCount()-1
 	lines := make([]string, 0, l2-l1+1)
 	for l := l1; l <= l2; l++ {
 		lines = append(lines, c.b.Line(l))
 	}
 	if err := c.apply(deleteLinesEdit(c.b, l1, l2)); err != nil {
 		return err
+	}
+	if all {
+		// Vim と同じく、全ての行を消したバッファは行の無いバッファにし、空のファイルとして書き出す（基本設計 4.1）。
+		c.b.MarkNoLines()
 	}
 	c.replaced = append(c.replaced, lineReplace{start: l1, old: l2 - l1 + 1, new: 0})
 	c.deletions = append(c.deletions, Deletion{Register: reg, Lines: lines})

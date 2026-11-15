@@ -281,7 +281,7 @@ func (e *Editor) Open(path string) error {
 // req: NFR-04
 func (e *Editor) Run(ctx context.Context) error {
 	if e.cur == nil {
-		e.newBuffer(buffer.New("\n"), "", "")
+		e.newBuffer(buffer.New(""), "", "")
 	}
 	w, h := e.term.Size()
 	e.setSize(w, h)
@@ -420,7 +420,10 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Columns = e.renderer.Columns()
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Interrupted = e.interrupt.Load
-	if err := e.host.OpenBuffer(exthost.BufferSnapshot{ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text()}); err != nil {
+	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
+		ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text(),
+		NoFinalNewline: !b.FinalNewline(),
+	}); err != nil {
 		e.log.Error("buffer/open を送れない", "err", err)
 	}
 }
@@ -465,8 +468,8 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	b, err := buffer.ReadFile(abs)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		// 新しいファイルは、Vim の 'fixeol' と同じく、書き出すときに末尾の改行を付ける。
-		b = buffer.New("\n")
+		// 新しいファイルは、Vim と同じく行の無いバッファにする。編集せずに書き出すと空のファイルに、編集すれば末尾に改行を付けて書き出す（基本設計 4.1）。
+		b = buffer.New("")
 	case err != nil:
 		return nil, fmt.Errorf("%s を開けない: %w", path, err)
 	}

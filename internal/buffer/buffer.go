@@ -21,11 +21,11 @@
 // 設定の既定は有効で、末尾の改行の無いファイルを開いて保存すると改行が付く。
 // 無効にすると、読み込んだときの末尾の改行の有無を復元する。
 //
-// 空のファイル "" から作ったバッファは、Vim の「行の無いバッファ」に当たる。
-// 編集する前（アンドゥで作った時点に戻った場合を含む）に書き出すと、設定によらず空のファイルになる。
+// Vim の「行の無いバッファ」（NoLines）は、設定によらず空のファイルに書き出す。
+// 空のファイル "" から作り、編集する前（アンドゥで作った時点に戻った場合を含む）のバッファは、行の無いバッファである。
 // 編集した後は、末尾の改行があるものとして書き出す（Vim は空のファイルの 'endofline' を有効のままにする）。
-// Vim は、全ての行を消した（dd など）バッファも「行の無いバッファ」として空のファイルに書き出すが、
-// Buffer は行の削除と行の中の削除を見分けないので、全ての行を消したバッファも空の行 1 つとして書き出す。
+// 行単位の削除で全ての行を消したバッファも、Vim では行の無いバッファになる。
+// Buffer は行の削除と行の中の削除をテキストから見分けられないので、編集した側が MarkNoLines で知らせる。
 //
 // 位置と編集（Position、Edit）は、行を "\n" でつないだテキスト（Text が返すもの）に対して数える。
 // 末尾の改行はこのテキストに含まれず、編集で消したり足したりすることはできない。
@@ -54,9 +54,10 @@ type Buffer struct {
 	eol bool
 	// fixEOL は、書き出すときに末尾の改行を補うかどうか（Vim の 'fixendofline'）である。
 	fixEOL bool
-	// emptyFile は、空のテキストから作ったバッファであることを表す。
-	// アンドゥの履歴が空の間（作った時点の内容の間）は、行の無いバッファとして空のファイルに書き出す。
-	emptyFile bool
+	// noLinesAt は、行の無いバッファ（NoLines）であるアンドゥの履歴の位置（stateID）の集合である。
+	// 空のテキストから作ったバッファでは、作った時点の位置 0 を含む。
+	// 位置で覚えるので、アンドゥとリドゥでその位置へ戻れば、また行の無いバッファになる。
+	noLinesAt map[uint64]bool
 	version   uint64
 	undo      []step
 	redo      []step
@@ -93,7 +94,11 @@ func New(text string) *Buffer {
 	empty := text == ""
 	eol := empty || strings.HasSuffix(text, "\n")
 	text = strings.TrimSuffix(text, "\n")
-	return &Buffer{lines: strings.Split(text, "\n"), eol: eol, fixEOL: true, emptyFile: empty}
+	b := &Buffer{lines: strings.Split(text, "\n"), eol: eol, fixEOL: true}
+	if empty {
+		b.noLinesAt = map[uint64]bool{0: true}
+	}
+	return b
 }
 
 // Read は、r の内容を全て読み、それを内容とするバッファを New と同じ規則で作る。
@@ -117,11 +122,11 @@ func ReadFile(path string) (*Buffer, error) {
 
 // WriteTo は、バッファの内容を w へ書き出す。
 // 最後の行の後には、FinalNewline が true なら改行を付ける。
-// ただし空のテキストから作ったバッファを編集する前は、何も書かない（パッケージの doc の「末尾の改行の書き出し」）。
+// ただし行の無いバッファ（NoLines）では、何も書かない（パッケージの doc の「末尾の改行の書き出し」）。
 // 書き出しはバージョン番号、アンドゥの履歴、保存済みの記録を変えない。
 func (b *Buffer) WriteTo(w io.Writer) (int64, error) {
 	var data string
-	if !b.noLines() {
+	if !b.NoLines() {
 		data = b.Text()
 		if b.FinalNewline() {
 			data += "\n"
@@ -252,15 +257,40 @@ func (b *Buffer) FixEndOfLine() bool {
 
 // FinalNewline は、書き出すときに最後の行の後に改行を付けるかどうかを返す。
 // 読み込んだテキストが末尾の改行を持っていたか、末尾の改行を補う設定が有効なら true である。
-// 空のテキストから作ったバッファを編集する前は、true を返しても WriteTo は何も書かない。
+// 行の無いバッファ（NoLines）では、true を返しても WriteTo は何も書かない。
 // 拡張機能へ送る ext.BufferOpenParams の FinalNewline には、この値を渡す。
 func (b *Buffer) FinalNewline() bool {
 	return b.eol || b.fixEOL
 }
 
-// noLines は、Vim の「行の無いバッファ」に当たるかどうか（空のテキストから作り、作った時点の内容のままであること）を返す。
-func (b *Buffer) noLines() bool {
-	return b.emptyFile && b.stateID() == 0
+// MarkNoLines は、現在の内容を、Vim の「行の無いバッファ」（--No lines in buffer--）として記録する。
+// 行単位の削除（dd、:d など）で全ての行を消した直後に、編集した側が呼ぶ。
+// Buffer は、行の削除で全ての行を消したことと、行の中を消して空の行 1 つにしたことを、テキストから見分けられないためである。
+// テキストが空でなければ何もしない。
+//
+// 記録はアンドゥの履歴の現在の位置に付く。この後に編集すると外れ、アンドゥやリドゥでこの位置へ戻ると、また付く。
+// MarkNoLines はバージョン番号、アンドゥの履歴、保存済みの記録を変えない。
+func (b *Buffer) MarkNoLines() {
+	if !b.emptyText() {
+		return
+	}
+	if b.noLinesAt == nil {
+		b.noLinesAt = map[uint64]bool{}
+	}
+	b.noLinesAt[b.stateID()] = true
+}
+
+// NoLines は、Vim の「行の無いバッファ」に当たるかどうかを返す。
+// 空のテキストから作り、作った時点の内容のままであるか、MarkNoLines で記録した内容のままなら true である。
+// 行の無いバッファは、書き出すと空のファイルになる（パッケージの doc の「末尾の改行の書き出し」）。
+// 表示と位置の数え方は、空の行 1 つのバッファと同じである。
+func (b *Buffer) NoLines() bool {
+	return b.noLinesAt[b.stateID()] && b.emptyText()
+}
+
+// emptyText は、テキストが空（空の行 1 つ）かどうかを返す。
+func (b *Buffer) emptyText() bool {
+	return len(b.lines) == 1 && b.lines[0] == ""
 }
 
 // Text は、行を "\n" でつないだテキストを返す。末尾の改行は含まない。

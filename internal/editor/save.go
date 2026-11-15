@@ -140,7 +140,7 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 	b, err := buffer.ReadFile(bs.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		b = buffer.New("\n")
+		b = buffer.New("")
 	case err != nil:
 		return fmt.Errorf("%s を読めません: %w", filepath.Base(bs.path), err)
 	}
@@ -157,6 +157,7 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 func (e *Editor) reload(bs *bufferState, b *buffer.Buffer) {
 	cur := bs.buf
 	cursor := bs.state.Cursor()
+	b.SetFixEndOfLine(cur.FixEndOfLine())
 	if b.HasTrailingNewline() == cur.HasTrailingNewline() {
 		if b.Text() != cur.Text() {
 			last := cur.LineCount() - 1
@@ -167,6 +168,10 @@ func (e *Editor) reload(bs *bufferState, b *buffer.Buffer) {
 				return
 			}
 			e.commitChange(bs, ch)
+		}
+		if b.NoLines() {
+			// 読み直したファイルが空なら、Vim と同じく行の無いバッファにする（書き出すと空のファイルになる）。
+			cur.MarkNoLines()
 		}
 		cur.MarkSaved()
 		bs.state.SetCursor(cursor)

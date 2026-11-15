@@ -219,7 +219,8 @@ func opDelete(s *State, cmd editcmd.Command, rg region, o opOptions) error {
 		return err
 	}
 	if all {
-		s.emptied, s.emptiedVersion = true, s.buf.Version()
+		// 行の無いバッファは、書き出すと空のファイルになる（基本設計 4.1）。
+		s.buf.MarkNoLines()
 	}
 	s.registers.delete(cmd.Register, reg, smallDelete(rg), o.forceOne)
 	if rg.linewise {
@@ -345,8 +346,8 @@ func opCase(f func(rune) rune) operatorFunc {
 	}
 }
 
-// noLines は、直前の変更が行単位の削除で全ての行を消したもので、その後にバッファが変わっていないかを返す。
-// Vim の「行が無い」バッファに当たる。buffer は空の行 1 つと区別しないので、State が覚えておく。
+// noLines は、バッファが Vim の「行が無い」バッファ（buffer.Buffer の NoLines）かどうかを返す。
+// 行単位の削除で全ての行を消したとき（opDelete、:d）と、空のファイルを開いたときに当たる。
 func (s *State) noLines() bool {
-	return s.emptied && s.emptiedVersion == s.buf.Version()
+	return s.buf.NoLines()
 }
