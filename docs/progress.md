@@ -26,7 +26,7 @@
 | FR-04 | 未着手 | - | - | レジスターを持つ |
 | FR-05 | 未着手 | - | - | マクロを記録し、再生できる。マクロはキー入力の列として記録する |
 | FR-06 | 未着手 | - | - | ドットリピートを持つ。解釈済みの編集コマンドを 1 つの値として記録し、その値を再実行する |
-| FR-07 | 実装とテスト | [internal/buffer/buffer.go:137](../internal/buffer/buffer.go#L137)<br>[internal/buffer/buffer.go:169](../internal/buffer/buffer.go#L169)<br>[internal/buffer/buffer.go:185](../internal/buffer/buffer.go#L185) | [internal/buffer/buffer_test.go:250](../internal/buffer/buffer_test.go#L250)<br>[internal/buffer/buffer_test.go:325](../internal/buffer/buffer_test.go#L325) | アンドゥとリドゥを持つ |
+| FR-07 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239)<br>[internal/buffer/buffer.go:283](../internal/buffer/buffer.go#L283)<br>[internal/buffer/buffer.go:291](../internal/buffer/buffer.go#L291)<br>[internal/buffer/buffer.go:347](../internal/buffer/buffer.go#L347)<br>[internal/buffer/buffer.go:365](../internal/buffer/buffer.go#L365) | [internal/buffer/buffer_test.go:283](../internal/buffer/buffer_test.go#L283)<br>[internal/buffer/buffer_test.go:358](../internal/buffer/buffer_test.go#L358)<br>[internal/buffer/buffer_test.go:495](../internal/buffer/buffer_test.go#L495) | アンドゥとリドゥを持つ |
 | FR-08 | 未着手 | - | - | Ex コマンドは `:w`、`:q`、`:s`、`:g` などの部分集合を持つ。対象の一覧は実装の段階で定める |
 | FR-09 | 未着手 | - | - | 正規表現は Go の標準ライブラリ（`regexp`）の文法に従う |
 | FR-10 | 未着手 | - | - | 拡張機能は、コンパイルする拡張機能と、スクリプトの拡張機能の 2 種類を用意する。どちらも Go で書く |
@@ -34,8 +34,8 @@
 | FR-12 | 未着手 | - | - | 拡張機能が追加した操作は、拡張機能の側に特別な処理を書かなくても、ドットリピートとマクロで繰り返せる。本体は、拡張機能の ID、コマンドの ID、引数を記録し、再実行のときに同じ拡張機能へ問い合わせ直す |
 | FR-13 | 未着手 | - | - | 拡張機能は、追加する操作の一覧と起動の契機を、実行せずに読める宣言ファイルに書く |
 | FR-14 | 未着手 | - | - | 拡張機能は、宣言した契機（対応するファイルを開いたとき、コマンドを呼んだとき、など）で初めて起動する。例: 言語サーバーの無いテキストファイルを開いている間は、LSP の拡張機能を起動しない |
-| FR-15 | 実装とテスト | [internal/buffer/buffer.go:137](../internal/buffer/buffer.go#L137) | [internal/buffer/buffer_test.go:45](../internal/buffer/buffer_test.go#L45)<br>[internal/buffer/buffer_test.go:206](../internal/buffer/buffer_test.go#L206) | バッファの内容を変更できるのは本体だけとする。拡張機能は、編集の内容と、元にしたバッファのバージョン番号を本体へ送り、本体はバージョン番号が現在と一致した編集だけを適用する |
-| FR-16 | 実装とテスト | [internal/buffer/buffer.go:137](../internal/buffer/buffer.go#L137)<br>[internal/buffer/buffer.go:169](../internal/buffer/buffer.go#L169)<br>[internal/buffer/buffer.go:185](../internal/buffer/buffer.go#L185)<br>[internal/buffer/edit.go:59](../internal/buffer/edit.go#L59) | [internal/buffer/buffer_test.go:349](../internal/buffer/buffer_test.go#L349) | 本体は拡張機能へ、最初にバッファの全文を送り、以後は差分を送る |
+| FR-15 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239) | [internal/buffer/buffer_test.go:53](../internal/buffer/buffer_test.go#L53)<br>[internal/buffer/buffer_test.go:239](../internal/buffer/buffer_test.go#L239) | バッファの内容を変更できるのは本体だけとする。拡張機能は、編集の内容と、元にしたバッファのバージョン番号を本体へ送り、本体はバージョン番号が現在と一致した編集だけを適用する |
+| FR-16 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239)<br>[internal/buffer/buffer.go:347](../internal/buffer/buffer.go#L347)<br>[internal/buffer/buffer.go:365](../internal/buffer/buffer.go#L365)<br>[internal/buffer/edit.go:64](../internal/buffer/edit.go#L64) | [internal/buffer/buffer_test.go:382](../internal/buffer/buffer_test.go#L382) | 本体は拡張機能へ、最初にバッファの全文を送り、以後は差分を送る |
 | FR-17 | 未着手 | - | - | キー入力ごとに結果が要る操作（拡張機能のモーションなど）は、期限付きで応答を待ち、期限を超えたら操作を失敗させる。期限を超えた応答は、後から届いても適用しない |
 | FR-18 | 未着手 | - | - | FR-17 の期限は設定で指定できる。0 を指定した場合は、待たずに次のキー入力を受け付け、結果が届いた時点でバッファのバージョン番号とカーソル位置が問い合わせたときと同じ場合だけ適用する。違う場合は破棄する |
 | FR-19 | 未着手 | - | - | マクロとドットリピートの再生中は、FR-18 の設定に関わらず、前の操作の完了を待ってから次の操作へ進む。拡張機能が応答しなければ、その位置で再生を止める |

@@ -6,18 +6,26 @@
 // Buffer は並行に呼ばれる前提を置かない。
 // 編集の状態はイベントループの goroutine 1 つだけが触る（基本設計 2.1）ので、排他制御をしない。
 //
+// # 行の数え方
+//
 // テキストは UTF-8 で、改行は LF を前提にする。
-// テキストを "\n" で区切ったものを行とする。
-// このため "a\n" は "a" と "" の 2 行になり、末尾の改行の有無はテキストと行の数にそのまま現れる。
-// 読み込んだテキストはそのまま書き出すので、末尾の改行の有無は保たれる。
+// 行の数え方は Vim に合わせ、改行は行の終わりを表すものとして数える。
+// このため "a\nb\n" と "a\nb" はどちらも "a" と "b" の 2 行で、違いは末尾の改行の有無（HasTrailingNewline）だけである。
+// 空のファイル "" と "\n" は、どちらも空の行 1 つである。
+// 末尾の改行の有無は読み込み時に記録し、書き出し時（WriteTo、WriteFile）に復元する。
+//
+// 位置と編集（Position、Edit）は、行を "\n" でつないだテキスト（Text が返すもの）に対して数える。
+// 末尾の改行はこのテキストに含まれず、編集で消したり足したりすることはできない。
 // CR（"\r"）は特別に扱わず、行の中の 1 バイトとして保持する。
 package buffer
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -28,25 +36,45 @@ import (
 type Buffer struct {
 	// lines は少なくとも 1 要素を持つ。
 	// テキストの保持の方法は外に見せない（基本設計 4.3）ので、構造を取り替えても公開の操作は変えない。
-	lines   []string
+	lines []string
+	// eol は、書き出すときに最後の行の後へ改行を付けるかどうかである。
+	eol     bool
 	version uint64
 	undo    []step
 	redo    []step
+
+	// groupDepth は、BeginUndoGroup の入れ子の深さである。
+	groupDepth int
+	// groupStarted は、開いているグループの最初の Apply が済み、undo の末尾がそのグループの単位であることを表す。
+	groupStarted bool
+
+	// nextID は、次に作る、またはまとめ直したアンドゥの単位に付ける識別子である。
+	nextID uint64
+	// savedID は、MarkSaved を呼んだ時点の stateID である。
+	savedID uint64
 }
 
-// step は、アンドゥとリドゥの 1 単位で、1 つのトランザクションに当たる。
+// step は、アンドゥとリドゥの 1 単位である。
 // inverse を順に適用すると、edits を適用する前のテキストに戻る。
+// id は、この単位を適用し終えた状態を見分けるための、履歴の中で一意な番号（1 以上）である。
 type step struct {
+	id      uint64
 	edits   []Edit
 	inverse []Edit
 }
 
 // New は、text を内容とするバッファを、バージョン番号 0 で作る。
+// text の末尾に改行があれば、それを末尾の改行として記録し、行には含めない。
+// 作った直後のバッファは、保存済み（Modified が false）として扱う。
 func New(text string) *Buffer {
-	return &Buffer{lines: strings.Split(text, "\n")}
+	eol := strings.HasSuffix(text, "\n")
+	if eol {
+		text = text[:len(text)-1]
+	}
+	return &Buffer{lines: strings.Split(text, "\n"), eol: eol}
 }
 
-// Read は、r の内容を全て読み、それを内容とするバッファを作る。
+// Read は、r の内容を全て読み、それを内容とするバッファを New と同じ規則で作る。
 func Read(r io.Reader) (*Buffer, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -65,29 +93,95 @@ func ReadFile(path string) (*Buffer, error) {
 	return Read(f)
 }
 
-// WriteTo は、バッファのテキストを w へ書き出す。
-// 書き出しはバージョン番号とアンドゥの履歴を変えない。
+// WriteTo は、バッファの内容を、末尾の改行の有無を復元して w へ書き出す。
+// 書き出しはバージョン番号、アンドゥの履歴、保存済みの記録を変えない。
 func (b *Buffer) WriteTo(w io.Writer) (int64, error) {
-	n, err := io.WriteString(w, b.Text())
+	data := b.Text()
+	if b.eol {
+		data += "\n"
+	}
+	n, err := io.WriteString(w, data)
 	if err != nil {
 		return int64(n), fmt.Errorf("buffer: write: %w", err)
 	}
 	return int64(n), nil
 }
 
-// WriteFile は、バッファのテキストを path のファイルへ書き出す。
-// ファイルが既にあれば、その許可属性を保ったまま中身を置き換える。
-// 無ければ、許可属性 0644（umask を適用した後の値）で作る。
+// WriteFile は、バッファの内容を path のファイルへ書き出す。
+//
+// ファイルが既にあれば、同じディレクトリの一時ファイルへ書いてから rename で置き換えるので、途中で失敗しても元のファイルは壊れない。
+// 一時ファイルには元のファイルの許可属性を付ける。
+// path がシンボリックリンクなら、リンクの指す先のファイルを置き換える。
+// 置き換えたファイルは新しいファイルになるので、ハードリンクは切れ、所有者は書き出したプロセスの利用者になる。
+//
+// ファイルが無ければ、許可属性 0644 に umask を適用して新しく作り、直接書き込む。守る元の内容が無いので、rename は使わない。
+//
+// WriteFile は保存済みの記録を変えない。編集中のファイルを保存したときは、呼び出し側が MarkSaved を呼ぶ。
 func (b *Buffer) WriteFile(path string) error {
-	perm := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		perm = info.Mode().Perm()
-	}
-	var buf bytes.Buffer
-	if _, err := b.WriteTo(&buf); err != nil {
+	target, perm, exists, err := writeTarget(path)
+	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, buf.Bytes(), perm); err != nil {
+	if !exists {
+		return b.createFile(path)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp*")
+	if err != nil {
+		return fmt.Errorf("buffer: %w", err)
+	}
+	tmpName := tmp.Name()
+	if err := writeAndClose(tmp, b, perm); err != nil {
+		_ = os.Remove(tmpName) // 一時ファイルの後始末に失敗しても、元のエラーを返すほうが大事である
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		_ = os.Remove(tmpName) // 同上
+		return fmt.Errorf("buffer: %w", err)
+	}
+	return nil
+}
+
+// writeTarget は、WriteFile が置き換えるファイルのパス（シンボリックリンクを解決したもの）と、その許可属性を返す。
+// ファイルが無ければ exists を false にして返す。それ以外の Stat の失敗はエラーとして返す。
+func writeTarget(path string) (target string, perm fs.FileMode, exists bool, err error) {
+	info, err := os.Stat(path)
+	switch {
+	case err == nil:
+		target, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", 0, false, fmt.Errorf("buffer: %w", err)
+		}
+		return target, info.Mode().Perm(), true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return "", 0, false, nil
+	default:
+		return "", 0, false, fmt.Errorf("buffer: %w", err)
+	}
+}
+
+// createFile は、path に新しいファイルを作って内容を書く。既にあれば失敗する。
+func (b *Buffer) createFile(path string) error {
+	//nolint:gosec // G302: 利用者が編集するテキストファイルなので、一般的なエディタと同じく 0644 に umask を適用した許可属性で作る
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("buffer: %w", err)
+	}
+	return writeAndClose(f, b, 0)
+}
+
+// writeAndClose は、f にバッファの内容を書き、perm が 0 でなければその許可属性を付け、ディスクへ同期してから閉じる。
+func writeAndClose(f *os.File, b *Buffer, perm fs.FileMode) error {
+	_, err := b.WriteTo(f)
+	if err == nil && perm != 0 {
+		err = f.Chmod(perm)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
 		return fmt.Errorf("buffer: %w", err)
 	}
 	return nil
@@ -99,7 +193,7 @@ func (b *Buffer) Version() uint64 {
 	return b.version
 }
 
-// LineCount は、行の数を返す。空のバッファでも 1 以上である。
+// LineCount は、行の数を返す。末尾の改行は行として数えない。空のバッファでも 1 以上である。
 func (b *Buffer) LineCount() int {
 	return len(b.lines)
 }
@@ -110,13 +204,19 @@ func (b *Buffer) Line(i int) string {
 	return b.lines[i]
 }
 
-// Text は、バッファのテキスト全体を返す。
+// HasTrailingNewline は、最後の行の後に改行があるかどうか（書き出すときに改行を付けるかどうか）を返す。
+func (b *Buffer) HasTrailingNewline() bool {
+	return b.eol
+}
+
+// Text は、行を "\n" でつないだテキストを返す。末尾の改行は含まない。
+// 位置と編集はこのテキストに対して数える。ファイルとしての内容は WriteTo で得る。
 func (b *Buffer) Text() string {
 	return strings.Join(b.lines, "\n")
 }
 
 // Slice は、範囲 r のテキストを返す（基本設計 4.3 の「範囲を読む」）。
-// 範囲がバッファの外にあるか、UTF-8 の文字の途中を指す場合は ErrInvalidPosition を、
+// 範囲がバッファの外にあるか、文字の途中を指す場合は ErrInvalidPosition を、
 // 終わりが始まりより前にある場合は ErrInvalidRange を返す。
 func (b *Buffer) Slice(r Range) (string, error) {
 	if err := b.checkRange(r); err != nil {
@@ -131,7 +231,9 @@ func (b *Buffer) Slice(r Range) (string, error) {
 // 編集の位置が正しくない場合も、何も変えずに ErrInvalidPosition か ErrInvalidRange を返す。
 // 途中の編集で失敗しても、それより前の編集は取り消され、トランザクションは全体として適用されないか、全て適用されるかのどちらかになる。
 //
-// 適用に成功すると、バージョン番号を 1 増やし、トランザクションをアンドゥの 1 単位として記録し、リドゥの履歴を捨てる。
+// 適用に成功すると、バージョン番号を 1 増やし、リドゥの履歴を捨てる。
+// トランザクションはアンドゥの 1 単位として記録する。
+// ただし BeginUndoGroup でグループを開いている間は、グループの中の 2 回目以降の Apply を、最初の Apply の単位にまとめる。
 // Edits が空のトランザクションは、バージョン番号が一致していれば何もせず、Before と After が等しい Change を返す。
 //
 // req: FR-07, FR-15, FR-16
@@ -147,27 +249,104 @@ func (b *Buffer) Apply(tx Transaction) (Change, error) {
 	if err != nil {
 		return Change{}, err
 	}
-	b.undo = append(b.undo, step{edits: edits, inverse: inverse})
+	b.record(edits, inverse)
 	b.redo = nil
 	return b.commit(edits), nil
 }
 
-// CanUndo は、アンドゥできるトランザクションが残っているかどうかを返す。
+// record は、適用した編集をアンドゥの履歴に記録する。
+// グループの中の 2 回目以降なら末尾の単位にまとめ、まとめた単位には新しい id を付ける。
+// id を付け直すのは、まとめる前の状態で MarkSaved した場合に、まとめた後を変更ありと判定するためである。
+func (b *Buffer) record(edits, inverse []Edit) {
+	b.nextID++
+	if b.groupDepth > 0 && b.groupStarted {
+		last := &b.undo[len(b.undo)-1]
+		last.id = b.nextID
+		last.edits = append(last.edits, edits...)
+		last.inverse = slices.Concat(inverse, last.inverse)
+		return
+	}
+	b.undo = append(b.undo, step{id: b.nextID, edits: edits, inverse: inverse})
+	if b.groupDepth > 0 {
+		b.groupStarted = true
+	}
+}
+
+// BeginUndoGroup は、アンドゥのグループを開く。
+// EndUndoGroup で閉じるまでの Apply は、アンドゥとリドゥで 1 つの単位として扱う（FR-07）。
+// インサートモードで 1 文字ごとに Apply し、モードを抜けるまでを 1 回のアンドゥで戻す、といった使い方を想定する。
+//
+// グループは入れ子にでき、最も外側の EndUndoGroup で閉じる。
+// グループの中でも、バージョン番号と Change は Apply ごとに進み、返る。
+// グループを開いている間に Undo か Redo を呼ぶと、グループは閉じる。
+//
+// req: FR-07
+func (b *Buffer) BeginUndoGroup() {
+	b.groupDepth++
+}
+
+// EndUndoGroup は、BeginUndoGroup で開いたグループを 1 段閉じる。
+// 開いているグループが無ければ何もしない。
+//
+// req: FR-07
+func (b *Buffer) EndUndoGroup() {
+	if b.groupDepth == 0 {
+		return
+	}
+	b.groupDepth--
+	if b.groupDepth == 0 {
+		b.groupStarted = false
+	}
+}
+
+// closeUndoGroup は、開いているグループを全て閉じる。
+func (b *Buffer) closeUndoGroup() {
+	b.groupDepth = 0
+	b.groupStarted = false
+}
+
+// MarkSaved は、現在の内容を保存した内容として記録する。
+// 以後、編集、アンドゥ、リドゥでこの内容に戻ったときは、Modified が false を返す。
+func (b *Buffer) MarkSaved() {
+	b.savedID = b.stateID()
+}
+
+// Modified は、現在の内容が、最後に MarkSaved した時点（呼んでいなければ作った時点）の内容から変わっているかどうかを返す。
+//
+// 判定はアンドゥの履歴の位置で行う。
+// 保存した後に編集し、アンドゥで保存した時点まで戻れば false になる。
+// 保存した時点より前へアンドゥしてから別の編集をすると、保存した時点へは戻れなくなるので、次に MarkSaved するまで true になる。
+// 別々の編集の結果がたまたま保存した内容と同じテキストになっても、true を返す。
+func (b *Buffer) Modified() bool {
+	return b.stateID() != b.savedID
+}
+
+// stateID は、アンドゥの履歴の現在の位置を表す番号を返す。履歴が空なら 0 である。
+func (b *Buffer) stateID() uint64 {
+	if len(b.undo) == 0 {
+		return 0
+	}
+	return b.undo[len(b.undo)-1].id
+}
+
+// CanUndo は、アンドゥできる単位が残っているかどうかを返す。
 func (b *Buffer) CanUndo() bool {
 	return len(b.undo) > 0
 }
 
-// CanRedo は、リドゥできるトランザクションが残っているかどうかを返す。
+// CanRedo は、リドゥできる単位が残っているかどうかを返す。
 func (b *Buffer) CanRedo() bool {
 	return len(b.redo) > 0
 }
 
-// Undo は、最後に適用したトランザクションを 1 つ取り消し、その変更を返す（FR-07）。
+// Undo は、アンドゥの単位を 1 つ取り消し、その変更を返す（FR-07）。
 // 取り消しも変更の 1 つとして扱い、バージョン番号を 1 増やす。
 // 取り消せるものが無ければ、何もせずに false を返す。
+// 開いているアンドゥのグループは閉じる。
 //
 // req: FR-07, FR-16
 func (b *Buffer) Undo() (Change, bool) {
+	b.closeUndoGroup()
 	if len(b.undo) == 0 {
 		return Change{}, false
 	}
@@ -178,12 +357,14 @@ func (b *Buffer) Undo() (Change, bool) {
 	return b.commit(s.inverse), true
 }
 
-// Redo は、最後に取り消したトランザクションを 1 つやり直し、その変更を返す（FR-07）。
+// Redo は、最後に取り消した単位を 1 つやり直し、その変更を返す（FR-07）。
 // やり直しも変更の 1 つとして扱い、バージョン番号を 1 増やす。
 // やり直せるものが無ければ、何もせずに false を返す。
+// 開いているアンドゥのグループは閉じる。
 //
 // req: FR-07, FR-16
 func (b *Buffer) Redo() (Change, bool) {
+	b.closeUndoGroup()
 	if len(b.redo) == 0 {
 		return Change{}, false
 	}
@@ -285,6 +466,7 @@ func (b *Buffer) checkRange(r Range) error {
 }
 
 // checkPosition は、p がバッファの中の文字の境界（行末を含む）を指すことを確かめる。
+// 文字の境界の定義は Position の doc コメントにある。
 func (b *Buffer) checkPosition(p Position) error {
 	if p.Line < 0 || p.Line >= len(b.lines) {
 		return fmt.Errorf("%w: %v: line out of range [0, %d)", ErrInvalidPosition, p, len(b.lines))
@@ -293,8 +475,24 @@ func (b *Buffer) checkPosition(p Position) error {
 	if p.Byte < 0 || p.Byte > len(line) {
 		return fmt.Errorf("%w: %v: byte out of range [0, %d]", ErrInvalidPosition, p, len(line))
 	}
-	if p.Byte < len(line) && !utf8.RuneStart(line[p.Byte]) {
-		return fmt.Errorf("%w: %v: not at a UTF-8 character boundary", ErrInvalidPosition, p)
+	if insideRune(line, p.Byte) {
+		return fmt.Errorf("%w: %v: inside a UTF-8 character", ErrInvalidPosition, p)
 	}
 	return nil
+}
+
+// insideRune は、i が line の中の正しい UTF-8 の多バイト文字の途中を指すかどうかを返す。
+//
+// 正しい多バイト文字の 2 バイト目以降は継続バイトなので、別の正しい文字の先頭にはならない。
+// このため、i の前 utf8.UTFMax-1 バイト以内から始まる正しい多バイト文字が i をまたぐかだけを見れば、
+// 行の先頭から utf8.DecodeRuneInString で進めたときの刻みと一致する。
+func insideRune(line string, i int) bool {
+	for j := max(0, i-(utf8.UTFMax-1)); j < i; j++ {
+		_, size := utf8.DecodeRuneInString(line[j:])
+		// 不正なバイトは size が 1 になる。正しい文字なら size は 1 以上で、U+FFFD そのものも 3 になる。
+		if size > 1 && j+size > i {
+			return true
+		}
+	}
+	return false
 }

@@ -17,12 +17,16 @@ func TestNewLines(t *testing.T) {
 	tests := []struct {
 		text  string
 		lines []string
+		eol   bool
 	}{
-		{"", []string{""}},
-		{"abc", []string{"abc"}},
-		{"abc\n", []string{"abc", ""}},
-		{"a\nb", []string{"a", "b"}},
-		{"a\r\nb", []string{"a\r", "b"}}, // CR は行の中のバイトとして残す
+		{"", []string{""}, false},
+		{"\n", []string{""}, true},
+		{"abc", []string{"abc"}, false},
+		{"abc\n", []string{"abc"}, true},
+		{"a\nb", []string{"a", "b"}, false},
+		{"a\nb\n", []string{"a", "b"}, true},
+		{"a\n\n", []string{"a", ""}, true},
+		{"a\r\nb", []string{"a\r", "b"}, false}, // CR は行の中のバイトとして残す
 	}
 	for _, tt := range tests {
 		b := New(tt.text)
@@ -33,8 +37,12 @@ func TestNewLines(t *testing.T) {
 		if !slices.Equal(got, tt.lines) {
 			t.Errorf("New(%q) lines = %q, want %q", tt.text, got, tt.lines)
 		}
-		if b.Text() != tt.text {
-			t.Errorf("New(%q).Text() = %q", tt.text, b.Text())
+		if b.HasTrailingNewline() != tt.eol {
+			t.Errorf("New(%q).HasTrailingNewline() = %v, want %v", tt.text, b.HasTrailingNewline(), tt.eol)
+		}
+		var out bytes.Buffer
+		if _, err := b.WriteTo(&out); err != nil || out.String() != tt.text {
+			t.Errorf("New(%q).WriteTo() = %q, %v", tt.text, out.String(), err)
 		}
 		if b.Version() != 0 {
 			t.Errorf("New(%q).Version() = %d, want 0", tt.text, b.Version())
@@ -100,10 +108,35 @@ func TestApply(t *testing.T) {
 			want:  "oX\nYwo\nthree",
 		},
 		{
-			name:  "末尾の改行の削除",
-			text:  "abc\n",
-			edits: []Edit{{Range: rng(0, 3, 1, 0)}},
-			want:  "abc",
+			name:  "空行の削除",
+			text:  "a\n\nb\n",
+			edits: []Edit{{Range: rng(0, 1, 1, 0)}},
+			want:  "a\nb",
+		},
+		{
+			name:  "不正なバイトの直後への挿入",
+			text:  "a\x80b",
+			edits: []Edit{{Range: rng(0, 2, 0, 2), Text: "X"}},
+			want:  "a\x80Xb",
+		},
+		{
+			name:  "不正なバイトだけの削除",
+			text:  "a\x80b",
+			edits: []Edit{{Range: rng(0, 1, 0, 2)}},
+			want:  "ab",
+		},
+		{
+			name:  "切れた多バイト文字の 2 バイト目の削除",
+			text:  "\xe3\x81b",
+			edits: []Edit{{Range: rng(0, 1, 0, 2)}},
+			want:  "\xe3b",
+		},
+		{
+			name:    "不正なバイトの後の多バイト文字の途中",
+			text:    "\x80あ",
+			edits:   []Edit{{Range: rng(0, 2, 0, 2), Text: "x"}},
+			want:    "\x80あ",
+			wantErr: ErrInvalidPosition,
 		},
 		{
 			name: "複数の編集は前の編集の後のテキストに対して順に適用する",
@@ -265,7 +298,7 @@ func TestUndoRedoRoundTrip(t *testing.T) {
 		},
 		{
 			name: "複数行と複数の編集",
-			text: "one\ntwo\nthree\n",
+			text: "one\ntwo\nthree\n\n",
 			txs: [][]Edit{
 				{{Range: rng(0, 1, 2, 3), Text: "X\nY"}, {Range: rng(1, 0, 1, 0), Text: "\n\n"}},
 				{{Range: rng(0, 0, 3, 0)}},
@@ -348,8 +381,8 @@ func TestApplyClearsRedo(t *testing.T) {
 //
 // req: FR-16
 func TestChangeReplay(t *testing.T) {
-	b := New("alpha\nbeta\n")
-	mirror := New(b.Text())
+	b := New("alpha\nbeta\n\n")
+	mirror := New("alpha\nbeta\n\n")
 
 	ops := []func() (Change, bool){
 		func() (Change, bool) {
@@ -406,7 +439,7 @@ func TestChangeIsIndependentOfHistory(t *testing.T) {
 }
 
 func TestSlice(t *testing.T) {
-	b := New("one\nあいう\nthree\n")
+	b := New("one\nあいう\nthree\n\n")
 	tests := []struct {
 		r       Range
 		want    string
@@ -418,6 +451,7 @@ func TestSlice(t *testing.T) {
 		{rng(0, 2, 2, 2), "e\nあいう\nth", nil},
 		{rng(0, 3, 1, 0), "\n", nil},
 		{rng(0, 0, 3, 0), "one\nあいう\nthree\n", nil},
+		{rng(3, 1, 3, 1), "", ErrInvalidPosition},
 		{rng(1, 2, 1, 3), "", ErrInvalidPosition},
 		{rng(0, 0, 4, 0), "", ErrInvalidPosition},
 		{rng(1, 0, 0, 0), "", ErrInvalidRange},
@@ -430,20 +464,162 @@ func TestSlice(t *testing.T) {
 	}
 }
 
+// TestBoundaryMatchesRange は、受け付ける位置が、文字列に対する range で止まる位置と行末に一致することを確かめる。
+func TestBoundaryMatchesRange(t *testing.T) {
+	lines := []string{
+		"",
+		"abc",
+		"あい🙂",
+		"a\x80b",
+		"\xe3\x81b",
+		"\x80あ\xff",
+		"\xf0\x9f\x99", // 切れた 4 バイト文字
+		"\xef\xbf\xbd", // U+FFFD そのもの
+		"\x83\x5c",     // Shift_JIS の「ソ」
+	}
+	for _, line := range lines {
+		b := New(line)
+		want := map[int]bool{len(line): true}
+		for i := range line {
+			want[i] = true
+		}
+		for i := 0; i <= len(line); i++ {
+			err := b.checkPosition(pos(0, i))
+			if (err == nil) != want[i] {
+				t.Errorf("%q の位置 %d: error = %v, 境界 = %v", line, i, err, want[i])
+			}
+		}
+	}
+}
+
+// req: FR-07
+func TestUndoGroup(t *testing.T) {
+	insert := func(b *Buffer, at int, text string) {
+		t.Helper()
+		if _, err := b.Apply(Transaction{BaseVersion: b.Version(), Edits: []Edit{{Range: rng(0, at, 0, at), Text: text}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("グループの中の Apply を 1 回で戻す", func(t *testing.T) {
+		b := New("x")
+		insert(b, 1, "a")
+		b.BeginUndoGroup()
+		insert(b, 2, "b")
+		insert(b, 3, "c")
+		b.BeginUndoGroup() // 入れ子は外側にまとめる
+		insert(b, 4, "\nd")
+		b.EndUndoGroup()
+		insert(b, 1, "e")
+		b.EndUndoGroup()
+		insert(b, 0, "f")
+		if b.Version() != 6 {
+			t.Errorf("Version() = %d, want 6（グループの中でも Apply ごとに進む）", b.Version())
+		}
+
+		b.Undo()
+		if b.Text() != "xeabc\nd" {
+			t.Fatalf("1 回目の Undo の後 Text() = %q", b.Text())
+		}
+		b.Undo()
+		if b.Text() != "xa" {
+			t.Fatalf("2 回目の Undo の後 Text() = %q, want %q", b.Text(), "xa")
+		}
+		b.Redo()
+		if b.Text() != "xeabc\nd" {
+			t.Fatalf("Redo の後 Text() = %q", b.Text())
+		}
+	})
+
+	t.Run("Undo はグループを閉じる", func(t *testing.T) {
+		b := New("")
+		insert(b, 0, "a")
+		b.BeginUndoGroup()
+		insert(b, 1, "b")
+		b.Undo()
+		insert(b, 1, "c")
+		insert(b, 2, "d")
+		b.EndUndoGroup() // 閉じた後の EndUndoGroup は何もしない
+		b.Undo()
+		if b.Text() != "ac" {
+			t.Errorf("Text() = %q, want %q", b.Text(), "ac")
+		}
+	})
+
+	t.Run("空のグループは単位を作らない", func(t *testing.T) {
+		b := New("")
+		b.BeginUndoGroup()
+		b.EndUndoGroup()
+		b.EndUndoGroup()
+		if b.CanUndo() {
+			t.Error("空のグループでアンドゥの単位ができた")
+		}
+	})
+}
+
+func TestModified(t *testing.T) {
+	insert := func(b *Buffer, text string) {
+		t.Helper()
+		if _, err := b.Apply(Transaction{BaseVersion: b.Version(), Edits: []Edit{{Range: rng(0, 0, 0, 0), Text: text}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(b *Buffer, step string, want bool) {
+		t.Helper()
+		if b.Modified() != want {
+			t.Errorf("%s: Modified() = %v, want %v", step, b.Modified(), want)
+		}
+	}
+
+	b := New("x")
+	check(b, "作った直後", false)
+	insert(b, "a")
+	check(b, "編集の後", true)
+	b.MarkSaved()
+	check(b, "保存の後", false)
+	insert(b, "b")
+	check(b, "保存の後の編集", true)
+	b.Undo()
+	check(b, "保存した時点へのアンドゥ", false)
+	b.Undo()
+	check(b, "保存した時点より前へのアンドゥ", true)
+	b.Redo()
+	check(b, "保存した時点へのリドゥ", false)
+	b.Undo()
+	insert(b, "a") // 同じテキストでも、履歴が分かれたので保存した時点ではない
+	check(b, "履歴が分かれた後", true)
+	b.MarkSaved()
+	check(b, "保存し直した後", false)
+
+	g := New("")
+	g.BeginUndoGroup()
+	insert(g, "a")
+	g.MarkSaved()
+	insert(g, "b")
+	check(g, "グループの途中で保存した後に同じグループへ足した", true)
+	g.EndUndoGroup()
+	g.Undo()
+	check(g, "グループを戻した", true)
+}
+
 func TestFileRoundTrip(t *testing.T) {
 	tests := []struct {
-		name string
-		text string
+		name  string
+		text  string
+		lines int
+		eol   bool
 	}{
-		{"空のファイル", ""},
-		{"末尾の改行あり", "a\nb\n"},
-		{"末尾の改行なし", "a\nb"},
-		{"空行で終わる", "a\n\n"},
-		{"多バイト文字", "日本語\n"},
+		{"空のファイル", "", 1, false},
+		{"改行だけ", "\n", 1, true},
+		{"末尾の改行あり", "a\nb\n", 2, true},
+		{"末尾の改行なし", "a\nb", 2, false},
+		{"空行で終わる", "a\n\n", 2, true},
+		{"多バイト文字", "日本語\n", 1, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "f.txt")
+			dir := t.TempDir()
+			path := filepath.Join(dir, "f.txt")
 			if err := os.WriteFile(path, []byte(tt.text), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -451,8 +627,8 @@ func TestFileRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if b.Text() != tt.text {
-				t.Errorf("ReadFile の Text() = %q, want %q", b.Text(), tt.text)
+			if b.LineCount() != tt.lines || b.HasTrailingNewline() != tt.eol {
+				t.Errorf("LineCount() = %d, HasTrailingNewline() = %v, want %d, %v", b.LineCount(), b.HasTrailingNewline(), tt.lines, tt.eol)
 			}
 			if err = b.WriteFile(path); err != nil {
 				t.Fatal(err)
@@ -469,9 +645,75 @@ func TestFileRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			if info.Mode().Perm() != 0o600 {
-				t.Errorf("許可属性 = %v, want 0600", info.Mode().Perm())
+				t.Errorf("許可属性 = %v, want 0600（元のファイルに合わせる）", info.Mode().Perm())
 			}
+			assertOnlyFiles(t, dir, "f.txt")
 		})
+	}
+}
+
+func TestWriteFileNew(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "new.txt")
+	if err := New("a\n").WriteFile(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "a\n" {
+		t.Errorf("ReadFile() = %q, %v", got, err)
+	}
+	assertOnlyFiles(t, dir, "new.txt")
+}
+
+func TestWriteFileSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.txt")
+	link := filepath.Join(dir, "link.txt")
+	if err := os.WriteFile(target, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.txt", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("new").WriteFile(link); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("リンクがリンクでなくなった: %v, %v", info, err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "new" {
+		t.Errorf("リンク先の内容 = %q, %v", got, err)
+	}
+	assertOnlyFiles(t, dir, "link.txt", "real.txt")
+}
+
+func TestWriteFileStatError(t *testing.T) {
+	// 通常のファイルの下のパスは、Stat が ErrNotExist ではないエラー（ENOTDIR）を返す。
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := New("x").WriteFile(filepath.Join(file, "child"))
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Errorf("WriteFile() error = %v, want ErrNotExist 以外のエラー", err)
+	}
+}
+
+// assertOnlyFiles は、dir の中に names のファイルだけがあること（一時ファイルが残っていないこと）を確かめる。
+func assertOnlyFiles(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if !slices.Equal(got, names) {
+		t.Errorf("%s の中身 = %q, want %q", dir, got, names)
 	}
 }
 
