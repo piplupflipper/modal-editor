@@ -11,7 +11,9 @@
 //   - permission: session/request_permission を送り、結果を返す
 //   - read: fs/read_text_file を送り、結果を返す
 //   - write: fs/write_text_file を送り、結果を返す
+//   - bare-permission: tool_call を送ってから、toolCallId だけの toolCall で session/request_permission を送る
 //   - hang: session/cancel が届くまで応答しない
+//   - stubborn: session/cancel にも応じず、標準入力が閉じるまで応答しない
 //   - crash: 終了コード 3 で終わる
 //   - pid: 自分のプロセス ID を返す
 //
@@ -222,6 +224,21 @@ func (a *agent) prompt(m message) {
 		a.chunk("write=" + string(res.Result) + "\n")
 	case "hang":
 		<-cancelled
+	case "stubborn":
+		// session/cancel にも応じず、標準入力が閉じるまで応答しない。
+		select {}
+	case "bare-permission":
+		// tool_call で表示の項目を送ってから、toolCallId だけの toolCall で権限を求める。
+		a.update(map[string]any{
+			"sessionUpdate": "tool_call", "toolCallId": "call_3", "title": "Write notes.txt", "kind": "edit", "status": "pending",
+			"locations": []any{map[string]any{"path": "/work/notes.txt"}},
+		})
+		res := a.call("session/request_permission", map[string]any{
+			"sessionId": sessionID,
+			"toolCall":  map[string]any{"toolCallId": "call_3"},
+			"options":   []any{map[string]any{"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"}},
+		})
+		a.chunk("permission=" + string(res.Result) + "\n")
 	case "crash":
 		os.Exit(3)
 	case "pid":

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 )
@@ -205,6 +206,75 @@ func TestCancelAndBusy(t *testing.T) {
 	h.waitIdle()
 	h.prompt(map[string]any{"op": "hello"})
 	h.waitOutput("[end_turn]")
+}
+
+// TestCancelStubbornAgent は、acp.cancel の後、期限までにプロンプトに応答しないエージェントを止め、
+// プロンプトを cancelled で終えて、次の acp.prompt で起動し直すことを確かめる（PR #94 のレビューの推奨 1）。
+//
+// req: FR-34
+func TestCancelStubbornAgent(t *testing.T) {
+	h := newHost(t, fakeSettings(), nil)
+	h.prompt(map[string]any{"op": "stubborn"})
+	waitSession(t, h)
+	if res := h.exec(cmdCancel, nil); !res.OK {
+		t.Fatalf("%s: ok = false", cmdCancel)
+	}
+	h.waitOutput("[cancelled]")
+	h.waitMessage("取り消しに応じなかった")
+	h.waitIdle()
+	for _, m := range h.messages() {
+		if strings.Contains(m.Text, "エージェントが終了した") {
+			t.Errorf("message = %q, want no abnormal-exit message for a stopped agent", m.Text)
+		}
+	}
+	h.prompt(map[string]any{"op": "hello"})
+	h.waitOutput("[end_turn]")
+}
+
+// TestPermissionFillsToolCall は、権限の確認の toolCall が toolCallId だけでも、同じプロンプトの tool_call で届いた
+// title、kind、locations で問いの文を補うことを確かめる（PR #94 のレビューの推奨 2）。
+//
+// req: FR-34
+func TestPermissionFillsToolCall(t *testing.T) {
+	h := newHost(t, fakeSettings(), nil)
+	h.prompt(map[string]any{"op": "bare-permission"})
+	ask := h.waitAsk()
+	if want := "エージェントが権限を求めている: Write notes.txt (edit) /work/notes.txt"; ask.Title != want {
+		t.Errorf("title = %q, want %q", ask.Title, want)
+	}
+	h.answers <- ext.ChoiceAskResult{Selected: "allow-once"}
+	out := h.waitOutput("[end_turn]")
+	if want := `permission={"outcome":{"outcome":"selected","optionId":"allow-once"}}`; !strings.Contains(out, want) {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+// TestWriteInvalidUTF8 は、不正な UTF-8 を含むファイルへの fs/write_text_file が、開かずにすぐ誤りで答えることを確かめる
+// （PR #94 のレビューの推奨 3）。
+//
+// req: FR-34
+func TestWriteInvalidUTF8(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bin.txt")
+	if err := os.WriteFile(path, []byte("a\xffb\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := newHost(t, fakeSettings(), nil)
+	// 複製を待つ期限（テストでは testTimeout）より十分短く答えることを確かめる。
+	start := time.Now()
+	h.prompt(map[string]any{"op": "write", "path": path, "content": "x\n"})
+	out := h.waitOutput("[end_turn]")
+	if !strings.Contains(out, "writeerr=") || !strings.Contains(out, "not valid UTF-8") {
+		t.Errorf("output = %q, want a UTF-8 error", out)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("took %v, want an immediate error", d)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.opens) != 0 {
+		t.Errorf("editor/open = %v, want none", h.opens)
+	}
+	assertFile(t, path, "a\xffb\n")
 }
 
 func waitSession(t *testing.T, h *host) {

@@ -128,6 +128,16 @@ func (c *lineConn) close(cause error) {
 	close(c.done)
 }
 
+// closed は、接続が終わったかどうかを返す。
+func (c *lineConn) closed() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *lineConn) dispatch(line []byte) {
 	var m wireMessage
 	if err := json.Unmarshal(line, &m); err != nil {

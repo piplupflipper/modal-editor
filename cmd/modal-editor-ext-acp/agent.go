@@ -100,7 +100,7 @@ func startAgentProcess(cfg agentConfig, dir string, logger *log.Logger,
 // まず標準入力を閉じ（多くのエージェントは標準入力の EOF で終わる）、grace を過ぎたらプロセスグループへ SIGTERM を、
 // さらに grace を過ぎたら SIGKILL を送る。2 回目からは、1 回目と同じく終わるのを待つだけである。
 // SIGKILL の後も、grace を過ぎたら待つのをやめる。プロセスグループの外へ出た孫のプロセスが標準出力を開いたままだと、
-// 接続の読み取りが終わらないためである。
+// 接続の読み取りが終わらないためである。待つ時間は最も長くて grace の 3 倍である（timeouts.stopGrace）。
 func (p *agentProcess) stop(grace time.Duration) {
 	p.stopOnce.Do(func() {
 		close(p.stopping)

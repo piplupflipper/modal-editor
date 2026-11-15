@@ -79,8 +79,10 @@ func (c *client) showUpdate(u *sessionUpdate) {
 		}
 		c.appendLine("[" + b.Type + "]")
 	case updateToolCall:
+		c.rememberToolCall(u)
 		c.appendLine("[tool] " + toolSummary(u.Title, u.Kind, u.Status, u.Locations))
 	case updateToolCallUpdate:
+		c.rememberToolCall(u)
 		c.appendLine("[tool " + u.ToolCallID + "] " + toolSummary(u.Title, u.Kind, u.Status, u.Locations))
 	case updatePlan:
 		parts := make([]string, 0, len(u.Entries))
@@ -89,6 +91,34 @@ func (c *client) showUpdate(u *sessionUpdate) {
 		}
 		c.appendLine("[plan] " + strings.Join(parts, "; "))
 	}
+}
+
+// rememberToolCall は、tool_call と tool_call_update で届いた表示の項目（title、kind、locations）を、
+// toolCallId ごとに覚える。tool_call_update は変わった項目だけを持つので、空でない項目だけを上書きする。
+func (c *client) rememberToolCall(u *sessionUpdate) {
+	if u.ToolCallID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.toolCalls[u.ToolCallID] = mergeToolCall(c.toolCalls[u.ToolCallID], toolCallUpdate{
+		ToolCallID: u.ToolCallID, Title: u.Title, Kind: u.Kind, Locations: u.Locations,
+	})
+}
+
+// mergeToolCall は、base に、next の空でない項目を上書きしたものを返す。
+func mergeToolCall(base, next toolCallUpdate) toolCallUpdate {
+	base.ToolCallID = next.ToolCallID
+	if next.Title != "" {
+		base.Title = next.Title
+	}
+	if next.Kind != "" {
+		base.Kind = next.Kind
+	}
+	if len(next.Locations) > 0 {
+		base.Locations = next.Locations
+	}
+	return base
 }
 
 // toolSummary は、ツールの呼び出しの 1 行の要約を作る。空の項目は省く。
@@ -120,6 +150,8 @@ func toolSummary(title, kind, status string, locs []toolCallLocation) string {
 
 // requestPermission は、session/request_permission を本体の choice/ask に写し、利用者の選択を返す（基本設計 6.5）。
 // toolCall の内容から問いの文を、options から選択肢（ID は optionId、表示は name）を作る。
+// toolCall は toolCallId だけのこともある（ACP の Tool Calls の例）ので、同じプロンプトの tool_call と tool_call_update で
+// 届いた項目で、欠けた title、kind、locations を補う。それでも何も無ければ toolCallId を示す。
 //
 // 利用者が取り消したとき、プロンプトが取り消されたとき（acp.cancel）、プロンプトの外で届いたとき、
 // 本体へ問えなかったときは、cancelled を返す（ACP の Tool Calls、Prompt Turn）。
@@ -129,6 +161,7 @@ func (c *client) requestPermission(ctx context.Context, p *requestPermissionPara
 	cancelled := requestPermissionResult{Outcome: permissionOutcome{Outcome: "cancelled"}}
 	c.mu.Lock()
 	turn := c.turn
+	tc := mergeToolCall(c.toolCalls[p.ToolCall.ToolCallID], p.ToolCall)
 	c.mu.Unlock()
 	if turn == nil {
 		return cancelled
@@ -143,7 +176,11 @@ func (c *client) requestPermission(ctx context.Context, p *requestPermissionPara
 	for _, o := range p.Options {
 		choices = append(choices, ext.Choice{ID: o.OptionID, Label: o.Name})
 	}
-	title := "エージェントが権限を求めている: " + toolSummary(p.ToolCall.Title, p.ToolCall.Kind, "", p.ToolCall.Locations)
+	what := toolSummary(tc.Title, tc.Kind, "", tc.Locations)
+	if what == "" {
+		what = "ツールの呼び出し " + tc.ToolCallID
+	}
+	title := "エージェントが権限を求めている: " + what
 	res, err := c.srv.AskChoice(ask, ext.ChoiceAskParams{Title: title, Choices: choices})
 	if err != nil {
 		if ask.Err() == nil {

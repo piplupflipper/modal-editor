@@ -138,12 +138,28 @@ type unopenedFileWriter interface {
 // skipHooks の buffer/save を送る（基本設計 6.5）。本体は無いファイルを空のバッファとして開くので、保存でファイルができる。
 type openAsBuffer struct{ c *client }
 
+// writeUnopened は、path をバッファとして開き、writeBuffer で書き出す。
+//
+// 不正な UTF-8 を含むファイルは、開く前に調べて誤りで答える。本体はそうしたバッファを拡張機能へ送らない（基本設計 4.1、5.3）ので、
+// 開いてから複製を待つと、待つ期限（timeouts.request）までエージェントのターンが止まる。
+// 本体で開いているバッファが不正な UTF-8 を含む場合は、editor/open の応答より先に buffer/close が届き、
+// WaitBuffer が server.ErrBufferClosed ですぐに返る（基本設計 6.7）。
 func (w openAsBuffer) writeUnopened(ctx context.Context, path, content string) error {
+	switch data, err := os.ReadFile(path); {
+	case err == nil && !utf8.Valid(data):
+		return fmt.Errorf("%s is not valid UTF-8; the editor does not pass such a buffer to extensions", path)
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		return err
+	}
 	res, err := w.c.srv.OpenEditor(ctx, ext.EditorOpenParams{Path: path, Focus: false})
 	if err != nil {
 		return fmt.Errorf("editor/open: %w", err)
 	}
-	return w.c.writeBuffer(ctx, res.Buffer, res.Version, content)
+	err = w.c.writeBuffer(ctx, res.Buffer, res.Version, content)
+	if errors.Is(err, server.ErrBufferClosed) {
+		return fmt.Errorf("%s: the editor did not pass the buffer to the extension (it may contain invalid UTF-8): %w", path, err)
+	}
+	return err
 }
 
 // writeBuffer は、バッファ id の全文を content に置き換え、保存の前の整形を通さずに書き出す（基本設計 6.5）。

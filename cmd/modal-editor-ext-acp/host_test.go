@@ -88,7 +88,7 @@ func newHost(t *testing.T, s settings, getenv func(string) string) *host {
 	if !testing.Verbose() {
 		c.logger.SetOutput(io.Discard)
 	}
-	c.timeouts = timeouts{start: testTimeout, request: testTimeout, stopGrace: 500 * time.Millisecond}
+	c.timeouts = timeouts{start: testTimeout, request: testTimeout, stopGrace: 500 * time.Millisecond, cancel: 300 * time.Millisecond}
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}

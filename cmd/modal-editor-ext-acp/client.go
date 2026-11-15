@@ -59,14 +59,18 @@ type timeouts struct {
 	start time.Duration
 	// request は、fs/* の処理で本体の応答と複製を待つ時間である。
 	request time.Duration
-	// stopGrace は、エージェントを終わらせるときの、標準入力を閉じてから SIGTERM まで、SIGTERM から SIGKILL までの猶予である。
-	// 本体は shutdown を送ってから期限（仮に 3 秒。基本設計 5.2）を過ぎると拡張機能のプロセスグループへ SIGTERM を送るので、
-	// 2 倍してもその期限より短くする。
+	// stopGrace は、エージェントを終わらせるときの、標準入力を閉じてから SIGTERM まで、SIGTERM から SIGKILL まで、
+	// SIGKILL から待つのをやめるまでの、それぞれの猶予である（agentProcess.stop）。
+	// 本体は shutdown を送ってから期限（仮に 3 秒。internal/exthost の DefaultShutdownTimeout。基本設計 5.2）を過ぎると
+	// 拡張機能のプロセスグループへ SIGTERM を送るので、3 倍してもその期限より短くする。
 	stopGrace time.Duration
+	// cancel は、acp.cancel で session/cancel を送ってから、エージェントがプロンプトに応答するのを待つ時間である。
+	// 過ぎたら、取り消しに応じないエージェントとして止め、プロンプトを終える（次の acp.prompt で起動し直す）。
+	cancel time.Duration
 }
 
 func defaultTimeouts() timeouts {
-	return timeouts{start: 60 * time.Second, request: 30 * time.Second, stopGrace: time.Second}
+	return timeouts{start: 60 * time.Second, request: 30 * time.Second, stopGrace: 800 * time.Millisecond, cancel: 5 * time.Second}
 }
 
 // client は、ACP の拡張機能の状態である。ACP のクライアントとして、設定のエージェントを子プロセスで起動して話す。
@@ -94,6 +98,11 @@ type client struct {
 	// acp.cancel で取り消し、処理中の権限の確認を cancelled で終わらせる（ACP の Prompt Turn の Cancellation）。
 	turn       context.Context
 	cancelTurn context.CancelFunc
+	// turnDone は、処理中のプロンプトが終わったときに閉じる。acp.cancel の期限の監視が使う。
+	turnDone chan struct{}
+	// toolCalls は、処理中のプロンプトで session/update の tool_call と tool_call_update で届いた、
+	// ツールの呼び出しの表示の項目である。権限の確認の toolCall に欠けた項目を補うのに使う（requestPermission）。
+	toolCalls map[string]toolCallUpdate
 	// paths は、開いているバッファのパスから番号への対応である（基本設計 6.7 のバッファのパス）。
 	paths map[string]ext.BufferID
 	// atLineStart は、欄へ最後に書き足したテキストが改行で終わっているか（何も書いていないか）である。
@@ -110,6 +119,7 @@ func newClient() *client {
 		getenv:      os.Getenv,
 		executable:  os.Executable,
 		paths:       make(map[string]ext.BufferID),
+		toolCalls:   make(map[string]toolCallUpdate),
 		atLineStart: true,
 	}
 	c.unopened = openAsBuffer{c: c}
@@ -266,21 +276,25 @@ func (c *client) prompt(_ context.Context, _ *server.Buffer, p *ext.CommandExecu
 		return c.fail(cmdPrompt + ": 前のプロンプトを処理している（" + cmdCancel + " で取り消せる）")
 	}
 	turn, cancel := context.WithCancel(context.Background())
-	c.turn, c.cancelTurn = turn, cancel
+	done := make(chan struct{})
+	c.turn, c.cancelTurn, c.turnDone = turn, cancel, done
 	c.mu.Unlock()
-	go c.runPrompt(turn, a.Text) //nolint:gosec // G118: ハンドラーの ctx は戻ると無効になるので引き継がない
+	go c.runPrompt(turn, done, a.Text) //nolint:gosec // G118: ハンドラーの ctx は戻ると無効になるので引き継がない
 	return ext.CommandExecuteResult{OK: true}, nil
 }
 
 // runPrompt は、セッションが無ければエージェントを起動してセッションを作り、session/prompt を送って応答を待つ。
+// 終わったら done を閉じる。
 //
 // req: FR-34
-func (c *client) runPrompt(turn context.Context, text string) {
+func (c *client) runPrompt(turn context.Context, done chan struct{}, text string) {
 	defer func() {
 		c.mu.Lock()
 		c.cancelTurn()
-		c.turn, c.cancelTurn = nil, nil
+		c.turn, c.cancelTurn, c.turnDone = nil, nil, nil
+		clear(c.toolCalls)
 		c.mu.Unlock()
+		close(done)
 	}()
 	c.appendLine("> " + text)
 	ag, err := c.ensureSession(turn)
@@ -304,8 +318,13 @@ func (c *client) runPrompt(turn context.Context, text string) {
 		Prompt:    []contentBlock{{Type: "text", Text: text}},
 	}, &res)
 	switch {
+	case errors.Is(err, errConnClosed) && ag.stopped() && turn.Err() != nil:
+		// 取り消しに応じないので止めた（cancel の期限）。知らせは cancel が出している。
+		c.appendLine("[" + stopCancelled + "]")
 	case errors.Is(err, errConnClosed):
-		// エージェントの終了は onAgentExit が知らせる。
+		// エージェントの終了そのものは onAgentExit が message/show で知らせる。
+		// 欄には、このプロンプトが終わらなかったことを書く。
+		c.appendLine("[error] エージェントとの接続が切れたので、このプロンプトは終わらなかった")
 	case err != nil:
 		c.showError("ACP: session/prompt: " + err.Error())
 		c.appendLine("[error] " + err.Error())
@@ -321,6 +340,10 @@ func (c *client) runPrompt(turn context.Context, text string) {
 func (c *client) ensureSession(turn context.Context) (*agentProcess, error) {
 	c.mu.Lock()
 	ag := c.agent
+	if ag != nil && ag.conn.closed() {
+		// 接続は閉じたが、onAgentExit がまだ呼ばれていない（プロセスの終了を待っている）。終わったものとして起動し直す。
+		ag = nil
+	}
 	if ag != nil && ag.sessionID != "" {
 		c.mu.Unlock()
 		return ag, nil
@@ -444,7 +467,7 @@ func (c *client) cancel(_ context.Context, _ *server.Buffer, _ *ext.CommandExecu
 		c.mu.Unlock()
 		return c.fail(cmdCancel + ": 処理中のプロンプトが無い")
 	}
-	cancelTurn := c.cancelTurn
+	cancelTurn, done := c.cancelTurn, c.turnDone
 	ag := c.agent
 	var sid string
 	if ag != nil {
@@ -465,7 +488,25 @@ func (c *client) cancel(_ context.Context, _ *server.Buffer, _ *ext.CommandExecu
 		}
 		cancelTurn()
 	}()
+	go c.watchCancel(ag, done)
 	return ext.CommandExecuteResult{OK: true}, nil
+}
+
+// watchCancel は、acp.cancel の後、期限（timeouts.cancel）までにプロンプトが終わらなければ、
+// 取り消しに応じないエージェントとして止める。止めると接続が閉じ、runPrompt はプロンプトを cancelled として終える。
+// 止めずにおくと、session/prompt の応答を待ち続け、次の acp.prompt が失敗し続ける。
+//
+// req: FR-34
+func (c *client) watchCancel(ag *agentProcess, done <-chan struct{}) {
+	t := time.NewTimer(c.timeouts.cancel)
+	defer t.Stop()
+	select {
+	case <-done:
+		return
+	case <-t.C:
+	}
+	c.showError(fmt.Sprintf("ACP: エージェントが %v 以内に取り消しに応じなかったので止めた。次の %s で起動し直す", c.timeouts.cancel, cmdPrompt))
+	ag.stop(c.timeouts.stopGrace)
 }
 
 // onAgentExit は、エージェントのプロセスが終わったときに呼ばれる。
