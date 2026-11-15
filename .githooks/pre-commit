@@ -1,0 +1,4 @@
+#!/bin/sh
+# コミット前に、CI と同じ検査を実行する。
+# 有効にするには `make hooks` を実行する。
+exec make check
