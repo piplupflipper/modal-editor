@@ -591,6 +591,8 @@ type request struct {
 	version ext.Version
 	path    string
 	lines   lines
+	// finalNewline は、lines を言語サーバーへ送ったときに末尾に "\n" を足したかどうか（document の finalNewline）である。
+	finalNewline bool
 }
 
 // send は、バッファ id の版 version の文書について、言語サーバーへリクエスト method を送る。ループから呼ぶ。
@@ -622,7 +624,7 @@ func (c *client) send(
 	if err != nil {
 		return nil, err
 	}
-	return &request{c: c, future: f, enc: p.enc, buffer: id, version: version, path: d.path, lines: cur.lines}, nil
+	return &request{c: c, future: f, enc: p.enc, buffer: id, version: version, path: d.path, lines: cur.lines, finalNewline: d.finalNewline}, nil
 }
 
 // errUnsupported は、言語サーバーがその機能を持たないことを表す。

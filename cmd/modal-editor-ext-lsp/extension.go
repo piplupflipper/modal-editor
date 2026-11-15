@@ -413,7 +413,7 @@ func formatTransaction(ctx context.Context, r *request) (*ext.Transaction, error
 	if err := r.wait(ctx, &edits); err != nil {
 		return nil, err
 	}
-	return formattingTransaction(r.lines, r.version, edits, r.enc), nil
+	return formattingTransaction(r.lines, r.finalNewline, r.version, edits, r.enc), nil
 }
 
 // hasFormatting は、言語サーバーが textDocument/formatting に対応するかどうかを返す。

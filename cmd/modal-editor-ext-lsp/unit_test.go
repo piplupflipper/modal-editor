@@ -117,7 +117,7 @@ func TestFormattingTransaction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ls := lines(strings.Split(tt.text, "\n"))
-			tx := formattingTransaction(ls, 7, tt.edits, encUTF16)
+			tx := formattingTransaction(ls, true, 7, tt.edits, encUTF16)
 			if tt.want == tt.text {
 				if tx != nil {
 					t.Fatalf("transaction = %+v, want nil", tx)
@@ -132,8 +132,39 @@ func TestFormattingTransaction(t *testing.T) {
 			}
 		})
 	}
-	if tx := formattingTransaction(lines{"a"}, 1, nil, encUTF16); tx != nil {
+	if tx := formattingTransaction(lines{"a"}, true, 1, nil, encUTF16); tx != nil {
 		t.Errorf("no edits: transaction = %+v, want nil", tx)
+	}
+}
+
+// TestFormattingTransactionNoFinalNewline は、書き出したときに末尾に改行が付かないバッファ（全文に "\n" を足さずに送ったもの）の整形の結果を、
+// 仮想の行の書き換えをせずにトランザクションにすることを確かめる。
+func TestFormattingTransactionNoFinalNewline(t *testing.T) {
+	te := func(sl, sc, el, ec int, text string) textEdit {
+		return textEdit{Range: lspRange{Start: lspPosition{Line: sl, Character: sc}, End: lspPosition{Line: el, Character: ec}}, NewText: text}
+	}
+	tests := []struct {
+		name  string
+		text  string
+		edits []textEdit
+		want  string
+	}{
+		// gofmt は末尾に改行を置くので、改行の無い全文には改行を足す編集を返す。本体のバッファには空の行が 1 つ増える。
+		{"add the final newline", "package a", []textEdit{te(0, 9, 0, 9, "\n")}, "package a\n"},
+		{"replace the whole document", "a\nb", []textEdit{te(0, 0, 1, 1, "A\nB\n")}, "A\nB\n"},
+		{"delete trailing empty lines", "a\n\n", []textEdit{te(0, 1, 2, 0, "\n")}, "a\n"},
+		{"position beyond the end is clamped to the end", "a", []textEdit{te(1, 0, 1, 0, "b")}, "ab"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := formattingTransaction(lines(strings.Split(tt.text, "\n")), false, 3, tt.edits, encUTF16)
+			if tx == nil {
+				t.Fatal("transaction = nil")
+			}
+			if got := applyEdits(tt.text, tx.Edits); got != tt.want {
+				t.Errorf("result = %q, want %q (edits %+v)", got, tt.want, tx.Edits)
+			}
+		})
 	}
 }
 

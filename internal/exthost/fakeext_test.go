@@ -80,6 +80,8 @@ type fakeBuffer struct {
 type fakeState struct {
 	PID     int                         `json:"pid"`
 	Buffers map[ext.BufferID]fakeBuffer `json:"buffers"`
+	// FinalNewline は、バッファごとに、最後に受け取った buffer/open の finalNewline である。省かれていれば nil。
+	FinalNewline map[ext.BufferID]*bool `json:"finalNewline"`
 	// Log は、受け取ったメッセージと、取り消しの記録である。
 	Log []string `json:"log"`
 }
@@ -99,8 +101,9 @@ type fakeExt struct {
 }
 
 type fakeDoc struct {
-	version ext.Version
-	lines   []string
+	version      ext.Version
+	lines        []string
+	finalNewline *bool
 }
 
 func runFakeExt(mode string) int {
@@ -253,7 +256,7 @@ func (f *fakeExt) notification(_ context.Context, n *rpc.Notification) {
 		var p ext.BufferOpenParams
 		_ = json.Unmarshal(n.Params, &p)
 		f.mu.Lock()
-		f.docs[p.Buffer] = &fakeDoc{version: p.Version, lines: strings.Split(p.Text, "\n")}
+		f.docs[p.Buffer] = &fakeDoc{version: p.Version, lines: strings.Split(p.Text, "\n"), finalNewline: p.FinalNewline}
 		f.log = append(f.log, fmt.Sprintf("open:%d:%d", p.Buffer, p.Version))
 		f.mu.Unlock()
 	case ext.MethodBufferChange:
@@ -301,9 +304,13 @@ func (f *fakeExt) notification(_ context.Context, n *rpc.Notification) {
 func (f *fakeExt) state() fakeState {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	s := fakeState{PID: os.Getpid(), Buffers: map[ext.BufferID]fakeBuffer{}, Log: append([]string(nil), f.log...)}
+	s := fakeState{
+		PID: os.Getpid(), Buffers: map[ext.BufferID]fakeBuffer{}, FinalNewline: map[ext.BufferID]*bool{},
+		Log: append([]string(nil), f.log...),
+	}
 	for id, d := range f.docs {
 		s.Buffers[id] = fakeBuffer{Version: d.version, Text: strings.Join(d.lines, "\n")}
+		s.FinalNewline[id] = d.finalNewline
 	}
 	return s
 }

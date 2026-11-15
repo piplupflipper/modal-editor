@@ -19,7 +19,7 @@ func TestNewLines(t *testing.T) {
 		lines []string
 		eol   bool
 	}{
-		{"", []string{""}, false},
+		{"", []string{""}, true}, // Vim と同じく、空のファイルは末尾の改行があるものとして扱う
 		{"\n", []string{""}, true},
 		{"abc", []string{"abc"}, false},
 		{"abc\n", []string{"abc"}, true},
@@ -40,6 +40,8 @@ func TestNewLines(t *testing.T) {
 		if b.HasTrailingNewline() != tt.eol {
 			t.Errorf("New(%q).HasTrailingNewline() = %v, want %v", tt.text, b.HasTrailingNewline(), tt.eol)
 		}
+		// 末尾の改行を補わない設定では、読み込んだ内容をそのまま復元する。
+		b.SetFixEndOfLine(false)
 		var out bytes.Buffer
 		if _, err := b.WriteTo(&out); err != nil || out.String() != tt.text {
 			t.Errorf("New(%q).WriteTo() = %q, %v", tt.text, out.String(), err)
@@ -609,7 +611,7 @@ func TestFileRoundTrip(t *testing.T) {
 		lines int
 		eol   bool
 	}{
-		{"空のファイル", "", 1, false},
+		{"空のファイル", "", 1, true},
 		{"改行だけ", "\n", 1, true},
 		{"末尾の改行あり", "a\nb\n", 2, true},
 		{"末尾の改行なし", "a\nb", 2, false},
@@ -630,6 +632,7 @@ func TestFileRoundTrip(t *testing.T) {
 			if b.LineCount() != tt.lines || b.HasTrailingNewline() != tt.eol {
 				t.Errorf("LineCount() = %d, HasTrailingNewline() = %v, want %d, %v", b.LineCount(), b.HasTrailingNewline(), tt.lines, tt.eol)
 			}
+			b.SetFixEndOfLine(false)
 			if err = b.WriteFile(path); err != nil {
 				t.Fatal(err)
 			}
@@ -675,7 +678,7 @@ func TestWriteFileSymlink(t *testing.T) {
 	if err := os.Symlink("real.txt", link); err != nil {
 		t.Fatal(err)
 	}
-	if err := New("new").WriteFile(link); err != nil {
+	if err := New("new\n").WriteFile(link); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Lstat(link)
@@ -683,7 +686,7 @@ func TestWriteFileSymlink(t *testing.T) {
 		t.Fatalf("リンクがリンクでなくなった: %v, %v", info, err)
 	}
 	got, err := os.ReadFile(target)
-	if err != nil || string(got) != "new" {
+	if err != nil || string(got) != "new\n" {
 		t.Errorf("リンク先の内容 = %q, %v", got, err)
 	}
 	assertOnlyFiles(t, dir, "link.txt", "real.txt")
@@ -714,6 +717,82 @@ func assertOnlyFiles(t *testing.T, dir string, names ...string) {
 	}
 	if !slices.Equal(got, names) {
 		t.Errorf("%s の中身 = %q, want %q", dir, got, names)
+	}
+}
+
+// TestWriteFinalNewline は、末尾の改行の書き出しが、Vim 9.1 の 'fixendofline' の有効と無効で Vim と一致することを確かめる。
+// 期待値は、手元の Vim 9.1 で vim -Nu NONE -n --not-a-term -c 'set [no]fixeol' -c '<操作>' -c 'wq! out' in を実行して得た（2026-11-16）。
+// 操作は、Vim のノーマルモードのコマンドを、同じテキストになる Buffer の編集に置き換えた。
+func TestWriteFinalNewline(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		// edits は、Vim で行った操作に当たる編集である。nil なら編集しない。
+		edits []Edit
+		// undo は、編集の後にアンドゥするかどうかである。
+		undo bool
+		fix  string // fixendofline が有効のときの書き出しの結果
+		nofx string // fixendofline が無効のときの書き出しの結果
+	}{
+		{name: "末尾の改行なし", in: "a\nb", fix: "a\nb\n", nofx: "a\nb"},
+		{name: "末尾の改行あり", in: "a\nb\n", fix: "a\nb\n", nofx: "a\nb\n"},
+		{name: "空のファイル", in: "", fix: "", nofx: ""},
+		{name: "改行だけ", in: "\n", fix: "\n", nofx: "\n"},
+		{name: "CR で終わる行", in: "a\r", fix: "a\r\n", nofx: "a\r"},
+		// ix
+		{name: "空のファイルに挿入", in: "", edits: []Edit{{Range: rng(0, 0, 0, 0), Text: "x"}}, fix: "x\n", nofx: "x\n"},
+		// ix<Esc>x
+		{name: "空のファイルに挿入して消す", in: "", edits: []Edit{{Range: rng(0, 0, 0, 0), Text: "x"}, {Range: rng(0, 0, 0, 1)}}, fix: "\n", nofx: "\n"},
+		// ix<Esc>u
+		{name: "空のファイルに挿入して戻す", in: "", edits: []Edit{{Range: rng(0, 0, 0, 0), Text: "x"}}, undo: true, fix: "", nofx: ""},
+		// ix
+		{name: "改行だけのファイルに挿入", in: "\n", edits: []Edit{{Range: rng(0, 0, 0, 0), Text: "x"}}, fix: "x\n", nofx: "x\n"},
+		// ox
+		{name: "末尾の改行なしに行を足す", in: "a", edits: []Edit{{Range: rng(0, 1, 0, 1), Text: "\nx"}}, fix: "a\nx\n", nofx: "a\nx"},
+		// 0D
+		{name: "末尾の改行なしの行を空にする", in: "abc", edits: []Edit{{Range: rng(0, 0, 0, 3)}}, fix: "\n", nofx: ""},
+		// 0D
+		{name: "末尾の改行ありの行を空にする", in: "abc\n", edits: []Edit{{Range: rng(0, 0, 0, 3)}}, fix: "\n", nofx: "\n"},
+	}
+	for _, tt := range tests {
+		for _, fix := range []bool{true, false} {
+			b := New(tt.in)
+			b.SetFixEndOfLine(fix)
+			if tt.edits != nil {
+				if _, err := b.Apply(Transaction{BaseVersion: b.Version(), Edits: tt.edits}); err != nil {
+					t.Fatalf("%s: Apply() error = %v", tt.name, err)
+				}
+			}
+			if tt.undo {
+				b.Undo()
+			}
+			want := tt.nofx
+			if fix {
+				want = tt.fix
+			}
+			var out bytes.Buffer
+			if _, err := b.WriteTo(&out); err != nil || out.String() != want {
+				t.Errorf("%s (fixendofline=%v): WriteTo() = %q, %v; want %q", tt.name, fix, out.String(), err, want)
+			}
+		}
+	}
+}
+
+func TestFinalNewline(t *testing.T) {
+	b := New("a")
+	if !b.FixEndOfLine() || !b.FinalNewline() || b.HasTrailingNewline() {
+		t.Errorf("New(%q): FixEndOfLine() = %v, FinalNewline() = %v, HasTrailingNewline() = %v; want true, true, false",
+			"a", b.FixEndOfLine(), b.FinalNewline(), b.HasTrailingNewline())
+	}
+	b.SetFixEndOfLine(false)
+	if b.FixEndOfLine() || b.FinalNewline() {
+		t.Errorf("SetFixEndOfLine(false) の後: FixEndOfLine() = %v, FinalNewline() = %v; want false, false", b.FixEndOfLine(), b.FinalNewline())
+	}
+	if b.Modified() || b.Version() != 0 {
+		t.Errorf("SetFixEndOfLine は変更として扱わない: Modified() = %v, Version() = %d", b.Modified(), b.Version())
+	}
+	if c := New("a\n"); func() bool { c.SetFixEndOfLine(false); return !c.FinalNewline() }() {
+		t.Errorf("末尾の改行のあるバッファの FinalNewline() = false, want true")
 	}
 }
 

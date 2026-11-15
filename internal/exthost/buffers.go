@@ -25,6 +25,10 @@ type BufferSnapshot struct {
 	Version uint64
 	// Text は、バッファの全文である。internal/buffer の Buffer.Text が返すもの（末尾の改行を含まない）を渡す。
 	Text string
+	// NoFinalNewline は、ファイルへ書き出したときに最後の行の後に改行が付かないことを表す。
+	// internal/buffer の Buffer.FinalNewline が false を返すバッファで true にする。
+	// ゼロ値（false）は改行が付くことを表し、拡張機能へは ext.BufferOpenParams の FinalNewline を true にして送る。
+	NoFinalNewline bool
 }
 
 // document は、Host が持つバッファの写しである。
@@ -36,15 +40,19 @@ type document struct {
 	version  ext.Version
 	// lines は、テキストを "\n" で分けた行である。少なくとも 1 要素を持つ。
 	lines []string
+	// finalNewline は、書き出したときに最後の行の後に改行が付くかどうかである。
+	finalNewline bool
 }
 
 func (d *document) openParams() ext.BufferOpenParams {
+	finalNewline := d.finalNewline
 	return ext.BufferOpenParams{
-		Buffer:   d.id,
-		Path:     d.path,
-		FileType: d.fileType,
-		Version:  d.version,
-		Text:     strings.Join(d.lines, "\n"),
+		Buffer:       d.id,
+		Path:         d.path,
+		FileType:     d.fileType,
+		Version:      d.version,
+		Text:         strings.Join(d.lines, "\n"),
+		FinalNewline: &finalNewline,
 	}
 }
 
@@ -69,6 +77,8 @@ func (h *Host) OpenBuffer(s BufferSnapshot) error {
 		fileType: s.FileType,
 		version:  ext.Version(s.Version),
 		lines:    strings.Split(s.Text, "\n"),
+
+		finalNewline: !s.NoFinalNewline,
 	}
 	h.docs[s.ID] = d
 	h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
@@ -162,6 +172,29 @@ func (h *Host) UpdateBuffer(id ext.BufferID, path, fileType string) error {
 	d.path, d.fileType = path, fileType
 	h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
 	h.activateLocked(ext.ActivationFileType, fileType)
+	return nil
+}
+
+// SetFinalNewline は、開いているバッファを書き出したときに最後の行の後に改行が付くかどうかが変わったことを知らせる
+// （末尾の改行を補う設定を利用者が切り替えた場合など）。
+// finalNewline には internal/buffer の Buffer.FinalNewline が返す値を渡す。
+// 値が変わったなら、稼働中の拡張機能へ buffer/open を送り直す（拡張機能は持っている内容を置き換える。[ext.BufferOpenParams]）。
+// 変わらなければ何もしない。開いていないバッファなら [ErrBufferState] を包んだ誤りを返す。
+func (h *Host) SetFinalNewline(id ext.BufferID, finalNewline bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing {
+		return ErrClosed
+	}
+	d, ok := h.docs[id]
+	if !ok {
+		return fmt.Errorf("%w: buffer %d is not open", ErrBufferState, id)
+	}
+	if d.finalNewline == finalNewline {
+		return nil
+	}
+	d.finalNewline = finalNewline
+	h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
 	return nil
 }
 
