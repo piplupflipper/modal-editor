@@ -13,6 +13,8 @@ type insertState struct {
 	text []rune
 	// repeat は、入力したテキストを入れる回数である（3ix<Esc> なら 3）。c では 1 である。
 	repeat int
+	// extraGroups は、抜けるときに追加で閉じるアンドゥのグループの数である（インサートモードで終わったマクロの再生の分）。
+	extraGroups int
 }
 
 // startInsert は、インサートモードへ移る。アンドゥのグループは呼び出し側（change）が開いたままにしておく。
@@ -131,7 +133,9 @@ func (s *State) finishInsert() {
 		s.cursor.Byte = prevChar(s.line(s.cursor.Line), s.cursor.Byte)
 	}
 	s.setCursorNormal(s.cursor)
-	s.buf.EndUndoGroup()
+	for range 1 + in.extraGroups {
+		s.buf.EndUndoGroup()
+	}
 	s.registers.inserted = applyBackspaces(text)
 	cmd := in.cmd
 	cmd.Text = text

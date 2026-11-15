@@ -53,8 +53,9 @@ func (s *State) stopRecording() {
 
 // play は、@{reg} と @@ である。レジスターのキーの列を、回数だけ 1 個ずつ Feed と同じ解釈に渡す（FR-05）。
 // 途中の操作が失敗したら、そこで再生を止める（Vim と同じ）。@: は、直前のコマンドラインを実行し直す。
+// 再生 1 回（回数の繰り返しを含む）の変更は、Vim の `:help undo-blocks` と同じくアンドゥの 1 単位にまとめる（FR-07）。
 //
-// req: FR-05
+// req: FR-05, FR-07
 func (s *State) play(cmd editcmd.Command) error {
 	name := cmd.Char
 	if name == '@' {
@@ -64,6 +65,8 @@ func (s *State) play(cmd editcmd.Command) error {
 		}
 	}
 	n := max(cmd.Count, 1)
+	s.buf.BeginUndoGroup()
+	defer s.endPlayGroup()
 	if name == ':' {
 		if s.lastCmd == "" {
 			return failf("no previous command line")
@@ -100,6 +103,16 @@ func (s *State) play(cmd editcmd.Command) error {
 		s.runResults(s.parser.Flush())
 	}
 	return nil
+}
+
+// endPlayGroup は、マクロの再生全体をまとめたアンドゥのグループを閉じる。
+// 再生がインサートモードで終わった場合（"iX" を @ で再生）は、インサートモードを抜けるときに一緒に閉じる。
+func (s *State) endPlayGroup() {
+	if s.mode == ModeInsert {
+		s.insert.extraGroups++
+		return
+	}
+	s.buf.EndUndoGroup()
 }
 
 // recordDot は、実行した値を、ドットリピートの対象であれば記録する（FR-06）。

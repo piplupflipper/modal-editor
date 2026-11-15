@@ -118,3 +118,24 @@ func TestMacroStopInVisual(t *testing.T) {
 		t.Errorf("a = %q", reg.Text)
 	}
 }
+
+// インサートモードで終わるマクロの再生は、インサートモードを抜けるまでを 1 単位にする。
+// 期待値は Vim 9.1 で :let @a='iX' の後に同じキーを入れた結果である。
+//
+// req: FR-05, FR-07
+func TestMacroEndsInInsert(t *testing.T) {
+	for _, tt := range []struct{ keys, want, cursor string }{
+		{"@aY<Esc>u", "abc", "0:0"},
+		{"@aY<Esc>xu", "XYabc", "0:1"},
+	} {
+		s := setup(t, "|abc")
+		s.registers.Set('a', Register{Text: "iX"})
+		feedKeys(s, tt.keys)
+		if got := s.buf.Text(); got != tt.want {
+			t.Errorf("%s: text = %q, want %q", tt.keys, got, tt.want)
+		}
+		if got := s.Cursor().String(); got != tt.cursor {
+			t.Errorf("%s: cursor = %s, want %s", tt.keys, got, tt.cursor)
+		}
+	}
+}
