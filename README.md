@@ -13,6 +13,7 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 
 - Go（バージョンは [go.mod](go.mod) を参照）
 - make
+- C コンパイラ（gcc など）。tree-sitter の拡張機能（`cmd/modal-editor-ext-treesitter/`）が cgo で文法をコンパイルするので、`make check`、`make test`、`make build` に要る。本体は cgo を使わない
 
 リンターなどの開発ツールは、`make` が `go run` でバージョンを固定して実行するので、インストールは不要である。
 初回の実行時だけ、ツールのビルドに数分かかる。
@@ -46,6 +47,7 @@ Go はコンパイル言語なので、型チェックはコンパイルの一�
 | `cmd/modal-editor/` | エディタ本体の実行ファイルの入口 |
 | `cmd/modal-editor-mcp-bridge/` | MCP の中継コマンド。標準入出力と起動中のエディタの Unix ドメインソケットの間でメッセージを転送する |
 | `cmd/modal-editor-ext-line/` | 標準の拡張機能（行のテキストオブジェクト）の実行ファイルと宣言ファイル |
+| `cmd/modal-editor-ext-treesitter/` | 標準の拡張機能（tree-sitter による構文ハイライト）の実行ファイルと宣言ファイル。cgo を使い、ビルドに C コンパイラが要る |
 | `cmd/reqtrace/` | 要件ごとの進捗を生成するツール |
 | `internal/` | このリポジトリの中だけで使うパッケージ |
 | `docs/` | 要件定義などの文書 |
