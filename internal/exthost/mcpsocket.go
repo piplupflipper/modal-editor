@@ -42,6 +42,8 @@ type MCPSocket struct {
 // 異常終了して残ったディレクトリとプロセス ID が重なった場合にも、一意にするためである。
 // 乱数の部分は os.MkdirTemp が作り、既にあるディレクトリは使わない。
 // 一時ディレクトリは他の利用者と共有されうるが、os.MkdirTemp は新しいディレクトリを 0700 で作るので、他の利用者は中に入れない。
+//
+// req: FR-33
 func NewMCPSocket() (*MCPSocket, error) {
 	return newMCPSocket(os.Getenv("XDG_RUNTIME_DIR"), os.TempDir(), os.Getpid())
 }

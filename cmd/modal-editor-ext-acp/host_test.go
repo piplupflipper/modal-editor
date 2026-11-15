@@ -53,11 +53,18 @@ func TestMain(m *testing.M) {
 
 // hostBuffer は、本体の役が持つバッファである。
 type hostBuffer struct {
-	path         string
-	text         string
+	path string
+	text string
+	// finalNewline は、本体の buffer.Buffer の FinalNewline（書き出すときに改行を足すか）である。
 	finalNewline bool
-	version      ext.Version
+	// noLines は、行の無いバッファ（無いファイルを開いた空のバッファ）かどうかである。書き出すと空のファイルになる。
+	// 拡張機能へは、行の無いバッファの FinalNewline を false で送る（ext.BufferOpenParams の FinalNewline）。
+	noLines bool
+	version ext.Version
 }
+
+// sentFinalNewline は、拡張機能へ送る FinalNewline である。
+func (b *hostBuffer) sentFinalNewline() bool { return b.finalNewline && !b.noLines }
 
 // host は、本体の役である。拡張機能の Server と io.Pipe でつなぎ、editor/open、buffer/edit、buffer/save、choice/ask に答える。
 // バッファの編集は、本体と同じく、適用したら buffer/change を送ってから応答する。
@@ -256,11 +263,13 @@ func (h *host) editorOpen(p ext.EditorOpenParams) (ext.BufferID, ext.Version, er
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// 本体と同じく、無いファイルは行の無いバッファにし、末尾の改行を付けない（ext.BufferOpenParams の FinalNewline）。
-		b.finalNewline = false
+		b.noLines = true
 	case err != nil:
 		h.mu.Unlock()
 		return 0, 0, err
 	default:
+		// 末尾の改行の無いファイルは、FinalNewline が false のバッファにする。
+		// 末尾の改行を補う設定（既定で有効）を無効にした本体と同じで、編集しても FinalNewline は変わらない。
 		s := string(data)
 		b.finalNewline = strings.HasSuffix(s, "\n")
 		b.text = strings.TrimSuffix(s, "\n")
@@ -269,7 +278,7 @@ func (h *host) editorOpen(p ext.EditorOpenParams) (ext.BufferID, ext.Version, er
 	id := h.nextBuf
 	h.bufs[id] = b
 	h.mu.Unlock()
-	fn := b.finalNewline
+	fn := b.sentFinalNewline()
 	err = h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: id, Path: p.Path, Version: 1, Text: b.text, FinalNewline: &fn})
 	return id, 1, err
 }
@@ -294,15 +303,15 @@ func (h *host) edit(p ext.BufferEditParams) ext.BufferEditResult {
 	from := b.version
 	b.version++
 	to := b.version
-	// 本体と同じく、行の無いバッファに入力したら末尾の改行を付けるようにし、buffer/open を送り直す。
-	reopen := !b.finalNewline && b.text != ""
+	// 本体と同じく、行の無いバッファに入力したら行の無いバッファでなくし、buffer/open で FinalNewline を送り直す。
+	reopen := b.noLines && b.text != ""
 	if reopen {
-		b.finalNewline = true
+		b.noLines = false
 	}
-	text, path := b.text, b.path
+	text, path, fn := b.text, b.path, b.sentFinalNewline()
 	h.mu.Unlock()
 	if reopen {
-		_ = h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: p.Buffer, Path: path, Version: to, Text: text})
+		_ = h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: p.Buffer, Path: path, Version: to, Text: text, FinalNewline: &fn})
 	} else {
 		_ = h.conn.Notify(ext.MethodBufferChange, ext.BufferChangeParams{Buffer: p.Buffer, FromVersion: from, ToVersion: to, Edits: p.Transaction.Edits})
 	}
@@ -331,7 +340,10 @@ func (h *host) save(p ext.BufferSaveParams) (ext.BufferSaveResult, error) {
 		return ext.BufferSaveResult{Saved: false, Version: b.version}, nil
 	}
 	data := b.text
-	if b.finalNewline {
+	switch {
+	case b.noLines:
+		data = ""
+	case b.finalNewline:
 		data += "\n"
 	}
 	if err := os.WriteFile(b.path, []byte(data), 0o600); err != nil {

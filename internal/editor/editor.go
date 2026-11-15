@@ -105,12 +105,13 @@ type Editor struct {
 	log      *slog.Logger
 	term     Terminal
 	host     *exthost.Host
-	// mcpSocket は、New が決めた MCP のソケットのパスである。Config.MCPSocket を指定したときと、決められなかったときは nil。
-	mcpSocket *exthost.MCPSocket
-	renderer  *ui.Renderer
+	renderer *ui.Renderer
 	keymap   *input.Keymap
 	remap    *remapper
 	fileType map[string]string
+
+	// mcpSocket は、New が決めた MCP のソケットのパスである。Config.MCPSocket を指定したときと、決められなかったときは nil。
+	mcpSocket *exthost.MCPSocket
 
 	bufs   []*bufferState
 	cur    *bufferState

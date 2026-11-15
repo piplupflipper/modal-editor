@@ -16,7 +16,8 @@ import (
 )
 
 // socketEnv は、待ち受けるソケットのパスを受け取る環境変数の名前である（仮。cmd/modal-editor-mcp-bridge と同じ）。
-const socketEnv = "MODAL_EDITOR_MCP_SOCKET"
+// 本体（internal/editor）が起動ごとにパスを決め、すべての拡張機能へ渡す（基本設計 6.2）。
+const socketEnv = ext.EnvMCPSocket
 
 // cmdStart は、拡張機能を起動する契機のコマンドである（仮。パッケージの doc の「MCP の接続」）。
 const cmdStart = "mcp.start"

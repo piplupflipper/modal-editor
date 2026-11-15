@@ -123,7 +123,8 @@ func specs(t *testing.T) []exthost.Spec {
 }
 
 // startEditor は、internal/editor のエディタを偽の端末で動かす。files を開き、テストの終わりに止める。
-func startEditor(t *testing.T, workDir string, files ...string) *fakeTerm {
+// 本体が拡張機能へ渡す MCP のソケットのパスを一緒に返す。
+func startEditor(t *testing.T, workDir string, files ...string) (*fakeTerm, string) {
 	t.Helper()
 	term := &fakeTerm{in: make(chan editor.TermEvent, 256)}
 	e, err := editor.New(term, editor.Config{
@@ -156,7 +157,7 @@ func startEditor(t *testing.T, workDir string, files ...string) *fakeTerm {
 			t.Errorf("Close = %v", err)
 		}
 	})
-	return term
+	return term, e.MCPSocket()
 }
 
 // waitSocket は、path で接続を受け付けるようになるまで待つ。
@@ -227,17 +228,21 @@ func TestThroughBridge(t *testing.T) {
 	if err := os.WriteFile(bPath, []byte("héllo\nworld\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	sockDir, err := os.MkdirTemp("", "mcps")
+	// ソケットのパスは本体が XDG_RUNTIME_DIR の下に決めて、拡張機能へ環境変数で渡す（基本設計 6.2）。
+	// 本体の環境に残っている変数は使われない。
+	rt, err := os.MkdirTemp("", "mcps")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	sock := filepath.Join(sockDir, "s")
-	// 拡張機能の子プロセスは、本体（このテストのプロセス）の環境変数を引き継ぐ。
-	t.Setenv(socketEnv, sock)
+	t.Cleanup(func() { _ = os.RemoveAll(rt) })
+	t.Setenv("XDG_RUNTIME_DIR", rt)
+	t.Setenv(socketEnv, filepath.Join(rt, "stale"))
 
-	term := startEditor(t, work, aPath)
-	// mcp.start で MCP の拡張機能が起動し、ソケットで待ち受ける。
+	term, sock := startEditor(t, work, aPath)
+	if !strings.HasPrefix(sock, filepath.Join(rt, "modal-editor")+string(filepath.Separator)) {
+		t.Fatalf("ソケットのパス = %q, want under %s", sock, rt)
+	}
+	// mcp.start で MCP の拡張機能が起動し、本体が決めたパスで待ち受ける。
 	term.keys(`\m`)
 	waitSocket(t, sock)
 	fi, err := os.Stat(sock)
