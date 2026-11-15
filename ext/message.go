@@ -335,12 +335,16 @@ type Decoration struct {
 // 本体は、同じ拡張機能から同じバッファについて前に受け取った一覧だけを置き換え、
 // 他の拡張機能が同じバッファに付けた一覧は変えない。
 // 空の一覧を送ると、その拡張機能がそのバッファに付けた色を消す。
+//
+// JSON では、範囲の一覧を範囲ごとのオブジェクトではなく、整数の列と色の種類の名前の表で表す（MarshalJSON。形は decoration.go の decorationFields の doc）。
+// 大きなファイルでも本体の受信の上限に収めるためである。Go の値としては Decorations の一覧のまま扱える。
 type DecorationSetParams struct {
 	Buffer BufferID `json:"buffer"`
 	// Version は、一覧を計算するもとにしたバージョン番号である。
 	Version Version `json:"version"`
 	// Decorations は、バッファ全体について、この拡張機能が色を付ける範囲の一覧である。
-	Decorations []Decoration `json:"decorations"`
+	// JSON では styles と data の 2 つの項目になる（MarshalJSON）ので、タグは使わない。
+	Decorations []Decoration `json:"-"`
 }
 
 // MessageLevel は、利用者へのメッセージの重要度である。

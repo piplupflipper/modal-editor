@@ -356,10 +356,17 @@ func connect(t *testing.T) (*rpc.Conn, <-chan ext.DecorationSetParams) {
 // 通り道の容量を大きく取り、受け取りの goroutine が詰まって ping の応答の受信が遅れないようにする。
 func connectWithMessages(t *testing.T) (*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams) {
 	t.Helper()
+	return connectLimited(t, maxDecorationSetBytes)
+}
+
+// connectLimited は、decoration/set の大きさの上限を maxBytes にして connectWithMessages と同じものを返す。
+func connectLimited(t *testing.T, maxBytes int) (*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams) {
+	t.Helper()
 	h, err := newHighlighter()
 	if err != nil {
 		t.Fatalf("newHighlighter: %v", err)
 	}
+	h.maxBytes = maxBytes
 	hostR, extW := io.Pipe()
 	extR, hostW := io.Pipe()
 	served := make(chan error, 1)
@@ -596,22 +603,6 @@ func TestInputEdit(t *testing.T) {
 	}
 }
 
-// TestDecorationSetSize は、符号化せずに数えた decoration/set の大きさが、encoding/json で符号化した大きさと一致することを確かめる。
-func TestDecorationSetSize(t *testing.T) {
-	h := newTestHighlighter(t)
-	d := parse(t, h, "go", goSource)
-	for _, decs := range [][]ext.Decoration{{}, d.decorations()[:1], d.decorations()} {
-		p := ext.DecorationSetParams{Buffer: 12345, Version: 1 << 40, Decorations: decs}
-		data, err := json.Marshal(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := decorationSetSize(p.Buffer, p.Version, p.Decorations); got != len(data) {
-			t.Errorf("%d decorations: size = %d, want %d", len(decs), got, len(data))
-		}
-	}
-}
-
 // bigJSON は、n 行の JSON の配列を返す。各行は {"id": N, "name": "itemN", "ok": true, "v": null}, の形で、8 つの範囲に色が付く。
 func bigJSON(n int) string {
 	var sb strings.Builder
@@ -675,7 +666,8 @@ func receiveVersion(t *testing.T, got <-chan ext.DecorationSetParams, want ext.V
 // TestServeStaysResponsive は、解析に時間のかかる大きなファイルを打鍵しても、ping が本体の期限（internal/exthost の DefaultPingTimeout、2 秒）より十分に早く返ることを確かめる。
 // レビューの再現の手順（20,003 行・約 1.2 MB の JSON に 100 ms の間隔で 15 文字を挿入した直後に ping）と同じである。
 // 解析をループの上で同期に行っていたときは 3.25 秒かかった。
-// このファイルの一覧は maxDecorationSetBytes を超えるので、一覧は空になり、message/show が 1 回だけ届くことも確かめる。
+// 範囲を整数の列で送る形（基本設計 6.1）では、このファイルの一覧（16 万の範囲）は約 1.6 MB で上限に収まり、
+// 最後のバージョンの一覧が全文から解析した一覧と一致することも確かめる（#53 の受入条件）。
 //
 // req: FR-35
 func TestServeStaysResponsive(t *testing.T) {
@@ -684,7 +676,7 @@ func TestServeStaysResponsive(t *testing.T) {
 	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, FileType: "json", Text: text}); err != nil {
 		t.Fatal(err)
 	}
-	typeChars(t, conn, text, 15, 100*time.Millisecond)
+	text = typeChars(t, conn, text, 15, 100*time.Millisecond)
 	if d := ping(t, conn); d > 500*time.Millisecond {
 		t.Errorf("ping took %v, want at most 500ms", d)
 	} else {
@@ -692,6 +684,54 @@ func TestServeStaysResponsive(t *testing.T) {
 	}
 	p, n := receiveVersion(t, got, 16)
 	t.Logf("received %d decoration/set for 16 versions", n)
+	h := newTestHighlighter(t)
+	want := parse(t, h, "json", text).decorations()
+	if len(want) < 160000 || !slices.Equal(p.Decorations, want) {
+		t.Errorf("decorations of version 16 differ from a full parse (%d vs %d)", len(p.Decorations), len(want))
+	}
+	if len(msgs) != 0 {
+		t.Errorf("message/show arrived %d times, want none", len(msgs))
+	}
+}
+
+// TestServeLargeGo は、1 万行の Go のファイルに色が付く（一覧が上限に収まり、全文から解析した一覧と一致する）ことを確かめる（#53 の受入条件）。
+//
+// req: FR-35
+func TestServeLargeGo(t *testing.T) {
+	conn, got := connect(t)
+	text := bigGo(10000)
+	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, FileType: "go", Text: text}); err != nil {
+		t.Fatal(err)
+	}
+	p := receiveWithin(t, got, bigTimeout)
+	h := newTestHighlighter(t)
+	want := parse(t, h, "go", text).decorations()
+	if len(want) < 10000 || !slices.Equal(p.Decorations, want) {
+		t.Errorf("decorations differ from a full parse (%d vs %d)", len(p.Decorations), len(want))
+	}
+}
+
+// bigGo は、goSource の関数を名前を変えて並べた、n 行以上の Go のソースを返す。
+func bigGo(n int) string {
+	var sb strings.Builder
+	sb.WriteString("package main\n\nimport \"fmt\"\n")
+	// 前置きが 3 行、関数 1 つが 12 行である。
+	for i := 0; 3+12*i < n; i++ {
+		fmt.Fprintf(&sb, "\n// f%d は、例の関数である。\nfunc f%d(name string) (int, error) {\n\tx := len(name) + %d\n\tif x > 0x1f {\n\t\treturn 0, fmt.Errorf(\"too long: %%q\", name)\n\t}\n\tvar s = []string{\"a\", `b`}\n\tfor _, v := range s {\n\t\tfmt.Println(v, nil, true, 1.5)\n\t}\n\treturn x, nil\n}\n", i, i, i)
+	}
+	return sb.String()
+}
+
+// TestServeTooLarge は、一覧が上限を超えるバッファには空の一覧を送り、message/show で 1 回だけ知らせることを確かめる。
+// 上限を小さくして試す。
+func TestServeTooLarge(t *testing.T) {
+	conn, got, msgs := connectLimited(t, 4096)
+	text := bigJSON(1000)
+	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, FileType: "json", Text: text}); err != nil {
+		t.Fatal(err)
+	}
+	typeChars(t, conn, text, 3, 0)
+	p, _ := receiveVersion(t, got, 4)
 	if len(p.Decorations) != 0 {
 		t.Errorf("decoration/set has %d decorations, want an empty list over the size limit", len(p.Decorations))
 	}
@@ -714,7 +754,6 @@ func TestServeStaysResponsive(t *testing.T) {
 // req: FR-35
 func TestServeCoalescesChanges(t *testing.T) {
 	conn, got := connect(t)
-	// 一覧が maxDecorationSetBytes を超えない大きさにする（1 行あたり約 740 バイト）。
 	text := bigJSON(3000)
 	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, FileType: "json", Text: text}); err != nil {
 		t.Fatal(err)

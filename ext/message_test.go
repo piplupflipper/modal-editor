@@ -98,7 +98,7 @@ func TestMessageJSON(t *testing.T) {
 	})
 	t.Run("decoration/set", func(t *testing.T) {
 		roundTrip(t, DecorationSetParams{Buffer: 1, Version: 3, Decorations: []Decoration{{Range: testRange, Style: "keyword"}}},
-			`{"buffer":1,"version":3,"decorations":[{"range":`+testRJSON+`,"style":"keyword"}]}`)
+			`{"buffer":1,"version":3,"styles":["keyword"],"data":[1,2,2,4,0]}`)
 	})
 	t.Run("message/show", func(t *testing.T) {
 		roundTrip(t, MessageShowParams{Level: MessageWarning, Text: "注意"}, `{"level":"warning","text":"注意"}`)
