@@ -10,10 +10,10 @@
 
 | 状態 | 件数 | 意味 |
 |---|---|---|
-| 実装とテスト | 3 | 実装とテストの両方に注釈がある |
+| 実装とテスト | 4 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 32 | 注釈が無い |
+| 未着手 | 31 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -32,7 +32,7 @@
 | FR-10 | 未着手 | - | - | 拡張機能は、コンパイルする拡張機能と、スクリプトの拡張機能の 2 種類を用意する。どちらも Go で書く |
 | FR-11 | 未着手 | - | - | 拡張機能は、モーション、オペレーター、テキストオブジェクト、コマンドを追加できる |
 | FR-12 | 未着手 | - | - | 拡張機能が追加した操作は、拡張機能の側に特別な処理を書かなくても、ドットリピートとマクロで繰り返せる。本体は、拡張機能の ID、コマンドの ID、引数を記録し、再実行のときに同じ拡張機能へ問い合わせ直す |
-| FR-13 | 未着手 | - | - | 拡張機能は、追加する操作の一覧と起動の契機を、実行せずに読める宣言ファイルに書く |
+| FR-13 | 実装とテスト | [ext/manifest.go:16](../ext/manifest.go#L16)<br>[ext/manifest.go:113](../ext/manifest.go#L113)<br>[ext/manifest.go:182](../ext/manifest.go#L182) | [ext/manifest_test.go:26](../ext/manifest_test.go#L26)<br>[ext/manifest_test.go:56](../ext/manifest_test.go#L56)<br>[ext/manifest_test.go:189](../ext/manifest_test.go#L189)<br>[ext/manifest_test.go:218](../ext/manifest_test.go#L218) | 拡張機能は、追加する操作の一覧と起動の契機を、実行せずに読める宣言ファイルに書く |
 | FR-14 | 未着手 | - | - | 拡張機能は、宣言した契機（対応するファイルを開いたとき、コマンドを呼んだとき、など）で初めて起動する。例: 言語サーバーの無いテキストファイルを開いている間は、LSP の拡張機能を起動しない |
 | FR-15 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239) | [internal/buffer/buffer_test.go:53](../internal/buffer/buffer_test.go#L53)<br>[internal/buffer/buffer_test.go:239](../internal/buffer/buffer_test.go#L239) | バッファの内容を変更できるのは本体だけとする。拡張機能は、編集の内容と、元にしたバッファのバージョン番号を本体へ送り、本体はバージョン番号が現在と一致した編集だけを適用する |
 | FR-16 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239)<br>[internal/buffer/buffer.go:347](../internal/buffer/buffer.go#L347)<br>[internal/buffer/buffer.go:365](../internal/buffer/buffer.go#L365)<br>[internal/buffer/edit.go:64](../internal/buffer/edit.go#L64) | [internal/buffer/buffer_test.go:382](../internal/buffer/buffer_test.go#L382) | 本体は拡張機能へ、最初にバッファの全文を送り、以後は差分を送る |
