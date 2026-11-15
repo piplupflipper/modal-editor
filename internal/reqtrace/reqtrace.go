@@ -1,7 +1,7 @@
 // Package reqtrace は、要件定義の ID とコードを突き合わせて、進捗の一覧を作る。
 //
 // 要件定義（docs/requirements.md）の表から要件の ID を読み取り、
-// Go のソースとテストのコメントに書かれた ID の注釈を集めて、
+// Go のソースとテストと Makefile のコメントに書かれた ID の注釈を集めて、
 // 要件ごとに「実装があるか」「テストがあるか」を導出する。
 //
 // 注釈は、コメントの行頭に "req:" と書き、その後に ID をカンマ区切りで並べる。
@@ -15,6 +15,7 @@ import (
 	"go/token"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -133,7 +134,7 @@ func ParseRequirements(r io.Reader) ([]Requirement, error) {
 	return reqs, nil
 }
 
-// Scan は、root 以下の Go のファイルから注釈を集める。
+// Scan は、root 以下の Go のファイルと Makefile から注釈を集める。
 // 名前が "." で始まるディレクトリと、testdata、vendor、bin は走査しない。
 func Scan(root string) ([]Ref, error) {
 	var refs []Ref
@@ -148,7 +149,12 @@ func Scan(root string) ([]Ref, error) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(d.Name(), ".go") {
+		scan := scanFile
+		switch {
+		case strings.HasSuffix(d.Name(), ".go"):
+		case d.Name() == "Makefile":
+			scan = scanMakefile
+		default:
 			return nil
 		}
 
@@ -156,7 +162,7 @@ func Scan(root string) ([]Ref, error) {
 		if err != nil {
 			return err
 		}
-		found, err := scanFile(path, filepath.ToSlash(rel))
+		found, err := scan(path, filepath.ToSlash(rel))
 		if err != nil {
 			return err
 		}
@@ -200,6 +206,28 @@ func scanFile(path, rel string) ([]Ref, error) {
 					refs = append(refs, Ref{ID: id, File: rel, Line: startLine + offset, IsTest: isTest})
 				}
 			}
+		}
+	}
+	return refs, nil
+}
+
+// scanMakefile は、Makefile のコメントから注釈を集める。
+// ビルドの指定（静的リンク、cgo を使わないこと、配布物の形）で満たす要件は、Go のソースではなく Makefile が実装になる。
+// 行頭が "#" の行だけを注釈の候補にする。タブで始まるレシピの行は、シェルに渡す内容なので拾わない。
+// Makefile は実装として扱い、検証は Go のテストに書く。
+func scanMakefile(path, rel string) ([]Ref, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var refs []Ref
+	for i, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		for _, id := range parseAnnotation(strings.TrimPrefix(line, "#")) {
+			refs = append(refs, Ref{ID: id, File: rel, Line: i + 1})
 		}
 	}
 	return refs, nil

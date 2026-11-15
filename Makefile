@@ -15,11 +15,16 @@ MCP_BRIDGE := $(BIN_DIR)/modal-editor-mcp-bridge
 # 標準の拡張機能。本体とは別の実行ファイルとして作る（NFR-01）。
 EXTENSIONS := modal-editor-ext-line modal-editor-ext-script modal-editor-ext-dap modal-editor-ext-lsp
 # cgo を使う標準の拡張機能。C コンパイラが要る。cgo を使うのはこれだけで、本体は CGO_ENABLED=0 で作る（NFR-02）。
+# 本体を CGO_ENABLED=0 で作る指定は build のターゲットにあり、make build-check が検査する。
+#
+# req: NFR-02
 CGO_EXTENSIONS := modal-editor-ext-treesitter
 # cgo の拡張機能は、C の標準ライブラリごと静的にリンクする（NFR-01）。
 # 動的にリンクすると、ビルドしたマシンより古い glibc の環境（AlmaLinux 8 の glibc 2.28 など）や、
 # musl の環境（Alpine）で起動できない（docs/measurements/nfr-dist.md）。
 # netgo と osusergo は、静的にリンクした glibc では動かない名前の解決（getaddrinfo、getpwnam）を Go の実装に置き換える。
+#
+# req: NFR-01
 CGO_STATIC_TAGS    := netgo,osusergo
 CGO_STATIC_LDFLAGS := -linkmode external -extldflags "-static"
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -28,6 +33,9 @@ LDFLAGS := -X github.com/piplupflipper/modal-editor/internal/version.version=$(V
 # 配布物（NFR-01、NFR-06）。ビルド済みの実行ファイルと宣言ファイルを 1 つのディレクトリと tar.gz にまとめる。
 # 宣言ファイルのある拡張機能は extensions/<名前>/ に実行ファイルと並べ（FR-13）、
 # 宣言ファイルの無い実行ファイル（スクリプトの実行環境）は本体と同じ階層に置く。
+# 配布するのはビルド済みの実行ファイルだけなので、利用者は C コンパイラも Go も要しない。
+#
+# req: NFR-01, NFR-06
 DIST_ROOT := dist
 DIST_NAME := modal-editor-$(VERSION)-$(shell go env GOOS)-$(shell go env GOARCH)
 DIST_DIR  := $(DIST_ROOT)/$(DIST_NAME)
