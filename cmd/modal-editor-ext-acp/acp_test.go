@@ -417,8 +417,13 @@ func TestWriteUnopenedFile(t *testing.T) {
 }
 
 // TestWriteFinalNewline は、fs/write_text_file で書き出したファイルの末尾の改行が、バッファの FinalNewline によらず
-// content と一致することを確かめる。本体の役は、末尾の改行の無いファイルを FinalNewline が false のバッファとして開く
-// （末尾の改行を補う設定を無効にした本体と同じ）。
+// content と一致することを確かめる。
+//
+// 本体の役は、末尾の改行の無いファイルを FinalNewline が false のバッファとして開く。これは末尾の改行を補う設定を無効にした本体の役である。
+// 今の本体は、この設定をバッファごとに無効にする手段をまだ持たず（基本設計 4.1 のバッファごとの設定は未実装）、
+// "old" のファイルも FinalNewline が true のバッファとして届くので、"no eol" のケースは今の本体では通らない経路である。
+//
+// 最後の 2 つのケースは、Vim と結果が違う現状を固定する（bufferText の doc、基本設計 6.5）。
 //
 // req: FR-34
 func TestWriteFinalNewline(t *testing.T) {
@@ -437,6 +442,9 @@ func TestWriteFinalNewline(t *testing.T) {
 		{"eol, content with two eols", ptr("old\n"), "a\n\n", "a\n\n"},
 		// 行の無いバッファ（無いファイル）は、編集で行ができると改行を補うので、true と同じに扱う。
 		{"new file, content with eol", nil, "a\nb\n", "a\nb\n"},
+		// 現状の結果。Vim なら、1 つ目は空のファイル、2 つ目は "\n" になる。
+		{"eol, empty content (differs from Vim)", ptr("x\n"), "", "\n"},
+		{"new file, content of one newline (differs from Vim)", nil, "\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "file.txt")

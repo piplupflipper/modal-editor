@@ -108,6 +108,36 @@ func TestNewMCPSocket(t *testing.T) {
 			t.Errorf("created a directory under the long path: %v", err)
 		}
 	})
+	t.Run("runtime dir not private", func(t *testing.T) {
+		tmp := t.TempDir()
+		// 既にある modal-editor が、他の利用者に開いている。
+		open := t.TempDir()
+		if err := os.Mkdir(filepath.Join(open, "modal-editor"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(open, "modal-editor"), 0o755); err != nil { //nolint:gosec // 他の利用者に開いたディレクトリを作るのがこのケースである。
+			t.Fatal(err)
+		}
+		// 既にある modal-editor が、私用のディレクトリへのシンボリックリンクである。
+		link := t.TempDir()
+		if err := os.Symlink(t.TempDir(), filepath.Join(link, "modal-editor")); err != nil {
+			t.Fatal(err)
+		}
+		for _, rt := range []string{open, link} {
+			s, err := newMCPSocket(rt, tmp, pid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkMCPSocket(t, s, tmp, "modal-editor-"+prefix)
+		}
+		private := filepath.Join(t.TempDir(), "private")
+		if err := os.Mkdir(private, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := checkPrivateDir(private); err != nil {
+			t.Errorf("checkPrivateDir of a private directory = %v", err)
+		}
+	})
 	t.Run("both unusable", func(t *testing.T) {
 		long := filepath.Join(t.TempDir(), strings.Repeat("d", 100))
 		if _, err := newMCPSocket(long, long, pid); err == nil {

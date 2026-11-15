@@ -226,8 +226,17 @@ func (c *client) writeBuffer(ctx context.Context, id ext.BufferID, version ext.V
 // true と同じに扱う。行の無いバッファは空のファイルとして書き出すために false で届くが、編集で行ができると、
 // 本体の末尾の改行を補う設定（Vim の 'fixendofline'。既定で有効）に従って改行を足すようになるためである。
 //
-// finalNewline が true のバッファへ、改行で終わらない content（空を含む）を書くと、書き出したファイルの末尾に改行が付く。
-// これは末尾の改行を補う設定のとおりの結果で、Vim で 'fixendofline' のバッファを書き出したときと同じである。
+// finalNewline が true のバッファへ、改行で終わらない空でない content を書くと、書き出したファイルの末尾に改行が付く。
+// これは末尾の改行を補う設定のとおりの結果で、Vim で content のファイルを読み直して書き出したとき（'fixendofline'）と同じである。
+//
+// 次の 2 つは Vim と結果が違う。buffer/edit では、行の無いバッファを作ることも、行の無いバッファでなくすこと（テキストを変えずに）もできないためである。
+//
+//   - 行のあるバッファ（"x\n" のファイルなど）へ空の content を書くと、空の行 1 つのバッファになり、ファイルは "\n" になる。
+//     Vim は空のファイルを行の無いバッファとして読むので、書き出すと空のファイルになる
+//   - 行の無いバッファ（無いファイルや空のファイルを開いたもの）へ "\n" を書くと、テキストは空のまま変わらず、ファイルは空になる。
+//     Vim では "\n" のファイルは空の行 1 つで、書き出すと "\n" になる
+//
+// Vim に揃えるには、拡張機能 API に行の無いバッファか FinalNewline を変える手段が要る（別 issue）。
 func bufferText(content, cur string, finalNewline bool) string {
 	if finalNewline || cur == "" {
 		return strings.TrimSuffix(content, "\n")

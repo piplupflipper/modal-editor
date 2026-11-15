@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,20 @@ func TestMCPSocketToExtensions(t *testing.T) {
 	h.keys(`\v`)
 	want := fmt.Sprintf("mcp=%q set=true", sock)
 	h.eventually("拡張機能が受け取ったパス", func() bool { return h.e.message.Text == want })
+}
+
+// パスを決められなかったときは、空の値を渡し、本体の環境の古い値を拡張機能へ引き継がない。
+func TestMCPSocketUnavailable(t *testing.T) {
+	long := filepath.Join(t.TempDir(), strings.Repeat("d", 100))
+	t.Setenv("XDG_RUNTIME_DIR", long)
+	t.Setenv("TMPDIR", long)
+	t.Setenv(ext.EnvMCPSocket, "/outer/editor/mcp.sock")
+	h := start(t, Config{Extensions: fakeSpecs(t)})
+	if s := h.e.MCPSocket(); s != "" {
+		t.Fatalf("MCPSocket = %q, want empty", s)
+	}
+	h.keys(`\v`)
+	h.eventually("拡張機能が受け取った空の値", func() bool { return h.e.message.Text == `mcp="" set=true` })
 }
 
 // Close は、New が決めた MCP のソケットのディレクトリを消す。Config.MCPSocket で指定したパスはそのまま渡し、消さない。

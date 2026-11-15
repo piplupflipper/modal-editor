@@ -92,6 +92,7 @@ type Config struct {
 	WorkDir string
 	// MCPSocket は、すべての拡張機能へ環境変数 ext.EnvMCPSocket で渡す MCP のソケットのパスである（基本設計 6.2）。
 	// 空なら、New が exthost.NewMCPSocket で起動ごとに一意なパスを決め、Close でそのディレクトリを消す。
+	// 決められなければ、空の値を渡す（本体の環境の同じ名前の変数は引き継がない）。
 	// 指定したパスは、呼び出し側が用意し、後始末する。
 	MCPSocket string
 	// Logger は、ログの記録先である。nil なら slog.Default() を使う。
@@ -201,7 +202,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	}
 	var sock *exthost.MCPSocket
 	if cfg.MCPSocket == "" {
-		// 決められなくてもエディタは動かす。MCP の拡張機能は待ち受けられなかったことを利用者へ知らせ、
+		// 決められなくてもエディタは動かす。MCP の拡張機能は待ち受けられなかったことを mcp.start で利用者へ知らせ、
 		// ACP の拡張機能はエージェントへ MCP サーバーを渡さない。
 		s, err := exthost.NewMCPSocket()
 		if err != nil {
@@ -211,9 +212,9 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 			cfg.MCPSocket = s.Path
 		}
 	}
-	if cfg.MCPSocket != "" {
-		cfg.Host.Env = append(slices.Clone(cfg.Host.Env), ext.EnvMCPSocket+"="+cfg.MCPSocket)
-	}
+	// 決められなかったときも空の値で上書きし、本体の環境の古い値（ACP のエージェントの中で起動したときの外側のエディタのパスなど）を
+	// 拡張機能へ引き継がない。拡張機能と中継コマンドは、空の値を変数が無いのと同じに扱う（os.Getenv）。
+	cfg.Host.Env = append(slices.Clone(cfg.Host.Env), ext.EnvMCPSocket+"="+cfg.MCPSocket)
 	host, err := exthost.New(cfg.Extensions, cfg.Host)
 	if err != nil {
 		_ = sock.Remove()
