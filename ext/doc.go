@@ -42,4 +42,5 @@ package ext
 //
 // 値は仮である。
 // バージョンの付け方と、食い違った場合の扱いは未決である（基本設計 10 章、要件定義 7 章）。
-const APIVersion = "0.1.0"
+// 0.2.0 で、decoration/set の範囲の一覧の JSON を整数の列（DecorationSetParams の MarshalJSON）に変えた（#53）。
+const APIVersion = "0.2.0"

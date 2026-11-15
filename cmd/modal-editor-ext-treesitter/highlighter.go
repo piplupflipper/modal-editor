@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
-	"math"
 	"os"
 	"sync"
 
@@ -13,10 +11,11 @@ import (
 )
 
 // maxDecorationSetBytes は、1 回の decoration/set の本文（JSON）の大きさの上限である。
-// 本体の JSON-RPC の受信の上限（internal/rpc の DefaultMaxMessageSize、64 MiB）を超えると接続が切れて拡張機能が再起動を繰り返すので、十分に下に置く。
-// 範囲を整数の列で送る形（基本設計 6.1）では、1 つの範囲が 10 バイトほどになり、約 6 MB・10 万行の JSON の一覧（80 万の範囲）が約 8 MB になる。
+// 本体は一覧を受け取るたびに、イベントループの上で描画用の表を全体から作り直す（internal/editor の rebuildDecorations）。
+// 範囲を整数の列で送る形（基本設計 6.1）では 1 つの範囲が 10 バイトほどで、上限の 10 MiB は約 10 万行の JSON（約 80 万の範囲）に当たり、
+// そのときの本体のイベントループの停止は 83〜122 ms だった（PR #73 のレビューの実測。40 万行では 445〜459 ms）。
 // 値は仮である（基本設計 10 章）。
-const maxDecorationSetBytes = 32 << 20
+const maxDecorationSetBytes = 10 << 20
 
 // tooLargeMessage は、一覧が maxDecorationSetBytes を超えたバッファについて、利用者へ 1 回だけ知らせる文言である。
 const tooLargeMessage = "tree-sitter: 色を付ける範囲の一覧が大きすぎるので、このバッファには色を付けない"
@@ -248,7 +247,7 @@ func (h *highlighter) process(id ext.BufferID, j *job) {
 	if h.superseded(id) {
 		return
 	}
-	if size := decorationSetSize(ext.DecorationSetParams{Buffer: id, Version: j.version, Decorations: decs}); size > h.maxBytes {
+	if size := (ext.DecorationSetParams{Buffer: id, Version: j.version, Decorations: decs}).JSONSize(); size > h.maxBytes {
 		h.log.Printf("buffer %d: decoration/set would be %d bytes (limit %d); sending an empty list", id, size, h.maxBytes)
 		decs = []ext.Decoration{}
 		if !h.warned[id] {
@@ -267,16 +266,6 @@ func (h *highlighter) superseded(id ext.BufferID) bool {
 	defer h.mu.Unlock()
 	_, ok := h.pending[id]
 	return ok
-}
-
-// decorationSetSize は、decoration/set の params を JSON にしたときのバイト数を返す。
-// 範囲を整数の列にする形（ext.DecorationSetParams の MarshalJSON）は符号化が速い（16 万の範囲で 15 ms ほど）ので、実際に符号化して数える。
-func decorationSetSize(p ext.DecorationSetParams) int {
-	b, err := json.Marshal(p)
-	if err != nil {
-		return math.MaxInt
-	}
-	return len(b)
 }
 
 // publish は、decoration/set を送る。送れなければログに書く。

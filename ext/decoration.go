@@ -34,23 +34,81 @@ type decorationSetWire struct {
 	Version Version         `json:"version"`
 	Styles  []string        `json:"styles"`
 	Data    json.RawMessage `json:"data"`
+	// Old は、API のバージョン 0.1.0 までの形（範囲ごとのオブジェクトの配列）の項目である。読むときに誤りにするためだけに置く。
+	Old json.RawMessage `json:"decorations,omitempty"`
 }
 
-// MarshalJSON は、p を decoration/set の JSON の形（範囲を整数の列にしたもの）にする。
-// 色の種類の名前の表 styles は、一覧に初めて現れた順に並べる。
-func (p DecorationSetParams) MarshalJSON() ([]byte, error) {
+// JSONSize は、p を MarshalJSON で JSON にしたときのバイト数を、符号化せずに返す。
+// 送る前に大きさの上限を確かめるのに使う（一覧が大きいと符号化に数十 ms かかる）。
+func (p DecorationSetParams) JSONSize() int {
+	index, styles := styleTable(p.Decorations)
+	n := len(`{"buffer":,"version":,"styles":,"data":[]}`) + uintDigits(uint64(p.Buffer)) + uintDigits(uint64(p.Version))
+	n += len(mustMarshal(styles))
+	var prev Position
+	for _, d := range p.Decorations {
+		for _, v := range encodeDecoration(prev, d, index[d.Style]) {
+			n += intDigits(v) + 1 // 区切りの ","
+		}
+		prev = d.Range.Start
+	}
+	if len(p.Decorations) > 0 {
+		n-- // 最後の整数の後ろには "," が無い
+	}
+	return n
+}
+
+// styleTable は、decs に現れる色の種類の名前を、初めて現れた順に並べた表と、名前から添字への対応を返す。
+func styleTable(decs []Decoration) (map[string]int, []string) {
 	index := map[string]int{}
 	styles := []string{}
-	for _, d := range p.Decorations {
+	for _, d := range decs {
 		if _, ok := index[d.Style]; !ok {
 			index[d.Style] = len(styles)
 			styles = append(styles, d.Style)
 		}
 	}
-	stylesJSON, err := json.Marshal(styles)
+	return index, styles
+}
+
+// mustMarshal は、文字列の列を JSON にする。文字列の列の符号化は失敗しない。
+func mustMarshal(styles []string) []byte {
+	b, err := json.Marshal(styles)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
+	return b
+}
+
+// uintDigits は、u の 10 進の桁数を返す。
+func uintDigits(u uint64) int {
+	n := 1
+	for ; u >= 10; u /= 10 {
+		n++
+	}
+	return n
+}
+
+// intDigits は、i の 10 進の表記の文字数（負なら "-" を含む）を返す。
+func intDigits(i int) int {
+	n := 1
+	if i < 0 {
+		n++ // "-"。MinInt の符号を反転すると桁あふれするので、負のまま割る
+		for ; i <= -10; i /= 10 {
+			n++
+		}
+		return n
+	}
+	for ; i >= 10; i /= 10 {
+		n++
+	}
+	return n
+}
+
+// MarshalJSON は、p を decoration/set の JSON の形（範囲を整数の列にしたもの）にする。
+// 色の種類の名前の表 styles は、一覧に初めて現れた順に並べる。
+func (p DecorationSetParams) MarshalJSON() ([]byte, error) {
+	index, styles := styleTable(p.Decorations)
+	stylesJSON := mustMarshal(styles)
 	// 1 つの範囲はたいてい 12 バイトに収まる。
 	b := make([]byte, 0, 64+len(stylesJSON)+12*len(p.Decorations))
 	b = append(b, `{"buffer":`...)
@@ -109,11 +167,19 @@ func decodeDecoration(prev Position, v [decorationFields]int) Range {
 
 // UnmarshalJSON は、decoration/set の JSON の形を読む。
 // data の長さが 5 の倍数でないか、style が styles の外を指せば誤りを返す。
+// data の項目が無いか null の通知と、前の形の項目 decorations を持つ通知も誤りにする。
+// 前の形の拡張機能の通知を空の一覧として受け取ると、本体はその拡張機能の色を黙って消すからである。空の一覧は "data":[] で送る。
 // 一覧が空なら、Decorations は nil ではなく長さ 0 のスライスにする。
 func (p *DecorationSetParams) UnmarshalJSON(b []byte) error {
 	var w decorationSetWire
 	if err := json.Unmarshal(b, &w); err != nil {
 		return err
+	}
+	if w.Old != nil {
+		return errors.New("decoration/set: the decorations field is the format before API 0.2.0; send styles and data")
+	}
+	if w.Data == nil || string(w.Data) == "null" {
+		return errors.New("decoration/set: data is missing")
 	}
 	data, err := parseInts(w.Data)
 	if err != nil {
@@ -139,15 +205,12 @@ func (p *DecorationSetParams) UnmarshalJSON(b []byte) error {
 
 var errNotIntArray = errors.New("not an array of integers")
 
-// parseInts は、JSON の整数の配列を読む。null と、項目の無い場合は空の列を返す。
+// parseInts は、JSON の整数の配列を読む。
 // encoding/json で []int に読むより速い（一覧は数十万の範囲、数百万の整数になる）。
 // 呼ぶ前に encoding/json が JSON として正しいことを確かめているので、ここでは整数の配列であることだけを確かめる。
 func parseInts(b []byte) ([]int, error) {
 	i := skipSpace(b, 0)
-	if i == len(b) || string(b[i:]) == "null" {
-		return nil, nil
-	}
-	if b[i] != '[' {
+	if i == len(b) || b[i] != '[' {
 		return nil, errNotIntArray
 	}
 	// 整数の数は、区切りの数から見積もる。

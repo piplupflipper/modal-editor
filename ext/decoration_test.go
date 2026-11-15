@@ -56,7 +56,7 @@ func TestDecorationSetJSONAnyOrder(t *testing.T) {
 	}
 }
 
-// TestDecorationSetJSONSpaces は、空白を含む JSON と、data が null の JSON を読めることを確かめる。
+// TestDecorationSetJSONSpaces は、空白を含む JSON と、空の data を読めることを確かめる。
 func TestDecorationSetJSONSpaces(t *testing.T) {
 	var p DecorationSetParams
 	if err := json.Unmarshal([]byte(`{ "buffer": 1, "version": 2, "styles": [ "a", "b" ], "data": [ 0 , -1,0,3, 1 ,
@@ -67,7 +67,7 @@ func TestDecorationSetJSONSpaces(t *testing.T) {
 	if !reflect.DeepEqual(p.Decorations, want) {
 		t.Errorf("Decorations = %+v, want %+v", p.Decorations, want)
 	}
-	for _, s := range []string{`{"buffer":1,"version":2,"styles":[],"data":null}`, `{"buffer":1,"version":2}`} {
+	for _, s := range []string{`{"buffer":1,"version":2,"styles":[],"data":[]}`, `{"buffer":1,"version":2,"data":[ ]}`} {
 		p = DecorationSetParams{}
 		if err := json.Unmarshal([]byte(s), &p); err != nil {
 			t.Fatalf("Unmarshal(%s): %v", s, err)
@@ -90,11 +90,50 @@ func TestDecorationSetJSONErrors(t *testing.T) {
 		`[0,0,0,1,0,]`,                   // encoding/json が誤りにする
 		`{"a":1}`,                        // 配列でない
 		`[0,0,0,99999999999999999999,0]`, // int に収まらない
+		`null`,
 	} {
 		var p DecorationSetParams
 		err := json.Unmarshal([]byte(`{"buffer":1,"version":1,"styles":["a"],"data":`+data+`}`), &p)
 		if err == nil {
 			t.Errorf("data %s: Unmarshal succeeded with %+v, want an error", data, p)
+		}
+	}
+}
+
+// TestDecorationSetJSONOldFormat は、data の無い通知と、API 0.1.0 までの形（decorations）の通知を、空の一覧ではなく誤りにすることを確かめる。
+func TestDecorationSetJSONOldFormat(t *testing.T) {
+	for _, s := range []string{
+		`{"buffer":1,"version":3,"decorations":[{"range":{"start":{"line":0,"byte":0},"end":{"line":0,"byte":1}},"style":"keyword"}]}`,
+		`{"buffer":1,"version":3,"decorations":[]}`,
+		`{"buffer":1,"version":3,"styles":[],"data":[],"decorations":[]}`,
+		`{"buffer":1,"version":3}`,
+		`{"buffer":1,"version":3,"styles":[]}`,
+	} {
+		var p DecorationSetParams
+		if err := json.Unmarshal([]byte(s), &p); err == nil {
+			t.Errorf("Unmarshal(%s) succeeded with %+v, want an error", s, p)
+		}
+	}
+}
+
+// TestDecorationSetJSONSize は、JSONSize が MarshalJSON の結果の長さと一致することを確かめる。
+func TestDecorationSetJSONSize(t *testing.T) {
+	r := rand.New(rand.NewPCG(53, 2)) //nolint:gosec // 再現できる無作為な一覧を作るためで、暗号の用途ではない
+	vals := []int{0, 1, -1, 9, 10, -10, 99999, math.MaxInt, math.MinInt}
+	styles := []string{"keyword", "a\"b", "", "名前", "\u0001<>&"}
+	for range 500 {
+		decs := make([]Decoration, r.IntN(20))
+		for i := range decs {
+			v := func() int { return vals[r.IntN(len(vals))] }
+			decs[i] = Decoration{Range: rng(v(), v(), v(), v()), Style: styles[r.IntN(len(styles))]}
+		}
+		p := DecorationSetParams{Buffer: BufferID(r.Uint64()), Version: Version(r.Uint64() >> r.IntN(64)), Decorations: decs}
+		data, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := p.JSONSize(); got != len(data) {
+			t.Fatalf("JSONSize = %d, want %d for %s", got, len(data), data)
 		}
 	}
 }
