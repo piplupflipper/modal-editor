@@ -118,6 +118,10 @@ type Editor struct {
 	size      atomic.Value // [2]int
 	inputDone chan struct{}
 	inspect   chan func()
+	// decoDone は、別の goroutine で作り終えた構文の色の表を、イベントループへ渡す（rebuildDecorations）。
+	decoDone chan decoBuilt
+	// stop は、Run が戻ると閉じる。イベントループへ渡す先の無くなった goroutine を終わらせる。
+	stop chan struct{}
 
 	// ctx は、Run に渡された ctx である。入れ子の待ちも、これが終わったらやめる。
 	ctx context.Context
@@ -162,6 +166,9 @@ type bufferState struct {
 	decoView    *ui.Decorations
 	diagnostics map[string][]ext.Diagnostic
 	signs       map[string][]ext.Sign
+
+	// decoBuilding は、decoView を別の goroutine で作っている途中かである（rebuildDecorations）。
+	decoBuilding bool
 }
 
 // New は、エディタを作る。拡張機能は起動しない（FR-14、NFR-04）。バッファは Open で開き、開かなければ Run が空のバッファを作る。
@@ -196,6 +203,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		resizeCh:  make(chan struct{}, 1),
 		inputDone: make(chan struct{}),
 		inspect:   make(chan func()),
+		decoDone:  make(chan decoBuilt),
 		outputs:   map[outputKey][]string{},
 		nextID:    1,
 	}
@@ -286,6 +294,8 @@ func (e *Editor) Run(ctx context.Context) error {
 	w, h := e.term.Size()
 	e.setSize(w, h)
 	e.ctx = ctx
+	e.stop = make(chan struct{})
+	defer close(e.stop)
 	go e.forwardInput()
 	e.render()
 	for !e.quit {
@@ -328,6 +338,8 @@ func (e *Editor) Run(ctx context.Context) error {
 			e.flushKeys()
 		case f := <-e.inspect:
 			f()
+		case r := <-e.decoDone:
+			e.decorationsBuilt(r)
 		}
 		e.renderIdle()
 	}
