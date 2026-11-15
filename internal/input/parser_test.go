@@ -4,147 +4,151 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // feed は、表記 s のキーを順に Feed し、全ての結果を返す。
-func feed(p *Parser, s string) []Result {
-	var out []Result
-	for _, k := range MustParseKeys(s) {
+func feed(p *Parser, s string) []editcmd.Result {
+	var out []editcmd.Result
+	for _, k := range editcmd.MustParseKeys(s) {
 		out = append(out, p.Feed(k)...)
 	}
 	return out
 }
 
-func builtin(id string) Ref { return Ref{ID: id} }
+func builtin(id string) editcmd.Ref { return editcmd.Ref{ID: id} }
 
-func done(c Command) Result { return Result{Command: c, Status: StatusDone} }
+func done(c editcmd.Command) editcmd.Result {
+	return editcmd.Result{Command: c, Status: editcmd.StatusDone}
+}
 
 // req: FR-02, FR-03, FR-06
 func TestParserBuiltin(t *testing.T) {
-	invalid := Result{Status: StatusInvalid}
-	canceled := Result{Status: StatusCanceled}
+	invalid := editcmd.Result{Status: editcmd.StatusInvalid}
+	canceled := editcmd.Result{Status: editcmd.StatusCanceled}
 	tests := []struct {
 		name string
 		keys string
-		want []Result
+		want []editcmd.Result
 	}{
-		{"d2w", "d2w", []Result{done(Command{
-			Kind: KindOperator, Count: 2, CountGiven: true, Operator: builtin("delete"),
-			Target: Target{Kind: TargetMotion, Ref: builtin("word-next")},
+		{"d2w", "d2w", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 2, CountGiven: true, Operator: builtin("delete"),
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("word-next")},
 		})}},
-		{"回数は前と後の積", "2d3w", []Result{done(Command{
-			Kind: KindOperator, Count: 6, CountGiven: true, Operator: builtin("delete"),
-			Target: Target{Kind: TargetMotion, Ref: builtin("word-next")},
+		{"回数は前と後の積", "2d3w", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 6, CountGiven: true, Operator: builtin("delete"),
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("word-next")},
 		})}},
-		{"レジスターと重ね押し", `"ayy`, []Result{done(Command{
-			Kind: KindOperator, Register: 'a', Count: 1, Operator: builtin("yank"),
-			Target: Target{Kind: TargetLine},
+		{"レジスターと重ね押し", `"ayy`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Register: 'a', Count: 1, Operator: builtin("yank"),
+			Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"レジスターの前後の回数", `2"a3yy`, []Result{done(Command{
-			Kind: KindOperator, Register: 'a', Count: 6, CountGiven: true, Operator: builtin("yank"),
-			Target: Target{Kind: TargetLine},
+		{"レジスターの前後の回数", `2"a3yy`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Register: 'a', Count: 6, CountGiven: true, Operator: builtin("yank"),
+			Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"テキストオブジェクト", `ci"`, []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("change"), Mode: ModeInsert,
-			Target: Target{Kind: TargetTextObject, Ref: builtin("inner-double-quote")},
+		{"テキストオブジェクト", `ci"`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("change"), Mode: editcmd.ModeInsert,
+			Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-double-quote")},
 		})}},
-		{"dd", "dd", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("delete"), Target: Target{Kind: TargetLine},
+		{"dd", "dd", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete"), Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"3dd", "3dd", []Result{done(Command{
-			Kind: KindOperator, Count: 3, CountGiven: true, Operator: builtin("delete"),
-			Target: Target{Kind: TargetLine},
+		{"3dd", "3dd", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 3, CountGiven: true, Operator: builtin("delete"),
+			Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"cc はインサートモードへ", "cc", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("change"), Mode: ModeInsert,
-			Target: Target{Kind: TargetLine},
+		{"cc はインサートモードへ", "cc", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("change"), Mode: editcmd.ModeInsert,
+			Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"<< の < は文字", "<<", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("dedent"), Target: Target{Kind: TargetLine},
+		{"<< の < は文字", "<<", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("dedent"), Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"fx", "fx", []Result{done(Command{
-			Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("find-forward"), Char: 'x'},
+		{"fx", "fx", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("find-forward"), Char: 'x'},
 		})}},
-		{"f の引数の数字は回数でない", "2f3", []Result{done(Command{
-			Kind: KindMotion, Count: 2, CountGiven: true,
-			Target: Target{Kind: TargetMotion, Ref: builtin("find-forward"), Char: '3'},
+		{"f の引数の数字は回数でない", "2f3", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 2, CountGiven: true,
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("find-forward"), Char: '3'},
 		})}},
-		{"dtx", "dtx", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("delete"),
-			Target: Target{Kind: TargetMotion, Ref: builtin("till-forward"), Char: 'x'},
+		{"dtx", "dtx", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete"),
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("till-forward"), Char: 'x'},
 		})}},
-		{"3j", "3j", []Result{done(Command{
-			Kind: KindMotion, Count: 3, CountGiven: true, Target: Target{Kind: TargetMotion, Ref: builtin("down")},
+		{"3j", "3j", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 3, CountGiven: true, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("down")},
 		})}},
-		{"0 はモーション", "0", []Result{done(Command{
-			Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("line-start")},
+		{"0 はモーション", "0", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("line-start")},
 		})}},
-		{"10 の 0 は回数", "10j", []Result{done(Command{
-			Kind: KindMotion, Count: 10, CountGiven: true, Target: Target{Kind: TargetMotion, Ref: builtin("down")},
+		{"10 の 0 は回数", "10j", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 10, CountGiven: true, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("down")},
 		})}},
-		{"d0", "d0", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("delete"),
-			Target: Target{Kind: TargetMotion, Ref: builtin("line-start")},
+		{"d0", "d0", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete"),
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("line-start")},
 		})}},
-		{"gg は 2 キーのモーション", "dgg", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("delete"),
-			Target: Target{Kind: TargetMotion, Ref: builtin("file-start")},
+		{"gg は 2 キーのモーション", "dgg", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete"),
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("file-start")},
 		})}},
-		{"rx", "3rx", []Result{done(Command{
-			Kind: KindAction, Count: 3, CountGiven: true, Action: builtin("replace-char"), Char: 'x',
+		{"rx", "3rx", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 3, CountGiven: true, Action: builtin("replace-char"), Char: 'x',
 		})}},
-		{"x", `"_x`, []Result{done(Command{
-			Kind: KindAction, Register: '_', Count: 1, Action: builtin("delete-char"),
+		{"x", `"_x`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Register: '_', Count: 1, Action: builtin("delete-char"),
 		})}},
-		{"i はインサートモードへ", "i", []Result{done(Command{
-			Kind: KindAction, Count: 1, Action: builtin("insert"), Mode: ModeInsert,
+		{"i はインサートモードへ", "i", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("insert"), Mode: editcmd.ModeInsert,
 		})}},
-		{"r<CR> は改行", "r<CR>", []Result{done(Command{
-			Kind: KindAction, Count: 1, Action: builtin("replace-char"), Char: '\n',
+		{"r<CR> は改行", "r<CR>", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("replace-char"), Char: '\n',
 		})}},
-		{"f<Tab> はタブ", "f<Tab>", []Result{done(Command{
-			Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("find-forward"), Char: '\t'},
+		{"f<Tab> はタブ", "f<Tab>", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("find-forward"), Char: '\t'},
 		})}},
-		{"f<Space>", "f<Space>", []Result{done(Command{
-			Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("find-forward"), Char: ' '},
+		{"f<Space>", "f<Space>", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("find-forward"), Char: ' '},
 		})}},
-		{"マクロの記録", "qa", []Result{done(Command{Kind: KindRecordStart, Count: 1, Char: 'a'})}},
-		{"マクロの再生", "3@a", []Result{done(Command{Kind: KindPlay, Count: 3, CountGiven: true, Char: 'a'})}},
-		{"直前のマクロの再生", "@@", []Result{done(Command{Kind: KindPlay, Count: 1, Char: '@'})}},
-		{"ドットリピート", ".", []Result{done(Command{Kind: KindRepeat, Count: 1})}},
-		{"回数つきのドットリピート", "3.", []Result{done(Command{Kind: KindRepeat, Count: 3, CountGiven: true})}},
-		{": はコマンドラインモードへ", ":", []Result{done(Command{
-			Kind: KindAction, Count: 1, Action: builtin("command-line"), Mode: ModeCommandLine,
+		{"マクロの記録", "qa", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindRecordStart, Count: 1, Char: 'a'})}},
+		{"マクロの再生", "3@a", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindPlay, Count: 3, CountGiven: true, Char: 'a'})}},
+		{"直前のマクロの再生", "@@", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindPlay, Count: 1, Char: '@'})}},
+		{"ドットリピート", ".", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindRepeat, Count: 1})}},
+		{"回数つきのドットリピート", "3.", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindRepeat, Count: 3, CountGiven: true})}},
+		{": はコマンドラインモードへ", ":", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("command-line"), Mode: editcmd.ModeCommandLine,
 		})}},
 
 		// 不正な列
-		{"dq", "dq", []Result{invalid}},
-		{"dy", "dy", []Result{invalid}},
-		{"g の後に無い文字", "gq", []Result{invalid}},
-		{"オペレーターの後のレジスター", `d"`, []Result{invalid}},
-		{"レジスターの名前でない", `"<C-a>`, []Result{invalid}},
-		{"テキストオブジェクトはオペレーターの後だけ", "iw", []Result{
-			done(Command{Kind: KindAction, Count: 1, Action: builtin("insert"), Mode: ModeInsert}),
-			done(Command{Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("word-next")}}),
+		{"dq", "dq", []editcmd.Result{invalid}},
+		{"dy", "dy", []editcmd.Result{invalid}},
+		{"g の後に無い文字", "gq", []editcmd.Result{invalid}},
+		{"オペレーターの後のレジスター", `d"`, []editcmd.Result{invalid}},
+		{"レジスターの名前でない", `"<C-a>`, []editcmd.Result{invalid}},
+		{"テキストオブジェクトはオペレーターの後だけ", "iw", []editcmd.Result{
+			done(editcmd.Command{Kind: editcmd.KindAction, Count: 1, Action: builtin("insert"), Mode: editcmd.ModeInsert}),
+			done(editcmd.Command{Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("word-next")}}),
 		}},
-		{"f の引数に特殊キー", "f<Up>", []Result{invalid}},
-		{"r の引数に修飾キーつきの文字", "r<C-a>", []Result{invalid}},
-		{"q の記録先にできないレジスター", "q_", []Result{invalid}},
-		{"@ の引数に特殊キー", "@<CR>", []Result{invalid}},
-		{"不正な列の後は初期状態", "dqj", []Result{invalid, done(Command{
-			Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("down")},
+		{"f の引数に特殊キー", "f<Up>", []editcmd.Result{invalid}},
+		{"r の引数に修飾キーつきの文字", "r<C-a>", []editcmd.Result{invalid}},
+		{"q の記録先にできないレジスター", "q_", []editcmd.Result{invalid}},
+		{"@ の引数に特殊キー", "@<CR>", []editcmd.Result{invalid}},
+		{"不正な列の後は初期状態", "dqj", []editcmd.Result{invalid, done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("down")},
 		})}},
 
 		// 途中の Esc
-		{"オペレーターの後の Esc", "d<Esc>", []Result{canceled}},
-		{"回数の後の Esc", "3<Esc>j", []Result{canceled, done(Command{
-			Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("down")},
+		{"オペレーターの後の Esc", "d<Esc>", []editcmd.Result{canceled}},
+		{"回数の後の Esc", "3<Esc>j", []editcmd.Result{canceled, done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("down")},
 		})}},
-		{"テキストオブジェクトの途中の Esc", "di<Esc>", []Result{canceled}},
-		{"f の引数の代わりの Esc", "f<Esc>", []Result{canceled}},
-		{"レジスター名の代わりの Esc", `"<Esc>`, []Result{canceled}},
-		{"q の後の Esc", "q<Esc>", []Result{canceled}},
-		{"初期状態の Esc", "<Esc>", []Result{canceled}},
+		{"テキストオブジェクトの途中の Esc", "di<Esc>", []editcmd.Result{canceled}},
+		{"f の引数の代わりの Esc", "f<Esc>", []editcmd.Result{canceled}},
+		{"レジスター名の代わりの Esc", `"<Esc>`, []editcmd.Result{canceled}},
+		{"q の後の Esc", "q<Esc>", []editcmd.Result{canceled}},
+		{"初期状態の Esc", "<Esc>", []editcmd.Result{canceled}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -186,21 +190,71 @@ func TestParserCountClamp(t *testing.T) {
 func TestParserRecording(t *testing.T) {
 	p := NewParser(DefaultKeymap())
 	p.SetRecording(true)
-	if got, want := feed(p, "q"), []Result{done(Command{Kind: KindRecordStop, Count: 1})}; !reflect.DeepEqual(got, want) {
+	if got, want := feed(p, "q"), []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindRecordStop, Count: 1})}; !reflect.DeepEqual(got, want) {
 		t.Errorf("記録中の q:\n got  %+v\n want %+v", got, want)
 	}
 	// 記録中の状態は、値を返した後や Esc の後も残る。
 	feed(p, "<Esc>")
-	if got, want := feed(p, "q"), []Result{done(Command{Kind: KindRecordStop, Count: 1})}; !reflect.DeepEqual(got, want) {
+	if got, want := feed(p, "q"), []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindRecordStop, Count: 1})}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Esc の後の記録中の q:\n got  %+v\n want %+v", got, want)
 	}
 	// オペレーターの後の q は記録の停止ではない（q はモーションに無いので不正）。
-	if got := feed(p, "dq"); !reflect.DeepEqual(got, []Result{{Status: StatusInvalid}}) {
+	if got := feed(p, "dq"); !reflect.DeepEqual(got, []editcmd.Result{{Status: editcmd.StatusInvalid}}) {
 		t.Errorf("記録中の dq = %+v", got)
 	}
 	p.SetRecording(false)
 	if rs := feed(p, "q"); len(rs) != 0 {
 		t.Errorf("記録中でない q が %+v を返した", rs)
+	}
+}
+
+// ビジュアルモードでは、オペレーターは対象を待たずに完成し、テキストオブジェクトは移動の値になり、
+// ビジュアルモードだけの登録（x、o）を引く。q と . はマクロとドットリピートとして読まない。
+//
+// req: FR-01
+func TestParserVisual(t *testing.T) {
+	p := NewParser(DefaultKeymap())
+	p.SetVisual(true)
+	tests := []struct {
+		keys string
+		want []editcmd.Result
+	}{
+		{"d", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete")})}},
+		{`"a3>`, []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Register: 'a', Count: 3, CountGiven: true, Operator: builtin("indent")})}},
+		{"x", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete")})}},
+		{"s", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("change"), Mode: editcmd.ModeInsert})}},
+		{"gU", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("uppercase")})}},
+		{"iw", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-word")},
+		})}},
+		{"ib", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-paren")},
+		})}},
+		{"2w", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 2, CountGiven: true, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("word-next")},
+		})}},
+		{"o", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindAction, Count: 1, Action: builtin("visual-swap")})}},
+		{"q", []editcmd.Result{{Status: editcmd.StatusInvalid}}},
+		{".", []editcmd.Result{{Status: editcmd.StatusInvalid}}},
+	}
+	for _, tt := range tests {
+		if got := feed(p, tt.keys); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%q:\n got  %+v\n want %+v", tt.keys, got, tt.want)
+		}
+	}
+	// 記録中の q は、ビジュアルモードでも記録の停止である。
+	p.SetRecording(true)
+	if got, want := feed(p, "q"), []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindRecordStop, Count: 1})}; !reflect.DeepEqual(got, want) {
+		t.Errorf("記録中の q:\n got  %+v\n want %+v", got, want)
+	}
+	p.SetRecording(false)
+	// ノーマルモードへ戻ると、o は行を開く操作、d はオペレーターに戻る。
+	p.SetVisual(false)
+	if got := feed(p, "o"); len(got) != 1 || got[0].Command.Action.ID != "open-below" {
+		t.Errorf("ノーマルモードの o = %+v", got)
+	}
+	if got := feed(p, "d"); len(got) != 0 || !p.Pending() {
+		t.Errorf("ノーマルモードの d = %+v", got)
 	}
 }
 
@@ -210,15 +264,15 @@ func TestParserRecording(t *testing.T) {
 func TestParserFlushKeepsBuiltinPrefix(t *testing.T) {
 	tests := []struct {
 		before, after string
-		want          Command
+		want          editcmd.Command
 	}{
-		{"g", "g", Command{Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("file-start")}}},
-		{"3g", "g", Command{Kind: KindMotion, Count: 3, CountGiven: true, Target: Target{Kind: TargetMotion, Ref: builtin("file-start")}}},
-		{"di", "w", Command{Kind: KindOperator, Count: 1, Operator: builtin("delete"), Target: Target{Kind: TargetTextObject, Ref: builtin("inner-word")}}},
-		{"ci", `"`, Command{Kind: KindOperator, Count: 1, Operator: builtin("change"), Mode: ModeInsert, Target: Target{Kind: TargetTextObject, Ref: builtin("inner-double-quote")}}},
-		{`"a`, "x", Command{Kind: KindAction, Register: 'a', Count: 1, Action: builtin("delete-char")}},
-		{"f", "x", Command{Kind: KindMotion, Count: 1, Target: Target{Kind: TargetMotion, Ref: builtin("find-forward"), Char: 'x'}}},
-		{"d", "w", Command{Kind: KindOperator, Count: 1, Operator: builtin("delete"), Target: Target{Kind: TargetMotion, Ref: builtin("word-next")}}},
+		{"g", "g", editcmd.Command{Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("file-start")}}},
+		{"3g", "g", editcmd.Command{Kind: editcmd.KindMotion, Count: 3, CountGiven: true, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("file-start")}}},
+		{"di", "w", editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete"), Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-word")}}},
+		{"ci", `"`, editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("change"), Mode: editcmd.ModeInsert, Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-double-quote")}}},
+		{`"a`, "x", editcmd.Command{Kind: editcmd.KindAction, Register: 'a', Count: 1, Action: builtin("delete-char")}},
+		{"f", "x", editcmd.Command{Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("find-forward"), Char: 'x'}}},
+		{"d", "w", editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete"), Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("word-next")}}},
 	}
 	for _, tt := range tests {
 		p := NewParser(DefaultKeymap())
@@ -226,7 +280,7 @@ func TestParserFlushKeepsBuiltinPrefix(t *testing.T) {
 		if rs := p.Flush(); rs != nil {
 			t.Errorf("%s の後の Flush が %+v を返した", tt.before, rs)
 		}
-		if got, want := feed(p, tt.after), []Result{done(tt.want)}; !reflect.DeepEqual(got, want) {
+		if got, want := feed(p, tt.after), []editcmd.Result{done(tt.want)}; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s, Flush, %s:\n got  %+v\n want %+v", tt.before, tt.after, got, want)
 		}
 	}
@@ -238,44 +292,44 @@ func TestParserFlushKeepsBuiltinPrefix(t *testing.T) {
 // req: FR-11, FR-12
 func TestParserExtension(t *testing.T) {
 	km := DefaultKeymap()
-	add := Ref{ID: "surround.add", Extension: "surround"}
-	inner := Ref{ID: "surround.inner", Extension: "surround"}
-	if err := km.Bind(Binding{Kind: BindOperator, Keys: MustParseKeys("ys"), Ref: add, TakesChar: true}); err != nil {
+	add := editcmd.Ref{ID: "surround.add", Extension: "surround"}
+	inner := editcmd.Ref{ID: "surround.inner", Extension: "surround"}
+	if err := km.Bind(Binding{Kind: BindOperator, Keys: editcmd.MustParseKeys("ys"), Ref: add, TakesChar: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := km.Bind(Binding{Kind: BindTextObject, Keys: MustParseKeys("is"), Ref: inner}); err != nil {
+	if err := km.Bind(Binding{Kind: BindTextObject, Keys: editcmd.MustParseKeys("is"), Ref: inner}); err != nil {
 		t.Fatal(err)
 	}
 
 	tests := []struct {
 		name string
 		keys string
-		want []Result
+		want []editcmd.Result
 	}{
-		{"拡張機能のオペレーターと本体のテキストオブジェクトと文字の引数", "ysiw)", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: add, Char: ')',
-			Target: Target{Kind: TargetTextObject, Ref: builtin("inner-word")},
+		{"拡張機能のオペレーターと本体のテキストオブジェクトと文字の引数", "ysiw)", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: add, Char: ')',
+			Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-word")},
 		})}},
-		{"対象の文字の引数とオペレーターの文字の引数", `ystx"`, []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: add, Char: '"',
-			Target: Target{Kind: TargetMotion, Ref: builtin("till-forward"), Char: 'x'},
+		{"対象の文字の引数とオペレーターの文字の引数", `ystx"`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: add, Char: '"',
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("till-forward"), Char: 'x'},
 		})}},
-		{"拡張機能のオペレーターの重ね押し", "2yss]", []Result{done(Command{
-			Kind: KindOperator, Count: 2, CountGiven: true, Operator: add, Char: ']', Target: Target{Kind: TargetLine},
+		{"拡張機能のオペレーターの重ね押し", "2yss]", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 2, CountGiven: true, Operator: add, Char: ']', Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"オペレーターの文字の引数の代わりの Esc", "ysiw<Esc>", []Result{{Status: StatusCanceled}}},
-		{"本体のオペレーターと拡張機能のテキストオブジェクト", "dis", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("delete"),
-			Target: Target{Kind: TargetTextObject, Ref: inner},
+		{"オペレーターの文字の引数の代わりの Esc", "ysiw<Esc>", []editcmd.Result{{Status: editcmd.StatusCanceled}}},
+		{"本体のオペレーターと拡張機能のテキストオブジェクト", "dis", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete"),
+			Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: inner},
 		})}},
-		{"y は ys の接頭辞だが、次のキーで y に決まる", "yw", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("yank"),
-			Target: Target{Kind: TargetMotion, Ref: builtin("word-next")},
+		{"y は ys の接頭辞だが、次のキーで y に決まる", "yw", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("yank"),
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("word-next")},
 		})}},
-		{"yy も y に決まる", "yy", []Result{done(Command{
-			Kind: KindOperator, Count: 1, Operator: builtin("yank"), Target: Target{Kind: TargetLine},
+		{"yy も y に決まる", "yy", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("yank"), Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"y の後の Esc はオペレーターごと捨てる", "y<Esc>", []Result{{Status: StatusCanceled}}},
+		{"y の後の Esc はオペレーターごと捨てる", "y<Esc>", []editcmd.Result{{Status: editcmd.StatusCanceled}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -292,28 +346,28 @@ func TestParserExtension(t *testing.T) {
 // req: FR-02, FR-11
 func TestParserShorterMatchAndFlush(t *testing.T) {
 	km := DefaultKeymap()
-	xyz := Ref{ID: "x.y", Extension: "ext"}
-	if err := km.Bind(Binding{Kind: BindAction, Keys: MustParseKeys("xyz"), Ref: xyz}); err != nil {
+	xyz := editcmd.Ref{ID: "x.y", Extension: "ext"}
+	if err := km.Bind(Binding{Kind: BindAction, Keys: editcmd.MustParseKeys("xyz"), Ref: xyz}); err != nil {
 		t.Fatal(err)
 	}
-	delChar := done(Command{Kind: KindAction, Count: 1, Action: builtin("delete-char")})
-	yankLine := done(Command{Kind: KindOperator, Count: 1, Operator: builtin("yank"), Target: Target{Kind: TargetLine}})
-	canceled := Result{Status: StatusCanceled}
+	delChar := done(editcmd.Command{Kind: editcmd.KindAction, Count: 1, Action: builtin("delete-char")})
+	yankLine := done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("yank"), Target: editcmd.Target{Kind: editcmd.TargetLine}})
+	canceled := editcmd.Result{Status: editcmd.StatusCanceled}
 
 	tests := []struct {
 		name  string
 		keys  string
 		flush bool // keys の後に Flush を呼ぶ
-		want  []Result
+		want  []editcmd.Result
 	}{
-		{"続かないキーで短い方に決まる", "xyy", false, []Result{delChar, yankLine}},
-		{"長い登録", "xyz", false, []Result{done(Command{Kind: KindAction, Count: 1, Action: xyz})}},
-		{"x の後の Flush は x に決める", "x", true, []Result{delChar}},
-		{"xy の後の Flush は x に決め、y はオペレーターとして待つ", "xy", true, []Result{delChar}},
-		{"x の後の Esc は x を実行してから取り消す（Vim と同じ）", "x<Esc>", false, []Result{delChar, canceled}},
-		{"xy の後の Esc は x を実行し、y を取り消す", "xy<Esc>", false, []Result{delChar, canceled}},
-		{"回数は短い方に付く", "3x<Esc>", false, []Result{
-			done(Command{Kind: KindAction, Count: 3, CountGiven: true, Action: builtin("delete-char")}), canceled,
+		{"続かないキーで短い方に決まる", "xyy", false, []editcmd.Result{delChar, yankLine}},
+		{"長い登録", "xyz", false, []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindAction, Count: 1, Action: xyz})}},
+		{"x の後の Flush は x に決める", "x", true, []editcmd.Result{delChar}},
+		{"xy の後の Flush は x に決め、y はオペレーターとして待つ", "xy", true, []editcmd.Result{delChar}},
+		{"x の後の Esc は x を実行してから取り消す（Vim と同じ）", "x<Esc>", false, []editcmd.Result{delChar, canceled}},
+		{"xy の後の Esc は x を実行し、y を取り消す", "xy<Esc>", false, []editcmd.Result{delChar, canceled}},
+		{"回数は短い方に付く", "3x<Esc>", false, []editcmd.Result{
+			done(editcmd.Command{Kind: editcmd.KindAction, Count: 3, CountGiven: true, Action: builtin("delete-char")}), canceled,
 		}},
 	}
 	for _, tt := range tests {
@@ -333,7 +387,7 @@ func TestParserShorterMatchAndFlush(t *testing.T) {
 	p := NewParser(km)
 	feed(p, "xy")
 	p.Flush()
-	if got, want := feed(p, "y"), []Result{yankLine}; !reflect.DeepEqual(got, want) {
+	if got, want := feed(p, "y"), []editcmd.Result{yankLine}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Flush の後の y:\n got  %+v\n want %+v", got, want)
 	}
 	if rs := p.Flush(); rs != nil {
@@ -344,8 +398,8 @@ func TestParserShorterMatchAndFlush(t *testing.T) {
 // req: FR-11
 func TestKeymapBind(t *testing.T) {
 	km := DefaultKeymap()
-	ext := Ref{ID: "e", Extension: "ext"}
-	keys := MustParseKeys
+	ext := editcmd.Ref{ID: "e", Extension: "ext"}
+	keys := editcmd.MustParseKeys
 
 	conflicts := []Binding{
 		{Kind: BindMotion, Keys: keys("x"), Ref: ext},     // 本体の操作 x とノーマルモードで重なる
@@ -355,14 +409,14 @@ func TestKeymapBind(t *testing.T) {
 	}
 	for _, b := range conflicts {
 		if err := km.Bind(b); !errors.Is(err, ErrConflict) {
-			t.Errorf("Bind(%v %s): err = %v, want ErrConflict", b.Kind, KeysString(b.Keys), err)
+			t.Errorf("Bind(%v %s): err = %v, want ErrConflict", b.Kind, editcmd.KeysString(b.Keys), err)
 		}
 	}
 	// 拡張機能どうしの衝突も拒む。
-	if err := km.Bind(Binding{Kind: BindOperator, Keys: keys("ys"), Ref: Ref{ID: "a", Extension: "one"}}); err != nil {
+	if err := km.Bind(Binding{Kind: BindOperator, Keys: keys("ys"), Ref: editcmd.Ref{ID: "a", Extension: "one"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := km.Bind(Binding{Kind: BindOperator, Keys: keys("ys"), Ref: Ref{ID: "b", Extension: "two"}}); !errors.Is(err, ErrConflict) {
+	if err := km.Bind(Binding{Kind: BindOperator, Keys: keys("ys"), Ref: editcmd.Ref{ID: "b", Extension: "two"}}); !errors.Is(err, ErrConflict) {
 		t.Errorf("拡張機能どうしの ys: err = %v, want ErrConflict", err)
 	}
 	// モードが重ならなければ、同じキーでも登録できる。
@@ -407,7 +461,7 @@ func TestKeymapBind(t *testing.T) {
 	if !km.Unbind(MapNormal, keys("w")) {
 		t.Error("Unbind(normal, w) = false")
 	}
-	if got := feed(NewParser(km), "w"); !reflect.DeepEqual(got, []Result{{Status: StatusInvalid}}) {
+	if got := feed(NewParser(km), "w"); !reflect.DeepEqual(got, []editcmd.Result{{Status: editcmd.StatusInvalid}}) {
 		t.Errorf("Unbind の後の w = %+v", got)
 	}
 	if got := feed(NewParser(km), "dw"); len(got) != 1 || got[0].Command.Target.Ref != ext {
@@ -436,17 +490,21 @@ func TestDefaultKeymap(t *testing.T) {
 	}
 	for _, tt := range tables {
 		for _, s := range tt.specs {
-			b, ok := km.Lookup(tt.mode, MustParseKeys(s.keys))
+			mode := tt.mode
+			if s.modes != 0 && s.modes&mode == 0 {
+				mode = MapVisual // ビジュアルモードだけの登録
+			}
+			b, ok := km.Lookup(mode, editcmd.MustParseKeys(s.keys))
 			if !ok || b.Kind != tt.kind || b.Ref.ID != s.id || !b.Ref.Builtin() {
 				t.Errorf("%v %q: got %+v, %v", tt.kind, s.keys, b, ok)
 			}
 		}
 	}
 	// DefaultKeymap は呼ぶたびに別の値を返す。
-	if err := km.Bind(Binding{Kind: BindMotion, Keys: MustParseKeys("Q"), Ref: Ref{ID: "q"}}); err != nil {
+	if err := km.Bind(Binding{Kind: BindMotion, Keys: editcmd.MustParseKeys("Q"), Ref: editcmd.Ref{ID: "q"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := DefaultKeymap().Lookup(MapNormal, MustParseKeys("Q")); ok {
+	if _, ok := DefaultKeymap().Lookup(MapNormal, editcmd.MustParseKeys("Q")); ok {
 		t.Error("DefaultKeymap が登録を共有している")
 	}
 }
