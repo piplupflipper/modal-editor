@@ -28,7 +28,7 @@ func perLine(lines, count, step int) *Decorations {
 			})
 		}
 	}
-	return NewDecorations(hs)
+	return NewDecorations(hs, lines)
 }
 
 // benchRender は、200 × 60 の画面で、カーソルを 1 行ずつ下げながら f を描く時間を測る。

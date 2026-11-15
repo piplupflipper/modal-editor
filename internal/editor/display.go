@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -182,37 +183,134 @@ func (e *Editor) setSigns(extID string, p ext.SignSetParams) bool {
 
 // setDecorations は、decoration/set の一覧を持つ。現在より新しいバージョン番号の一覧は捨てる。
 // 基本設計 6.1 のとおり、古い一覧も置き換えずに持ち、新しい一覧が届くまで前の色のまま描く（位置はずらさない）。
+// 描画に使う表は、イベントループの外で作り直す（rebuildDecorations）。
 func (e *Editor) setDecorations(extID string, p ext.DecorationSetParams) {
 	bs := e.findBuffer(p.Buffer)
 	if bs == nil || uint64(p.Version) > bs.buf.Version() {
 		return
 	}
 	if len(p.Decorations) == 0 {
-		delete(bs.decorations, extID)
+		bs.removeDecorations(extID)
 	} else {
 		bs.decorations[extID] = decorationSet{version: p.Version, decorations: p.Decorations}
 	}
-	bs.rebuildDecorations()
+	e.rebuildDecorations(bs)
+}
+
+// removeDecorations は、拡張機能 extID の一覧を消し、その世代の番号を進める。
+// 消す前の一覧から作り始めた表を、同じ拡張機能が一覧を送り直した後に受け取っても、世代の違いで使わずに済む。
+func (bs *bufferState) removeDecorations(extID string) {
+	if _, ok := bs.decorations[extID]; !ok {
+		return
+	}
+	delete(bs.decorations, extID)
+	if bs.decoGen == nil {
+		bs.decoGen = map[string]uint64{}
+	}
+	bs.decoGen[extID]++
+}
+
+// decoSource は、表を作る元にした、1 つの拡張機能の一覧である。
+type decoSource struct {
+	ext  string
+	decs []ext.Decoration
+	// gen は、作り始めたときの、この拡張機能の一覧の世代の番号（bufferState.decoGen）である。
+	gen uint64
+}
+
+// decoBuilt は、イベントループの外で作り終えた表である。
+type decoBuilt struct {
+	bs *bufferState
+	// buf と src は、作り始めたときの bs.buf と一覧である。届いたときにまだ現在のものかを確かめる。
+	buf  *buffer.Buffer
+	src  []decoSource
+	view *ui.Decorations
+}
+
+// decoSources は、拡張機能ごとの一覧を、拡張機能の ID の順に並べて返す。
+// 重なった範囲は後ろのものほど上に描くので、並べる順を決めておく。
+func (bs *bufferState) decoSources() []decoSource {
+	src := make([]decoSource, 0, len(bs.decorations))
+	for id, ds := range bs.decorations {
+		src = append(src, decoSource{ext: id, decs: ds.decorations, gen: bs.decoGen[id]})
+	}
+	sort.Slice(src, func(i, j int) bool { return src[i].ext < src[j].ext })
+	return src
+}
+
+// sameSources は、a と b が同じ拡張機能の同じ一覧（同じスライス）からなるかを返す。
+// 一覧は受け取った後に変えないので、スライスの先頭の位置と長さで比べれば足りる。
+func sameSources(a, b []decoSource) bool {
+	return slices.EqualFunc(a, b, func(x, y decoSource) bool {
+		return x.ext == y.ext && x.gen == y.gen && len(x.decs) == len(y.decs) && (len(x.decs) == 0 || &x.decs[0] == &y.decs[0])
+	})
 }
 
 // rebuildDecorations は、拡張機能ごとの一覧を合わせて、描画に渡す ui.Decorations を作り直す。
-func (bs *bufferState) rebuildDecorations() {
-	ids := make([]string, 0, len(bs.decorations))
-	for id := range bs.decorations {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	var hs []ui.Highlight
-	for _, id := range ids {
-		for _, d := range bs.decorations[id].decorations {
-			hs = append(hs, ui.Highlight{Range: fromExtRange(d.Range), Style: d.Style})
-		}
-	}
-	if len(hs) == 0 {
+//
+// 表は別の goroutine で作り、作り終えたら e.decoDone からイベントループへ渡す（decorationsBuilt）。
+// 10 万行の JSON の一覧（80 万の範囲）で、表を作るのに数十 ms かかり、その間キー入力を処理できなかったためである（#74）。
+// 別の goroutine は、受け取った後に変えない一覧のスライスを読むだけで、バッファの状態には触らない（基本設計 2.1）。
+// 1 つのバッファで同時に作るのは 1 つまでにし、作っている間に一覧が変わったら、作り終えた後にもう一度作る。
+// 作り終えるまでは、前の表で描く。一覧が空になったときだけは、待たずに色を消す。
+func (e *Editor) rebuildDecorations(bs *bufferState) {
+	if len(bs.decorations) == 0 {
 		bs.decoView = nil
 		return
 	}
-	bs.decoView = ui.NewDecorations(hs)
+	if bs.decoBuilding {
+		return
+	}
+	bs.decoBuilding = true
+	r := decoBuilt{bs: bs, buf: bs.buf, src: bs.decoSources()}
+	lines := bs.buf.LineCount()
+	done, stop := e.decoDone, e.stop
+	go func() {
+		r.view = buildDecorations(r.src, lines)
+		select {
+		case done <- r:
+		case <-stop:
+		}
+	}()
+}
+
+// buildDecorations は、src の一覧を合わせた、lines 行のテキストの ui.Decorations を作る。イベントループの外で呼ぶ。
+func buildDecorations(src []decoSource, lines int) *ui.Decorations {
+	return ui.NewDecorationsSeq(func(yield func(ui.Highlight) bool) {
+		for _, s := range src {
+			for _, d := range s.decs {
+				if !yield(ui.Highlight{Range: fromExtRange(d.Range), Style: d.Style}) {
+					return
+				}
+			}
+		}
+	}, lines)
+}
+
+// decorationsBuilt は、別の goroutine で作り終えた表を受け取る。
+// 作っている間に一覧が変わっていなければ、そのまま描画に使う。
+// 変わっていれば、もう一度作る。そのとき、作り終えた表が今の表より新しい一覧から作ったもので、
+// 作り始めた後に消した一覧を含まず（拡張機能ごとの世代の番号が同じ）、バッファを読み込み直してもいなければ、
+// 作り直しを待つ間はそれで描く。一覧が届き続けても、色が古いまま止まらないようにするためである。
+// 消した後に同じ拡張機能が一覧を送り直しても、消す前の一覧から作った表は世代の番号が違うので使わない。
+func (e *Editor) decorationsBuilt(r decoBuilt) {
+	bs := r.bs
+	bs.decoBuilding = false
+	if len(bs.decorations) == 0 {
+		return
+	}
+	cur := bs.decoSources()
+	if sameSources(r.src, cur) {
+		bs.decoView = r.view
+		return
+	}
+	if r.buf == bs.buf && !slices.ContainsFunc(r.src, func(s decoSource) bool {
+		_, ok := bs.decorations[s.ext]
+		return !ok || bs.decoGen[s.ext] != s.gen
+	}) {
+		bs.decoView = r.view
+	}
+	e.rebuildDecorations(bs)
 }
 
 // clearExtension は、異常で終わった拡張機能の表示のデータを、すべてのバッファから消す（基本設計 6.7）。
@@ -221,8 +319,8 @@ func (e *Editor) clearExtension(extID string) {
 		delete(bs.diagnostics, extID)
 		delete(bs.signs, extID)
 		if _, ok := bs.decorations[extID]; ok {
-			delete(bs.decorations, extID)
-			bs.rebuildDecorations()
+			bs.removeDecorations(extID)
+			e.rebuildDecorations(bs)
 		}
 	}
 }

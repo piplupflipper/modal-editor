@@ -347,7 +347,7 @@ func (d *drawer) prepare(row, line, ln int) {
 	w := &d.sweep
 	w.reset()
 	for _, ds := range d.f.Decorations.line(line) {
-		a := d.theme.attr(ds.style)
+		a := d.theme.attr(d.f.Decorations.style(ds))
 		start, end := min(ds.start, ln), min(ds.end, ln)
 		if a == (Attr{}) || start >= end {
 			continue

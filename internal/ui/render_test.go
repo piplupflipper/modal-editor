@@ -285,7 +285,7 @@ func TestGoldenDecorations(t *testing.T) {
 		{Range: buffer.Range{Start: pos(3, 0), End: pos(3, 1)}, Style: StyleNumber},  // テーマに無い名前は色を付けない
 		{Range: buffer.Range{Start: pos(1, 5), End: pos(2, 3)}, Style: StyleString},  // 行をまたぐ。行末の 1 セルは含めない
 		{Range: buffer.Range{Start: pos(1, 6), End: pos(1, 7)}, Style: StyleKeyword}, // 後の要素を上に重ねる
-	})
+	}, b.LineCount())
 	diags := []Diagnostic{
 		{Range: buffer.Range{Start: pos(0, 2), End: pos(0, 7)}, Severity: SeverityError},
 		{Range: buffer.Range{Start: pos(2, 11), End: pos(2, 11)}, Severity: SeverityWarning}, // 行末の空の範囲
@@ -418,7 +418,7 @@ func TestRenderSmall(t *testing.T) {
 				Decorations: NewDecorations([]Highlight{
 					{Range: buffer.Range{Start: pos(9, 9), End: pos(0, 1)}, Style: StyleKeyword},
 					{Range: buffer.Range{Start: pos(-3, -1), End: pos(-1, 0)}, Style: StyleKeyword},
-				}),
+				}, 1),
 			},
 		}
 		for _, f := range frames {
