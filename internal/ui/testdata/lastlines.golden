@@ -1,5 +1,5 @@
 ## 先頭
-size 16x7 cursor 0,0
+size 16x7 cursor 0,0 block
    |line 1          |
    |line 2          |
    |line 3          |
@@ -10,7 +10,7 @@ fx |SSSSSSSSSSSSSSSS|
    |                |
 
 ## 1 行下へはみ出す
-size 16x7 cursor 4,0
+size 16x7 cursor 4,0 block
    |line 2          |
    |line 3          |
    |line 4          |
@@ -21,7 +21,7 @@ fx |SSSSSSSSSSSSSSSS|
    |                |
 
 ## 最終行へ飛ぶと最終行を下の端に置く
-size 16x7 cursor 4,0
+size 16x7 cursor 4,0 block
    |line 16         |
    |line 17         |
    |line 18         |
@@ -32,7 +32,7 @@ fx |SSSSSSSSSSSSSSSS|
    |                |
 
 ## 最終行の付近で上へ
-size 16x7 cursor 0,3
+size 16x7 cursor 0,3 block
    |line 16         |
    |line 17         |
    |line 18         |
@@ -43,7 +43,7 @@ fx |SSSSSSSSSSSSSSSS|
    |                |
 
 ## 短いバッファは ~ の行
-size 16x7 cursor 1,0
+size 16x7 cursor 1,0 block
    |one             |
    |two             |
    |~               |

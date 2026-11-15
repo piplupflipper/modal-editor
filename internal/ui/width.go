@@ -1,5 +1,7 @@
 package ui
 
+//go:generate go run ./internal/widthgen
+
 import (
 	"fmt"
 	"sort"
@@ -46,9 +48,16 @@ type glyph struct {
 //   - wideTable にある文字: 2 列
 //   - それ以外: 1 列
 //
-// 行頭の結合文字は前の文字が無いので、空白に重ねて 1 列にする（Vim の strdisplaywidth と同じ幅）。
+// 行頭の結合文字は前の文字が無いので、空白に重ねて出す。幅は Vim の strdisplaywidth と同じく、
+// 多くは 1 列、全角の結合文字（U+3099 など）は 2 列で、U+180B〜U+180D は <180b> の形にする（loneComposingTable）。
 // タブと ^A などの後の結合文字は、幅 0 で、画面には出さない。
+//
+// glyphText の text は line の部分文字列で、文字ごとに割り当てをしない（行頭の結合文字だけは空白を足すので割り当てる）。
 func nextGlyph(line string, off, col, tabStop int) glyph {
+	// 速い道: 表示できる ASCII の文字で、後に結合文字が続かない（次のバイトが ASCII か行末）。
+	if c := line[off]; c >= 0x20 && c < 0x7f && (off+1 == len(line) || line[off+1] < 0x80) {
+		return glyph{off: off, size: 1, col: col, width: 1, kind: glyphText, text: line[off : off+1]}
+	}
 	r, size := utf8.DecodeRuneInString(line[off:])
 	g := glyph{off: off, size: size, col: col}
 	switch {
@@ -66,10 +75,14 @@ func nextGlyph(line string, off, col, tabStop int) glyph {
 	case unprintable(r):
 		g.kind, g.text = glyphSpecial, fmt.Sprintf("<%04x>", r)
 	case isComposing(r):
-		g.kind, g.text = glyphText, " "+string(r)
-		g.width = 1
+		g.kind, g.width = glyphText, loneComposingWidth(r)
+		if g.width > 2 {
+			g.kind, g.text = glyphSpecial, fmt.Sprintf("<%04x>", r)
+		} else {
+			g.text = " " + line[off:off+size]
+		}
 	default:
-		g.kind, g.text = glyphText, string(r)
+		g.kind, g.text = glyphText, line[off:off+size]
 		g.width = runeWidth(r)
 	}
 	if g.kind == glyphSpecial {
@@ -82,7 +95,11 @@ func nextGlyph(line string, off, col, tabStop int) glyph {
 			break
 		}
 		if g.kind == glyphText {
-			g.text += line[g.off+g.size : g.off+g.size+n]
+			if g.text[0] == ' ' && isComposing(r) {
+				g.text += line[g.off+g.size : g.off+g.size+n]
+			} else {
+				g.text = line[g.off : g.off+g.size+n]
+			}
 		}
 		g.size += n
 	}
@@ -92,6 +109,9 @@ func nextGlyph(line string, off, col, tabStop int) glyph {
 // isComposing は、r が結合文字（前の文字と合わせて 1 文字として扱う文字）かどうかを返す。
 // internal/command/target と同じく、Unicode の Mn と Me を結合文字とする（Vim の utf_iscomposing() に当たる）。
 func isComposing(r rune) bool {
+	if r < 0x300 {
+		return false // Mn と Me の最初の文字は U+0300
+	}
 	return unicode.In(r, unicode.Mn, unicode.Me)
 }
 
@@ -107,6 +127,15 @@ func unprintable(r rune) bool {
 		return true
 	}
 	return false
+}
+
+// loneComposingWidth は、行頭に単独で置いた結合文字 r の表示幅を返す。2 より大きければ <180b> の形で出す幅である。
+func loneComposingWidth(r rune) int {
+	i := sort.Search(len(loneComposingTable), func(i int) bool { return loneComposingTable[i].hi >= r })
+	if i < len(loneComposingTable) && loneComposingTable[i].lo <= r {
+		return loneComposingTable[i].width
+	}
+	return 1
 }
 
 // runeWidth は、そのまま出せる文字 r の表示幅（0、1、2）を返す。

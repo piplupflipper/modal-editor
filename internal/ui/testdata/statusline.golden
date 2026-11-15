@@ -1,5 +1,5 @@
 ## 名前なし
-size 24x4 cursor 0,4
+size 24x4 cursor 0,4 block
    |hello                   |
    |~                       |
 fg |n.......................|
@@ -8,7 +8,7 @@ fx |SSSSSSSSSSSSSSSSSSSSSSSS|
    |                        |
 
 ## 変更ありと記録中
-size 24x4 cursor 0,5
+size 24x4 cursor 0,5 bar
    |hello                   |
    |~                       |
 fg |n.......................|
@@ -17,7 +17,7 @@ fx |SSSSSSSSSSSSSSSSSSSSSSSS|
    |                        |
 
 ## 幅が足りなければ左の部分を切る
-size 24x4 cursor 0,0
+size 24x4 cursor 0,0 block
    |hello                   |
    |~                       |
 fg |n.......................|
@@ -26,7 +26,7 @@ fx |SSSSSSSSSSSSSSSSSSSSSSSS|
    |                        |
 
 ## コマンドライン
-size 24x4 cursor 3,8
+size 24x4 cursor 3,8 bar
    |hello                   |
    |~                       |
 fg |n.......................|
@@ -35,7 +35,7 @@ fx |SSSSSSSSSSSSSSSSSSSSSSSS|
    |:s/a/b/g                |
 
 ## 長いコマンドラインは末尾を見せる
-size 24x4 cursor 3,23
+size 24x4 cursor 3,23 bar
    |hello                   |
    |~                       |
 fg |n.......................|
@@ -44,7 +44,7 @@ fx |SSSSSSSSSSSSSSSSSSSSSSSS|
    |ghijklmnop/qrstuvwxyz/g |
 
 ## エラーのメッセージ
-size 24x4 cursor 0,0
+size 24x4 cursor 0,0 block
    |hello                   |
    |~                       |
 fg |n.......................|
@@ -54,7 +54,7 @@ fx |SSSSSSSSSSSSSSSSSSSSSSSS|
 fg |EEEEEEEEEEEEEEEEEEEEEEE.|
 
 ## 空の行のルーラー
-size 24x4 cursor 0,0
+size 24x4 cursor 0,0 block
    |                        |
    |~                       |
 fg |n.......................|

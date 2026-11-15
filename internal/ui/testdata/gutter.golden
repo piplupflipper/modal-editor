@@ -1,0 +1,65 @@
+## 欄の右からテキストを描く
+size 14x5 cursor 0,3 block
+   |   abcdefghijk|
+   |   あいうえお>|
+fg |.............n|
+   |~             |
+fg |n.............|
+   | NOR 1,1  All |
+fx |SSSSSSSSSSSSSS|
+   |              |
+
+## 横のスクロールは欄を除いた幅で数える
+size 14x5 cursor 0,8 block
+   |   hijklmnopqr|
+   |   <おかきくけ|
+fg |...n..........|
+   |~             |
+fg |n.............|
+   | NO 1,13  All |
+fx |SSSSSSSSSSSSSS|
+   |              |
+
+## 右の端の全角文字
+size 14x5 cursor 1,3 block
+   |   abcdefghijk|
+   |   あいうえお>|
+fg |.............n|
+   |~             |
+fg |n.............|
+   | NOR 2,1  All |
+fx |SSSSSSSSSSSSSS|
+   |              |
+
+## インサートモードは縦線
+size 14x5 cursor 1,5 bar
+   |   abcdefghijk|
+   |   あいうえお>|
+fg |.............n|
+   |~             |
+fg |n.............|
+   | I 2,4-3  All |
+fx |SSSSSSSSSSSSSS|
+   |              |
+
+## オペレーターの後は下線
+size 14x5 cursor 1,5 underline
+   |   abcdefghijk|
+   |   あいうえお>|
+fg |.............n|
+   |~             |
+fg |n.............|
+   | N 2,4-3  All |
+fx |SSSSSSSSSSSSSS|
+   |              |
+
+## コマンドラインは縦線
+size 14x5 cursor 4,2 bar
+   |   abcdefghijk|
+   |   あいうえお>|
+fg |.............n|
+   |~             |
+fg |n.............|
+   | C 2,4-3  All |
+fx |SSSSSSSSSSSSSS|
+   |:w            |

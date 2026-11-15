@@ -3,24 +3,44 @@ package ui
 import "strings"
 
 // Color は、文字か背景の色である。
-// ゼロ値の ColorDefault は端末の既定の色を表し、それ以外は 256 色の番号を Indexed で表す。
+// ゼロ値の ColorDefault は端末の既定の色を表す。それ以外は、256 色の番号（Indexed）か、24 ビットの色（RGB）である。
 // 端末の制御のライブラリ（#9 で裁定待ち）が決まったら、そのライブラリの色の型へ変換する。
-type Color uint16
+type Color uint32
 
 // ColorDefault は、端末の既定の色である。
 const ColorDefault Color = 0
 
+// 上位の 8 ビットで色の種類を区別する。
+const (
+	colorIndexed Color = 1 << 24
+	colorRGB     Color = 2 << 24
+	colorKind    Color = 0xff << 24
+)
+
 // Indexed は、256 色の番号 n（0〜255）の色を返す。0〜15 は端末の 16 色である。
 func Indexed(n uint8) Color {
-	return Color(n) + 1
+	return colorIndexed | Color(n)
 }
 
-// Index は、256 色の番号を返す。ColorDefault なら ok が false である。
+// RGB は、24 ビットの色（#rrggbb）を返す。
+func RGB(r, g, b uint8) Color {
+	return colorRGB | Color(r)<<16 | Color(g)<<8 | Color(b)
+}
+
+// Index は、256 色の番号を返す。Indexed で作った色でなければ ok が false である。
 func (c Color) Index() (n uint8, ok bool) {
-	if c == ColorDefault {
+	if c&colorKind != colorIndexed {
 		return 0, false
 	}
-	return uint8(c - 1), true //nolint:gosec // c は Indexed で作った 1〜256 の値なので、1 を引けば uint8 に収まる
+	return uint8(c & 0xff), true
+}
+
+// RGB は、24 ビットの色の成分を返す。RGB で作った色でなければ ok が false である。
+func (c Color) RGB() (r, g, b uint8, ok bool) {
+	if c&colorKind != colorRGB {
+		return 0, 0, 0, false
+	}
+	return uint8(c >> 16 & 0xff), uint8(c >> 8 & 0xff), uint8(c & 0xff), true
 }
 
 // Attr は、セルの表示の属性である。ゼロ値は、端末の既定の色で飾りの無い表示である。

@@ -1,28 +1,45 @@
 package ui
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
-
-	"github.com/piplupflipper/modal-editor/internal/buffer"
 )
 
-// Point は、画面上の位置である。Row と Col は 0 から数える。
-type Point struct {
+// CursorShape は、カーソルの形である。
+type CursorShape int
+
+// カーソルの形。
+const (
+	// CursorBlock は、文字を覆う箱の形である。ノーマルモードとビジュアルモードで使う。
+	CursorBlock CursorShape = iota
+	// CursorBar は、文字の左の縦線である。インサートモードとコマンドラインモードで使う。
+	CursorBar
+	// CursorUnderline は、文字の下の線である。オペレーターの後でモーションを待つ間に使う（Vim の既定の 'guicursor' の o と同じ）。
+	CursorUnderline
+)
+
+// Cursor は、端末のカーソルの位置と形である。Row と Col は 0 から数える。
+type Cursor struct {
 	Row, Col int
+	Shape    CursorShape
+	// Visible は、カーソルを表示するかどうかである。カーソルを置く場所が画面に無いとき（表示領域が 0 行のときなど）は false である。
+	Visible bool
 }
 
 // Screen は、1 回の描画の結果である。
 type Screen struct {
 	// Grid は、画面の全体の内容である。
 	Grid *Grid
-	// Cursor は、端末のカーソルを置く位置である。
-	Cursor Point
+	// Cursor は、端末のカーソルの位置と形である。
+	Cursor Cursor
 }
 
 // Renderer は、Frame から画面の格子を作る。
 //
 // 画面は上から、バッファの表示領域（Height-2 行）、ステータス行（1 行）、コマンドラインの行（1 行）に分ける。
+// バッファの表示領域の左には、印と行番号を置く欄（GutterWidth 列）を空けられる。欄の中身は今は空白で、後から足す。
 // バッファの行は折り返さず、長い行は横にスクロールして表示する（Vim の 'nowrap'）。
 //
 // Renderer は、縦と横のスクロールの位置を、描画をまたいで持つ。
@@ -35,6 +52,8 @@ type Renderer struct {
 	TabStop int
 	// Theme は、色の種類の名前から属性への対応である。nil なら DefaultTheme を使う。
 	Theme Theme
+	// GutterWidth は、バッファの表示領域の左に空ける欄（印、行番号）の列数である。テキストはその右から描く。
+	GutterWidth int
 
 	top  int // 表示領域の最初の行の番号（0 から数える）
 	left int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
@@ -60,6 +79,16 @@ func (r *Renderer) Columns() Columns {
 // textRows は、バッファの表示領域の行数を返す。
 func (r *Renderer) textRows() int {
 	return max(r.Height-2, 0)
+}
+
+// textLeft は、バッファのテキストを描く最初の画面の列を返す。
+func (r *Renderer) textLeft() int {
+	return min(max(r.GutterWidth, 0), max(r.Width, 0))
+}
+
+// textWidth は、バッファのテキストを描く列数を返す。
+func (r *Renderer) textWidth() int {
+	return max(r.Width-r.textLeft(), 0)
 }
 
 // emptyText は、Frame.Text が nil のときに使う、空の 1 行のバッファである。
@@ -102,13 +131,22 @@ func (r *Renderer) Render(f *Frame) Screen {
 		}
 		d.drawLine(i, n)
 	}
-	screen := Screen{Grid: g, Cursor: Point{Row: cur.line - r.top, Col: cur.col - r.left}}
+	screen := Screen{Grid: g, Cursor: Cursor{
+		Row: cur.line - r.top, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,
+		Visible: rows > 0 && r.textWidth() > 0,
+	}}
+	switch {
+	case f.Mode == ModeInsert:
+		screen.Cursor.Shape = CursorBar
+	case f.OperatorPending:
+		screen.Cursor.Shape = CursorUnderline
+	}
 	if r.Height >= 2 {
 		r.drawStatus(g, theme, text, f, cur)
 	}
 	if r.Height >= 1 {
-		if p, ok := r.drawCommandLine(g, theme, f); ok {
-			screen.Cursor = p
+		if c, ok := r.drawCommandLine(g, theme, f); ok {
+			screen.Cursor = c
 		}
 	}
 	return screen
@@ -170,7 +208,7 @@ func (r *Renderer) scroll(lineCount int, cur cursorPlace) {
 		}
 		r.top = max(r.top, 0)
 	}
-	if w := r.Width; w > 0 && (cur.col < r.left || cur.end > r.left+w) {
+	if w := r.textWidth(); w > 0 && (cur.col < r.left || cur.end > r.left+w) {
 		r.left = max(cur.col-w/2, 0)
 	}
 }
@@ -179,8 +217,12 @@ func (r *Renderer) scroll(lineCount int, cur cursorPlace) {
 // end が行の長さより大きければ、行末の 1 セル（行の区切りを表すセル）も含む。
 type span struct {
 	start, end int
+	order      int // 重ねる順。大きい方を上に重ねる
 	attr       Attr
 }
+
+// 重ねる順の基準。構文の色、診断の順に重ねる。
+const diagnosticOrder = 1 << 40
 
 // drawer は、1 回の描画の作業の状態である。
 type drawer struct {
@@ -190,22 +232,23 @@ type drawer struct {
 	text  Text
 	f     *Frame
 	cur   cursorPlace
-	spans [][]span // 表示領域の行ごとの、構文の色と診断の範囲（重ねる順）
+	diags [][]span // 表示領域の行ごとの診断の範囲
 	sel   []span   // 表示領域の行ごとの、選択の範囲（end が 0 なら選択なし）
+	sweep sweep    // 行ごとに使い回す作業の領域
 }
 
-// collectSpans は、構文の色と診断と選択の範囲を、表示領域の行ごとに分ける。
-//
-// req: FR-35
+// collectSpans は、診断と選択の範囲を、表示領域の行ごとに分ける。
+// 構文の色は Decorations が行ごとに分けて持っているので、ここでは分けない。
 func (d *drawer) collectSpans(rows int) {
-	d.spans = make([][]span, rows)
+	d.diags = make([][]span, rows)
 	d.sel = make([]span, rows)
 	top := d.r.top
-	add := func(rg buffer.Range, a Attr, widen bool) {
+	for i, dg := range d.f.Diagnostics {
+		a := d.theme.attr("diagnostic." + string(dg.Severity))
 		if a == (Attr{}) {
-			return
+			continue
 		}
-		s, e := rg.Start, rg.End
+		s, e := dg.Range.Start, dg.Range.End
 		if e.Less(s) {
 			s, e = e, s
 		}
@@ -218,19 +261,13 @@ func (d *drawer) collectSpans(rows int) {
 			if n == e.Line {
 				b1 = min(max(e.Byte, 0), ln)
 			}
-			if widen && s == e {
+			if s == e {
 				b1 = b0 + 1
 			}
 			if b0 < b1 {
-				d.spans[n-top] = append(d.spans[n-top], span{start: b0, end: b1, attr: a})
+				d.diags[n-top] = append(d.diags[n-top], span{start: b0, end: b1, order: diagnosticOrder + i, attr: a})
 			}
 		}
-	}
-	for _, h := range d.f.Decorations {
-		add(h.Range, d.theme.attr(h.Style), false)
-	}
-	for _, dg := range d.f.Diagnostics {
-		add(dg.Range, d.theme.attr("diagnostic."+string(dg.Severity)), true)
 	}
 
 	sel := d.f.Selection
@@ -257,41 +294,107 @@ func (d *drawer) collectSpans(rows int) {
 	}
 }
 
-// attrAt は、表示領域の row 行目で、バイトの範囲 [off, off+size) の文字に重ねる属性を返す。
-// size が 0 なら行末のセルを表し、行末を含む範囲だけを重ねる。
+// sweep は、1 行の範囲を左から順に重ねるための作業の領域である。
+// 文字を左から順に渡すと、その文字に掛かる範囲だけを active に持つので、文字ごとに行の範囲の全部をなめずに済む。
+type sweep struct {
+	spans  []span // 開始の順に並べた、その行の範囲
+	next   int    // まだ active に入れていない最初の範囲
+	active []span // いま見ている文字に掛かる範囲
+	dirty  bool   // active の並びを重ねる順に直す必要があるか
+}
+
+// reset は、行の範囲を空にする。
+func (w *sweep) reset() {
+	w.spans, w.active = w.spans[:0], w.active[:0]
+	w.next, w.dirty = 0, false
+}
+
+// advance は、バイトの範囲 [off, off+size) の文字へ進む。size が 0 なら行末のセルを表す。
+// 文字は左から順に渡す必要がある。
+func (w *sweep) advance(off, size int) {
+	hi := off + max(size, 1)
+	for w.next < len(w.spans) && w.spans[w.next].start < hi {
+		w.active = append(w.active, w.spans[w.next])
+		w.next++
+		w.dirty = true
+	}
+	k := 0
+	for _, sp := range w.active {
+		if sp.end > off {
+			w.active[k] = sp
+			k++
+		}
+	}
+	w.active = w.active[:k]
+}
+
+// attr は、いまの文字に掛かる範囲の属性を、base の上に重ねる順に重ねて返す。
+func (w *sweep) attr(base Attr) Attr {
+	if w.dirty {
+		slices.SortFunc(w.active, func(a, b span) int { return cmp.Compare(a.order, b.order) })
+		w.dirty = false
+	}
+	for _, sp := range w.active {
+		base = base.Over(sp.attr)
+	}
+	return base
+}
+
+// prepare は、表示領域の row 行目（バッファの line 行目、長さ ln）の構文の色と診断の範囲を sweep に詰める。
+//
+// req: FR-35
+func (d *drawer) prepare(row, line, ln int) {
+	w := &d.sweep
+	w.reset()
+	for _, ds := range d.f.Decorations.line(line) {
+		a := d.theme.attr(ds.style)
+		start, end := min(ds.start, ln), min(ds.end, ln)
+		if a == (Attr{}) || start >= end {
+			continue
+		}
+		w.spans = append(w.spans, span{start: start, end: end, order: ds.order, attr: a})
+	}
+	if len(d.diags[row]) > 0 {
+		w.spans = append(w.spans, d.diags[row]...)
+		slices.SortStableFunc(w.spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
+	}
+}
+
+// attrAt は、バッファの line 行目の、バイトの範囲 [off, off+size) の文字の属性を返す。size が 0 なら行末のセルを表す。
+// 同じ行の中では、off の小さい順に呼ぶ必要がある。
 func (d *drawer) attrAt(row, line, off, size int, base Attr) Attr {
-	a := base
-	covers := func(sp span) bool {
-		if size == 0 {
-			return sp.start <= off && sp.end > off
-		}
-		return sp.start < off+size && sp.end > off
-	}
-	for _, sp := range d.spans[row] {
-		if covers(sp) {
-			a = a.Over(sp.attr)
-		}
-	}
-	if sp := d.sel[row]; sp.end > 0 && covers(sp) {
-		// カーソルの文字は反転しない。端末のカーソルが反転で描かれても文字が読めるようにするためで、Vim と同じ。
-		if line != d.cur.line || off != d.cur.byte {
-			a = a.Over(sp.attr)
-		}
+	d.sweep.advance(off, size)
+	a := d.sweep.attr(base)
+	sp := d.sel[row]
+	covers := sp.start < off+max(size, 1) && sp.end > off
+	// カーソルの文字は反転しない。端末のカーソルが反転で描かれても文字が読めるようにするためで、Vim と同じ。
+	if sp.end > 0 && covers && (line != d.cur.line || off != d.cur.byte) {
+		a = a.Over(sp.attr)
 	}
 	return a
 }
 
 // drawLine は、バッファの line 行目を、表示領域の row 行目に描く。
+//
+// 行の先頭から文字の列を数え直すので、時間は行の長さ（表示の左の端より左の部分を含む）に比例する。
+// 文字ごとの割り当ては、^A などの表記を作るときと、行頭の結合文字だけである。
 func (d *drawer) drawLine(row, line int) {
 	s := d.text.Line(line)
-	left, w := d.r.left, d.r.Width
+	left, w, x0 := d.r.left, d.r.textWidth(), d.r.textLeft()
 	tabStop := tabStopOr(d.r.TabStop)
+	d.prepare(row, line, len(s))
+	put := func(x int, c Cell) {
+		if x >= 0 && x < w {
+			d.g.set(row, x0+x, c)
+		}
+	}
 	col := 0
 	for off := 0; off < len(s) && col < left+w; {
 		gl := nextGlyph(s, off, col, tabStop)
 		col += gl.width
 		off += gl.size
 		if gl.col+gl.width <= left {
+			d.sweep.advance(gl.off, gl.size)
 			continue
 		}
 		var base Attr
@@ -303,31 +406,31 @@ func (d *drawer) drawLine(row, line int) {
 		switch gl.kind {
 		case glyphTab:
 			for i := range gl.width {
-				d.g.set(row, x+i, blank(a))
+				put(x+i, blank(a))
 			}
 		case glyphSpecial:
-			for i, c := range gl.text {
-				d.g.set(row, x+i, Cell{Text: string(c), Width: 1, Attr: a})
+			for i := range len(gl.text) {
+				put(x+i, Cell{Text: gl.text[i : i+1], Width: 1, Attr: a})
 			}
 		case glyphText:
 			switch {
 			case gl.width < 2:
-				d.g.set(row, x, Cell{Text: gl.text, Width: 1, Attr: a})
+				put(x, Cell{Text: gl.text, Width: 1, Attr: a})
 			case x < 0:
 				// 全角文字の左半分が画面の左の端より左にある。Vim と同じく "<" を出す。
-				d.g.set(row, 0, Cell{Text: "<", Width: 1, Attr: a.Over(d.theme.attr(StyleNonText))})
+				put(0, Cell{Text: "<", Width: 1, Attr: a.Over(d.theme.attr(StyleNonText))})
 			case x+1 >= w:
-				// 右の端に半分だけ掛かる全角文字は出さない。
-				d.g.set(row, x, blank(a))
+				// 右の端に半分だけ掛かる全角文字は、Vim と同じく最後の列に ">" を出す。
+				put(x, Cell{Text: ">", Width: 1, Attr: a.Over(d.theme.attr(StyleNonText))})
 			default:
-				d.g.set(row, x, Cell{Text: gl.text, Width: 2, Attr: a})
-				d.g.set(row, x+1, Cell{Width: 0, Attr: a})
+				put(x, Cell{Text: gl.text, Width: 2, Attr: a})
+				put(x+1, Cell{Width: 0, Attr: a})
 			}
 		}
 	}
 	if col >= left && col < left+w {
 		if a := d.attrAt(row, line, len(s), 0, Attr{}); a != (Attr{}) {
-			d.g.set(row, col-left, blank(a))
+			put(col-left, blank(a))
 		}
 	}
 }
@@ -347,8 +450,8 @@ func (r *Renderer) drawText(g *Grid, row, col, limit int, s string, a Attr) int 
 				g.set(row, gl.col+i, blank(a))
 			}
 		case glyphSpecial:
-			for i, c := range gl.text {
-				g.set(row, gl.col+i, Cell{Text: string(c), Width: 1, Attr: a})
+			for i := range len(gl.text) {
+				g.set(row, gl.col+i, Cell{Text: gl.text[i : i+1], Width: 1, Attr: a})
 			}
 		case glyphText:
 			g.set(row, gl.col, Cell{Text: gl.text, Width: gl.width, Attr: a})
@@ -422,9 +525,9 @@ func (r *Renderer) position(lineCount int) string {
 }
 
 // drawCommandLine は、最後の行にコマンドラインかメッセージを描く。
-// コマンドラインモードでは ":" と入力中の文字列を出し、カーソルの位置を ok が true で返す。
+// コマンドラインモードでは ":" と入力中の文字列を出し、カーソル（縦線）を ok が true で返す。
 // 入力中の文字列が幅に収まらなければ、末尾が見えるように先頭の側を隠す。
-func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Point, bool) {
+func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool) {
 	row := r.Height - 1
 	if f.Mode == ModeCommandLine {
 		s := ":" + f.CommandLine
@@ -434,11 +537,11 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Point, bool)
 			s = s[nextGlyph(s, 0, 0, tabStop).size:]
 		}
 		end := r.drawText(g, row, 0, r.Width, s, Attr{})
-		return Point{Row: row, Col: min(end, max(r.Width-1, 0))}, true
+		return Cursor{Row: row, Col: min(end, max(r.Width-1, 0)), Shape: CursorBar, Visible: r.Width > 0}, true
 	}
 	msg := f.Message.Text
 	if msg == "" {
-		return Point{}, false
+		return Cursor{}, false
 	}
 	if i := strings.IndexByte(msg, '\n'); i >= 0 {
 		msg = msg[:i]
@@ -452,5 +555,5 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Point, bool)
 		style = StyleMessageError
 	}
 	r.drawText(g, row, 0, r.Width, msg, theme.attr(style))
-	return Point{}, false
+	return Cursor{}, false
 }

@@ -112,12 +112,14 @@ type Frame struct {
 	Selection Selection
 	// CommandLine は、コマンドラインモードで入力中の文字列（先頭の ":" を除く）である。
 	CommandLine string
+	// OperatorPending は、オペレーターの後でモーションを待っているかどうかである。カーソルを下線の形にする。
+	OperatorPending bool
 	// Recording は、記録中のマクロのレジスターの名前である。0 なら記録していない。
 	Recording rune
 	// Message は、コマンドラインモードでないときにコマンドラインの行に出すメッセージである。
 	Message Message
-	// Decorations は、構文の色の範囲の一覧である。後の要素ほど上に重ねる。
-	Decorations []Highlight
+	// Decorations は、構文の色の範囲を行ごとに分けたもの（NewDecorations で作る）である。nil なら色を付けない。
+	Decorations *Decorations
 	// Diagnostics は、診断の範囲の一覧である。構文の色の上に重ねる。
 	Diagnostics []Diagnostic
 }

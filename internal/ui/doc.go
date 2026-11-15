@@ -9,4 +9,8 @@
 //
 // 表示幅の数え方（全角文字、タブ、制御文字、結合文字、不正な UTF-8）は Vim 9.1 の既定の設定に合わせる。
 // 同じ数え方を、internal/command の望みの列に差し込む Columns として提供する。
+//
+// 全角の文字の表（widetable.go）と、その検査に使う Vim の値（testdata/vim-width.txt）は、
+// このディレクトリで `go generate` を打つと、PATH にある vim から作り直す（internal/widthgen）。
+// Vim か Go の Unicode の版を上げたときに打ち直し、`go test ./internal/ui` で確かめる。
 package ui

@@ -1,13 +1,13 @@
 ## 構文の色と診断
-size 20x6 cursor 3,0
+size 20x6 cursor 3,0 block
    |func f() {          |
 fg |kkkk................|
 fx |  ~~~~~             |
    |        // note     |
-fg |........ccccccc.....|
+fg |........ccccsks.....|
 fx |           ____     |
    |        return "s"  |
-fg |........kkkkkk.sss..|
+fg |sssssssssskkkk.sss..|
 fx |_________         _ |
    |}                   |
    | NORMAL  [ 4,1  All |
@@ -15,14 +15,14 @@ fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 
 ## 選択を重ねる
-size 20x6 cursor 0,9
+size 20x6 cursor 0,9 block
    |func f() {          |
 fg |kkkk................|
 fx |  vvvvvvv           |
    |        // note     |
-fg |........ccccccc.....|
+fg |........ccccsks.....|
    |        return "s"  |
-fg |........kkkkkk.sss..|
+fg |sssssssssskkkk.sss..|
    |}                   |
    | VISUAL   1,10  All |
 fx |SSSSSSSSSSSSSSSSSSSS|

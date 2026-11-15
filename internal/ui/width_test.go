@@ -10,10 +10,11 @@ import (
 
 // TestRuneWidthVim は、1 文字の表示幅を、Vim 9.1 の strdisplaywidth の値と全文字で比べる。
 //
-// testdata/vim-width.txt は、`vim -Nu NONE -es` で U+0001 から U+10FFFF までの各文字 c について
-// `strdisplaywidth('a' .. nr2char(c)) - 1` を求め、値が変わる位置で区切った区間（開始、終わり、幅。16 進と 10 進）である。
+// testdata/vim-width.txt は、internal/widthgen（go generate）が Vim から書き出した値で、
+// U+0001 から U+10FFFF までの各文字 c について、'a' の後に置いた幅（strdisplaywidth('a' .. c) - 1）と
+// 単独の幅（strdisplaywidth(c)）の組が変わる位置で区切った区間である。
 // 幅 -2 はサロゲートで、Go の文字列には現れないので比べない。
-// タブは列 1 に置いた幅（7）なので比べず、TestStringWidth で確かめる。
+// タブは列 1 に置いた幅なので比べず、TestStringWidth で確かめる。
 //
 // Go の unicode パッケージと Vim 9.1 は、持っている Unicode の版が違う。
 // このため、結合文字（Mn と Me）かどうかの判定が食い違う文字（Go が新しく Mn にした文字と、Mn から Mc に変わった U+1171E）は比べない。
@@ -27,32 +28,25 @@ func TestRuneWidthVim(t *testing.T) {
 	checked, skipped := 0, 0
 	for sc.Scan() {
 		var lo, hi rune
-		var want int
-		if _, err := fmt.Sscanf(sc.Text(), "%x %x %d", &lo, &hi, &want); err != nil {
+		var after, alone int
+		if _, err := fmt.Sscanf(sc.Text(), "%x %x %d %d", &lo, &hi, &after, &alone); err != nil {
 			t.Fatalf("%q: %v", sc.Text(), err)
 		}
-		if want < 0 {
+		if after < 0 {
 			continue
 		}
 		for r := lo; r <= hi; r++ {
 			if r == '\t' {
 				continue
 			}
-			got := nextGlyph(string(r), 0, 0, DefaultTabStop).width
-			if isComposing(r) {
-				// 結合文字は、前の文字に重ねて幅 0 になることを確かめる。
-				got = StringWidth("a"+string(r), DefaultTabStop) - 1
-				if want == 1 {
-					skipped++
-					continue
-				}
-			}
-			if !isComposing(r) && want == 0 && got == 1 {
+			if isComposing(r) != (after == 0) {
 				skipped++
 				continue
 			}
-			if got != want {
-				t.Errorf("U+%04X: width %d, Vim %d", r, got, want)
+			gotAfter := StringWidth("a"+string(r), DefaultTabStop) - 1
+			gotAlone := StringWidth(string(r), DefaultTabStop)
+			if gotAfter != after || gotAlone != alone {
+				t.Errorf("U+%04X: width after 'a' %d, alone %d; Vim %d, %d", r, gotAfter, gotAlone, after, alone)
 			}
 			checked++
 		}
@@ -92,6 +86,9 @@ func TestStringWidth(t *testing.T) {
 		{"e\u0301", 8, 1},  // 結合文字は 0 列
 		{"\u0301", 8, 1},   // 行頭の結合文字は空白に重ねて 1 列
 		{"\u0301\u0302", 8, 1},
+		{"\u3099", 8, 2}, // 行頭の全角の結合文字は 2 列
+		{"\u180b", 8, 6}, // 行頭の U+180B は <180b>
+		{"a\u180b", 8, 1},
 		{"\t\u0301", 8, 8},
 		{"😀", 8, 2},
 		{"🌡", 8, 2}, // Vim は East Asian Width が N の絵文字も 2 列にする

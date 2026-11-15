@@ -69,7 +69,7 @@ func cellCodes(a Attr) (fg, fx byte) {
 func dump(s Screen) string {
 	g := s.Grid
 	var b strings.Builder
-	fmt.Fprintf(&b, "size %dx%d cursor %d,%d\n", g.Width(), g.Height(), s.Cursor.Row, s.Cursor.Col)
+	fmt.Fprintf(&b, "size %dx%d cursor %d,%d %s\n", g.Width(), g.Height(), s.Cursor.Row, s.Cursor.Col, cursorDesc(s.Cursor))
 	for row := range g.Height() {
 		fmt.Fprintf(&b, "   |%s|\n", g.RowText(row))
 		fgs, fxs := make([]byte, g.Width()), make([]byte, g.Width())
@@ -87,6 +87,22 @@ func dump(s Screen) string {
 		}
 	}
 	return b.String()
+}
+
+// cursorDesc は、カーソルの形と表示の有無をゴールデンに書く語にする。
+func cursorDesc(c Cursor) string {
+	if !c.Visible {
+		return "hidden"
+	}
+	switch c.Shape {
+	case CursorBlock:
+		return "block"
+	case CursorBar:
+		return "bar"
+	case CursorUnderline:
+		return "underline"
+	}
+	return "?"
 }
 
 // golden は、got を testdata/<name>.golden と比べる。-update なら書き直す。
@@ -136,14 +152,57 @@ func pos(line, b int) buffer.Position {
 }
 
 func TestGoldenWide(t *testing.T) {
-	b := buffer.New("あいうえおかきくけこ\nxあいうえおかきくけこ\nabc日本語def\n")
+	b := buffer.New("あいうえおかきくけこさしすせそ\nxあいうえおかきくけこさしすせそ\nabc日本語def\n")
 	r := newRenderer(11, 6)
 	golden(t, "wide", renderSteps(r, []step{
-		{"右の端に半分だけ掛かる全角文字は出さない", Frame{Text: b, Name: "a.txt", Cursor: pos(0, 0)}},
+		{"右の端に半分だけ掛かる全角文字は > にする", Frame{Text: b, Name: "a.txt", Cursor: pos(0, 0)}},
 		{"全角文字の上のカーソル", Frame{Text: b, Name: "a.txt", Cursor: pos(2, 6)}},
-		{"横のスクロールで左の端が欠けた全角文字は <", Frame{Text: b, Name: "a.txt", Cursor: pos(0, 27)}},
+		{"横のスクロールで左の端が欠けた全角文字は <、右の端に掛かる全角文字は >", Frame{Text: b, Name: "a.txt", Cursor: pos(0, 27)}},
 		{"左の端より左へ戻るとスクロールを戻す", Frame{Text: b, Name: "a.txt", Cursor: pos(1, 1)}},
 	}))
+}
+
+// TestGoldenGutter は、表示領域の左に欄を空けたときの描画とカーソルの形を確かめる。
+func TestGoldenGutter(t *testing.T) {
+	b := buffer.New("abcdefghijklmnopqrstuvwxyz\nあいうえおかきくけこ\n")
+	r := &Renderer{Width: 14, Height: 5, GutterWidth: 3, Theme: testTheme()}
+	golden(t, "gutter", renderSteps(r, []step{
+		{"欄の右からテキストを描く", Frame{Text: b, Cursor: pos(0, 0)}},
+		{"横のスクロールは欄を除いた幅で数える", Frame{Text: b, Cursor: pos(0, 12)}},
+		{"右の端の全角文字", Frame{Text: b, Cursor: pos(1, 0)}},
+		{"インサートモードは縦線", Frame{Text: b, Mode: ModeInsert, Cursor: pos(1, 3)}},
+		{"オペレーターの後は下線", Frame{Text: b, OperatorPending: true, Cursor: pos(1, 3)}},
+		{"コマンドラインは縦線", Frame{Text: b, Mode: ModeCommandLine, CommandLine: "w", Cursor: pos(1, 3)}},
+	}))
+	if got := (&Renderer{Width: 10, Height: 2}).Render(&Frame{}).Cursor; got.Visible {
+		t.Errorf("表示領域が 0 行ならカーソルを出さない: %+v", got)
+	}
+}
+
+func TestColor(t *testing.T) {
+	if _, ok := ColorDefault.Index(); ok {
+		t.Error("ColorDefault.Index が ok")
+	}
+	if n, ok := Indexed(0).Index(); !ok || n != 0 {
+		t.Errorf("Indexed(0).Index() = %d, %v", n, ok)
+	}
+	if n, ok := Indexed(255).Index(); !ok || n != 255 {
+		t.Errorf("Indexed(255).Index() = %d, %v", n, ok)
+	}
+	c := RGB(0x12, 0x34, 0x56)
+	if r, g, b, ok := c.RGB(); !ok || r != 0x12 || g != 0x34 || b != 0x56 {
+		t.Errorf("RGB = %x %x %x %v", r, g, b, ok)
+	}
+	if _, ok := c.Index(); ok {
+		t.Error("RGB の色の Index が ok")
+	}
+	if RGB(0, 0, 0) == ColorDefault || Indexed(0) == ColorDefault || RGB(0, 0, 0) == Indexed(0) {
+		t.Error("黒と既定の色が区別できない")
+	}
+	a := Attr{Fg: Indexed(1)}.Over(Attr{Fg: RGB(1, 2, 3), Underline: true})
+	if a.Fg != RGB(1, 2, 3) || !a.Underline {
+		t.Errorf("Over = %+v", a)
+	}
 }
 
 func TestGoldenTab(t *testing.T) {
@@ -217,14 +276,16 @@ func TestGoldenVisual(t *testing.T) {
 func TestGoldenDecorations(t *testing.T) {
 	b := buffer.New("func f() {\n\t// note\n\treturn \"s\"\n}\n")
 	r := newRenderer(20, 6)
-	decos := []Highlight{
+	decos := NewDecorations([]Highlight{
 		{Range: buffer.Range{Start: pos(0, 0), End: pos(0, 4)}, Style: StyleKeyword},
 		{Range: buffer.Range{Start: pos(1, 1), End: pos(1, 8)}, Style: StyleComment},
 		{Range: buffer.Range{Start: pos(2, 1), End: pos(2, 7)}, Style: StyleKeyword},
 		{Range: buffer.Range{Start: pos(2, 8), End: pos(2, 11)}, Style: StyleString},
 		{Range: buffer.Range{Start: pos(0, 5), End: pos(0, 6)}, Style: "unknown"},
-		{Range: buffer.Range{Start: pos(3, 0), End: pos(3, 1)}, Style: StyleNumber}, // テーマに無い名前は色を付けない
-	}
+		{Range: buffer.Range{Start: pos(3, 0), End: pos(3, 1)}, Style: StyleNumber},  // テーマに無い名前は色を付けない
+		{Range: buffer.Range{Start: pos(1, 5), End: pos(2, 3)}, Style: StyleString},  // 行をまたぐ。行末の 1 セルは含めない
+		{Range: buffer.Range{Start: pos(1, 6), End: pos(1, 7)}, Style: StyleKeyword}, // 後の要素を上に重ねる
+	})
 	diags := []Diagnostic{
 		{Range: buffer.Range{Start: pos(0, 2), End: pos(0, 7)}, Severity: SeverityError},
 		{Range: buffer.Range{Start: pos(2, 11), End: pos(2, 11)}, Severity: SeverityWarning}, // 行末の空の範囲
@@ -353,8 +414,11 @@ func TestRenderSmall(t *testing.T) {
 			{Text: buffer.New("あいう\tx\n"), Cursor: pos(5, 99), Mode: ModeCommandLine, CommandLine: "w"},
 			{
 				Text: buffer.New("abc\n"), Mode: ModeVisual,
-				Selection:   Selection{Active: true, Start: pos(-1, -1), End: pos(9, 9)},
-				Decorations: []Highlight{{Range: buffer.Range{Start: pos(9, 9), End: pos(0, 1)}, Style: StyleKeyword}},
+				Selection: Selection{Active: true, Start: pos(-1, -1), End: pos(9, 9)},
+				Decorations: NewDecorations([]Highlight{
+					{Range: buffer.Range{Start: pos(9, 9), End: pos(0, 1)}, Style: StyleKeyword},
+					{Range: buffer.Range{Start: pos(-3, -1), End: pos(-1, 0)}, Style: StyleKeyword},
+				}),
 			},
 		}
 		for _, f := range frames {
@@ -369,7 +433,7 @@ func TestRenderSmall(t *testing.T) {
 // TestRenderDoesNotModify は、描画が入力の Frame とバッファを変えないことを確かめる。
 func TestRenderDoesNotModify(t *testing.T) {
 	b := buffer.New("abc\n")
-	f := Frame{Text: b, Cursor: pos(5, 9), Decorations: []Highlight{{Range: buffer.Range{Start: pos(0, 2), End: pos(0, 0)}, Style: StyleKeyword}}}
+	f := Frame{Text: b, Cursor: pos(5, 9), Diagnostics: []Diagnostic{{Range: buffer.Range{Start: pos(0, 2), End: pos(0, 0)}, Severity: SeverityError}}}
 	before := fmt.Sprintf("%+v", f)
 	v := b.Version()
 	(&Renderer{Width: 10, Height: 4}).Render(&f)

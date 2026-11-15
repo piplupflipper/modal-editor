@@ -1,5 +1,5 @@
 ## ノーマルモードではタブの最後の列
-size 20x6 cursor 0,7
+size 20x6 cursor 0,7 block
    |        x           |
    |a       b           |
    |abcdefgh        z   |
@@ -10,7 +10,7 @@ fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 
 ## インサートモードではタブの最初の列
-size 20x6 cursor 1,1
+size 20x6 cursor 1,1 bar
    |        x           |
    |a       b           |
    |abcdefgh        z   |
@@ -21,7 +21,7 @@ fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 
 ## 8 列ちょうどの後のタブ
-size 20x6 cursor 2,15
+size 20x6 cursor 2,15 block
    |        x           |
    |a       b           |
    |abcdefgh        z   |
@@ -32,7 +32,7 @@ fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 
 ## タブ幅 4
-size 20x6 cursor 1,3
+size 20x6 cursor 1,3 block
    |    x               |
    |a   b               |
    |abcdefgh    z       |
