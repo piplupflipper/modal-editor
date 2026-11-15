@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/ext"
 )
@@ -186,6 +188,9 @@ const bufferRefSchema = `"buffer": {"type": "integer", "minimum": 1, "descriptio
 
 // resolve は、ref が指す開いているバッファを、editor/state の一覧から探す。
 // ref が空のときは、required なら誤りを、そうでなければ nil を返す。
+//
+// パスは filepath.Clean で整えてから比べる。本体は利用者が開いたパスを絶対パスにして渡し、シンボリックリンクは解決しない（基本設計 6.7）。
+// 言語モデルは `./` や `..` を含むパスを作りやすいので、文字列の一致だけでは開いているバッファを見つけられないことがある。
 func (ref bufferRef) resolve(st *ext.EditorStateResult, required bool) (*ext.BufferInfo, error) {
 	switch {
 	case ref.Buffer != nil && ref.Path != "":
@@ -195,10 +200,16 @@ func (ref bufferRef) resolve(st *ext.EditorStateResult, required bool) (*ext.Buf
 			return nil, toolErrorf("buffer or path is required")
 		}
 		return nil, nil
+	case ref.Path != "" && !filepath.IsAbs(ref.Path):
+		return nil, toolErrorf("path %q is not an absolute path", ref.Path)
+	}
+	want := ""
+	if ref.Path != "" {
+		want = filepath.Clean(ref.Path)
 	}
 	for i := range st.Buffers {
 		b := &st.Buffers[i]
-		if (ref.Buffer != nil && b.Buffer == *ref.Buffer) || (ref.Path != "" && b.Path == ref.Path) {
+		if (ref.Buffer != nil && b.Buffer == *ref.Buffer) || (want != "" && b.Path != "" && filepath.Clean(b.Path) == want) {
 			return b, nil
 		}
 	}
@@ -478,6 +489,40 @@ func toTransaction(version ext.Version, edits []mcpEdit) (ext.Transaction, error
 	return tx, nil
 }
 
+// checkEdits は、edit_buffer の置き換えの位置が、lines（version の時点のテキスト）の中の文字の境界を指すことを確かめる。
+// 誤りの本文は、ツールの数え方（1 始まりの行と列）と引数の edits[i] で書く。
+// 本体も同じ検査をするが、その誤りの本文は 0 始まりの位置で、トランザクションの並べ替えた後の番号を指すので、言語モデルが読み違えうる。
+// 文字の境界の判定は ext/server の Buffer と同じく、正しい UTF-8 の多バイト文字の途中だけを境界でないとする。
+func checkEdits(lines []string, edits []mcpEdit) error {
+	for i, e := range edits {
+		for _, p := range []mcpPosition{e.Range.Start, e.Range.End} {
+			if err := checkPosition(lines, p); err != nil {
+				return toolErrorf("edits[%d]: %v", i, err)
+			}
+		}
+	}
+	return nil
+}
+
+// checkPosition は、1 始まりの位置 p が lines の中の文字の境界（行末を含む）を指すことを確かめる。
+func checkPosition(lines []string, p mcpPosition) error {
+	if p.Line < 1 || p.Line > len(lines) {
+		return fmt.Errorf("line %d is out of range: the buffer has lines 1 to %d", p.Line, len(lines))
+	}
+	line := lines[p.Line-1]
+	if p.Column < 1 || p.Column > len(line)+1 {
+		return fmt.Errorf("column %d of line %d is out of range: the line has %d bytes, so the column is 1 to %d (%d is the end of the line)",
+			p.Column, p.Line, len(line), len(line)+1, len(line)+1)
+	}
+	b := p.Column - 1
+	for j := max(0, b-(utf8.UTFMax-1)); j < b; j++ {
+		if _, size := utf8.DecodeRuneInString(line[j:]); size > 1 && j+size > b {
+			return fmt.Errorf("column %d of line %d is inside a multi-byte character that starts at column %d; columns count bytes", p.Column, p.Line, j+1)
+		}
+	}
+	return nil
+}
+
 func comparePos(p, q ext.Position) int {
 	if p.Line != q.Line {
 		return p.Line - q.Line
@@ -565,9 +610,20 @@ var editBufferTool = tool{
 		if err != nil {
 			return nil, err
 		}
+		// 位置の誤りを、ツールの数え方の本文で返すために、送る前に複製で確かめる。
+		// バッファが既に別の版なら、本体がバージョン番号の不一致で拒むので確かめない。
+		// 複製を読めない（不正な UTF-8 で送られていない）ときも、本体の判断に任せる。
+		if info.Version == *a.Version {
+			if snap, rerr := ed.ReadBuffer(ctx, info.Buffer, info.Version); rerr == nil && snap.Version == *a.Version {
+				if cerr := checkEdits(snap.Lines, a.Edits); cerr != nil {
+					return nil, cerr
+				}
+			}
+		}
 		res, err := ed.Edit(ctx, ext.BufferEditParams{Buffer: info.Buffer, Transaction: tx})
 		if err != nil {
-			return nil, err
+			// 本体の誤りの本文は、0 始まりの位置と、並べ替えた後のトランザクションの番号で書かれている。
+			return nil, fmt.Errorf("%w (positions in this message are 0-based and refer to the edits sorted from the end of the buffer)", err)
 		}
 		if !res.Applied && res.Version != *a.Version {
 			return nil, toolErrorf("not applied: version %d does not match the current version %d of buffer %d; "+
@@ -613,10 +669,11 @@ var openFileTool = tool{
 		if err := decodeArgs(args, &a); err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(a.Path, "/") {
+		if !filepath.IsAbs(a.Path) {
 			return nil, toolErrorf("path %q is not an absolute path", a.Path)
 		}
-		p := ext.EditorOpenParams{Path: a.Path, Version: a.Version, Focus: a.Focus == nil || *a.Focus}
+		// 本体は既に開いているファイルをパスで探すので、`./` や `..` を除いてから渡す（bufferRef.resolve と同じ）。
+		p := ext.EditorOpenParams{Path: filepath.Clean(a.Path), Version: a.Version, Focus: a.Focus == nil || *a.Focus}
 		switch {
 		case a.Line != nil:
 			col := 1

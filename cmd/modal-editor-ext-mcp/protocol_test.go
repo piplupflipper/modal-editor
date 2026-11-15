@@ -399,6 +399,14 @@ func TestReadTools(t *testing.T) {
 	s.toolErr("read_buffer", map[string]any{"buffer": 2}, "invalid UTF-8")
 	s.toolErr("read_buffer", map[string]any{"buffer": 9}, "not open")
 	s.toolErr("read_buffer", map[string]any{"path": "/nope"}, "open_file")
+	s.toolErr("read_buffer", map[string]any{"path": "tmp/a.go"}, "not an absolute path")
+	// パスは filepath.Clean で整えてから比べる。
+	for _, p := range []string{"/tmp/./a.go", "/tmp/x/../a.go", "//tmp/a.go"} {
+		s.toolOK("read_buffer", map[string]any{"path": p}, &rb)
+		if rb.Version != 3 {
+			t.Errorf("read_buffer(%q) = %+v", p, rb)
+		}
+	}
 	s.toolErr("read_buffer", map[string]any{}, "required")
 	s.toolErr("read_buffer", map[string]any{"buffer": 1, "path": "/tmp/a.go"}, "not both")
 	s.toolErr("read_buffer", map[string]any{"buffer": 1, "lines": 3}, "unknown field")
@@ -469,6 +477,14 @@ func TestEditBuffer(t *testing.T) {
 	s.toolErr("edit_buffer", map[string]any{"buffer": 1, "version": 4, "edits": []any{
 		map[string]any{"range": rng(2, 1, 1, 1), "text": "a"},
 	}}, "before its start")
+	// 位置の誤りは、送る前に 1 始まりの数え方で返す。いまのテキストは "// x\npackage b\nvar v = 1\nfunc g() {}"。
+	s.toolErr("edit_buffer", map[string]any{"buffer": 1, "version": 4, "edits": []any{
+		map[string]any{"range": rng(1, 1, 1, 1), "text": "a"},
+		map[string]any{"range": rng(5, 1, 5, 1), "text": "a"},
+	}}, "edits[1]: line 5 is out of range: the buffer has lines 1 to 4")
+	s.toolErr("edit_buffer", map[string]any{"buffer": 1, "version": 4, "edits": []any{
+		map[string]any{"range": rng(1, 2, 1, 6), "text": "a"},
+	}}, "edits[0]: column 6 of line 1 is out of range: the line has 4 bytes, so the column is 1 to 5")
 	if len(s.ed.edits) != 2 {
 		t.Errorf("本体へ送った buffer/edit の数 = %d, want 2（引数の誤りは送らない）", len(s.ed.edits))
 	}

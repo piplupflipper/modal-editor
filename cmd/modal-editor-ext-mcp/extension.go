@@ -181,7 +181,9 @@ func listenSocket(path string) (net.Listener, error) {
 			return nil, fmt.Errorf("残っていたソケット %s を消せません: %w", path, err)
 		}
 	}
-	ln, err := net.Listen("unix", path)
+	var ln net.Listener
+	var err error
+	withPrivateUmask(func() { ln, err = net.Listen("unix", path) })
 	if err != nil {
 		return nil, fmt.Errorf("%s で待ち受けられません: %w", path, err)
 	}

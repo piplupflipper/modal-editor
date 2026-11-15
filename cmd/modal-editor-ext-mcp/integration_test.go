@@ -333,10 +333,14 @@ func TestThroughBridge(t *testing.T) {
 	c.toolErr("edit_buffer", map[string]any{"buffer": aID, "version": rb.Version - 1, "edits": []any{
 		map[string]any{"range": rng(1, 1, 1, 1), "text": "x"},
 	}}, "read_buffer again")
-	// バッファの外の位置は、本体が拒む。
+	// バッファの外の位置は、送る前にツールの数え方（1 始まり）の本文で拒む。
 	c.toolErr("edit_buffer", map[string]any{"buffer": aID, "version": rb.Version, "edits": []any{
+		map[string]any{"range": rng(1, 1, 1, 1), "text": "x"},
 		map[string]any{"range": rng(9, 1, 9, 1), "text": "x"},
-	}}, "")
+	}}, "edits[1]: line 9 is out of range: the buffer has lines 1 to 4")
+	c.toolErr("edit_buffer", map[string]any{"path": work + "/./a.go", "version": rb.Version, "edits": []any{
+		map[string]any{"range": rng(2, 1, 2, 50), "text": "x"},
+	}}, "edits[0]: column 50 of line 2 is out of range: the line has 9 bytes, so the column is 1 to 10")
 
 	// get_editor_state: 利用者がビジュアルモードで選んだ範囲を読む。
 	type stateResult struct {
@@ -393,6 +397,10 @@ func TestThroughBridge(t *testing.T) {
 	if rb.Text != "world" {
 		t.Errorf("open_file の後の read_buffer = %+v", rb)
 	}
+	// 列はバイトで数えるので、é（列 2 から 2 バイト）の途中の列 3 は拒む。
+	c.toolErr("edit_buffer", map[string]any{"buffer": of.Buffer, "version": rb.Version, "edits": []any{
+		map[string]any{"range": rng(1, 3, 1, 3), "text": "x"},
+	}}, "column 3 of line 1 is inside a multi-byte character that starts at column 2")
 
 	// save_buffer: 編集した a.go を書き出す。
 	var sb struct {
