@@ -4,8 +4,10 @@
 //
 //   - バッファを開く、変える、閉じるたびに [Host.OpenBuffer]、[Host.ChangeBuffer]、[Host.CloseBuffer] を呼ぶ。
 //     稼働中の拡張機能へ全文と差分を送る（FR-16）
-//   - 拡張機能の操作が呼ばれたら、[Host.ResolveMotion] などの期限付きの問い合わせを呼ぶ（5.4）。
-//     期限を 0 にした設定では、待たない [Host.Send] を呼び、結果を [QueryResult] のイベントで受け取る（FR-18）
+//   - 拡張機能の操作が呼ばれたら、[Host.Send] で問い合わせ、結果を [QueryResult] のイベントで受け取る（5.4）。
+//     Send は待たずに戻るので、イベントループは結果を待つ間も描画と利用者の中断を処理できる。
+//     期限が正の設定（FR-17）では期限を渡し、期限 0 の設定（FR-18）では結果が届いた時点で照合する。
+//     応答を待って止まってよい呼び出し側（テストや計測のコマンド）は、[Host.Call] と [Host.ResolveMotion] などを使う
 //   - [Host.Events] のチャネルから、拡張機能からの要求と通知、状態の変化を受け取り、イベントループの goroutine で処理する
 //
 // 拡張機能のプロセスとの通信と監視は、このパッケージの中の goroutine が行う。
@@ -47,6 +49,8 @@ const (
 	DefaultMaxFailures = 5
 	// DefaultResetAfter は、連続の失敗の数え直しに要る、稼働の継続時間の既定値（仮）である。
 	DefaultResetAfter = time.Minute
+	// DefaultSendTimeout は、期限を指定しない Send の待ちの上限の既定値（仮）である。
+	DefaultSendTimeout = 10 * time.Second
 	// DefaultMaxOutboxBytes は、拡張機能 1 つあたりの送信の列の上限の既定値（仮）である。
 	DefaultMaxOutboxBytes = 64 << 20
 	// DefaultMaxQueuedEvents は、拡張機能 1 つあたりの、イベントループへ渡していないイベントの数の上限の既定値（仮）である。
@@ -72,8 +76,14 @@ type Config struct {
 	// ResetAfter は、連続の失敗を数え直すのに要る、稼働の継続時間である。
 	// 稼働中になってからこの時間より長く動いた後の失敗は、連続の 1 回目として数える。
 	ResetAfter time.Duration
+	// SendTimeout は、[SendOptions] の Timeout を指定しない [Host.Send] が、起動と応答を待つ上限である。
+	// 期限 0 の設定（FR-18）でも、応答しない問い合わせの待ち受けが溜まり続けないようにする。
+	SendTimeout time.Duration
 	// MaxOutboxBytes は、拡張機能 1 つあたりの、送信の列に積んだまま書いていないバイト数の上限である。
-	// 拡張機能が標準入力を読まなくなったときに、本体のメモリを使い切らないための上限で、超えたら異常と判断する（NFR-03）。
+	// 拡張機能が標準入力を読まなくなったときに、本体のメモリを使い切らないための上限である（NFR-03）。
+	// 送る時点で、列に残っている量がこの上限を超えていたら、送らずに異常と判断する（[ErrOutboxFull]）。
+	// 列が空なら、上限より大きいメッセージ（大きなバッファの全文）も送る。
+	// このため列の量は、最大で上限と 1 件のメッセージの和に収まる。
 	MaxOutboxBytes int
 	// MaxQueuedEvents は、拡張機能 1 つあたりの、イベントループへ渡していないイベントの数の上限である。
 	// 拡張機能が通知を送り続けたときに、本体のメモリを使い切らないための上限で、超えたら異常と判断する（NFR-03）。
@@ -103,6 +113,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ResetAfter <= 0 {
 		c.ResetAfter = DefaultResetAfter
+	}
+	if c.SendTimeout <= 0 {
+		c.SendTimeout = DefaultSendTimeout
 	}
 	if c.MaxOutboxBytes <= 0 {
 		c.MaxOutboxBytes = DefaultMaxOutboxBytes
@@ -150,6 +163,7 @@ const (
 	// StateRestartWait は、異常で子プロセスを終わらせ、再起動の待ち時間が過ぎるのを待っている状態である。
 	StateRestartWait
 	// StateDisabled は、連続の失敗が上限に達し、自動では起動しない状態である。[Host.Restart] で起動し直せる。
+	// 上限に達した失敗でも、いったん StateRestartWait へ移ってから、待たずにこの状態へ移る（図 4）。
 	StateDisabled
 )
 
@@ -178,6 +192,9 @@ var (
 	ErrUnavailable = errors.New("exthost: extension unavailable")
 	// ErrTimeout は、期限付きの問い合わせが期限を超えたことを表す（FR-17）。
 	ErrTimeout = errors.New("exthost: query timed out")
+	// ErrOutboxFull は、拡張機能が標準入力を読まず、送信の列が [Config.MaxOutboxBytes] を超えたことを表す。
+	// 異常の理由として [StateChange] の Err に入る。
+	ErrOutboxFull = errors.New("exthost: extension is not reading its input (outbox limit exceeded)")
 	// ErrClosed は、[Host.Close] の後に呼ばれたことを表す。
 	ErrClosed = errors.New("exthost: host closed")
 )

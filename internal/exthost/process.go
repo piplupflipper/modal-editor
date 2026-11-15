@@ -79,6 +79,8 @@ func (h *Host) supervise(e *extension, r *run) {
 		e.failures++
 		e.run = nil
 		h.purgeLocked(r)
+		// 図 4 のとおり、異常ではいったん再起動待ちへ移り、連続の失敗が上限に達していれば待たずに無効へ移る。
+		h.setStateLocked(e, StateRestartWait, err)
 		if e.failures >= h.cfg.MaxFailures {
 			h.setStateLocked(e, StateDisabled, fmt.Errorf("%w (%d consecutive failures)", err, e.failures))
 			h.mu.Unlock()
@@ -86,7 +88,6 @@ func (h *Host) supervise(e *extension, r *run) {
 		}
 		failures := e.failures
 		delay := h.restartDelay(failures)
-		h.setStateLocked(e, StateRestartWait, err)
 		h.mu.Unlock()
 
 		h.log.Info("extension restart scheduled", "extension", id, "delay", delay, "failures", failures)
@@ -133,7 +134,7 @@ func (h *Host) runOnce(e *extension, r *run) error {
 		h.logStderr(id, p.stderr)
 	}()
 
-	conn := rpc.NewConn(p.stdout, p.stdin, h.handler(e, r), rpc.WithMaxOutboxBytes(h.cfg.MaxOutboxBytes))
+	conn := rpc.NewConn(p.stdout, p.stdin, h.handler(e, r))
 	h.mu.Lock()
 	r.conn = conn
 	h.mu.Unlock()
@@ -202,7 +203,7 @@ func (h *Host) initialize(e *extension, r *run, p *process) error {
 	r.runningSince = time.Now()
 	h.setStateLocked(e, StateRunning, nil)
 	for _, d := range h.sortedDocsLocked() {
-		h.notifyLocked(id, r.conn, ext.MethodBufferOpen, d.openParams())
+		h.notifyLocked(id, r, ext.MethodBufferOpen, d.openParams())
 	}
 	return nil
 }

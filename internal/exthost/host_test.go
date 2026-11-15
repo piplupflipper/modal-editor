@@ -2,6 +2,7 @@ package exthost
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,9 @@ import (
 
 // waitTimeout は、テストが起こるはずのことを待つ上限である。これを超えたらテストを失敗させる。
 const waitTimeout = 10 * time.Second
+
+// ctx は、中断しない問い合わせに渡す ctx である。
+var ctx = context.Background()
 
 // callTimeout は、応答することが分かっている問い合わせの期限である。
 const callTimeout = 5 * time.Second
@@ -154,6 +158,26 @@ func (hs *harness) waitEvent(what string, pred func(Event) bool) Event {
 	return nil
 }
 
+// mark は、これまでに集めたイベントの数を返す。statesSince の起点に使う。
+func (hs *harness) mark() int {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	return len(hs.events)
+}
+
+// statesSince は、from 番目以降のイベントのうち、拡張機能 id の状態の変化を順に返す。
+func (hs *harness) statesSince(from int, id string) []State {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	var states []State
+	for _, ev := range hs.events[from:] {
+		if sc, ok := ev.(*StateChange); ok && sc.Extension == id {
+			states = append(states, sc.State)
+		}
+	}
+	return states
+}
+
 // waitState は、拡張機能 id が st になったことを知らせる StateChange を待って返す。
 func (hs *harness) waitState(id string, st State) *StateChange {
 	hs.t.Helper()
@@ -168,7 +192,7 @@ func (hs *harness) waitState(id string, st State) *StateChange {
 func (hs *harness) fakeState() fakeState {
 	hs.t.Helper()
 	var s fakeState
-	if err := hs.h.Call("x", methodState, nil, callTimeout, &s); err != nil {
+	if err := hs.h.Call(ctx, "x", methodState, nil, callTimeout, &s); err != nil {
 		hs.t.Fatalf("test/state: %v", err)
 	}
 	return s
@@ -394,7 +418,7 @@ func TestResync(t *testing.T) {
 	}
 	hs.h.Activate(ext.ActivationTextObject, "x.obj")
 	hs.waitState("x", StateRunning)
-	if err := hs.h.Call("x", methodForget, ext.BufferCloseParams{Buffer: 7}, callTimeout, nil); err != nil {
+	if err := hs.h.Call(ctx, "x", methodForget, ext.BufferCloseParams{Buffer: 7}, callTimeout, nil); err != nil {
 		t.Fatal(err)
 	}
 	c, err := b.Apply(buffer.Transaction{BaseVersion: 0, Edits: []buffer.Edit{{Range: buffer.Range{Start: buffer.Position{Line: 1, Byte: 3}, End: buffer.Position{Line: 1, Byte: 3}}, Text: "!"}}})
@@ -420,7 +444,7 @@ func TestResync(t *testing.T) {
 func TestCallStartsExtension(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)
 	p := ext.TextObjectResolveParams{Buffer: 1, Version: 4, ID: "x.obj", Cursor: ext.Position{Line: 2, Byte: 1}, Count: 3}
-	res, err := hs.h.ResolveTextObject("x", p, callTimeout)
+	res, err := hs.h.ResolveTextObject(ctx, "x", p, callTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,23 +452,23 @@ func TestCallStartsExtension(t *testing.T) {
 	if res != want {
 		t.Fatalf("result = %+v, want %+v", res, want)
 	}
-	mres, err := hs.h.ResolveMotion("x", ext.MotionResolveParams{Version: 4, Count: 2}, callTimeout)
+	mres, err := hs.h.ResolveMotion(ctx, "x", ext.MotionResolveParams{Version: 4, Count: 2}, callTimeout)
 	if err != nil || !mres.OK || mres.Position.Byte != 2 {
 		t.Fatalf("motion = %+v, %v", mres, err)
 	}
-	ores, err := hs.h.ApplyOperator("x", ext.OperatorApplyParams{Version: 4}, callTimeout)
+	ores, err := hs.h.ApplyOperator(ctx, "x", ext.OperatorApplyParams{Version: 4}, callTimeout)
 	if err != nil || !ores.OK || ores.Transaction.BaseVersion != 4 || len(ores.Transaction.Edits) != 1 {
 		t.Fatalf("operator = %+v, %v", ores, err)
 	}
 
-	if _, err := hs.h.ResolveMotion("nope", ext.MotionResolveParams{}, callTimeout); !errors.Is(err, ErrUnknownExtension) {
+	if _, err := hs.h.ResolveMotion(ctx, "nope", ext.MotionResolveParams{}, callTimeout); !errors.Is(err, ErrUnknownExtension) {
 		t.Fatalf("unknown extension: %v", err)
 	}
-	if err := hs.h.Call("x", ext.MethodPing, nil, 0, nil); err == nil {
+	if err := hs.h.Call(ctx, "x", ext.MethodPing, nil, 0, nil); err == nil {
 		t.Fatal("Call with timeout 0 succeeded")
 	}
 	var rpcErr *rpc.Error
-	if err := hs.h.Call("x", "no/such", nil, callTimeout, nil); !errors.As(err, &rpcErr) || rpcErr.Code != rpc.CodeMethodNotFound {
+	if err := hs.h.Call(ctx, "x", "no/such", nil, callTimeout, nil); !errors.As(err, &rpcErr) || rpcErr.Code != rpc.CodeMethodNotFound {
 		t.Fatalf("unknown method: %v", err)
 	}
 }
@@ -459,7 +483,7 @@ func TestCallTimeoutDiscardsLateResponse(t *testing.T) {
 
 	slow := ext.TextObjectResolveParams{Version: 1, Count: 100, Args: json.RawMessage(`{"delayMs":400}`)}
 	start := time.Now()
-	_, err := hs.h.ResolveTextObject("x", slow, 50*time.Millisecond)
+	_, err := hs.h.ResolveTextObject(ctx, "x", slow, 50*time.Millisecond)
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("slow query: %v, want ErrTimeout", err)
 	}
@@ -470,7 +494,7 @@ func TestCallTimeoutDiscardsLateResponse(t *testing.T) {
 	// 遅れた応答（Count 100）が届く頃に次の問い合わせをしても、自分の応答（Count 7）を受け取る。
 	time.Sleep(350 * time.Millisecond)
 	for i := range 5 {
-		res, err := hs.h.ResolveTextObject("x", ext.TextObjectResolveParams{Version: 1, Count: 7 + i}, callTimeout)
+		res, err := hs.h.ResolveTextObject(ctx, "x", ext.TextObjectResolveParams{Version: 1, Count: 7 + i}, callTimeout)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -505,7 +529,7 @@ func TestSendDeliversResultLater(t *testing.T) {
 	}
 	p := ext.MotionResolveParams{Version: 9, Cursor: ext.Position{Line: 1, Byte: 2}, Count: 3, Args: json.RawMessage(`{"delayMs":200}`)}
 	start := time.Now()
-	if err := hs.h.Send("x", ext.MethodMotionResolve, p, tag{9, p.Cursor}); err != nil {
+	if _, err := hs.h.Send("x", ext.MethodMotionResolve, p, SendOptions{Tag: tag{9, p.Cursor}}); err != nil {
 		t.Fatal(err)
 	}
 	if d := time.Since(start); d > 100*time.Millisecond {
@@ -527,7 +551,7 @@ func TestSendDeliversResultLater(t *testing.T) {
 		t.Fatal("result arrived before the extension replied")
 	}
 
-	if err := hs.h.Send("nope", ext.MethodMotionResolve, p, nil); !errors.Is(err, ErrUnknownExtension) {
+	if _, err := hs.h.Send("nope", ext.MethodMotionResolve, p, SendOptions{}); !errors.Is(err, ErrUnknownExtension) {
 		t.Fatalf("unknown extension: %v", err)
 	}
 }
@@ -538,7 +562,7 @@ func TestRequestsFromExtension(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)
 
 	params := ext.BufferEditParams{Buffer: 3, Transaction: ext.Transaction{BaseVersion: 5, Edits: []ext.Edit{{Text: "a"}}}}
-	if err := hs.h.Send("x", methodEdit, params, "edit"); err != nil {
+	if _, err := hs.h.Send("x", methodEdit, params, SendOptions{Tag: "edit"}); err != nil {
 		t.Fatal(err)
 	}
 	ev := hs.waitEvent("edit request", func(ev Event) bool { _, ok := ev.(*EditRequest); return ok })
@@ -555,7 +579,7 @@ func TestRequestsFromExtension(t *testing.T) {
 		t.Fatalf("edit result = %+v, %v", res, err)
 	}
 
-	if err := hs.h.Call("x", methodNotify, nil, callTimeout, nil); err != nil {
+	if err := hs.h.Call(ctx, "x", methodNotify, nil, callTimeout, nil); err != nil {
 		t.Fatal(err)
 	}
 	ds := hs.waitEvent("decoration", func(ev Event) bool { _, ok := ev.(*DecorationSet); return ok }).(*DecorationSet)
@@ -598,7 +622,7 @@ func TestRestartAfterCrash(t *testing.T) {
 			hs.waitState("x", StateRunning)
 			before := hs.fakeState().PID
 
-			if err := hs.h.Call("x", tc.method, nil, callTimeout, nil); !errors.Is(err, ErrUnavailable) {
+			if err := hs.h.Call(ctx, "x", tc.method, nil, callTimeout, nil); !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("call %s: %v, want ErrUnavailable", tc.method, err)
 			}
 			sc := hs.waitState("x", StateRestartWait)
@@ -638,11 +662,11 @@ func TestKillHungExtension(t *testing.T) {
 	hs.waitState("x", StateRunning)
 	before := hs.fakeState().PID
 
-	if err := hs.h.Call("x", methodHang, nil, 100*time.Millisecond, nil); !errors.Is(err, ErrTimeout) {
+	if err := hs.h.Call(ctx, "x", methodHang, nil, 100*time.Millisecond, nil); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("call test/hang: %v, want ErrTimeout", err)
 	}
 	// 拡張機能が応答しない間も、本体の呼び出しは期限で戻る。
-	if _, err := hs.h.ResolveMotion("x", ext.MotionResolveParams{}, 50*time.Millisecond); !errors.Is(err, ErrTimeout) {
+	if _, err := hs.h.ResolveMotion(ctx, "x", ext.MotionResolveParams{}, 50*time.Millisecond); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("query to hung extension: %v, want ErrTimeout", err)
 	}
 	sc := hs.waitState("x", StateRestartWait)
@@ -661,11 +685,11 @@ func TestKillHungExtension(t *testing.T) {
 func TestKillGrandchild(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)
 	var pid int
-	if err := hs.h.Call("x", methodGrandchild, nil, callTimeout, &pid); err != nil {
+	if err := hs.h.Call(ctx, "x", methodGrandchild, nil, callTimeout, &pid); err != nil {
 		t.Fatal(err)
 	}
 	hs.waitState("x", StateRunning)
-	if err := hs.h.Send("x", methodExit, nil, nil); err != nil {
+	if _, err := hs.h.Send("x", methodExit, nil, SendOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	sc := hs.waitState("x", StateRestartWait)
@@ -685,7 +709,7 @@ func TestProtocolError(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)
 	hs.h.Activate(ext.ActivationTextObject, "x.obj")
 	hs.waitState("x", StateRunning)
-	if err := hs.h.Send("x", methodGarbage, nil, nil); err != nil {
+	if _, err := hs.h.Send("x", methodGarbage, nil, SendOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	sc := hs.waitState("x", StateRestartWait)
@@ -700,7 +724,7 @@ func TestProtocolError(t *testing.T) {
 // req: NFR-03
 func TestInitTimeout(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNoInit, "")}, func(c *Config) { c.InitTimeout = 200 * time.Millisecond }, true)
-	_, err := hs.h.ResolveMotion("x", ext.MotionResolveParams{}, 100*time.Millisecond)
+	_, err := hs.h.ResolveMotion(ctx, "x", ext.MotionResolveParams{}, 100*time.Millisecond)
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("query while starting: %v, want ErrTimeout", err)
 	}
@@ -715,30 +739,37 @@ func TestInitTimeout(t *testing.T) {
 // req: NFR-03
 func TestDisableAfterRepeatedFailures(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeExit, "")}, nil, true)
+	// MaxFailures は 3。図 4 のとおり、上限に達した失敗でも再起動待ちを経てから無効になる。
+	want := []State{StateStarting, StateRestartWait, StateStarting, StateRestartWait, StateStarting, StateRestartWait, StateDisabled}
+
+	from := hs.mark()
 	hs.h.Activate(ext.ActivationTextObject, "x.obj")
-	for range 2 {
-		hs.waitState("x", StateRestartWait)
-		hs.waitState("x", StateStarting)
-	}
 	sc := hs.waitState("x", StateDisabled)
 	if !errors.Is(sc.Err, errExited) {
 		t.Fatalf("disable reason = %v", sc.Err)
 	}
-	if _, err := hs.h.ResolveMotion("x", ext.MotionResolveParams{}, callTimeout); !errors.Is(err, ErrUnavailable) {
+	if got := hs.statesSince(from, "x"); !slices.Equal(got, want) {
+		t.Fatalf("states = %v, want %v", got, want)
+	}
+	if _, err := hs.h.ResolveMotion(ctx, "x", ext.MotionResolveParams{}, callTimeout); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("query to disabled extension: %v, want ErrUnavailable", err)
 	}
-	if err := hs.h.Send("x", ext.MethodMotionResolve, nil, nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := hs.h.Send("x", ext.MethodMotionResolve, nil, SendOptions{}); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("send to disabled extension: %v, want ErrUnavailable", err)
 	}
 	if hs.h.Activate(ext.ActivationTextObject, "x.obj") != nil {
 		t.Fatal("activation restarted a disabled extension")
 	}
 
+	// Restart は連続の失敗の数を 0 に戻すので、無効になるまでに再び MaxFailures 回の失敗を要する。
+	from = hs.mark()
 	if err := hs.h.Restart("x"); err != nil {
 		t.Fatal(err)
 	}
-	hs.waitState("x", StateStarting)
 	hs.waitState("x", StateDisabled)
+	if got := hs.statesSince(from, "x"); !slices.Equal(got, want) {
+		t.Fatalf("states after Restart = %v, want %v", got, want)
+	}
 }
 
 // 再起動の待ち時間は、失敗が続くたびに延ばし、上限で頭打ちにする。
@@ -757,7 +788,7 @@ func TestRestartDelay(t *testing.T) {
 func TestEventQueueLimit(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, func(c *Config) { c.MaxQueuedEvents = 10 }, false)
 	// イベントを受け取らないので、Send ではなく Call で送る。
-	err := hs.h.Call("x", methodFlood, 100, callTimeout, nil)
+	err := hs.h.Call(ctx, "x", methodFlood, 100, callTimeout, nil)
 	if err != nil && !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("flood: %v", err)
 	}
@@ -768,7 +799,7 @@ func TestEventQueueLimit(t *testing.T) {
 func TestClose(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, false)
 	var s fakeState
-	if err := hs.h.Call("x", methodState, nil, callTimeout, &s); err != nil {
+	if err := hs.h.Call(ctx, "x", methodState, nil, callTimeout, &s); err != nil {
 		t.Fatal(err)
 	}
 	if err := hs.h.Close(); err != nil {
@@ -779,7 +810,7 @@ func TestClose(t *testing.T) {
 	}
 	for range hs.h.Events() {
 	}
-	if err := hs.h.Call("x", methodState, nil, callTimeout, nil); !errors.Is(err, ErrClosed) {
+	if err := hs.h.Call(ctx, "x", methodState, nil, callTimeout, nil); !errors.Is(err, ErrClosed) {
 		t.Fatalf("call after Close: %v, want ErrClosed", err)
 	}
 	if err := hs.h.OpenBuffer(snapshot(1, "", buffer.New(""))); !errors.Is(err, ErrClosed) {
@@ -830,5 +861,196 @@ func TestApplyEditsMatchesBuffer(t *testing.T) {
 	}
 	if _, err := applyEdits([]string{"a"}, []ext.Edit{{Range: ext.Range{End: ext.Position{Byte: 2}}}}); err == nil {
 		t.Error("out-of-range position accepted")
+	}
+}
+
+// 利用者の中断（ctx の取り消し）で待つのをやめ、$/cancel を送る。
+//
+// req: FR-17
+func TestCallContextCancel(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)
+	hs.h.Activate(ext.ActivationTextObject, "x.obj")
+	hs.waitState("x", StateRunning)
+
+	cctx, cancel := context.WithCancel(ctx)
+	time.AfterFunc(50*time.Millisecond, cancel)
+	p := ext.TextObjectResolveParams{Count: 11, Args: json.RawMessage(`{"delayMs":5000}`)}
+	start := time.Now()
+	_, err := hs.h.ResolveTextObject(cctx, "x", p, time.Minute)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrTimeout) {
+		t.Fatalf("cancelled call: %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("cancelled call returned after %s", d)
+	}
+	deadline := time.Now().Add(waitTimeout)
+	for !slices.Contains(hs.fakeState().Log, "cancelled:textObject/resolve:11") {
+		if time.Now().After(deadline) {
+			t.Fatal("extension did not receive $/cancel")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Send の問い合わせは期限で打ち切り、Query.Cancel で取り消せる。どちらも結果のイベントを 1 回だけ渡す。
+//
+// req: FR-17, FR-18
+func TestSendTimeoutAndCancel(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, func(c *Config) { c.SendTimeout = 200 * time.Millisecond }, true)
+	hs.h.Activate(ext.ActivationTextObject, "x.obj")
+	hs.waitState("x", StateRunning)
+	slow := func(count int) ext.MotionResolveParams {
+		return ext.MotionResolveParams{Count: count, Args: json.RawMessage(`{"delayMs":100000}`)}
+	}
+	result := func(tag string) *QueryResult {
+		return hs.waitEvent("query result "+tag, func(ev Event) bool {
+			qr, ok := ev.(*QueryResult)
+			return ok && qr.Tag == tag
+		}).(*QueryResult)
+	}
+
+	if _, err := hs.h.Send("x", ext.MethodMotionResolve, slow(1), SendOptions{Tag: "explicit", Timeout: 50 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	if qr := result("explicit"); !errors.Is(qr.Err, ErrTimeout) {
+		t.Fatalf("explicit timeout: %v", qr.Err)
+	}
+	if _, err := hs.h.Send("x", ext.MethodMotionResolve, slow(2), SendOptions{Tag: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if qr := result("default"); !errors.Is(qr.Err, ErrTimeout) {
+		t.Fatalf("default timeout: %v", qr.Err)
+	}
+
+	// 新しい問い合わせで古いものを取り消す使い方。取り消した数だけ結果が届き、待ち受けは残らない。
+	const n = 200
+	for i := range n {
+		q, err := hs.h.Send("x", ext.MethodMotionResolve, slow(100+i), SendOptions{Tag: fmt.Sprint("c", i), Timeout: time.Minute})
+		if err != nil {
+			t.Fatal(err)
+		}
+		q.Cancel()
+		q.Cancel()
+	}
+	for i := range n {
+		if qr := result(fmt.Sprint("c", i)); !errors.Is(qr.Err, context.Canceled) {
+			t.Fatalf("cancelled query %d: %v", i, qr.Err)
+		}
+	}
+	hs.mu.Lock()
+	var results int
+	for _, ev := range hs.events {
+		if _, ok := ev.(*QueryResult); ok {
+			results++
+		}
+	}
+	hs.mu.Unlock()
+	if results != n+2 {
+		t.Fatalf("%d query results, want %d", results, n+2)
+	}
+}
+
+// 標準入力を読まない拡張機能だけを、送信の列の上限で異常とする。
+// 上限より大きいバッファの全文は、読んでいる拡張機能には送れる。
+//
+// req: NFR-03
+func TestOutboxLimitIsolated(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, ""), fakeSpec(t, "y", modeNormal, "")}, func(c *Config) {
+		c.MaxOutboxBytes = 64 << 10
+		c.PingInterval = time.Minute
+	}, true)
+	// 全文（約 160 KiB）は上限より大きい。
+	b := buffer.New(strings.Repeat("0123456789abcdef\n", 10000))
+	if err := hs.h.OpenBuffer(snapshot(1, "", b)); err != nil {
+		t.Fatal(err)
+	}
+	hs.h.Activate(ext.ActivationTextObject, "x.obj")
+	hs.h.Activate(ext.ActivationTextObject, "y.obj")
+	hs.waitState("x", StateRunning)
+	hs.waitState("y", StateRunning)
+
+	if err := hs.h.Call(ctx, "x", methodHang, nil, 100*time.Millisecond, nil); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("call test/hang: %v", err)
+	}
+	// 読んでいる拡張機能 y が追いつける速さで差分を送り、読まない x の列だけを溜める。
+	line := strings.Repeat("z", 1000) + "\n"
+	for i := 0; hs.state("x") == StateRunning; i++ {
+		if i == 3000 {
+			t.Fatal("x was not stopped by the outbox limit")
+		}
+		time.Sleep(time.Millisecond)
+		c, err := b.Apply(buffer.Transaction{BaseVersion: b.Version(), Edits: []buffer.Edit{{Text: line}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := hs.h.ChangeBuffer(1, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sc := hs.waitState("x", StateRestartWait)
+	if !errors.Is(sc.Err, ErrOutboxFull) {
+		t.Fatalf("restart reason = %v, want ErrOutboxFull", sc.Err)
+	}
+	if st := hs.state("y"); st != StateRunning {
+		t.Fatalf("y: state %s, want running", st)
+	}
+	var s fakeState
+	if err := hs.h.Call(ctx, "y", methodState, nil, callTimeout, &s); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Buffers[1]; got.Text != b.Text() || got.Version != ext.Version(b.Version()) {
+		t.Fatalf("y: buffer version %d len %d, want version %d len %d", got.Version, len(got.Text), b.Version(), len(b.Text()))
+	}
+}
+
+// 開いた後にファイルの種類とパスが変わったら、稼働中の拡張機能へ送り直し、新しいファイルの種類の契機で起動する。
+//
+// req: FR-14
+func TestUpdateBuffer(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, ""), fakeSpec(t, "md", modeNormal, "markdown")}, nil, true)
+	b := buffer.New("# t")
+	if err := hs.h.OpenBuffer(BufferSnapshot{ID: 1, Path: "/tmp/a.txt", FileType: "text", Text: b.Text()}); err != nil {
+		t.Fatal(err)
+	}
+	hs.h.Activate(ext.ActivationTextObject, "x.obj")
+	hs.waitState("x", StateRunning)
+	if st := hs.state("md"); st != StateNotStarted {
+		t.Fatalf("md: state %s, want not-started", st)
+	}
+
+	if err := hs.h.UpdateBuffer(1, "/tmp/a.md", "markdown"); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("md", StateRunning)
+	var opens int
+	for _, l := range hs.fakeState().Log {
+		if l == "open:1:0" {
+			opens++
+		}
+	}
+	if opens != 2 {
+		t.Fatalf("x received %d buffer/open, want 2", opens)
+	}
+	var s fakeState
+	if err := hs.h.Call(ctx, "md", methodState, nil, callTimeout, &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Buffers[1].Text != "# t" {
+		t.Fatalf("md buffers = %v", s.Buffers)
+	}
+	if err := hs.h.UpdateBuffer(2, "", ""); !errors.Is(err, ErrBufferState) {
+		t.Fatalf("update of unopened buffer: %v", err)
+	}
+}
+
+// command/execute を問い合わせる。未起動の拡張機能は、この呼び出しで起動する。
+func TestExecuteCommand(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)
+	res, err := hs.h.ExecuteCommand(ctx, "x", ext.CommandExecuteParams{Version: 3, ID: "x.cmd"}, callTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK || res.Transaction == nil || res.Transaction.BaseVersion != 3 || res.Transaction.Edits[0].Text != "x.cmd" {
+		t.Fatalf("result = %+v", res)
 	}
 }

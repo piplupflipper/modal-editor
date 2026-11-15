@@ -5,32 +5,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/rpc"
 )
 
-// Call は、拡張機能 id へリクエスト method を送り、timeout の間だけ応答を待つ（基本設計 5.4）。
+// Call は、拡張機能 id へリクエスト method を送り、応答を待つ（基本設計 5.4）。
 // 成功の応答なら、結果の JSON を result（ポインター）へ読み込む。result が nil なら読み捨てる。
 //
-// 拡張機能が未起動なら起動を始め、起動中なら稼働中になるのを待ち、同じ timeout の中で起動と応答を待つ。
+// 待つのは timeout の間と、ctx が終わるまでの短い方である。
+// ctx は、利用者の中断（マクロの再生の中止など）で待つのをやめるために使う。
+// timeout が 0 以下なら、何も送らずに誤りを返す。
+//
+// 拡張機能が未起動なら起動を始め、起動中なら稼働中になるのを待ち、同じ期限の中で起動と応答を待つ。
 // 再起動待ちと無効の拡張機能へは送らず、すぐに [ErrUnavailable] を包んだ誤りを返す。
 //
-// timeout を超えたら、[ErrTimeout] を包んだ誤りを返す。リクエストを送った後なら、拡張機能へ $/cancel を送る。
-// 期限を超えた後に届いた応答は捨てる（FR-17）。
+// timeout を超えたら [ErrTimeout] を、ctx が取り消されたら context.Canceled を包んだ誤りを返す。
+// どちらの場合も、リクエストを送った後なら、拡張機能へ $/cancel を送り、後から届いた応答は捨てる（FR-17）。
 // 拡張機能が誤りで応答したら、その *rpc.Error を包んだ誤りを返す。
-// timeout が 0 以下なら、何も送らずに誤りを返す。待たない問い合わせ（FR-18）には [Host.Send] を使う。
 //
-// 呼んだ goroutine は応答まで止まる。Host の中の goroutine は呼び出し側を待たないので、
-// イベントループの goroutine から呼んでも、拡張機能との通信と監視は止まらない。
+// 呼んだ goroutine は、応答か期限まで止まる。
+// イベントループは、待つ間も画面の描画と利用者の中断を処理する（基本設計 5.4）ので、Call を直接呼ばない。
+// 待たずに戻り、結果をイベントで受け取る [Host.Send] を使うか、Call を別の goroutine で呼んで結果を自分のチャネルで受ける。
 //
 // req: FR-17
-func (h *Host) Call(id, method string, params any, timeout time.Duration, result any) error {
+func (h *Host) Call(ctx context.Context, id, method string, params any, timeout time.Duration, result any) error {
 	if timeout <= 0 {
 		return fmt.Errorf("exthost: call %s: timeout must be positive, got %s", method, timeout)
 	}
-	ctx, cancel := context.WithTimeout(h.ctx, timeout)
+	ctx, cancel := h.queryContext(ctx, timeout)
 	defer cancel()
 	conn, err := h.waitRunning(ctx, id)
 	if err != nil {
@@ -42,39 +47,85 @@ func (h *Host) Call(id, method string, params any, timeout time.Duration, result
 	return nil
 }
 
-// ResolveMotion は、motion/resolve を期限付きで問い合わせる。誤りの扱いは [Host.Call] と同じである。
+// queryContext は、ctx と Host の終了の両方で終わり、timeout で期限を迎える ctx を作る。
+func (h *Host) queryContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	stop := context.AfterFunc(h.ctx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// ResolveMotion は、motion/resolve を問い合わせて応答を待つ。誤りの扱いと使い方の注意は [Host.Call] と同じである。
 // 結果の Version と OK を確かめて適用するかどうかを決めるのは、呼び出し側である。
-func (h *Host) ResolveMotion(id string, p ext.MotionResolveParams, timeout time.Duration) (ext.MotionResolveResult, error) {
+func (h *Host) ResolveMotion(ctx context.Context, id string, p ext.MotionResolveParams, timeout time.Duration) (ext.MotionResolveResult, error) {
 	var res ext.MotionResolveResult
-	err := h.Call(id, ext.MethodMotionResolve, p, timeout, &res)
+	err := h.Call(ctx, id, ext.MethodMotionResolve, p, timeout, &res)
 	return res, err
 }
 
-// ResolveTextObject は、textObject/resolve を期限付きで問い合わせる。誤りの扱いは [Host.Call] と同じである。
-func (h *Host) ResolveTextObject(id string, p ext.TextObjectResolveParams, timeout time.Duration) (ext.TextObjectResolveResult, error) {
+// ResolveTextObject は、textObject/resolve を問い合わせて応答を待つ。誤りの扱いと使い方の注意は [Host.Call] と同じである。
+func (h *Host) ResolveTextObject(ctx context.Context, id string, p ext.TextObjectResolveParams, timeout time.Duration) (ext.TextObjectResolveResult, error) {
 	var res ext.TextObjectResolveResult
-	err := h.Call(id, ext.MethodTextObjectResolve, p, timeout, &res)
+	err := h.Call(ctx, id, ext.MethodTextObjectResolve, p, timeout, &res)
 	return res, err
 }
 
-// ApplyOperator は、operator/apply を期限付きで問い合わせる。誤りの扱いは [Host.Call] と同じである。
+// ApplyOperator は、operator/apply を問い合わせて応答を待つ。誤りの扱いと使い方の注意は [Host.Call] と同じである。
 // 返ったトランザクションは、BaseVersion が現在のバージョン番号と一致した場合だけ適用する（FR-15）。
-func (h *Host) ApplyOperator(id string, p ext.OperatorApplyParams, timeout time.Duration) (ext.OperatorApplyResult, error) {
+func (h *Host) ApplyOperator(ctx context.Context, id string, p ext.OperatorApplyParams, timeout time.Duration) (ext.OperatorApplyResult, error) {
 	var res ext.OperatorApplyResult
-	err := h.Call(id, ext.MethodOperatorApply, p, timeout, &res)
+	err := h.Call(ctx, id, ext.MethodOperatorApply, p, timeout, &res)
 	return res, err
 }
 
-// Send は、拡張機能 id へリクエスト method を送り、応答を待たずに戻る（期限 0 の問い合わせ。FR-18）。
-// 結果は、届いた時点で [QueryResult] のイベントとして [Host.Events] へ渡す。tag は、そのイベントの Tag にそのまま入れる。
-// イベントループは、tag に問い合わせた時点のバージョン番号とカーソル位置を入れておき、結果が届いたときに照合する。
+// ExecuteCommand は、command/execute を問い合わせて応答を待つ。誤りの扱いと使い方の注意は [Host.Call] と同じである。
+// 返ったトランザクション（あれば）は、BaseVersion が現在のバージョン番号と一致した場合だけ適用する（FR-15）。
+// コマンドの呼び出しを起動の契機にする拡張機能は、[Host.Activate] を呼ばなくても、この呼び出しで起動する。
+func (h *Host) ExecuteCommand(ctx context.Context, id string, p ext.CommandExecuteParams, timeout time.Duration) (ext.CommandExecuteResult, error) {
+	var res ext.CommandExecuteResult
+	err := h.Call(ctx, id, ext.MethodCommandExecute, p, timeout, &res)
+	return res, err
+}
+
+// SendOptions は、[Host.Send] の設定である。
+type SendOptions struct {
+	// Tag は、結果の [QueryResult] の Tag にそのまま入れる値である。
+	// イベントループは、問い合わせた時点のバージョン番号とカーソル位置を入れておき、結果が届いたときに照合する（FR-18）。
+	Tag any
+	// Timeout は、起動と応答を待つ上限である。0 以下なら [Config.SendTimeout] を使う。
+	// 期限 0 の設定（FR-18）でも、応答しない問い合わせの待ち受けが溜まらないように、この上限で打ち切る。
+	Timeout time.Duration
+}
+
+// Query は、[Host.Send] で送った問い合わせである。
+type Query struct {
+	cancel context.CancelFunc
+}
+
+// Cancel は、問い合わせを取り消す。リクエストを送った後なら、拡張機能へ $/cancel を送る。
+// 結果がまだ決まっていなければ、context.Canceled を包んだ Err の [QueryResult] を渡す。
+// 新しい問い合わせで古い問い合わせが要らなくなったときに呼ぶ。何度呼んでもよい。
+func (q *Query) Cancel() {
+	q.cancel()
+}
+
+// Send は、拡張機能 id へリクエスト method を送り、応答を待たずに戻る。
+// 結果は、決まった時点で [QueryResult] のイベントとして [Host.Events] へ 1 回だけ渡す。
+// 期限が正の設定（FR-17）でも、イベントループは Send を使えば、待つ間も描画と中断を処理できる。
 //
 // 拡張機能が未起動なら起動を始め、稼働中になってから送る。
-// 拡張機能が無いか、再起動待ちか無効なら、何も送らずに誤りを返す。
-// 起動に失敗するか、応答の前に拡張機能が終わったら、Err を設定した QueryResult を渡す。
+// 拡張機能が無いか、再起動待ちか無効なら、何も送らずに誤りを返し、イベントも渡さない。
+// 期限を超えたら [ErrTimeout] を包んだ Err、起動に失敗するか応答の前に拡張機能が終わったら [ErrUnavailable] を包んだ Err の
+// QueryResult を渡す。期限を超えたか取り消した問い合わせへ後から届いた応答は捨てる。
 //
 // req: FR-18
-func (h *Host) Send(id, method string, params any, tag any) error {
+func (h *Host) Send(id, method string, params any, opts SendOptions) (*Query, error) {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = h.cfg.SendTimeout
+	}
 	h.mu.Lock()
 	e, err := h.lookupLocked(id)
 	if err == nil {
@@ -82,15 +133,19 @@ func (h *Host) Send(id, method string, params any, tag any) error {
 	}
 	if err != nil {
 		h.mu.Unlock()
-		return fmt.Errorf("exthost: send %s to %q: %w", method, id, err)
+		return nil, fmt.Errorf("exthost: send %s to %q: %w", method, id, err)
 	}
 	h.wg.Add(1)
 	h.mu.Unlock()
 
+	ctx, cancel := h.queryContext(context.Background(), timeout)
+	var once sync.Once
+	q := &Query{cancel: func() { once.Do(cancel) }}
 	go func() {
 		defer h.wg.Done()
-		qr := &QueryResult{Extension: id, Method: method, Tag: tag}
-		qr.Err = h.sendAndWait(id, method, params, &qr.result)
+		defer q.cancel()
+		qr := &QueryResult{Extension: id, Method: method, Tag: opts.Tag}
+		qr.Err = h.sendAndWait(ctx, id, method, params, &qr.result)
 		if qr.Err != nil {
 			qr.Err = fmt.Errorf("exthost: send %s to %q: %w", method, id, qr.Err)
 		}
@@ -100,26 +155,16 @@ func (h *Host) Send(id, method string, params any, tag any) error {
 			_ = h.pushLocked(qr, nil)
 		}
 	}()
-	return nil
+	return q, nil
 }
 
-func (h *Host) sendAndWait(id, method string, params any, result *json.RawMessage) error {
-	conn, err := h.waitRunning(h.ctx, id)
+func (h *Host) sendAndWait(ctx context.Context, id, method string, params any, result *json.RawMessage) error {
+	conn, err := h.waitRunning(ctx, id)
 	if err != nil {
 		return err
 	}
-	f, err := conn.Go(method, params)
-	if err != nil {
-		return h.classify(h.ctx, err)
-	}
-	select {
-	case <-f.Ready():
-	case <-h.ctx.Done():
-		_ = f.Cancel()
-		return ErrClosed
-	}
-	if err := f.Result(result); err != nil {
-		return h.classify(h.ctx, err)
+	if err := conn.Call(ctx, method, params, result); err != nil {
+		return h.classify(ctx, err)
 	}
 	return nil
 }

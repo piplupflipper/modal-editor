@@ -8,7 +8,6 @@ import (
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
 )
 
 // ErrBufferState は、バッファの開閉や版の並びが食い違っていることを表す（開いていないバッファの変更、同じバッファを 2 回開くなど）。
@@ -79,6 +78,7 @@ func (h *Host) OpenBuffer(s BufferSnapshot) error {
 
 // ChangeBuffer は、バッファに変更を適用したことを知らせ、稼働中の拡張機能へ buffer/change で差分を送る（FR-16）。
 // c は、internal/buffer の Apply、Undo、Redo が返したものをそのまま渡す。
+// 写しへの適用は、編集が触る行だけを置き換える。行の数が変わらない編集（行の中の挿入と削除）の手間は、バッファの大きさに依らない。
 //
 // c.Before が Host の知っているバージョン番号と一致しないか、c.Edits を写しに適用できなければ、
 // 何も送らずに [ErrBufferState] を包んだ誤りを返す。
@@ -86,6 +86,10 @@ func (h *Host) OpenBuffer(s BufferSnapshot) error {
 //
 // req: FR-16
 func (h *Host) ChangeBuffer(id ext.BufferID, c buffer.Change) error {
+	edits := make([]ext.Edit, len(c.Edits))
+	for i, e := range c.Edits {
+		edits[i] = toExtEdit(e)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closing {
@@ -104,15 +108,12 @@ func (h *Host) ChangeBuffer(id ext.BufferID, c buffer.Change) error {
 	if c.After < c.Before {
 		return fmt.Errorf("%w: buffer %d: version goes back from %d to %d", ErrBufferState, id, c.Before, c.After)
 	}
-	edits := make([]ext.Edit, len(c.Edits))
-	for i, e := range c.Edits {
-		edits[i] = toExtEdit(e)
-	}
+	// 失敗しても applyEdits は内容を戻すが、配列を取り替えていることがあるので、戻り値を常に写しにする。
 	lines, err := applyEdits(d.lines, edits)
+	d.lines = lines
 	if err != nil {
 		return fmt.Errorf("%w: buffer %d: %w", ErrBufferState, id, err)
 	}
-	d.lines = lines
 	d.version = ext.Version(c.After)
 	h.broadcastLocked(ext.MethodBufferChange, ext.BufferChangeParams{
 		Buffer:      id,
@@ -139,6 +140,31 @@ func (h *Host) CloseBuffer(id ext.BufferID) error {
 	return nil
 }
 
+// UpdateBuffer は、開いているバッファのパスとファイルの種類が変わったことを知らせる（別名での保存、:set filetype= など）。
+// 稼働中の拡張機能へ、新しいパスとファイルの種類で buffer/open を送り直す（拡張機能は持っている内容を置き換える。[ext.BufferOpenParams]）。
+// 新しいファイルの種類の契機が成り立つ未起動の拡張機能を起動する（FR-14）。
+// 開いていないバッファなら [ErrBufferState] を包んだ誤りを返す。
+//
+// req: FR-14
+func (h *Host) UpdateBuffer(id ext.BufferID, path, fileType string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing {
+		return ErrClosed
+	}
+	d, ok := h.docs[id]
+	if !ok {
+		return fmt.Errorf("%w: buffer %d is not open", ErrBufferState, id)
+	}
+	if d.path == path && d.fileType == fileType {
+		return nil
+	}
+	d.path, d.fileType = path, fileType
+	h.broadcastLocked(ext.MethodBufferOpen, d.openParams())
+	h.activateLocked(ext.ActivationFileType, fileType)
+	return nil
+}
+
 // resync は、拡張機能からの buffer/resync に応じ、そのバッファの全文を buffer/open で送り直す。
 // 閉じたバッファか、既に終わらせたプロセスからの要求なら何もしない。
 //
@@ -155,7 +181,7 @@ func (h *Host) resync(e *extension, r *run, p ext.BufferResyncParams) {
 	}
 	id := e.spec.Manifest.ID
 	h.log.Info("extension requested resync", "extension", id, "buffer", p.Buffer, "extension_version", p.Version, "host_version", d.version)
-	h.notifyLocked(id, r.conn, ext.MethodBufferOpen, d.openParams())
+	h.notifyLocked(id, r, ext.MethodBufferOpen, d.openParams())
 }
 
 // broadcastLocked は、稼働中のすべての拡張機能へ通知を送る。
@@ -164,14 +190,22 @@ func (h *Host) resync(e *extension, r *run, p ext.BufferResyncParams) {
 func (h *Host) broadcastLocked(method string, params any) {
 	for _, e := range h.order {
 		if e.state == StateRunning && e.run != nil {
-			h.notifyLocked(e.spec.Manifest.ID, e.run.conn, method, params)
+			h.notifyLocked(e.spec.Manifest.ID, e.run, method, params)
 		}
 	}
 }
 
-// notifyLocked は、1 つの拡張機能へ通知を送る。失敗（接続の終了）は記録だけする。監視の goroutine が異常として扱う。
-func (h *Host) notifyLocked(id string, conn *rpc.Conn, method string, params any) {
-	if err := conn.Notify(method, params); err != nil {
+// notifyLocked は、プロセス r の拡張機能へ通知を送る。失敗（接続の終了）は記録だけする。監視の goroutine が異常として扱う。
+//
+// 送る前に、送信の列に残っている量が [Config.MaxOutboxBytes] を超えていたら、送らずに r を異常とする（[ErrOutboxFull]）。
+// 判断は拡張機能ごとに行うので、標準入力を読まない拡張機能が、他の拡張機能を巻き込むことは無い。
+// 列が空なら上限より大きいメッセージも送るので、大きなバッファの全文で、読んでいる拡張機能を異常とすることは無い。
+func (h *Host) notifyLocked(id string, r *run, method string, params any) {
+	if queued := r.conn.OutboxBytes(); queued > h.cfg.MaxOutboxBytes {
+		r.fail(fmt.Errorf("%w: %d bytes queued, limit %d", ErrOutboxFull, queued, h.cfg.MaxOutboxBytes))
+		return
+	}
+	if err := r.conn.Notify(method, params); err != nil {
 		h.log.Debug("notify extension failed", "extension", id, "method", method, "error", err)
 	}
 }
@@ -204,23 +238,41 @@ func toExtEdit(e buffer.Edit) ext.Edit {
 	}
 }
 
-// applyEdits は、行の配列 lines に、逐次の数え方の編集の列を先頭から順に適用した結果を返す。lines は変えない。
-// 位置が行の外を指すか、終わりが始まりより前にあれば誤りを返す。
+// applyEdits は、行の配列 lines に、逐次の数え方の編集の列を先頭から順に適用した結果を返す。
+// lines の配列をその場で書き換える（返す値は lines と同じ配列を指すことがある）。
+// 編集ごとに、触る行だけを置き換えるので、手間は触る行の数と、行の数が変わるときの後ろの行の移動に比例する。
+//
+// 位置が行の外を指すか、終わりが始まりより前にあれば、それまでの編集を戻して誤りを返す。
+// このとき lines の内容は呼んだ前と同じである。
 // UTF-8 の文字の途中かどうかは検査しない（写しに送る変更は、本体のバッファが検査済みである）。
 func applyEdits(lines []string, edits []ext.Edit) ([]string, error) {
-	out := slices.Clone(lines)
+	type undo struct {
+		at, n int
+		old   []string
+	}
+	var undos []undo
 	for i, e := range edits {
 		s, end := e.Range.Start, e.Range.End
-		if !validPos(out, s) || !validPos(out, end) {
-			return nil, fmt.Errorf("edit %d: position out of range", i)
+		var err error
+		switch {
+		case !validPos(lines, s) || !validPos(lines, end):
+			err = fmt.Errorf("edit %d: position out of range", i)
+		case end.Line < s.Line || (end.Line == s.Line && end.Byte < s.Byte):
+			err = fmt.Errorf("edit %d: range end before start", i)
 		}
-		if end.Line < s.Line || (end.Line == s.Line && end.Byte < s.Byte) {
-			return nil, fmt.Errorf("edit %d: range end before start", i)
+		if err != nil {
+			for k := len(undos) - 1; k >= 0; k-- {
+				u := undos[k]
+				lines = slices.Replace(lines, u.at, u.at+u.n, u.old...)
+			}
+			return lines, err
 		}
-		joined := out[s.Line][:s.Byte] + e.Text + out[end.Line][end.Byte:]
-		out = slices.Concat(out[:s.Line], strings.Split(joined, "\n"), out[end.Line+1:])
+		joined := lines[s.Line][:s.Byte] + e.Text + lines[end.Line][end.Byte:]
+		repl := strings.Split(joined, "\n")
+		undos = append(undos, undo{at: s.Line, n: len(repl), old: slices.Clone(lines[s.Line : end.Line+1])})
+		lines = slices.Replace(lines, s.Line, end.Line+1, repl...)
 	}
-	return out, nil
+	return lines, nil
 }
 
 func validPos(lines []string, p ext.Position) bool {

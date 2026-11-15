@@ -69,6 +69,9 @@ type fakeState struct {
 type fakeExt struct {
 	mode string
 	conn *rpc.Conn
+	// ready は、conn を代入した後に閉じる。ハンドラーは conn を読む前にこれを待つ。
+	// NewConn は代入より先に読み取りの goroutine を始めるので、起動直後のリクエストのハンドラーが nil の conn を読まないようにする。
+	ready chan struct{}
 
 	mu    sync.Mutex
 	docs  map[ext.BufferID]*fakeDoc
@@ -86,8 +89,9 @@ func runFakeExt(mode string) int {
 	if mode == modeExit {
 		return 2
 	}
-	f := &fakeExt{mode: mode, docs: map[ext.BufferID]*fakeDoc{}}
+	f := &fakeExt{mode: mode, docs: map[ext.BufferID]*fakeDoc{}, ready: make(chan struct{})}
 	f.conn = rpc.NewConn(os.Stdin, os.Stdout, rpc.HandlerFuncs{Request: f.request, Notification: f.notification})
+	close(f.ready)
 	<-f.conn.Done()
 	return 0
 }
@@ -99,6 +103,7 @@ func (f *fakeExt) record(format string, args ...any) {
 }
 
 func (f *fakeExt) request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
+	<-f.ready
 	f.record("request:%s", req.Method)
 	switch req.Method {
 	case ext.MethodInitialize:
@@ -126,6 +131,12 @@ func (f *fakeExt) request(ctx context.Context, req *rpc.Request, reply rpc.Repli
 		_ = json.Unmarshal(req.Params, &p)
 		f.later(ctx, req.Method, p.Count, p.Args, reply, ext.OperatorApplyResult{
 			OK: true, Transaction: ext.Transaction{BaseVersion: p.Version, Edits: []ext.Edit{{Range: p.Range, Text: "X"}}},
+		})
+	case ext.MethodCommandExecute:
+		var p ext.CommandExecuteParams
+		_ = json.Unmarshal(req.Params, &p)
+		f.later(ctx, req.Method, p.Count, p.Args, reply, ext.CommandExecuteResult{
+			OK: true, Transaction: &ext.Transaction{BaseVersion: p.Version, Edits: []ext.Edit{{Text: p.ID}}},
 		})
 	case methodState:
 		_ = reply(f.state(), nil)
@@ -201,6 +212,7 @@ func (f *fakeExt) later(ctx context.Context, method string, count int, raw json.
 }
 
 func (f *fakeExt) notification(_ context.Context, n *rpc.Notification) {
+	<-f.ready
 	switch n.Method {
 	case ext.MethodBufferOpen:
 		var p ext.BufferOpenParams
@@ -225,10 +237,11 @@ func (f *fakeExt) notification(_ context.Context, n *rpc.Notification) {
 			return
 		}
 		lines, err := applyEdits(d.lines, p.Edits)
+		d.lines = lines
 		if err != nil {
 			f.log = append(f.log, fmt.Sprintf("bad-change:%d:%v", p.Buffer, err))
 		} else {
-			d.lines, d.version = lines, p.ToVersion
+			d.version = p.ToVersion
 			f.log = append(f.log, fmt.Sprintf("change:%d:%d->%d", p.Buffer, p.FromVersion, p.ToVersion))
 		}
 		f.mu.Unlock()
