@@ -13,7 +13,7 @@ BINARY  := $(BIN_DIR)/modal-editor
 # MCP の中継コマンド。MCP のクライアントが標準入出力のサーバーとして起動する（FR-33）。
 MCP_BRIDGE := $(BIN_DIR)/modal-editor-mcp-bridge
 # 標準の拡張機能。本体とは別の実行ファイルとして作る（NFR-01）。
-EXTENSIONS := modal-editor-ext-line modal-editor-ext-script modal-editor-ext-dap
+EXTENSIONS := modal-editor-ext-line modal-editor-ext-script modal-editor-ext-dap modal-editor-ext-lsp
 # cgo を使う標準の拡張機能。C コンパイラが要る。cgo を使うのはこれだけで、本体は CGO_ENABLED=0 で作る（NFR-02）。
 CGO_EXTENSIONS := modal-editor-ext-treesitter
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
