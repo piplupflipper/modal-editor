@@ -50,7 +50,8 @@ const (
 )
 
 // Parser は、キーを 1 個ずつ受け取り、編集コマンドの値を組み立てる状態機械である（基本設計 3 章）。
-// ノーマルモードのキーだけを扱う。インサートモードとコマンドラインモードのキーは、呼び出し元が別に扱う。
+// ノーマルモードとビジュアルモードのキーを扱う。インサートモードとコマンドラインモードのキーは、呼び出し元が別に扱う。
+// ビジュアルモードの読み方は SetVisual を参照。
 //
 // 入力の文法は次のとおりである。
 //
@@ -70,6 +71,7 @@ const (
 type Parser struct {
 	km        *Keymap
 	recording bool // マクロの記録中か。reset で消さない
+	visual    bool // ビジュアルモードか。reset で消さない
 
 	st          state
 	seq         []Key // 操作を引くために溜めているキーの列
@@ -89,6 +91,18 @@ func NewParser(km *Keymap) *Parser { return &Parser{km: km} }
 // 記録中は、ノーマルモードの初期状態の q を、記録の停止（KindRecordStop）として読む。
 // 記録を始める値（KindRecordStart）や止める値を実行した呼び出し元が、その都度呼ぶ。
 func (p *Parser) SetRecording(on bool) { p.recording = on }
+
+// SetVisual は、ビジュアルモードかを Parser に知らせる。
+// ビジュアルモードでは、MapVisual の登録を引く。オペレーターは選択を対象にするので、対象を待たずに値を完成させる
+// （Target.Kind は TargetNone）。テキストオブジェクトは、オペレーターの後と同じく引き、KindMotion の値にする。
+// q、@、. は、マクロとドットリピートとして先に読まず、キーマップから引く。
+// モードを切り替えた呼び出し元が、その都度呼ぶ。解釈の途中の状態は捨てる。
+func (p *Parser) SetVisual(on bool) {
+	if p.visual != on {
+		p.reset()
+		p.visual = on
+	}
+}
 
 // Pending は、解釈の途中であるか（初期状態でないか）を返す。
 func (p *Parser) Pending() bool {
@@ -163,7 +177,7 @@ func (p *Parser) step(k Key) (results []Result, rest []Key) {
 			p.cur = min(p.cur*10+d, MaxCount)
 			return nil, nil
 		}
-		if p.st == stNormal {
+		if p.st == stNormal && (!p.visual || k.Rune == '"') {
 			if rs, ok := p.special(k.Rune); ok {
 				return rs, nil
 			}
@@ -259,6 +273,9 @@ func (p *Parser) resolve(n int) (results []Result, rest []Key) {
 // 重ね押しとモーションの両方に一致する場合は重ね押しを優先する。
 func (p *Parser) match(seq []Key) (exact *Binding, longer bool) {
 	if p.st == stNormal {
+		if p.visual {
+			return p.km.match(MapVisual, seq)
+		}
 		return p.km.match(MapNormal, seq)
 	}
 	exact, longer = p.km.match(MapOperatorPending, seq)
@@ -283,6 +300,9 @@ func (p *Parser) apply(b Binding) []Result {
 		p.cmd.Mode = b.NextMode
 		p.opKeys = b.Keys
 		p.opTakesChar = b.TakesChar
+		if p.visual {
+			return p.complete()
+		}
 		p.st = stOperator
 		return nil
 	case BindMotion, BindTextObject:
@@ -350,7 +370,7 @@ func (p *Parser) fail() []Result {
 }
 
 func (p *Parser) reset() {
-	*p = Parser{km: p.km, recording: p.recording}
+	*p = Parser{km: p.km, recording: p.recording, visual: p.visual}
 }
 
 // countDigit は、r が回数の数字であれば、その値を返す。

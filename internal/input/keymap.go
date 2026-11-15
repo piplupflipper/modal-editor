@@ -43,9 +43,8 @@ func (k BindingKind) String() string {
 // MapMode は、登録が有効なモードの集合を表すビットの集合である。
 // 基本設計 7 章の設定の keymap がモードごとであることに合わせた軸である。
 //
-// 現在の Parser が引くのは MapNormal と MapOperatorPending だけである。
-// MapVisual と MapInsert は、ビジュアルモードとインサートモードの解釈を載せるときのための口で、
-// 登録はできるが、まだどこからも引かれない。
+// Parser が引くのは MapNormal、MapVisual（Parser.SetVisual の後）、MapOperatorPending である。
+// MapInsert は、インサートモードの解釈を載せるときのための口で、登録はできるが、まだどこからも引かれない。
 type MapMode uint8
 
 // 登録が有効なモード。

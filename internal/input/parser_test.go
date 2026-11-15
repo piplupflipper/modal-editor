@@ -204,6 +204,50 @@ func TestParserRecording(t *testing.T) {
 	}
 }
 
+// ビジュアルモードでは、オペレーターは対象を待たずに完成し、テキストオブジェクトは移動の値になり、
+// ビジュアルモードだけの登録（x、o）を引く。q と . はマクロとドットリピートとして読まない。
+//
+// req: FR-01
+func TestParserVisual(t *testing.T) {
+	p := NewParser(DefaultKeymap())
+	p.SetVisual(true)
+	tests := []struct {
+		keys string
+		want []Result
+	}{
+		{"d", []Result{done(Command{Kind: KindOperator, Count: 1, Operator: builtin("delete")})}},
+		{`"a3>`, []Result{done(Command{Kind: KindOperator, Register: 'a', Count: 3, CountGiven: true, Operator: builtin("indent")})}},
+		{"x", []Result{done(Command{Kind: KindOperator, Count: 1, Operator: builtin("delete")})}},
+		{"s", []Result{done(Command{Kind: KindOperator, Count: 1, Operator: builtin("change"), Mode: ModeInsert})}},
+		{"gU", []Result{done(Command{Kind: KindOperator, Count: 1, Operator: builtin("uppercase")})}},
+		{"iw", []Result{done(Command{
+			Kind: KindMotion, Count: 1, Target: Target{Kind: TargetTextObject, Ref: builtin("inner-word")},
+		})}},
+		{"ib", []Result{done(Command{
+			Kind: KindMotion, Count: 1, Target: Target{Kind: TargetTextObject, Ref: builtin("inner-paren")},
+		})}},
+		{"2w", []Result{done(Command{
+			Kind: KindMotion, Count: 2, CountGiven: true, Target: Target{Kind: TargetMotion, Ref: builtin("word-next")},
+		})}},
+		{"o", []Result{done(Command{Kind: KindAction, Count: 1, Action: builtin("visual-swap")})}},
+		{"q", []Result{{Status: StatusInvalid}}},
+		{".", []Result{{Status: StatusInvalid}}},
+	}
+	for _, tt := range tests {
+		if got := feed(p, tt.keys); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%q:\n got  %+v\n want %+v", tt.keys, got, tt.want)
+		}
+	}
+	// ノーマルモードへ戻ると、o は行を開く操作、d はオペレーターに戻る。
+	p.SetVisual(false)
+	if got := feed(p, "o"); len(got) != 1 || got[0].Command.Action.ID != "open-below" {
+		t.Errorf("ノーマルモードの o = %+v", got)
+	}
+	if got := feed(p, "d"); len(got) != 0 || !p.Pending() {
+		t.Errorf("ノーマルモードの d = %+v", got)
+	}
+}
+
 // 本体の操作の途中では、Flush は何もせず次のキーを待ち続ける。
 //
 // req: FR-02
@@ -436,7 +480,11 @@ func TestDefaultKeymap(t *testing.T) {
 	}
 	for _, tt := range tables {
 		for _, s := range tt.specs {
-			b, ok := km.Lookup(tt.mode, MustParseKeys(s.keys))
+			mode := tt.mode
+			if s.modes != 0 && s.modes&mode == 0 {
+				mode = MapVisual // ビジュアルモードだけの登録
+			}
+			b, ok := km.Lookup(mode, MustParseKeys(s.keys))
 			if !ok || b.Kind != tt.kind || b.Ref.ID != s.id || !b.Ref.Builtin() {
 				t.Errorf("%v %q: got %+v, %v", tt.kind, s.keys, b, ok)
 			}
