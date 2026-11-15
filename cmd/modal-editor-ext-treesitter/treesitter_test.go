@@ -21,6 +21,10 @@ import (
 
 const testTimeout = 5 * time.Second
 
+// bigTimeout は、大きなファイルの一覧を待つ時間の上限である。
+// 一覧の計算は -race の下で遅く、CI の ubuntu-latest では 2 万行の JSON で 5 秒を超えた。
+const bigTimeout = 60 * time.Second
+
 // goSource は、Go の文法の主な要素を含むソースである。
 // 行 4 に多バイト文字を置き、位置がバイト数で数えられることを確かめる。
 const goSource = `package main
@@ -407,10 +411,15 @@ func connectWithMessages(t *testing.T) (*rpc.Conn, <-chan ext.DecorationSetParam
 
 func receive(t *testing.T, ch <-chan ext.DecorationSetParams) ext.DecorationSetParams {
 	t.Helper()
+	return receiveWithin(t, ch, testTimeout)
+}
+
+func receiveWithin(t *testing.T, ch <-chan ext.DecorationSetParams, timeout time.Duration) ext.DecorationSetParams {
+	t.Helper()
 	select {
 	case p := <-ch:
 		return p
-	case <-time.After(testTimeout):
+	case <-time.After(timeout):
 		t.Fatal("decoration/set did not arrive")
 		return ext.DecorationSetParams{}
 	}
@@ -649,7 +658,7 @@ func receiveVersion(t *testing.T, got <-chan ext.DecorationSetParams, want ext.V
 	t.Helper()
 	var prev ext.Version
 	for n := 1; ; n++ {
-		p := receive(t, got)
+		p := receiveWithin(t, got, bigTimeout)
 		if p.Version <= prev {
 			t.Fatalf("decoration/set version %d after %d", p.Version, prev)
 		}
@@ -691,7 +700,7 @@ func TestServeStaysResponsive(t *testing.T) {
 		if m.Level != ext.MessageWarning || m.Text != tooLargeMessage {
 			t.Errorf("message/show = %+v, want the warning %q", m, tooLargeMessage)
 		}
-	case <-time.After(testTimeout):
+	case <-time.After(bigTimeout):
 		t.Fatal("message/show did not arrive")
 	}
 	if len(msgs) != 0 {
@@ -705,8 +714,8 @@ func TestServeStaysResponsive(t *testing.T) {
 // req: FR-35
 func TestServeCoalescesChanges(t *testing.T) {
 	conn, got := connect(t)
-	// 一覧が maxDecorationSetBytes を超えない大きさにする（1 行あたり約 370 バイト）。
-	text := bigJSON(10000)
+	// 一覧が maxDecorationSetBytes を超えない大きさにする（1 行あたり約 740 バイト）。
+	text := bigJSON(3000)
 	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, FileType: "json", Text: text}); err != nil {
 		t.Fatal(err)
 	}
