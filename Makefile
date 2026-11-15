@@ -72,6 +72,10 @@ build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行フ
 	for e in $(EXTENSIONS); do CGO_ENABLED=0 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
 	for e in $(CGO_EXTENSIONS); do CGO_ENABLED=1 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
 
+.PHONY: build-check
+build-check: build ## make build の生成物を検査する（本体の静的リンクと CGO_ENABLED=0 など。NFR-02）
+	MODAL_EDITOR_BUILD_DIR=$(abspath $(BIN_DIR)) go test -count=1 ./internal/distcheck
+
 .PHONY: run
 run: ## ビルドせずに実行する
 	go run ./cmd/modal-editor
