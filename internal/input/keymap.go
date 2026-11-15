@@ -15,9 +15,9 @@ const (
 	BindMotion BindingKind = iota + 1
 	// BindOperator は、対象を取るオペレーターである（d、c、y など）。
 	BindOperator
-	// BindTextObject は、オペレーターの後だけで使えるテキストオブジェクトである。
+	// BindTextObject は、オペレーターの後（とビジュアルモード）で使うテキストオブジェクトである。
 	BindTextObject
-	// BindAction は、ノーマルモードで対象を取らずに完結する操作である（x、p、i など）。
+	// BindAction は、対象を取らずに完結する操作である（x、p、i など）。
 	BindAction
 
 	// bindLine は、オペレーターの重ね押し（dd）を表す、Parser の内部だけで使う種類である。
@@ -40,25 +40,59 @@ func (k BindingKind) String() string {
 	return fmt.Sprintf("BindingKind(%d)", int(k))
 }
 
-// normalKinds と pendingKinds は、Parser の状態ごとに引く操作の種類である。
-var (
-	normalKinds  = []BindingKind{BindMotion, BindOperator, BindAction}
-	pendingKinds = []BindingKind{BindMotion, BindTextObject}
+// MapMode は、登録が有効なモードの集合を表すビットの集合である。
+// 基本設計 7 章の設定の keymap がモードごとであることに合わせた軸である。
+//
+// 現在の Parser が引くのは MapNormal と MapOperatorPending だけである。
+// MapVisual と MapInsert は、ビジュアルモードとインサートモードの解釈を載せるときのための口で、
+// 登録はできるが、まだどこからも引かれない。
+type MapMode uint8
+
+// 登録が有効なモード。
+const (
+	MapNormal          MapMode = 1 << iota // ノーマルモード
+	MapVisual                              // ビジュアルモード
+	MapOperatorPending                     // オペレーターの後（対象を待つ間）
+	MapInsert                              // インサートモード
 )
+
+// allowedModes は、操作の種類ごとに登録できるモードである。
+var allowedModes = map[BindingKind]MapMode{
+	BindMotion:     MapNormal | MapVisual | MapOperatorPending,
+	BindOperator:   MapNormal | MapVisual,
+	BindTextObject: MapVisual | MapOperatorPending,
+	BindAction:     MapNormal | MapVisual | MapInsert,
+}
+
+// defaultModes は、Binding.Modes を省略したときのモードである。
+var defaultModes = map[BindingKind]MapMode{
+	BindMotion:     MapNormal | MapVisual | MapOperatorPending,
+	BindOperator:   MapNormal | MapVisual,
+	BindTextObject: MapVisual | MapOperatorPending,
+	BindAction:     MapNormal,
+}
 
 // Binding は、キーの列と操作の対応の 1 件である。
 type Binding struct {
 	Kind BindingKind
-	Keys []Key
-	Ref  Ref
-	// TakesChar は、キーの列の後に文字の引数を 1 つ取るかを表す（f、t、r など）。
+	// Modes は、登録が有効なモードの集合である。0 なら種類ごとの既定（defaultModes）にする。
+	Modes MapMode
+	Keys  []Key
+	Ref   Ref
+	// TakesChar は、文字の引数を 1 つ取るかを表す。
+	// モーション（f、t）と操作（r）ではキーの列の直後に、オペレーターでは対象の後に取る
+	// （拡張機能の surround の ysiw) の ')'）。テキストオブジェクトではキーの列の直後に取る。
 	TakesChar bool
-	// Mode は、実行の後に移るモードである（i や c ならインサートモード）。
-	Mode Mode
+	// NextMode は、実行の後に移るモードである（i や c ならインサートモード）。
+	NextMode Mode
 }
 
 // Keymap は、キーの列から操作を引く対応表である。
 // 本体の操作（DefaultKeymap）と、拡張機能が宣言した操作（基本設計 5.1 の contributes）を同じ表に登録する。
+//
+// 利用者の設定のキーマップ（基本設計 7 章。キーの列を別のキーの列に展開する）は、この表ではなく、
+// Parser の前段の別の層として作る（別 issue）。
+//
 // 並行に呼ばれる前提は置かない（基本設計 2.1）。
 //
 // req: FR-11
@@ -69,76 +103,93 @@ type Keymap struct {
 // NewKeymap は、空のキーマップを返す。
 func NewKeymap() *Keymap { return &Keymap{} }
 
-// ErrConflict は、同じキーの列が、同じ状態で引かれる別の種類の操作に登録済みであることを表す。
-var ErrConflict = errors.New("キーの列が別の種類の操作に登録済みである")
+// ErrConflict は、同じキーの列が、同じモードで有効な登録に使われていることを表す。
+var ErrConflict = errors.New("キーの列が同じモードの登録に使われている")
 
-// Bind は、操作を登録する。
-// 同じ種類で同じキーの列の登録があれば置き換える（利用者の設定による上書きのため）。
+// Bind は、操作を登録する。既存の登録は置き換えない。
+// 置き換えたい場合は、先に Unbind で取り除く。
 //
 // 次の場合はエラーを返し、何も登録しない。
-//   - Keys か Ref.ID が空である
-//   - Keys が 1 から 9 の数字で始まる（回数として読まれるため、引けない）
-//   - 同じ状態で引かれる別の種類の操作に、同じキーの列が登録済みである（ErrConflict）。
-//     例えばモーションの x は、ノーマルモードで操作の x と区別できない
+//   - Keys か Ref.ID が空である。Modes に、その種類で登録できないモードが含まれる
+//   - Keys が、Parser が先に読むキーで始まる。ノーマル、ビジュアル、オペレーターの後での 1 から 9 の数字（回数）、
+//     ノーマルとビジュアルでの "（レジスター）、ノーマルでの q、@、.（マクロとドットリピート）
+//   - 同じキーの列が、モードの重なる登録に使われている（ErrConflict）。
+//     本体の操作と拡張機能の操作の衝突も、拡張機能どうしの衝突も同じく拒む
 func (m *Keymap) Bind(b Binding) error {
-	switch b.Kind {
-	case BindMotion, BindOperator, BindTextObject, BindAction:
-	case bindLine:
+	allowed, ok := allowedModes[b.Kind]
+	if !ok {
 		return fmt.Errorf("登録できない操作の種類である: %v", b.Kind)
-	default:
-		return fmt.Errorf("登録できない操作の種類である: %v", b.Kind)
+	}
+	if b.Modes == 0 {
+		b.Modes = defaultModes[b.Kind]
+	}
+	if b.Modes&^allowed != 0 {
+		return fmt.Errorf("%v は、指定したモード（%04b）に登録できない", b.Kind, b.Modes)
 	}
 	if len(b.Keys) == 0 || b.Ref.ID == "" {
 		return fmt.Errorf("キーの列と ID は空にできない: %q %q", KeysString(b.Keys), b.Ref.ID)
 	}
-	if first := b.Keys[0]; first.isPlain() && first.Rune >= '1' && first.Rune <= '9' {
-		return fmt.Errorf("数字で始まるキーの列は回数として読まれる: %q", KeysString(b.Keys))
+	if reservedFirstKey(b.Keys[0], b.Modes) {
+		return fmt.Errorf("%q は、回数、レジスター、マクロ、ドットリピートとして先に読まれるキーで始まる", KeysString(b.Keys))
 	}
-	if b.Kind != BindTextObject && b.Keys[0] == Rune('"') {
-		return fmt.Errorf("\" で始まるキーの列はレジスターの指定として読まれる: %q", KeysString(b.Keys))
+	for _, old := range m.bindings {
+		if old.Modes&b.Modes != 0 && slices.Equal(old.Keys, b.Keys) {
+			return fmt.Errorf("%w: %q は %v の %s（拡張機能 %q）", ErrConflict,
+				KeysString(b.Keys), old.Kind, old.Ref.ID, old.Ref.Extension)
+		}
 	}
 	b.Keys = slices.Clone(b.Keys)
-	for i, old := range m.bindings {
-		if !slices.Equal(old.Keys, b.Keys) {
-			continue
-		}
-		if old.Kind == b.Kind {
-			m.bindings[i] = b
-			return nil
-		}
-		if sharesState(old.Kind, b.Kind) {
-			return fmt.Errorf("%w: %q は %v の %s", ErrConflict, KeysString(b.Keys), old.Kind, old.Ref.ID)
-		}
-	}
 	m.bindings = append(m.bindings, b)
 	return nil
 }
 
-// Unbind は、指定した種類とキーの列の登録を取り除く。取り除いたかを返す。
-func (m *Keymap) Unbind(kind BindingKind, keys []Key) bool {
-	n := len(m.bindings)
-	m.bindings = slices.DeleteFunc(m.bindings, func(b Binding) bool {
-		return b.Kind == kind && slices.Equal(b.Keys, keys)
-	})
-	return len(m.bindings) != n
+func reservedFirstKey(k Key, modes MapMode) bool {
+	if !k.isPlain() {
+		return false
+	}
+	switch r := k.Rune; {
+	case r >= '1' && r <= '9':
+		return modes&(MapNormal|MapVisual|MapOperatorPending) != 0
+	case r == '"':
+		return modes&(MapNormal|MapVisual) != 0
+	case r == 'q' || r == '@' || r == '.':
+		return modes&MapNormal != 0
+	}
+	return false
 }
 
-// Lookup は、指定した種類とキーの列の登録を返す。
-func (m *Keymap) Lookup(kind BindingKind, keys []Key) (Binding, bool) {
+// Unbind は、mode（1 つ以上のモード）で有効な、キーの列が keys の登録を、そのモードから取り除く。
+// 有効なモードが無くなった登録は表から消す。取り除いたかを返す。
+func (m *Keymap) Unbind(mode MapMode, keys []Key) bool {
+	removed := false
+	for i := range m.bindings {
+		b := &m.bindings[i]
+		if b.Modes&mode != 0 && slices.Equal(b.Keys, keys) {
+			b.Modes &^= mode
+			removed = true
+		}
+	}
+	m.bindings = slices.DeleteFunc(m.bindings, func(b Binding) bool { return b.Modes == 0 })
+	return removed
+}
+
+// Lookup は、mode で有効な、キーの列が keys の登録を返す。
+// 同じモードで同じキーの列の登録は Bind が拒むので、高々 1 件である。
+func (m *Keymap) Lookup(mode MapMode, keys []Key) (Binding, bool) {
 	for _, b := range m.bindings {
-		if b.Kind == kind && slices.Equal(b.Keys, keys) {
+		if b.Modes&mode != 0 && slices.Equal(b.Keys, keys) {
 			return b, true
 		}
 	}
 	return Binding{}, false
 }
 
-// match は、kinds の操作のうち、キーの列が seq と一致するものと、
+// match は、mode で有効な登録のうち、キーの列が seq と一致するものと、
 // seq を真の接頭辞とするより長い登録があるかを返す。
-func (m *Keymap) match(kinds []BindingKind, seq []Key) (exact *Binding, longer bool) {
+func (m *Keymap) match(mode MapMode, seq []Key) (exact *Binding, longer bool) {
 	for i := range m.bindings {
 		b := &m.bindings[i]
-		if !slices.Contains(kinds, b.Kind) {
+		if b.Modes&mode == 0 {
 			continue
 		}
 		switch {
@@ -149,9 +200,4 @@ func (m *Keymap) match(kinds []BindingKind, seq []Key) (exact *Binding, longer b
 		}
 	}
 	return exact, longer
-}
-
-func sharesState(a, b BindingKind) bool {
-	return (slices.Contains(normalKinds, a) && slices.Contains(normalKinds, b)) ||
-		(slices.Contains(pendingKinds, a) && slices.Contains(pendingKinds, b))
 }

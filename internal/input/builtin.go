@@ -7,7 +7,7 @@ type spec struct {
 	keys      string // ParseKeys の表記
 	id        string
 	takesChar bool
-	mode      Mode
+	next      Mode // 実行の後のモード
 }
 
 // 本体の操作の一覧。
@@ -17,6 +17,8 @@ type spec struct {
 //
 // ~ は Vim の既定（tildeop が off）に合わせ、対象を取らない操作にした。
 // オペレーターの ~（g~）、gu、gU は #9 の案のとおり後回しにする。
+// マクロ（q、@）とドットリピート（.）は、Parser が記録中かどうかで読み方を変えるので、表ではなく Parser が持つ。
+// 有効なモードは種類ごとの既定（defaultModes）である。
 //
 // req: FR-03
 var (
@@ -49,7 +51,7 @@ var (
 
 	builtinOperators = []spec{
 		{keys: "d", id: "delete"},
-		{keys: "c", id: "change", mode: ModeInsert},
+		{keys: "c", id: "change", next: ModeInsert},
 		{keys: "y", id: "yank"},
 		{keys: ">", id: "indent"},
 		{keys: "<", id: "dedent"},
@@ -82,14 +84,14 @@ var (
 		{keys: "X", id: "delete-char-before"},
 		{keys: "r", id: "replace-char", takesChar: true},
 		{keys: "J", id: "join-lines"},
-		{keys: "o", id: "open-below", mode: ModeInsert},
-		{keys: "O", id: "open-above", mode: ModeInsert},
-		{keys: "i", id: "insert", mode: ModeInsert},
-		{keys: "a", id: "append", mode: ModeInsert},
-		{keys: "I", id: "insert-line-start", mode: ModeInsert},
-		{keys: "A", id: "append-line-end", mode: ModeInsert},
+		{keys: "o", id: "open-below", next: ModeInsert},
+		{keys: "O", id: "open-above", next: ModeInsert},
+		{keys: "i", id: "insert", next: ModeInsert},
+		{keys: "a", id: "append", next: ModeInsert},
+		{keys: "I", id: "insert-line-start", next: ModeInsert},
+		{keys: "A", id: "append-line-end", next: ModeInsert},
 		// Ex コマンド（:w など）の一覧と解釈はコマンドラインの担当で、ここでは切り替えだけを持つ。
-		{keys: ":", id: "command-line", mode: ModeCommandLine},
+		{keys: ":", id: "command-line", next: ModeCommandLine},
 	}
 )
 
@@ -112,10 +114,10 @@ func DefaultKeymap() *Keymap {
 		for _, s := range t.specs {
 			err := m.Bind(Binding{
 				Kind:      t.kind,
-				Keys:      ParseKeys(s.keys),
+				Keys:      MustParseKeys(s.keys),
 				Ref:       Ref{ID: s.id},
 				TakesChar: s.takesChar,
-				Mode:      s.mode,
+				NextMode:  s.next,
 			})
 			if err != nil {
 				// 表の誤りはプログラムの誤りで、テストで検出する。

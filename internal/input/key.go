@@ -7,6 +7,7 @@ package input
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // Code は、キーの種類を表す。
@@ -49,8 +50,17 @@ var codeNames = map[Code]string{
 	CodePageDown:  "PageDown",
 }
 
+// runeNames は、文字のキーのうち <...> で書く名前である（Vim と同じ）。
+// Key.String は、修飾キーの無い ' ' と '<' だけをこの名前で書き、'|' と '\' はそのまま書く。
+var runeNames = map[rune]string{
+	' ':  "Space",
+	'<':  "lt",
+	'|':  "Bar",
+	'\\': "Bslash",
+}
+
 // Mod は、修飾キーの組み合わせを表すビットの集合である。
-// Shift は、文字のキーでは大文字などの文字に織り込み、Mod には立てない。
+// 文字のキーの修飾キーは Key.Normalize の規則で正規化する。
 type Mod uint8
 
 // 修飾キー。
@@ -62,6 +72,7 @@ const (
 
 // Key は、1 回のキー入力を表す。
 // 端末ライブラリに依存しない値で、比較（==）とマップのキーに使える。
+// 比較の前に Normalize で正規化しておく（ParseKeys と Rune、Special が返す値は正規化済み）。
 // マクロはこの型の列として記録し、再生のときは 1 個ずつ Parser.Feed へ渡す。
 //
 // req: FR-05
@@ -80,24 +91,43 @@ func Special(c Code) Key { return Key{Code: c} }
 // Esc は、Esc キーである。
 var Esc = Special(CodeEsc)
 
+// Normalize は、同じ入力を表す Key を 1 つの値にそろえて返す。端末のバイト列の解読もこの規則に従う。
+//
+//   - Ctrl つきの英字は小文字にする（<C-W> と <C-w> は同じキー）。Shift はそのまま残す
+//   - Ctrl の無い Shift つきの英字は、大文字にして Shift を外す（<S-a> は A）
+//   - 英字でない文字の Shift と、特殊キーの修飾キーはそのまま残す
+func (k Key) Normalize() Key {
+	if k.Code != CodeRune || !unicode.IsLetter(k.Rune) {
+		return k
+	}
+	switch {
+	case k.Mod&ModCtrl != 0:
+		k.Rune = unicode.ToLower(k.Rune)
+	case k.Mod&ModShift != 0:
+		k.Rune = unicode.ToUpper(k.Rune)
+		k.Mod &^= ModShift
+	}
+	return k
+}
+
 // isPlain は、修飾キーの無い文字のキーであるかを返す。
-// レジスター名、回数、f や r の文字の引数には、この種類のキーだけを受け付ける。
+// レジスター名と回数には、この種類のキーだけを受け付ける。
 func (k Key) isPlain() bool { return k.Code == CodeRune && k.Mod == 0 }
 
-// String は、キーを Vim の表記で返す（例: a、<Esc>、<C-w>、<lt>）。
+// String は、キーを Vim の表記で返す（例: a、<Esc>、<C-w>、<lt>、<Space>）。
 // 結果を ParseKeys に渡すと元のキーに戻る。
 func (k Key) String() string {
 	var name string
 	if k.Code == CodeRune {
-		if k.Mod == 0 {
-			if k.Rune == '<' {
-				return "<lt>"
-			}
+		if k.Mod == 0 && k.Rune != ' ' && k.Rune != '<' {
 			return string(k.Rune)
 		}
 		name = string(k.Rune)
-		if k.Rune == '<' {
-			name = "lt"
+		if n, ok := runeNames[k.Rune]; ok {
+			name = n
+		}
+		if k.Mod == 0 {
+			return "<" + name + ">"
 		}
 	} else {
 		var ok bool
@@ -130,64 +160,101 @@ func KeysString(keys []Key) string {
 	return b.String()
 }
 
-// ParseKeys は、Vim の表記のキーの列（例: "d2w"、"d<Esc>"、"<C-w>j"）をキーの列にする。
-// キーマップの表、拡張機能の宣言の keys、テストで使う。
+// ParseKeys は、Vim の表記のキーの列（例: "d2w"、"d<Esc>"、"<C-w>j"、"<Space>w"）をキーの列にする。
+// キーマップの表、拡張機能の宣言の keys、利用者の設定で使う。返すキーは正規化済みである。
 //
-// <...> の中が特殊キーの名前、修飾キーつきの表記（C-、A-、S-）、lt のどれでもない場合、
-// '<' はただの文字として扱う。このため "<" と "<<" はそのまま書ける。
-func ParseKeys(s string) []Key {
+// '<' から次の '>' までを、修飾キー（C-、A-、M-、S-）と名前として読む。
+// 名前は特殊キー（Esc、CR、Tab など）、Space、lt、Bar、Bslash、または修飾キーつきの 1 文字である。
+// 大文字と小文字は区別しない。名前が分からない場合（<x>、<Foo>）はエラーを返す。
+// 後ろに '>' が無い '<' は、ただの文字として読む。このため "<" と "<<" はそのまま書ける。
+func ParseKeys(s string) ([]Key, error) {
 	var keys []Key
 	rs := []rune(s)
-	for i := 0; i < len(rs); i++ {
-		if rs[i] == '<' {
-			if end := indexRune(rs[i+1:], '>'); end >= 0 {
-				if k, ok := parseAngle(string(rs[i+1 : i+1+end])); ok {
-					keys = append(keys, k)
-					i += end + 1
-					continue
-				}
-			}
+	for i := 0; i < len(rs); {
+		if rs[i] != '<' {
+			keys = append(keys, Rune(rs[i]))
+			i++
+			continue
 		}
-		keys = append(keys, Rune(rs[i]))
+		k, n, err := parseAngle(rs[i:])
+		if err != nil {
+			return nil, fmt.Errorf("キーの表記 %q: %w", s, err)
+		}
+		if n == 0 {
+			keys = append(keys, Rune('<'))
+			i++
+			continue
+		}
+		keys = append(keys, k)
+		i += n
+	}
+	return keys, nil
+}
+
+// MustParseKeys は ParseKeys と同じで、エラーの場合は panic する。本体の表とテストのためにある。
+func MustParseKeys(s string) []Key {
+	keys, err := ParseKeys(s)
+	if err != nil {
+		panic(err)
 	}
 	return keys
 }
 
-func indexRune(rs []rune, r rune) int {
-	for i, x := range rs {
-		if x == r {
-			return i
+// parseAngle は、'<' で始まる rs の先頭の <...> を 1 つのキーとして読み、読んだ文字数を返す。
+// 後ろに '>' が無ければ n は 0 で、'<' はただの文字である。
+func parseAngle(rs []rune) (k Key, n int, err error) {
+	j := 1
+	var mod Mod
+	for j+2 < len(rs) && rs[j+1] == '-' {
+		m, ok := modOf(rs[j])
+		if !ok {
+			break
+		}
+		mod |= m
+		j += 2
+	}
+	var name string
+	if j+1 < len(rs) && rs[j+1] == '>' {
+		// 1 文字の名前。'>' 自身も名前になれる（<C->>）
+		name, n = string(rs[j]), j+2
+	} else {
+		end := -1
+		for x := j; x < len(rs); x++ {
+			if rs[x] == '>' {
+				end = x
+				break
+			}
+		}
+		if end < 0 {
+			return Key{}, 0, nil
+		}
+		name, n = string(rs[j:end]), end+1
+	}
+	raw := string(rs[:n])
+	for c, cn := range codeNames {
+		if strings.EqualFold(name, cn) {
+			return Key{Code: c, Mod: mod}, n, nil
 		}
 	}
-	return -1
+	for r, rn := range runeNames {
+		if strings.EqualFold(name, rn) {
+			return Key{Code: CodeRune, Rune: r, Mod: mod}.Normalize(), n, nil
+		}
+	}
+	if r := []rune(name); len(r) == 1 && mod != 0 {
+		return Key{Code: CodeRune, Rune: r[0], Mod: mod}.Normalize(), n, nil
+	}
+	return Key{}, 0, fmt.Errorf("知らないキーの名前 %s（ただの < は <lt> と書く）", raw)
 }
 
-// parseAngle は、<...> の中身をキーにする。名前が分からなければ ok は false。
-func parseAngle(body string) (Key, bool) {
-	var mod Mod
-	for len(body) > 2 && body[1] == '-' {
-		switch body[0] {
-		case 'C', 'c':
-			mod |= ModCtrl
-		case 'A', 'a', 'M', 'm':
-			mod |= ModAlt
-		case 'S', 's':
-			mod |= ModShift
-		default:
-			return Key{}, false
-		}
-		body = body[2:]
+func modOf(r rune) (Mod, bool) {
+	switch r {
+	case 'C', 'c':
+		return ModCtrl, true
+	case 'A', 'a', 'M', 'm':
+		return ModAlt, true
+	case 'S', 's':
+		return ModShift, true
 	}
-	if strings.EqualFold(body, "lt") {
-		return Key{Code: CodeRune, Rune: '<', Mod: mod}, true
-	}
-	for c, name := range codeNames {
-		if strings.EqualFold(body, name) {
-			return Key{Code: c, Mod: mod}, true
-		}
-	}
-	if rs := []rune(body); len(rs) == 1 && mod != 0 {
-		return Key{Code: CodeRune, Rune: rs[0], Mod: mod}, true
-	}
-	return Key{}, false
+	return 0, false
 }

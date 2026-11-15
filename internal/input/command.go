@@ -11,6 +11,15 @@ const (
 	KindOperator
 	// KindAction は、対象を取らない操作である（例: x、p、rx、i、:）。
 	KindAction
+	// KindRecordStart は、マクロの記録の開始（q{reg}）である。Char にレジスターの名前が入る。
+	KindRecordStart
+	// KindRecordStop は、マクロの記録の停止（記録中の q）である。
+	// Parser は記録中かを知らないので、呼び出し元が Parser.SetRecording で知らせる。
+	KindRecordStop
+	// KindPlay は、マクロの再生（@{reg}）である。Char にレジスターの名前が入り、@@ では '@' が入る。
+	KindPlay
+	// KindRepeat は、ドットリピート（.）である。
+	KindRepeat
 )
 
 // TargetKind は、オペレーターやモーションの対象の種類を表す。
@@ -53,7 +62,7 @@ func (r Ref) Builtin() bool { return r.Extension == "" }
 type Target struct {
 	Kind TargetKind
 	Ref  Ref  // TargetLine と TargetNone では空
-	Char rune // f、F、t、T のような文字の引数。引数を取らない対象では 0
+	Char rune // f、F、t、T のような文字の引数。<CR> は '\n'、<Tab> は '\t'。引数を取らない対象では 0
 }
 
 // Command は、キーの列から解釈した編集コマンドの値である（基本設計 3 章の表）。
@@ -70,6 +79,8 @@ type Command struct {
 	Register rune
 
 	// Count は回数で、省略した場合は 1。オペレーターの前と後の回数の積である（2d3w は 6）。
+	// KindRepeat で CountGiven が true のときは、記録した値の回数をこの回数で置き換える（Vim と同じく、
+	// 2d3w の後の 3. は d3w ではなく 3 回の dw に当たる。積は取らない）。置き換えは実行の側が行う。
 	Count int
 	// CountGiven は、回数を明示したかを表す。G や :（範囲）のように、省略と 1 で意味が違う操作のために持つ。
 	CountGiven bool
@@ -80,7 +91,11 @@ type Command struct {
 	Target Target
 	// Action は、KindAction のときの操作。
 	Action Ref
-	// Char は、r のように文字の引数を取る操作（KindAction）の引数。
+	// Char は、操作の後に取る文字の引数である。
+	// KindAction では r の文字、KindOperator では、対象の後に文字を取るオペレーター（拡張機能の
+	// surround の ysiw) の ')' など）の文字、KindRecordStart と KindPlay ではレジスターの名前が入る。
+	// <CR> は '\n'、<Tab> は '\t' として入る。引数を取らなければ 0。
+	// ドットリピートとマクロの再実行で、拡張機能の操作に同じ引数を渡すために値に残す（FR-12）。
 	Char rune
 
 	// Mode は、実行の後に移るモード。
