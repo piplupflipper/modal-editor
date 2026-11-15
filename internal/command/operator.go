@@ -74,6 +74,9 @@ func (s *State) moveMotion(cmd editcmd.Command) error {
 	}
 	s.cursor = s.clampNormal(s.clampPos(res.Pos))
 	s.want = res.Want
+	if s.mode.visual() {
+		s.cursor = s.visualCursor()
+	}
 	return nil
 }
 
@@ -302,8 +305,14 @@ const (
 func opShift(dir int) operatorFunc {
 	return func(s *State, _ editcmd.Command, rg region, o opOptions) error {
 		times := max(o.times, 1)
+		// 文字単位の範囲が次の行の先頭で終わる（選択の終わりが行末の後で、その行の改行まで選んだ）なら、
+		// 次の行は字下げしない。Vim の op_shift は選択の終わりの行までを数える（#89。ab|c、d、e の vj> は e を残す）。
+		last := rg.r.End.Line
+		if !rg.linewise && rg.r.End.Byte == 0 && last > rg.r.Start.Line {
+			last--
+		}
 		var edits []buffer.Edit
-		for l := rg.r.Start.Line; l <= rg.r.End.Line; l++ {
+		for l := rg.r.Start.Line; l <= last; l++ {
 			line := s.line(l)
 			if dir > 0 && line == "" {
 				continue

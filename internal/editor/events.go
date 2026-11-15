@@ -210,10 +210,14 @@ func (e *Editor) editorState() ext.EditorStateResult {
 			start.Byte = 0
 			end.Byte = len(b.Line(end.Line))
 		} else {
+			// 終わりが行末の後（空の行を含む）なら、その行の改行まで含める。d が消す範囲と揃える（#89）。
 			line := b.Line(end.Line)
-			if end.Byte < len(line) {
+			switch {
+			case end.Byte < len(line):
 				_, n := utf8.DecodeRuneInString(line[end.Byte:])
 				end.Byte += n
+			case end.Line+1 < b.LineCount():
+				end = buffer.Position{Line: end.Line + 1}
 			}
 		}
 		res.Selections = []ext.Range{toExtRange(buffer.Range{Start: start, End: end})}
