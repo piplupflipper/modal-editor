@@ -19,9 +19,10 @@ import (
 // ErrNotRunning は、Serve の前か後に、本体へメッセージを送ろうとしたことを表す。
 var ErrNotRunning = errors.New("server: not serving")
 
-// ErrEditInHandler は、Server が呼んだハンドラーかフックの中から、その ctx で Edit を呼んだことを表す。
-// 待つと詰まるので、Edit は buffer/edit を送らずにこの誤りを返す（Edit の doc を参照）。
-var ErrEditInHandler = errors.New("server: Edit called from a handler or hook; it would block the message loop")
+// ErrEditInHandler は、Server が呼んだハンドラーかフックの中から、その ctx で、本体の応答を待つ関数を呼んだことを表す。
+// 対象は Edit、EditorState、OpenEditor、SaveBuffer、ListDiagnostics、AskChoice、WaitBuffer である。
+// 待つと詰まるので、これらはリクエストを送らずにこの誤りを返す（Edit と WaitBuffer の doc を参照）。
+var ErrEditInHandler = errors.New("server: request to the host called from a handler or hook; it would block the message loop")
 
 // codeRequestCancelled は、取り消されたリクエストへの応答のエラーコードである（LSP の RequestCancelled と同じ値）。
 const codeRequestCancelled = -32800
@@ -35,7 +36,7 @@ const codeRequestCancelled = -32800
 // # 処理の順序
 //
 // 本体から届いたリクエストと通知は、届いた順に、Server の持つ 1 つの goroutine（以下、ループ）が 1 件ずつ処理する。
-// ハンドラーとフック（OnInitialize、OnBufferOpen、OnBufferChange、OnBufferClose）は、すべてループから呼ばれる。
+// ハンドラーとフック（OnInitialize、OnBufferOpen、OnBufferChange、OnBufferClose、OnBufferDidSave）は、すべてループから呼ばれる。
 // このため、ハンドラーが読む複製は、本体がそのリクエストより前に送った buffer/change をすべて適用した内容になる。
 // ハンドラーとフックが戻るまで次のメッセージを処理しないので、どちらも速やかに戻る。
 //
@@ -53,6 +54,15 @@ const codeRequestCancelled = -32800
 //     本体はこれで拡張機能の無限ループやデッドロックを検出する（基本設計 5.2）
 //   - $/cancel: 対象のリクエストのハンドラーの ctx を取り消す。まだ処理していないリクエストなら、ハンドラーを呼ばずに失敗を応答する
 //   - buffer/open、buffer/change、buffer/close: 複製を作る、更新する、捨てる
+//   - buffer/willSave: BufferWillSave で登録したハンドラーを呼ぶ。登録していなければ、編集無しを応答する
+//   - buffer/didSave: OnBufferDidSave で登録したフックを呼ぶ
+//
+// # 本体へ送るメッセージ
+//
+// 通知（SetDecorations、ShowMessage、SetDiagnostics、SetSigns、ShowPopup、AppendOutput）は、どこから呼んでもよい。
+// リクエスト（Edit、EditorState、OpenEditor、SaveBuffer、ListDiagnostics、AskChoice）と WaitBuffer は、
+// 本体の応答かループの処理を待つので、ループの上から呼んではならない（Edit の doc）。
+// ハンドラーかフックから使うときは、go で別の goroutine を起こし、Server が渡したのとは別の ctx で呼ぶ。
 //
 // buffer/change の FromVersion が複製の番号と一致しないか、編集の位置が複製の外を指す場合は、差分が欠けたと判断し、
 // buffer/resync を送る（基本設計 5.3）。次の buffer/open が届くまで、そのバッファの差分は捨て、
@@ -84,14 +94,21 @@ type Server struct {
 	onOpen      func(ctx context.Context, e *BufferOpenEvent)
 	onChange    func(ctx context.Context, e *BufferChangeEvent)
 	onClose     func(ctx context.Context, e *BufferCloseEvent)
+	onDidSave   func(ctx context.Context, e *BufferDidSaveEvent)
+	// willSave は、buffer/willSave のハンドラーである。登録は 1 つだけで、キーは空文字列である。
+	willSave map[string]entry[ext.BufferWillSaveParams, ext.BufferWillSaveResult]
 
 	started atomic.Bool
 	conn    atomic.Pointer[rpc.Conn]
+	// loopq は、Serve の間のループの列である。WaitBuffer がループへ処理を頼むのに使う。
+	loopq atomic.Pointer[queue]
 
 	// 以下は、ループだけが触る。
 	buffers map[ext.BufferID]*Buffer
 	// stale は、buffer/resync を送り、buffer/open を待っているバッファである。
 	stale map[ext.BufferID]bool
+	// waiters は、WaitBuffer で複製を待っている呼び出しである。
+	waiters map[ext.BufferID][]*bufWaiter
 }
 
 // New は、ハンドラーを登録していない Server を作る。
@@ -101,8 +118,10 @@ func New() *Server {
 		textObjects: make(map[string]entry[ext.TextObjectResolveParams, ext.TextObjectResolveResult]),
 		operators:   make(map[string]entry[ext.OperatorApplyParams, ext.OperatorApplyResult]),
 		commands:    make(map[string]entry[ext.CommandExecuteParams, ext.CommandExecuteResult]),
+		willSave:    make(map[string]entry[ext.BufferWillSaveParams, ext.BufferWillSaveResult]),
 		buffers:     make(map[ext.BufferID]*Buffer),
 		stale:       make(map[ext.BufferID]bool),
+		waiters:     make(map[ext.BufferID][]*bufWaiter),
 	}
 }
 
@@ -144,6 +163,8 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	}, rpc.WithCancelMethod(ext.MethodCancel))
 	s.conn.Store(conn)
 	defer s.conn.Store(nil)
+	s.loopq.Store(q)
+	defer s.loopq.Store(nil)
 
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
@@ -238,6 +259,10 @@ func (s *Server) enter(ctx context.Context) (context.Context, func()) {
 
 // dispatch は、1 件のメッセージを処理する。
 func (s *Server) dispatch(m inbound) {
+	if m.fn != nil {
+		m.fn()
+		return
+	}
 	ctx, leave := s.enter(m.ctx)
 	defer leave()
 	if m.note != nil {
@@ -277,6 +302,8 @@ func (s *Server) handleRequest(ctx context.Context, req *rpc.Request, reply rpc.
 		query(ctx, s, req, reply, s.operators, func(p *ext.OperatorApplyParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
 		}, func(r *ext.OperatorApplyResult, v ext.Version) { r.Transaction.BaseVersion = v })
+	case ext.MethodBufferWillSave:
+		s.bufferWillSave(ctx, req, reply)
 	case ext.MethodCommandExecute:
 		query(ctx, s, req, reply, s.commands, func(p *ext.CommandExecuteParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
@@ -337,6 +364,7 @@ func (s *Server) handleNotification(ctx context.Context, n *rpc.Notification) {
 			e := &BufferOpenEvent{Buffer: b, Reopen: held}
 			s.hook("buffer open hook", func() { s.onOpen(ctx, e) })
 		}
+		s.wakeWaiters(p.Buffer)
 	case ext.MethodBufferChange:
 		var p ext.BufferChangeParams
 		if err := decodeParams(n, &p); err != nil {
@@ -357,6 +385,14 @@ func (s *Server) handleNotification(ctx context.Context, n *rpc.Notification) {
 			e := &BufferCloseEvent{Buffer: p.Buffer}
 			s.hook("buffer close hook", func() { s.onClose(ctx, e) })
 		}
+		s.failWaiters(p.Buffer, ErrBufferClosed)
+	case ext.MethodBufferDidSave:
+		var p ext.BufferDidSaveParams
+		if err := decodeParams(n, &p); err != nil {
+			s.logf("%v", err)
+			return
+		}
+		s.bufferDidSave(ctx, &p)
 	default:
 		// 知らない通知は捨てる（JSON-RPC 2.0 では通知に応答しない）。
 	}
@@ -385,6 +421,7 @@ func (s *Server) bufferChange(ctx context.Context, p *ext.BufferChangeParams) {
 			e := &BufferChangeEvent{Buffer: b, FromVersion: p.FromVersion, ToVersion: p.ToVersion, Edits: p.Edits}
 			s.hook("buffer change hook", func() { s.onChange(ctx, e) })
 		}
+		s.wakeWaiters(p.Buffer)
 		return
 	}
 	s.logf("buffer %d: %v; requesting resync", p.Buffer, cause)
@@ -442,12 +479,14 @@ func decodeParams(m any, v any) error {
 	return nil
 }
 
-// inbound は、本体から届いた 1 件のメッセージである。req と note のどちらか一方だけが nil でない。
+// inbound は、本体から届いた 1 件のメッセージか、ループで行う処理である。
+// req、note、fn のどれか 1 つだけが nil でない。fn は WaitBuffer がループへ頼む処理である。
 type inbound struct {
 	ctx   context.Context
 	req   *rpc.Request
 	reply rpc.Replier
 	note  *rpc.Notification
+	fn    func()
 }
 
 // queue は、接続の読み取りの goroutine から、ループへメッセージを渡す、上限の無い列である。
