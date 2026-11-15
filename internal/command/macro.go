@@ -1,6 +1,8 @@
 package command
 
 import (
+	"errors"
+
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
@@ -95,29 +97,91 @@ func (s *State) play(cmd editcmd.Command) error {
 	keys := reg.macroKeys()
 	s.playDepth++
 	defer func() { s.playDepth-- }()
-	for range n {
-		if s.interrupted() {
-			s.fail(ErrInterrupted)
-			return nil
-		}
-		if len(keys) == 0 {
-			break
-		}
-		for _, k := range keys {
-			if s.interrupted() {
-				s.fail(ErrInterrupted)
-				return nil
-			}
-			s.feed(k)
-			if s.res.Err != nil {
-				return nil
-			}
-		}
-	}
+	s.playKeys(keys, n)
 	if s.mode == ModeNormal || s.mode.visual() {
 		s.runResults(s.parser.Flush())
 	}
 	return nil
+}
+
+// playKeys は、キーの列 keys を n 回、1 個ずつ Feed と同じ解釈に渡す。失敗したら止める。
+//
+// 途中の Ex コマンドが確認を求めた（Result.Confirm）ら、Vim 9.1 と同じく、マクロの次のキーを答えとして読む
+// （"y" なら続きを実行する）。答えのキーが無ければ、確認は Result.Confirm のまま呼び出し側へ渡す。
+//
+// 拡張機能の操作が ErrBufferSwitched を返した（カーソルのあるバッファが別のバッファへ移った）ら、
+// 残りのキーを Result.Remaining に積んで止める。呼び出し側は、移った先のバッファの State の ContinueReplay へ渡す。
+func (s *State) playKeys(keys []editcmd.Key, n int) {
+	for iter := range n {
+		if s.interrupted() {
+			s.fail(ErrInterrupted)
+			return
+		}
+		if len(keys) == 0 {
+			return
+		}
+		for i := 0; i < len(keys); i++ {
+			if s.interrupted() {
+				s.fail(ErrInterrupted)
+				return
+			}
+			s.feed(keys[i])
+			if cf := s.res.Confirm; cf != nil && i+1 < len(keys) {
+				s.res.Confirm, s.res.Err = nil, nil
+				i++
+				if keys[i] == editcmd.Rune('y') {
+					res, err := cf.Resume(s.buf, &s.Ex)
+					s.applyExResult(res, err)
+				}
+			}
+			if s.res.Err != nil {
+				if errors.Is(s.res.Err, ErrBufferSwitched) {
+					s.res.Remaining = append(s.res.Remaining, ReplaySegment{Keys: keys[i+1:], Count: 1})
+					if rest := n - iter - 1; rest > 0 {
+						s.res.Remaining = append(s.res.Remaining, ReplaySegment{Keys: keys, Count: rest})
+					}
+				}
+				return
+			}
+		}
+	}
+}
+
+// ReplaySegment は、再生の残りの 1 区切りで、Keys を Count 回再生することを表す。
+type ReplaySegment struct {
+	Keys  []editcmd.Key
+	Count int
+}
+
+// ErrBufferSwitched は、マクロの再生の途中で、拡張機能の操作（再生中の command/execute の結果の open）が
+// カーソルのあるバッファを別のバッファへ移したことを表す。Extensions の実装が返す。
+// 再生は、移った先のバッファで続ける（Vim と同じく、マクロのキーはカーソルのあるバッファへ入る）。
+// State は残りのキーを Result.Remaining に入れて止まり、呼び出し側が移った先の State の ContinueReplay へ渡す。
+var ErrBufferSwitched = errors.New("command: replay continues in another buffer")
+
+// ContinueReplay は、別のバッファの State が ErrBufferSwitched で止めた再生の残り segs を、この State で続ける（FR-05、FR-19）。
+// 再生中として扱い（Replaying が true）、変更はアンドゥの 1 単位にまとめる。
+//
+// req: FR-05
+func (s *State) ContinueReplay(segs []ReplaySegment) Result {
+	s.res = Result{}
+	s.buf.BeginUndoGroup()
+	s.playDepth++
+	for i, seg := range segs {
+		s.playKeys(seg.Keys, seg.Count)
+		if s.res.Err != nil {
+			if errors.Is(s.res.Err, ErrBufferSwitched) {
+				s.res.Remaining = append(s.res.Remaining, segs[i+1:]...)
+			}
+			break
+		}
+	}
+	s.playDepth--
+	if s.mode == ModeNormal || s.mode.visual() {
+		s.runResults(s.parser.Flush())
+	}
+	s.endPlayGroup()
+	return s.take()
 }
 
 // endPlayGroup は、マクロの再生全体をまとめたアンドゥのグループを閉じる。

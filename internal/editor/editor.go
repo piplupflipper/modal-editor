@@ -34,9 +34,14 @@ const (
 	maxOutputLines = 10000
 )
 
-// InterruptKey は、中断のキー（<C-c>）である。
+// interruptKey は、中断のキー（<C-c>）である。
 // マクロの再生と拡張機能の応答の待ちを止める。それ以外のときは <Esc> として扱う。
-var InterruptKey = editcmd.Key{Code: editcmd.CodeRune, Rune: 'c', Mod: editcmd.ModCtrl}
+// 端末の側は、このキーを特別に扱わずに TermEvent で送ればよい。
+var interruptKey = editcmd.Key{Code: editcmd.CodeRune, Rune: 'c', Mod: editcmd.ModCtrl}
+
+// ErrTerminalLost は、端末の入力（Terminal.Input）が閉じたので Run が終わったことを表す。
+// :q で終わったときの nil と区別し、呼び出し側が未保存の変更の退避などを判断できるようにする。
+var ErrTerminalLost = errors.New("editor: terminal input closed")
 
 // Terminal は、端末の口である。端末の制御のライブラリ（#9 で裁定待ち）を包んだものを、呼び出し側が差し込む。
 type Terminal interface {
@@ -114,6 +119,9 @@ type Editor struct {
 	inputDone chan struct{}
 	inspect   chan func()
 
+	// ctx は、Run に渡された ctx である。入れ子の待ちも、これが終わったらやめる。
+	ctx context.Context
+
 	keyTimer *time.Timer
 	keyTimeC <-chan time.Time
 
@@ -131,8 +139,10 @@ type Editor struct {
 	message ui.Message
 	popup   *popupState
 	choices []*exthost.ChoiceAskRequest
-	confirm *ex.Confirm
-	outputs map[outputKey][]string
+	// confirm は、表示中の Ex の確認の問いと、問いを出したバッファである。
+	confirm   *ex.Confirm
+	confirmBS *bufferState
+	outputs   map[outputKey][]string
 
 	quit bool
 }
@@ -241,11 +251,17 @@ func buildKeymap(specs []exthost.Spec) (*input.Keymap, []error) {
 	return km, errs
 }
 
-// Close は、拡張機能のプロセスをすべて終わらせる。Run が戻った後に呼ぶ。
-func (e *Editor) Close() error { return e.host.Close() }
-
-// Host は、拡張機能を管理する exthost.Host を返す。
-func (e *Editor) Host() *exthost.Host { return e.host }
+// Close は、拡張機能のプロセスをすべて正常に止める（exthost.Host.CloseContext。基本設計 5.2）。
+// ctx が終わったら、止まっていない拡張機能を待たずに SIGKILL で終わらせ、ctx.Err() を返す。
+//
+// 終わるときの順序は次のとおりにする。
+//
+//  1. Run が戻る
+//  2. 呼び出し側が端末の後始末（画面の復元）をする。拡張機能の終了は最大で数秒かかるので、
+//     その間にエディタが止まって見えないように、先に端末を戻す
+//  3. Close を呼ぶ
+//  4. 端末の入力を閉じる。Run が戻った後も、入力を読む goroutine は Terminal.Input が閉じるまで残る
+func (e *Editor) Close(ctx context.Context) error { return e.host.CloseContext(ctx) }
 
 // Open は、path のファイルを開き、カーソルのあるバッファにする。
 // ファイルが無ければ、そのパスの空のバッファを作る（Vim の :e newfile と同じ）。
@@ -256,7 +272,9 @@ func (e *Editor) Open(path string) error {
 }
 
 // Run は、イベントループを動かす。:q で終了するか、端末の入力が閉じるか、ctx が終わるまで戻らない。
-// :q と端末の入力の終わりでは nil を、ctx の終わりでは ctx.Err() を返す。
+// :q では nil を、端末の入力の終わりでは ErrTerminalLost を、ctx の終わりでは ctx.Err() を返す。
+// 拡張機能の応答を待っている途中（入れ子の待ち）に ctx が終わっても、待ちをやめて戻る。
+// 戻った後の後始末の順序は Close の doc にある。
 //
 // 拡張機能の起動は待たない。起動は exthost の goroutine で進み、その間もキーを処理する（NFR-04）。
 //
@@ -267,14 +285,18 @@ func (e *Editor) Run(ctx context.Context) error {
 	}
 	w, h := e.term.Size()
 	e.setSize(w, h)
+	e.ctx = ctx
 	go e.forwardInput()
 	e.render()
 	for !e.quit {
-		if len(e.held) > 0 {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if len(e.held) > 0 && e.confirm == nil {
 			ev := e.held[0]
 			e.held = e.held[1:]
 			e.handleEvent(ev)
-			e.render()
+			e.renderIdle()
 			continue
 		}
 		select {
@@ -282,7 +304,7 @@ func (e *Editor) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-e.inputDone:
 			if e.keys.empty() {
-				return nil
+				return ErrTerminalLost
 			}
 			e.handleKeys()
 		case <-e.keys.ready:
@@ -295,16 +317,29 @@ func (e *Editor) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			e.handleEvent(ev)
+			if e.confirm != nil {
+				// 確認の問いに答えるまでは、Vim の問いと同じく他の処理をしない。問いを出したバッファと範囲を変えないためである。
+				e.hold(ev)
+			} else {
+				e.handleEvent(ev)
+			}
 		case <-e.keyTimeC:
 			e.keyTimeC = nil
 			e.flushKeys()
 		case f := <-e.inspect:
 			f()
 		}
-		e.render()
+		e.renderIdle()
 	}
 	return nil
+}
+
+// renderIdle は、列に処理していないキーが無いときだけ描く。
+// 貼り付けのようにキーがまとめて届いたときは、溜まったキーを処理し終えてから 1 回描く。
+func (e *Editor) renderIdle() {
+	if e.keys.empty() {
+		e.render()
+	}
 }
 
 // forwardInput は、端末の入力を読み、キーを列に積む。<C-c> を見たら中断の印を立てる。
@@ -317,7 +352,7 @@ func (e *Editor) forwardInput() {
 			continue
 		}
 		k := ev.Key.Normalize()
-		if k == InterruptKey {
+		if k == interruptKey {
 			e.interrupt.Store(true)
 			signal(e.intrCh)
 		}
@@ -371,16 +406,23 @@ func (e *Editor) newBuffer(b *buffer.Buffer, path, fileType string) *bufferState
 		signs:       map[string][]ext.Sign{},
 	}
 	e.nextID++
+	e.initState(bs)
+	e.bufs = append(e.bufs, bs)
+	e.switchTo(bs)
+	return bs
+}
+
+// initState は、bs.buf を編集する command.State を作り、exthost へ buffer/open で知らせる。
+func (e *Editor) initState(bs *bufferState) {
+	b := bs.buf
+	bs.sent = b.Version()
 	bs.state = command.New(b, input.NewParser(e.keymap))
 	bs.state.Columns = e.renderer.Columns()
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Interrupted = e.interrupt.Load
-	if err := e.host.OpenBuffer(exthost.BufferSnapshot{ID: bs.id, Path: path, FileType: fileType, Version: b.Version(), Text: b.Text()}); err != nil {
+	if err := e.host.OpenBuffer(exthost.BufferSnapshot{ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text()}); err != nil {
 		e.log.Error("buffer/open を送れない", "err", err)
 	}
-	e.bufs = append(e.bufs, bs)
-	e.switchTo(bs)
-	return bs
 }
 
 // switchTo は、カーソルのあるバッファを bs にする。レジスターは引き継ぐ（Vim と同じく、レジスターはバッファをまたいで 1 組）。

@@ -12,6 +12,7 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/command/target"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/rpc"
 )
 
 // queryTag は、exthost.SendOptions の Tag に入れる、問い合わせを見分ける値である。
@@ -95,17 +96,25 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 }
 
 // wait は、Tag が tag の QueryResult が届くまで待つ（入れ子の待ち）。
-// 待つ間は、リサイズに応じて描画し、<C-c> で問い合わせを取り消す。他のイベントは held に取っておく。
+// 待つ間は、リサイズに応じて描画し、<C-c> で問い合わせを取り消す。他のイベントは hold で取っておく。
 // キーは列に残したままにし、待ちが終わってから処理する。
+// Run の ctx が終わったら、問い合わせを取り消し、結果を待たずに ctx.Err() の結果を返す。
 func (e *Editor) wait(q *exthost.Query, tag queryTag) *exthost.QueryResult {
 	e.waiting++
 	defer func() { e.waiting-- }()
 	e.render()
+	done := context.Background().Done()
+	if e.ctx != nil {
+		done = e.ctx.Done()
+	}
 	for {
 		if e.interrupt.Load() {
 			q.Cancel()
 		}
 		select {
+		case <-done:
+			q.Cancel()
+			return &exthost.QueryResult{Err: e.ctx.Err()}
 		case ev, ok := <-e.host.Events():
 			if !ok {
 				return &exthost.QueryResult{Err: exthost.ErrClosed}
@@ -113,13 +122,55 @@ func (e *Editor) wait(q *exthost.Query, tag queryTag) *exthost.QueryResult {
 			if r, ok := ev.(*exthost.QueryResult); ok && r.Tag == tag {
 				return r
 			}
-			e.held = append(e.held, ev)
+			e.hold(ev)
 		case <-e.resizeCh:
 			e.applySize()
 			e.render()
 		case <-e.intrCh:
 		}
 	}
+}
+
+// hold は、入れ子の待ちの間と確認の問いの間に届いたイベントを、後で届いた順に処理するために取っておく。
+//
+// 取っておく数の上限は exthost の Config.MaxQueuedEvents（既定 1024）である。
+// 待ちの間は exthost の列からここへ移すので、exthost の上限（NFR-03）が効かない。その代わりにここで抑える。
+// 上限を超えたら、最も古い通知（表示のデータとメッセージ）から捨てる。通知が無ければ、最も古いリクエストに誤りで応答して捨てる。
+// 問い合わせの結果（QueryResult）と状態の変化（StateChange）は捨てない。
+func (e *Editor) hold(ev exthost.Event) {
+	e.held = append(e.held, ev)
+	limit := e.cfg.Host.MaxQueuedEvents
+	if limit <= 0 {
+		limit = exthost.DefaultMaxQueuedEvents
+	}
+	if len(e.held) <= limit {
+		return
+	}
+	drop := -1
+	for i, h := range e.held {
+		switch h.(type) {
+		case *exthost.DecorationSet, *exthost.MessageShow, *exthost.DiagnosticSet, *exthost.SignSet,
+			*exthost.PopupShow, *exthost.OutputAppend:
+			drop = i
+		}
+		if drop >= 0 {
+			break
+		}
+	}
+	if drop < 0 {
+		for i, h := range e.held {
+			if r, ok := h.(request); ok {
+				_ = r.ReplyError(&rpc.Error{Code: rpc.CodeInternalError, Message: "editor is busy: too many pending requests"})
+				drop = i
+				break
+			}
+		}
+	}
+	if drop < 0 {
+		return
+	}
+	e.log.Warn("取っておくイベントが上限を超えたので捨てる", "type", fmt.Sprintf("%T", e.held[drop]))
+	e.held = append(e.held[:drop], e.held[drop+1:]...)
 }
 
 // trackDeferred は、Feed などが保留した操作 d を、送った問い合わせと結びつける。
@@ -146,6 +197,10 @@ func (e *Editor) applyDeferred(p *pendingQuery, r *exthost.QueryResult) {
 	if p.d == nil {
 		return
 	}
+	if p.bs.state.Pending() {
+		// キーの列の解釈の途中（d の後など）に届いた結果は破棄する。利用者は続きのキーを、保留した操作の後のつもりで打っていない。
+		return
+	}
 	if r.Err != nil {
 		if !errors.Is(r.Err, context.Canceled) {
 			e.showError(fmt.Errorf("拡張機能 %s の %s が失敗しました: %w", r.Extension, r.Method, r.Err))
@@ -153,7 +208,7 @@ func (e *Editor) applyDeferred(p *pendingQuery, r *exthost.QueryResult) {
 		return
 	}
 	x := &extQuery{e: e, bs: p.bs, answer: r, answerMethod: p.method}
-	e.handleResult(p.bs, p.bs.state.ApplyDeferred(*p.d, x))
+	_ = e.handleResult(p.bs, p.bs.state.ApplyDeferred(*p.d, x)) // 失敗は handleResult が知らせる
 }
 
 // count は、ext の回数（0 は省略）を返す。
@@ -322,19 +377,36 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 		x.e.syncChanges(x.bs, x.bs.state.PendingChanges())
 		x.e.commitChange(x.bs, ch)
 	}
-	x.e.openFromCommand(ref.Extension, x.bs, *r.Open)
+	if err := x.e.openFromCommand(ref.Extension, x.bs, *r.Open, info.Replaying); err != nil {
+		return buffer.Transaction{}, err
+	}
 	return buffer.Transaction{BaseVersion: b.Version()}, nil
 }
 
 // openFromCommand は、command/execute の結果の Open を行う。
-// 同じバッファの中の移動はすぐに行い（再生の次の操作の前に動かす）、別のバッファへ移るものは Feed が戻ってから行う。
-func (e *Editor) openFromCommand(extID string, bs *bufferState, p ext.EditorOpenParams) {
+//
+// 同じバッファの中の移動はすぐに行う（再生の次の操作の前に動かす）。
+// 別のバッファへ移るもの（Focus が true）は、再生中ならすぐに移り、command.ErrBufferSwitched を返す。
+// command.State は再生の残りを Result.Remaining に入れて止まり、handleResult が移った先のバッファで続ける
+// （Vim と同じく、マクロの残りのキーはカーソルのあるバッファへ入る。基本設計 6 章の冒頭の「transaction を適用した後に移動する」）。
+// 再生中でなければ、Feed が戻ってから移る。
+func (e *Editor) openFromCommand(extID string, bs *bufferState, p ext.EditorOpenParams, replaying bool) error {
 	same := (p.Buffer != nil && *p.Buffer == bs.id) || (p.Path != "" && p.Path == bs.path)
 	if same && (!p.Focus || e.cur == bs) {
 		e.moveCursor(bs, p)
-		return
+		return nil
 	}
-	e.pendingOpen = append(e.pendingOpen, openRequest{ext: extID, p: p})
+	if !replaying || !p.Focus {
+		e.pendingOpen = append(e.pendingOpen, openRequest{ext: extID, p: p})
+		return nil
+	}
+	if _, _, err := e.editorOpen(p); err != nil {
+		return errExtension(editcmd.Ref{Extension: extID, ID: "open"}, err)
+	}
+	if e.cur == bs {
+		return nil
+	}
+	return command.ErrBufferSwitched
 }
 
 // moveCursor は、editor/open の Position と Version に従って bs のカーソルを動かし、動かしたかを返す。

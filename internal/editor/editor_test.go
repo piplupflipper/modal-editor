@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 )
@@ -399,4 +402,161 @@ func TestInterrupt(t *testing.T) {
 	if got := h.text(); !strings.HasSuffix(got, "a\nx") {
 		t.Errorf("中断の後のキー: text の末尾 = %q", got[max(0, len(got)-10):])
 	}
+}
+
+// 確認の問いを出している間は拡張機能のイベントを取っておくので、問いの間に届いた editor/open（focus）で
+// カーソルのあるバッファが入れ替わっても、答えは問いを出したバッファで実行する。
+//
+// req: FR-08
+func TestConfirmKeepsBuffer(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a\nb\nc\nd\n", "b.txt": "1\n2\n3\n4\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(5 * time.Second)}, "b.txt", "a.txt")
+	h.keys(`\f:3,1d<CR>`)
+	h.settle()
+	time.Sleep(300 * time.Millisecond)
+	var path string
+	h.e.do(func() { path = h.e.cur.path })
+	if filepath.Base(path) != "a.txt" {
+		t.Fatalf("問いの間にバッファが移った: %s", path)
+	}
+	h.keys("y")
+	h.eventually("editor/open の後の b.txt", func() bool { return filepath.Base(h.e.cur.path) == "b.txt" })
+	h.e.do(func() {
+		for _, bs := range h.e.bufs {
+			want := map[string]string{"a.txt": "d", "b.txt": "1\n2\n3\n4"}[filepath.Base(bs.path)]
+			if got := bs.buf.Text(); got != want {
+				t.Errorf("%s: text = %q, want %q", filepath.Base(bs.path), got, want)
+			}
+		}
+	})
+}
+
+// 再生中の command/execute の open が別のバッファを指すと、そのバッファへ移り、マクロの残りのキーは移った先で続く。
+// 再生中でなければ、操作の後に移る。
+//
+// req: FR-19
+func TestReplaySwitchesBuffer(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\na2\na3\n", "b.txt": "b1\nb2\nb3\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(5 * time.Second)}, "a.txt", "b.txt")
+	h.e.do(func() { h.e.cur.state.Registers().Set('q', command.Register{Text: `\gddx`}) })
+	h.keys("@q")
+	h.settle()
+	h.e.do(func() {
+		if got := filepath.Base(h.e.cur.path); got != "a.txt" {
+			t.Errorf("cur = %s", got)
+		}
+		for _, bs := range h.e.bufs {
+			want := map[string]string{"a.txt": "a1\n3", "b.txt": "b1\nb2\nb3"}[filepath.Base(bs.path)]
+			if got := bs.buf.Text(); got != want {
+				t.Errorf("%s: text = %q, want %q", filepath.Base(bs.path), got, want)
+			}
+		}
+	})
+	// 再生中でなければ、Feed の後に移る。
+	h.keys(`\g`)
+	h.eventually("b.txt へ移る", func() bool {
+		return filepath.Base(h.e.cur.path) == "b.txt" && h.e.cur.state.Cursor().Line == 1
+	})
+}
+
+// 期限 0 の結果が、キーの列の解釈の途中（d の後）に届いたら、適用せずに捨てる。
+//
+// req: FR-18
+func TestDeferredDuringPending(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc def\nghi\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(0)}, "a.txt")
+	h.keys("disd")
+	h.settle()
+	time.Sleep(2 * slowDelay)
+	h.keys("w")
+	h.settle()
+	if got := h.text(); got != "def\nghi" {
+		t.Errorf("text = %q", got)
+	}
+}
+
+// 再生中の待ちの途中に Run の ctx が終わったら、待ちをやめて戻る。端末の入力が閉じたら ErrTerminalLost で戻る。
+func TestRunStops(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), ReplayTimeout: time.Minute}, "a.txt")
+	h.keys("dil")
+	h.eventually("起動", func() bool { return h.e.cur.buf.Text() == "" })
+	h.e.do(func() { h.e.cur.state.Registers().Set('q', command.Register{Text: "dih"}) })
+	h.keys("u@q")
+	time.Sleep(200 * time.Millisecond)
+	began := time.Now()
+	h.cancel()
+	select {
+	case err := <-h.done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Run = %v", err)
+		}
+		h.done <- nil
+	case <-time.After(5 * time.Second):
+		t.Fatal("待ちの間に ctx が終わっても戻らない")
+	}
+	if d := time.Since(began); d > time.Second {
+		t.Errorf("戻るまで %v", d)
+	}
+
+	h2 := start(t, Config{})
+	close(h2.term.in)
+	select {
+	case err := <-h2.done:
+		if !errors.Is(err, ErrTerminalLost) {
+			t.Errorf("Run = %v", err)
+		}
+		h2.done <- nil
+	case <-time.After(5 * time.Second):
+		t.Fatal("端末の入力が閉じても戻らない")
+	}
+}
+
+// 引数の無い :e は、バッファの番号を変えずに読み直す。読み直した内容は拡張機能へ差分で届き、u で戻れる。
+//
+// req: FR-08, FR-16
+func TestReload(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	var id ext.BufferID
+	h.e.do(func() { id = h.e.cur.id })
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("xyz\nnew\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.keys(`:e<CR>\d`)
+	h.eventually("複製", func() bool {
+		return h.e.message.Text == fmt.Sprintf("v%d:%q", h.e.cur.buf.Version(), "xyz\nnew")
+	})
+	h.e.do(func() {
+		if h.e.cur.id != id || h.e.cur.buf.Modified() || len(h.e.bufs) != 1 {
+			t.Errorf("id = %d（前は %d）, modified = %v, bufs = %d", h.e.cur.id, id, h.e.cur.buf.Modified(), len(h.e.bufs))
+		}
+	})
+	h.keys("u")
+	h.settle()
+	if got := h.text(); got != "abc" {
+		t.Errorf("u: text = %q", got)
+	}
+}
+
+// 取っておくイベントが上限を超えたら、最も古い通知から捨てる。問い合わせの結果は捨てない。
+func TestHoldLimit(t *testing.T) {
+	h := start(t, Config{Host: exthost.Config{MaxQueuedEvents: 3}})
+	h.e.do(func() {
+		e := h.e
+		e.hold(&exthost.QueryResult{Tag: queryTag(99)})
+		for i := range 4 {
+			e.hold(&exthost.MessageShow{Params: ext.MessageShowParams{Text: fmt.Sprint(i)}})
+		}
+		if len(e.held) != 3 {
+			t.Fatalf("held = %d", len(e.held))
+		}
+		if _, ok := e.held[0].(*exthost.QueryResult); !ok {
+			t.Errorf("held[0] = %T", e.held[0])
+		}
+		if m := e.held[1].(*exthost.MessageShow); m.Params.Text != "2" {
+			t.Errorf("held[1] = %q", m.Params.Text)
+		}
+		e.held = nil
+	})
 }

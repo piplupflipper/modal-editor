@@ -57,6 +57,8 @@ func runFakeExt(mode string) int {
 	// hostCtx は、ハンドラーから起こした goroutine が本体へリクエストを送るときの ctx である。
 	// ハンドラーの ctx で送ると ErrEditInHandler になる（ext/server の Edit の doc）。
 	hostCtx := context.Background()
+	var mu sync.Mutex
+	opened := map[ext.BufferID]bool{}
 	switch mode {
 	case fakeMain:
 		s.TextObject("fake.line", func(_ context.Context, b *server.Buffer, p *ext.TextObjectResolveParams) (ext.TextObjectResolveResult, error) {
@@ -113,6 +115,49 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.focus は、少し待ってから、カーソルのない方のバッファを editor/open（focus）で開かせる。
+		s.Command("fake.focus", func(context.Context, *server.Buffer, *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				st, err := s.EditorState(hostCtx)
+				if err != nil {
+					return
+				}
+				for _, b := range st.Buffers {
+					if b.Buffer != st.Buffer {
+						id := b.Buffer
+						_, _ = s.OpenEditor(hostCtx, ext.EditorOpenParams{Buffer: &id, Focus: true})
+						return
+					}
+				}
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
+		// fake.goto は、別のバッファ（複製を持つもののうち番号の最も小さいもの）の 2 行目へ移る open を、結果で返す。
+		s.Command("fake.goto", func(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			var other ext.BufferID
+			for id := range opened {
+				if id != b.ID() && (other == 0 || id < other) {
+					other = id
+				}
+			}
+			if other == 0 {
+				return ext.CommandExecuteResult{OK: false}, nil
+			}
+			return ext.CommandExecuteResult{OK: true, Open: &ext.EditorOpenParams{Buffer: &other, Position: &ext.Position{Line: 1}, Focus: true}}, nil
+		})
+		s.OnBufferOpen(func(_ context.Context, ev *server.BufferOpenEvent) {
+			mu.Lock()
+			defer mu.Unlock()
+			opened[ev.Buffer.ID()] = true
+		})
+		s.OnBufferClose(func(_ context.Context, ev *server.BufferCloseEvent) {
+			mu.Lock()
+			defer mu.Unlock()
+			delete(opened, ev.Buffer)
+		})
 		s.BufferWillSave(func(_ context.Context, b *server.Buffer, _ *ext.BufferWillSaveParams) (ext.BufferWillSaveResult, error) {
 			for i := range b.LineCount() {
 				if j := strings.Index(b.Line(i), "fmt"); j >= 0 {
@@ -158,6 +203,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				Commands: []ext.Contribution{
 					contrib("fake.upper", `\u`), contrib("fake.jump", `\j`), contrib("fake.later", `\l`),
 					contrib("fake.dump", `\d`), contrib("fake.ask", `\a`), contrib("fake.state", `\s`),
+					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`),
 				},
 			},
 		},
@@ -213,11 +259,12 @@ func (f *fakeTerm) screen() string {
 
 // harness は、偽の端末で動かしたエディタである。
 type harness struct {
-	t    *testing.T
-	e    *Editor
-	term *fakeTerm
-	done chan error
-	sent int64
+	t      *testing.T
+	e      *Editor
+	term   *fakeTerm
+	done   chan error
+	sent   int64
+	cancel context.CancelFunc
 }
 
 // start は、cfg でエディタを作り、files を開いて、別の goroutine で Run する。テストの終わりに止めて Close する。
@@ -239,20 +286,24 @@ func start(t *testing.T, cfg Config, files ...string) *harness {
 			t.Fatal(err)
 		}
 	}
-	h := &harness{t: t, e: e, term: term, done: make(chan error, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
+	h := &harness{t: t, e: e, term: term, done: make(chan error, 1), cancel: cancel}
 	go func() { h.done <- e.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
 		case err := <-h.done:
-			if err != nil && !errors.Is(err, context.Canceled) {
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrTerminalLost) {
 				t.Errorf("Run = %v", err)
 			}
 		case <-time.After(5 * time.Second):
 			t.Error("Run が終わらない")
 		}
-		_ = e.Close()
+		closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if err := e.Close(closeCtx); err != nil {
+			t.Errorf("Close = %v", err)
+		}
 	})
 	return h
 }

@@ -144,21 +144,45 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 	case err != nil:
 		return fmt.Errorf("%s を読めません: %w", filepath.Base(bs.path), err)
 	}
-	// 読み直したバッファは、新しい番号の別のバッファとして開き直す（拡張機能の複製も作り直す）。
-	if err := e.host.CloseBuffer(bs.id); err != nil {
-		e.log.Error("buffer/close を送れない", "err", err)
-	}
-	e.removeBuffer(bs)
-	e.newBuffer(b, bs.path, bs.fileType)
+	e.reload(bs, b)
 	return nil
 }
 
-// removeBuffer は、開いているバッファの一覧から bs を除く。
-func (e *Editor) removeBuffer(bs *bufferState) {
-	for i, o := range e.bufs {
-		if o == bs {
-			e.bufs = append(e.bufs[:i], e.bufs[i+1:]...)
-			break
+// reload は、バッファ bs の内容を、読み直した b の内容にする。バッファの番号は変えない（Vim の :e と同じ）。
+//
+// 末尾の改行の有無が同じなら、全体を置き換える 1 つの編集として適用する。
+// バージョン番号は進み続け、拡張機能へは差分（buffer/change）で届き、アンドゥで読み直す前へ戻れる（Vim の 'undoreload' と同じ）。
+// 末尾の改行の有無が違えば（編集では変えられないので）、同じ番号で buffer/close と buffer/open を送り直し、
+// バージョン番号は 0 から数え直す。このとき、そのバッファの診断と印と色は消す。
+func (e *Editor) reload(bs *bufferState, b *buffer.Buffer) {
+	cur := bs.buf
+	cursor := bs.state.Cursor()
+	if b.HasTrailingNewline() == cur.HasTrailingNewline() {
+		if b.Text() != cur.Text() {
+			last := cur.LineCount() - 1
+			whole := buffer.Range{End: buffer.Position{Line: last, Byte: len(cur.Line(last))}}
+			ch, err := cur.Apply(buffer.Transaction{BaseVersion: cur.Version(), Edits: []buffer.Edit{{Range: whole, Text: b.Text()}}})
+			if err != nil {
+				e.showError(err)
+				return
+			}
+			e.commitChange(bs, ch)
 		}
+		cur.MarkSaved()
+		bs.state.SetCursor(cursor)
+		return
 	}
+	if err := e.host.CloseBuffer(bs.id); err != nil {
+		e.log.Error("buffer/close を送れない", "err", err)
+	}
+	regs := *bs.state.Registers()
+	bs.buf = b
+	bs.history = nil
+	bs.decorations = map[string]decorationSet{}
+	bs.decoView = nil
+	bs.diagnostics = map[string][]ext.Diagnostic{}
+	bs.signs = map[string][]ext.Sign{}
+	e.initState(bs)
+	*bs.state.Registers() = regs
+	bs.state.SetCursor(cursor)
 }

@@ -76,7 +76,7 @@ func (e *Editor) afterKey() {
 	if e.interrupt.Load() {
 		// 処理の途中に <C-c> が押された。中断はもう効いたので印を下ろし、<C-c> までの先打ちを捨てる。
 		e.interrupt.Store(false)
-		e.keys.dropThrough(InterruptKey)
+		e.keys.dropThrough(interruptKey)
 	}
 	if e.remap.pendingKeys() || e.cur.state.Pending() {
 		e.armKeyTimer()
@@ -103,17 +103,18 @@ func (e *Editor) stopKeyTimer() {
 
 // handleKey は、利用者のキーを 1 個処理する。
 func (e *Editor) handleKey(k editcmd.Key) {
-	if k == InterruptKey {
+	if k == interruptKey {
 		e.interrupt.Store(false)
 		k = editcmd.Esc
 	}
 	e.popup = nil
 	if e.confirm != nil {
-		cf := e.confirm
-		e.confirm = nil
+		// 答えは、問いを出したバッファの State へ渡す。問いの間は拡張機能のイベントを取っておくので、そのバッファと範囲は変わっていない。
+		cf, bs := e.confirm, e.confirmBS
+		e.confirm, e.confirmBS = nil, nil
 		e.message = noMessage
 		yes := k == editcmd.Rune('y')
-		e.handleResult(e.cur, e.cur.state.Confirm(cf, yes))
+		_ = e.handleResult(bs, bs.state.Confirm(cf, yes)) // 失敗は handleResult が知らせる
 		return
 	}
 	if e.activeChoice() != nil {
@@ -136,7 +137,7 @@ func (e *Editor) flushKeys() {
 			break
 		}
 	}
-	e.handleResult(e.cur, e.cur.state.Flush())
+	_ = e.handleResult(e.cur, e.cur.state.Flush()) // 失敗は handleResult が知らせる
 	e.afterKey()
 }
 
@@ -144,9 +145,7 @@ func (e *Editor) flushKeys() {
 // マクロの記録はこの Feed が行うので、コマンドラインのキーも記録される。
 func (e *Editor) feedKey(k editcmd.Key) bool {
 	bs := e.cur
-	res := bs.state.Feed(k)
-	e.handleResult(bs, res)
-	return res.Err == nil
+	return e.handleResult(bs, bs.state.Feed(k)) == nil
 }
 
 // mapMode は、利用者のキーマップを引くモードを返す。
@@ -170,17 +169,22 @@ func (e *Editor) mapMode() mapMode {
 	return mapNone
 }
 
-// handleResult は、command.State の結果を処理する。
+// handleResult は、command.State の結果を処理し、操作の失敗（無ければ nil）を返す。
 // 変更を exthost へ送り（FR-16）、表示のデータをずらし、Ex コマンドの動作を行い、失敗を知らせる。
-func (e *Editor) handleResult(bs *bufferState, res command.Result) {
+//
+// マクロの再生の途中でカーソルのあるバッファが移った（command.ErrBufferSwitched）なら、
+// 再生の残りを、移った先のバッファで続ける（Vim と同じく、マクロのキーはカーソルのあるバッファへ入る）。
+func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 	for _, ch := range res.Changes {
 		e.commitChange(bs, ch)
 	}
 	e.trackDeferred(bs, res.Deferred)
-	if res.Confirm != nil {
+	switched := errors.Is(res.Err, command.ErrBufferSwitched)
+	switch {
+	case res.Confirm != nil:
 		// Err は確認を求めた E493 なので知らせず、問いを出す（render）。
-		e.confirm = res.Confirm
-	} else if res.Err != nil {
+		e.confirm, e.confirmBS = res.Confirm, bs
+	case res.Err != nil && !switched:
 		e.reportError(res.Err)
 	}
 	for _, a := range res.Actions {
@@ -190,6 +194,14 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) {
 		}
 	}
 	e.doPendingOpens()
+	if switched {
+		if len(res.Remaining) == 0 || e.cur == bs {
+			return nil
+		}
+		next := e.cur
+		return e.handleResult(next, next.state.ContinueReplay(res.Remaining))
+	}
+	return res.Err
 }
 
 // reportError は、操作の失敗を知らせる。

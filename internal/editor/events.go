@@ -105,7 +105,7 @@ func (e *Editor) stateChange(ev *exthost.StateChange) {
 			text += ": " + ev.Err.Error()
 		}
 		e.message = ui.Message{Text: text, Level: ui.MessageError}
-	case exthost.StateNotStarted, exthost.StateStarting, exthost.StateRunning:
+	case exthost.StateNotStarted, exthost.StateStarting, exthost.StateRunning, exthost.StateStopping:
 	}
 }
 
