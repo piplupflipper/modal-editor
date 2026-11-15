@@ -218,6 +218,30 @@ LSP は、既定では位置を UTF-16 の単位で数える。
 `buffer/change` の「適用の前のバージョン番号」が、拡張機能の持つ番号と一致しない場合、拡張機能は差分が欠けたと判断し、全文の送り直しを本体に求める。
 `buffer/open` の全文は、位置を数えるもとのテキスト（4.1）であり、末尾の改行を含めない。
 
+標準の拡張機能（6 章）を作るために、次のメソッドを足す。
+名前と内容は仮で、`ext/message.go` にはまだ無い。
+params と result の項目は 6.7 に書く。
+
+| 向き | メソッド | 種類 | 内容 | 使う拡張機能 |
+|---|---|---|---|---|
+| 本体 → 拡張機能 | `buffer/willSave` | リクエスト | 保存の直前に、保存する前に適用する編集を問い合わせる。応答はトランザクションか、編集無し。宣言ファイルで保存の契機を宣言した拡張機能にだけ送る | LSP |
+| 本体 → 拡張機能 | `buffer/didSave` | 通知 | バッファをファイルへ書き出したことを、書き出した時点のバージョン番号と一緒に知らせる | LSP、DAP |
+| 拡張機能 → 本体 | `editor/state` | リクエスト | 編集の状態を問い合わせる。応答は、カーソルのあるバッファ、カーソル位置、モード、ビジュアルモードの選択範囲、開いているバッファの一覧 | MCP |
+| 拡張機能 → 本体 | `editor/open` | リクエスト | ファイルかバッファを開き、カーソルを指定の位置へ動かす。応答は開いたバッファの番号と、カーソルを動かしたかどうか | MCP、LSP、DAP、ACP |
+| 拡張機能 → 本体 | `buffer/save` | リクエスト | バッファをファイルへ書き出すよう求める。応答は書き出したかどうかと、その時点のバージョン番号 | MCP、ACP |
+| 拡張機能 → 本体 | `diagnostic/set` | 通知 | バッファ 1 つ分の診断の一覧を、元にしたバージョン番号と一緒に渡す | LSP |
+| 拡張機能 → 本体 | `diagnostic/list` | リクエスト | 本体が受け取り済みの診断を問い合わせる | MCP |
+| 拡張機能 → 本体 | `sign/set` | 通知 | 行に付ける印（ブレークポイント、実行位置）の一覧を、バッファ 1 つ分まとめて渡す | DAP |
+| 拡張機能 → 本体 | `popup/show` | 通知 | カーソルの近くに一時的に表示するテキスト（ホバーの説明など）を渡す | LSP |
+| 拡張機能 → 本体 | `output/append` | 通知 | 名前を付けた出力の欄（デバッグ対象の出力、エージェントの返答など）へテキストを書き足す | DAP、ACP |
+| 拡張機能 → 本体 | `choice/ask` | リクエスト | 選択肢を利用者に示して 1 つ選ばせる。応答は選んだ選択肢の ID か、取り消し | ACP、LSP |
+
+拡張機能から本体へのリクエストは、イベントループが 1 件ずつ処理する（2.1）。
+本体が、ある拡張機能へのキー入力ごとの問い合わせ（5.4）か `command/execute` の結果を待っている間は、その拡張機能から届いたリクエストを待たせ、待ちが終わってから処理する。
+このため、拡張機能が `motion/resolve` などのハンドラーの中で本体へのリクエストの応答を待つと、問い合わせが期限を超えるまで双方が止まる。
+`ext/server` の `Server` は、ハンドラーの中で `Edit` を呼ぶとこの理由で `ErrEditInHandler` を返す。
+足すリクエストを `ext/server` に加えるときも、同じ扱いにする。
+
 ### 5.4 キー入力ごとに結果が要る問い合わせ
 
 `motion/resolve`、`textObject/resolve`、`operator/apply` の 3 つは、結果が届くまで次のキー入力を処理できない。
@@ -239,11 +263,62 @@ LSP は、既定では位置を UTF-16 の単位で数える。
 
 ## 6. 標準の拡張機能
 
+標準の拡張機能ごとに、段階 2 以降で最初に作る機能の範囲（以下、最初の範囲）と、そのために要る本体との取り決めを定める。
+表示を伴う取り決めは、何を表示してほしいかのデータとして定める。
+表示の仕方（色、枠、置き場所）は `internal/ui` が決める。
+端末の制御に使うライブラリが未決（#9）なので、この文書は表示の仕方を決めない。
+
+| 拡張機能 | 最初の範囲 | 使う既存のメソッド | 足すメソッド（5.3） | 節 |
+|---|---|---|---|---|
+| tree-sitter | 構文ハイライト、構文に沿ったテキストオブジェクト（関数、クラス） | バッファの同期、`decoration/set`、`textObject/resolve` | 無し | 6.1 |
+| MCP | FR-32 のツール（バッファの一覧と内容、カーソル位置、選択範囲、診断の取得、編集、ファイルを開く、保存） | バッファの同期、`buffer/edit` | `editor/state`、`editor/open`、`buffer/save`、`diagnostic/list` | 6.2 |
+| LSP | 診断の表示、定義へ移動、ホバー、整形（コマンドと保存の前） | バッファの同期、`command/execute`、`buffer/edit`、`message/show` | `buffer/willSave`、`buffer/didSave`、`diagnostic/set`、`editor/open`、`popup/show`、`choice/ask` | 6.3 |
+| DAP | ブレークポイントの切り替え、デバッグの開始と終了、続行とステップ実行、停止位置の表示、デバッグ対象の出力の表示 | バッファの同期、`command/execute`、`message/show` | `buffer/didSave`、`sign/set`、`editor/open`、`output/append` | 6.4 |
+| ACP | エージェントの起動、プロンプトの送信、返答の表示、権限の確認、エディタの内容を通したファイルの読み書き | バッファの同期、`command/execute`、`buffer/edit`、`message/show` | `editor/open`、`buffer/save`、`output/append`、`choice/ask` | 6.5 |
+| スクリプト | スクリプトの拡張機能が、モーション、テキストオブジェクト、オペレーター、コマンドを追加する | 5.3 の既存のメソッドすべて | 無し。宣言ファイルに項目を足す | 6.6 |
+
+表の「バッファの同期」は、`buffer/open`、`buffer/change`、`buffer/close`、`buffer/resync` の 4 つを指す。
+拡張機能の側で始める処理（言語サーバーへの問い合わせなど）は、キー入力ごとの問い合わせの期限（5.4）より長くかかることがある。
+このため、LSP、DAP、ACP のコマンドは、`command/execute` には受け付けたことだけを `ok` で返し、結果は後から、5.3 で足した拡張機能から本体へのメソッドで届ける。
+後から届ける編集（`buffer/edit`）は、ドットリピートの記録の対象にならない（ドットリピートが繰り返すのは、本体が記録した編集コマンドの値である。FR-06）。
+
+拡張機能をまたぐ取り決め（ファイルの種類の判定、保存の流れ、宣言ファイルに足す項目、表示のデータの項目）は 6.7 に書く。
+
 ### 6.1 tree-sitter
 
 tree-sitter の拡張機能は、`buffer/open` と `buffer/change` を受け取って構文を解析し、色を付ける範囲の一覧を `decoration/set` で本体へ送る（FR-35）。
 本体は、描画のたびに拡張機能へ問い合わせることはせず、受け取り済みの一覧で描画する。
 一覧には元にしたバージョン番号が付いているので、本体は、それより後に編集された範囲の色を、新しい一覧が届くまで前の色のまま表示する。
+
+最初の範囲は、構文ハイライトと、構文木に沿ったテキストオブジェクト（関数とクラスの、内側と全体）である。
+テキストオブジェクトは既存の `textObject/resolve` で答えるので、足すメソッドは無い。
+起動の契機は、文法を持つファイルの種類ごとの `filetype` の契機である。
+ファイルの種類は本体が判定して `buffer/open` の `fileType` で渡し、拡張機能には判定を問い合わせない（6.7）。
+
+`decoration/set` の `style`（色の種類の名前）は、次の名前（仮）から選ぶ。
+名前から色への対応は本体が持つ。
+
+| 名前（仮） | 付ける対象 |
+|---|---|
+| `comment` | コメント |
+| `keyword` | 予約語 |
+| `string` | 文字列のリテラル |
+| `number` | 数値のリテラル |
+| `constant` | 定数、真偽値、`nil` のような値 |
+| `function` | 関数とメソッドの名前 |
+| `type` | 型の名前 |
+| `variable` | 変数と引数の名前 |
+| `operator` | 演算子 |
+| `punctuation` | 括弧と区切りの記号 |
+
+表に無い名前を受け取った本体は、その範囲に色を付けない。
+
+`buffer/change` の編集は逐次の数え方で書かれている（`ext/protocol.go` の `Transaction`）。
+tree-sitter の増分の解析には、編集ごとの開始のバイト位置と行と列を渡す。
+拡張機能は、受け取った編集を先頭から 1 つずつ構文木と複製に適用すれば、この値を数え直さずに得られる。
+
+`decoration/set` は、バッファ全体の一覧を毎回送る（`ext.DecorationSetParams`）。
+大きなファイルで一覧が大きくなったときに、画面に見えている範囲だけを送るかどうかは未決とし、計測で決める（10 章）。
 
 ### 6.2 MCP
 
@@ -257,6 +332,305 @@ MCP の標準入出力での接続は、クライアントがサーバーを子�
 中継コマンドは、標準入出力とソケットの間でメッセージを転送するだけで、内容を解釈しない。
 
 ACP でエージェントを起動する場合は、ACP の拡張機能が、セッションを作るときに中継コマンドを MCP サーバーとしてエージェントへ渡す。
+
+ソケットで接続を受けて MCP のサーバーとして振る舞うのは、MCP の拡張機能である。
+本体は MCP のメッセージを解釈せず、拡張機能が MCP のツールの呼び出しを本体への 5.3 のメソッドに置き換える。
+
+最初の範囲のツールは次のとおりである。
+ツールの名前と引数は仮である。
+
+| ツール（仮） | 内容 | 使う取り決め |
+|---|---|---|
+| `list_buffers` | 開いているバッファの一覧（番号、パス、ファイルの種類、バージョン番号、未保存の変更の有無） | `editor/state` |
+| `get_editor_state` | カーソルのあるバッファ、カーソル位置、モード、選択範囲 | `editor/state` |
+| `read_buffer` | バッファの全文か、指定した行の範囲のテキストと、そのバージョン番号 | 拡張機能が持つ複製（バッファの同期） |
+| `get_diagnostics` | 診断の一覧。バッファを指定しなければ、開いているバッファすべて | `diagnostic/list` |
+| `edit_buffer` | 範囲の置き換えの列を、`read_buffer` で得たバージョン番号と一緒に受け取って適用を求める | `buffer/edit` |
+| `open_file` | ファイルを開き、指定があればカーソルを動かす | `editor/open` |
+| `save_buffer` | バッファをファイルへ書き出す | `buffer/save` |
+
+`edit_buffer` のバージョン番号が現在と一致しなければ、本体は適用しない（FR-15）。
+拡張機能は、ツールの結果を `isError: true` にして、読み直してから再度試すよう本文に書く。
+MCP の仕様は、ツールの実行の誤りを `isError: true` の結果で返し、言語モデルが自分で直せるようにすることを定めている（[MCP の Tools](https://modelcontextprotocol.io/specification/latest/server/tools)、「Error Handling」）。
+
+ツールの引数と結果の位置は、行を 1 から、列を行の先頭から 1 から数えたバイト数で表す（仮。Vim の `line()` と `col()` と同じ数え方）。
+拡張機能 API の位置（0 から数える。4.1）との変換は、MCP の拡張機能の中で行う。
+
+本体が呼ばれないうちに MCP の拡張機能を起動しないように（FR-14）、起動の契機に `socket`（仮）を足す（6.7）。
+本体は起動時にソケットを作って待ち受け、最初の接続が来た時点で MCP の拡張機能を起動し、待ち受けているソケットを子プロセスに引き継ぐ。
+Go では、`os/exec` の `Cmd.ExtraFiles` でファイル記述子を子プロセスへ渡し、子プロセスは `net.FileListener` で待ち受けを再開できる。
+ソケットのパスは、本体が拡張機能を起動するときに環境変数 `MODAL_EDITOR_MCP_SOCKET`（仮。#39 の中継コマンドが読む名前）で渡す。
+ACP の拡張機能は、この変数から中継コマンドの引数を作る（6.5）。
+ソケットを置くディレクトリと名前の規則は、要件定義 7 章の「起動中のエディタを中継コマンドが見つける規則」と合わせて決める。
+
+2026-11-16 に確かめた MCP の仕様の最新の版は 2026-07-28 である（[MCP の Tools](https://modelcontextprotocol.io/specification/latest/server/tools) のリンク先が `specification/2026-07-28/` を指す）。
+この版では、すべてのリクエストが `_meta` に `io.modelcontextprotocol/protocolVersion` などを含めることになっている（同ページの冒頭の注）。
+どの版を実装するかは MCP の拡張機能の中で閉じる事柄で、本体との取り決めには影響しない。
+版の選び方は未決とする（10 章）。
+
+### 6.3 LSP
+
+LSP の拡張機能は、1 つのプロセスで、ファイルの種類ごとに言語サーバーを子プロセスとして起動する。
+どのファイルの種類にどの言語サーバーを使うかは、利用者の設定のうち LSP の拡張機能に向けた部分（`initialize` の `settings`）に書く。
+起動の契機は、その設定に書いたファイルの種類の `filetype` の契機である。
+宣言ファイルは実行せずに読む固定のファイルなので、利用者が言語を足したときの契機は、利用者の設定から宣言ファイルの `activation` へ足す（6.7）。
+
+最初の範囲の機能と、使う取り決めは次のとおりである。
+
+| 機能 | 契機 | LSP のメッセージ | 本体との取り決め |
+|---|---|---|---|
+| 文書の同期 | バッファの同期 | `textDocument/didOpen`、`textDocument/didChange`、`textDocument/didClose` | `buffer/open`、`buffer/change`、`buffer/close` |
+| 診断の表示 | 言語サーバーからの通知 | `textDocument/publishDiagnostics` | `diagnostic/set` |
+| 定義へ移動 | コマンド `lsp.definition`（仮） | `textDocument/definition` | `command/execute`、`editor/open`。候補が複数なら `choice/ask` |
+| ホバー | コマンド `lsp.hover`（仮） | `textDocument/hover` | `command/execute`、`popup/show` |
+| 整形 | コマンド `lsp.format`（仮） | `textDocument/formatting` | `command/execute`、`buffer/edit` |
+| 保存の前の整形 | 保存 | `textDocument/formatting` | `buffer/willSave` |
+| 保存の通知 | 保存の後 | `textDocument/didSave` | `buffer/didSave` |
+
+コマンドの既定のキーは決めず、利用者の設定で割り当てる。
+Vim の `gd` と `K` は Vim の標準の操作であり、本体の標準の操作の一覧（#9 で裁定待ち）と重なりうるためである。
+
+位置の単位は、LSP の拡張機能の中で変換する（4.1）。
+LSP 3.17 では、位置の数え方の既定は UTF-16 で、クライアントは `general.positionEncodings` で `utf-8` などを申し出られ、サーバーは `capabilities.positionEncoding` で 1 つを選ぶ（[LSP 3.17 の仕様](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)）。
+拡張機能は `utf-8` を申し出るが、サーバーが選ばなかった場合に備えて UTF-16 との変換を持つ。
+LSP の行と文字の位置は 0 から数える（同仕様）。
+
+`textDocument/publishDiagnostics` は、サーバーからクライアントへの通知で、`uri`、省略できる `version`、`diagnostics` を持つ（同仕様）。
+拡張機能は `didOpen` と `didChange` の `version` に本体のバージョン番号をそのまま使う。
+このため、診断の `version` は本体のバージョン番号として `diagnostic/set` へ渡せる。
+`version` が無い診断には、受け取った時点で拡張機能の複製が持つバージョン番号を付ける。
+開いていないファイルについての診断は、最初の範囲では捨てる。
+
+`textDocument/definition` の結果は、`Location`、`Location` の配列、`LocationLink` の配列、`null` のいずれかである（同仕様）。
+候補が 1 つなら `editor/open` でその位置へ移動し、複数なら `choice/ask` で利用者に選ばせる。
+`textDocument/hover` の結果の `contents` は `popup/show` の本文に、`MarkupContent` の `kind` は本文の形式（`plaintext` か `markdown`）に写す。
+
+`textDocument/formatting` の結果は `TextEdit` の配列か `null` である（同仕様）。
+LSP の `TextEdit` の配列の範囲は、どれも計算のもとにした文書の位置を指し、互いに重ならない（同仕様）。
+拡張機能 API のトランザクションは逐次の数え方（`ext/protocol.go` の `Transaction`）なので、拡張機能は範囲の開始の位置が後ろのものから順に並べ替えて送る。
+後ろの編集から適用すれば、前の編集の位置はずれないので、並べ替えだけで逐次の数え方になる。
+`BaseVersion` には、`textDocument/formatting` を送った時点のバージョン番号を書く。
+その間に利用者が編集していれば、本体は適用せず（FR-15）、拡張機能は `message/show` でそのことを知らせる。
+
+保存の前の整形には、コマンド `lsp.format` と同じ `textDocument/formatting` を使い、保存の前とコマンドで整形の結果をそろえる。
+LSP には保存の前に編集を問い合わせる `textDocument/willSaveWaitUntil` もあり、仕様は、編集の計算に時間がかかったときクライアントが結果を捨てうるとしている（同仕様）。
+`buffer/willSave` の期限（6.7）も同じ考え方を取る。
+
+補完は最初の範囲に入れない。
+補完は、インサートモードの入力ごとに言語サーバーへ問い合わせ、候補の一覧を表示し、確定した候補を編集にする。
+入力ごとの契機と候補の一覧の表示の両方に新しい取り決めが要り、本体のインサートモードの実装（#32）の後に設計する（10 章）。
+
+### 6.4 DAP
+
+DAP の拡張機能は、デバッグを始めるコマンドで起動し、設定に書いたデバッグアダプターを子プロセスとして起動する。
+
+| 機能 | 契機 | 本体との取り決め |
+|---|---|---|
+| ブレークポイントの切り替え | コマンド `dap.toggleBreakpoint`（仮） | `command/execute`（カーソルの行）、`sign/set` |
+| デバッグの開始と終了 | コマンド `dap.start`、`dap.stop`（仮） | `command/execute` |
+| 続行、ステップ実行 | コマンド `dap.continue`、`dap.next`、`dap.stepIn`、`dap.stepOut`（仮） | `command/execute` |
+| 停止位置の表示 | DAP の `stopped` イベント | `editor/open`、`sign/set`、`message/show` |
+| デバッグ対象の出力 | DAP の `output` イベント | `output/append` |
+| ブレークポイントの位置の追従 | 編集と保存 | `buffer/change`、`buffer/didSave` |
+
+拡張機能は、ファイルごとのブレークポイントの行を自分で持ち、DAP の `setBreakpoints` で送る。
+`setBreakpoints` の応答は、ブレークポイントごとに実際の位置と、検証できたかどうか（`verified`）を返す（[DAP の仕様](https://microsoft.github.io/debug-adapter-protocol/specification)）。
+拡張機能は、検証できたものを `breakpoint`、できなかったものを `breakpointUnverified` の印として `sign/set` で送る（印の種類は 6.7）。
+デバッグを始める前に置いたブレークポイントは、デバッグアダプターが無いので `breakpoint` の印で表示し、開始の後に `setBreakpoints` の応答で付け直す。
+
+利用者が編集してブレークポイントの行がずれた場合、本体は印の行を編集に合わせてずらす（6.7）。
+拡張機能も、`buffer/change` の編集から自分の持つ行をずらし、`buffer/didSave` を受け取った時点で `setBreakpoints` を送り直す。
+保存まで送り直さないのは、デバッグ対象が実行するのは保存されたファイルだからである。
+
+`stopped` イベントは、停止の理由（`reason`）と、停止したスレッド（`threadId`）を持つ（同仕様）。
+拡張機能は、`stackTrace` で得た先頭のフレームの `source` の `path` と `line` を、`editor/open` でカーソルの移動先にし、`sign/set` で `executionPoint` の印を付ける。
+`continued` と `terminated` のイベントを受け取ったら、`executionPoint` の印を消す。
+
+DAP の行と列は、既定では 1 から数え、`initialize` の `linesStartAt1` と `columnsStartAt1` を false にすると 0 から数える（同仕様）。
+拡張機能は、どちらの数え方でも本体の位置（4.1）へ変換する。
+DAP の列が何の単位（文字、UTF-16、バイト）で数えるかは未確認であり、最初の範囲では行だけを使い、列は 0 とする。
+
+`output` イベントの本文（`output`）は、`output/append` の `dap` の欄（仮）へ書き足す。
+変数の表示、ウォッチ式、デバッグアダプターからの端末での起動の依頼（`runInTerminal` の逆向きのリクエスト）は、最初の範囲に入れない。
+
+### 6.5 ACP
+
+ACP の拡張機能は、コマンドで呼ばれたときに起動し、設定に書いたエージェントを子プロセスとして起動する。
+ACP の仕様は、クライアントがエージェントを子プロセスとして起動し、標準入出力でメッセージをやり取りする形を定めており、メッセージは改行で区切る（[ACP の Transports](https://agentclientprotocol.com/protocol/transports)）。
+本体と拡張機能の間の `Content-Length` の形式（5.3）とは区切りが違うので、`internal/rpc` の読み書きの部品はそのまま使えない。
+
+| 機能 | 契機 | ACP のメッセージ | 本体との取り決め |
+|---|---|---|---|
+| セッションの開始 | 最初のプロンプト | `initialize`、`session/new` | 無し |
+| プロンプトの送信 | コマンド `acp.prompt`（仮）。引数がプロンプトの本文 | `session/prompt` | `command/execute` |
+| 取り消し | コマンド `acp.cancel`（仮） | `session/cancel` | `command/execute` |
+| 返答と進み具合の表示 | エージェントからの通知 | `session/update` | `output/append` |
+| 権限の確認 | エージェントからのリクエスト | `session/request_permission` | `choice/ask` |
+| ファイルの読み取り | エージェントからのリクエスト | `fs/read_text_file` | 拡張機能が持つ複製（バッファの同期） |
+| ファイルの書き込み | エージェントからのリクエスト | `fs/write_text_file` | `editor/open`、`buffer/edit`、`buffer/save` |
+
+`session/new` は、作業ディレクトリ（`cwd`、絶対パス）と、エージェントが接続する MCP サーバーの一覧（`mcpServers`）を受け取る（[ACP の Session Setup](https://agentclientprotocol.com/protocol/session-setup)）。
+標準入出力の MCP サーバーは、`name`、実行ファイルの絶対パスの `command`、`args`、省略できる `env` で指定し、すべてのエージェントは標準入出力の MCP サーバーへの接続に対応しなければならない（同ページ）。
+拡張機能は、`cwd` に本体の作業ディレクトリを、`mcpServers` に中継コマンド（`command` に絶対パス、`args` に `--socket` とソケットのパス）を渡す（6.2）。
+中継コマンドの絶対パスを拡張機能が知る方法は、要件定義 7 章の「拡張機能のファイルを置くディレクトリと、本体が拡張機能を探す規則」と合わせて決める。
+
+`session/update` の更新の種類のうち、`agent_message_chunk` の本文は `acp` の欄（仮）へ `output/append` でそのまま書き足し、`tool_call` と `tool_call_update` と `plan` は 1 行の要約にして書き足す（更新の種類の一覧は [ACP の Prompt Turn](https://agentclientprotocol.com/protocol/prompt-turn)）。
+ツールの呼び出しには、エージェントが読み書きしているファイルの絶対パスと 1 から数えた行を表す `locations` が付くことがあり、クライアントはこれを使ってエージェントの作業を追える（[ACP の Tool Calls](https://agentclientprotocol.com/protocol/tool-calls)）。
+最初の範囲では、`locations` を要約の行に書くだけで、カーソルは動かさない。
+
+`session/request_permission` は、`sessionId`、`toolCall`、選択肢の一覧（`options`）を持ち、選択肢の種類は `allow_once`、`allow_always`、`reject_once`、`reject_always` である（同 Tool Calls）。
+拡張機能は、`toolCall` の内容から作った文を `choice/ask` の問いの文に、`options` を選択肢に写し、利用者が選んだ選択肢の ID を `selected` の結果で返す。
+利用者が取り消した場合と、プロンプトが取り消された場合は、`cancelled` の結果を返す（同 Tool Calls、[ACP の Prompt Turn](https://agentclientprotocol.com/protocol/prompt-turn)）。
+
+`fs/read_text_file` と `fs/write_text_file` は、クライアントが `fs.readTextFile` と `fs.writeTextFile` の能力を申し出た場合だけ、エージェントが呼べる（[ACP の Overview](https://agentclientprotocol.com/protocol/overview)）。
+拡張機能は両方を申し出る。
+`fs/read_text_file` は、エディタの未保存の変更を含めた内容を返すことになっており、パスは絶対パス、`line` は 1 から数え、`limit` は読む行数の上限である（[ACP の File System](https://agentclientprotocol.com/protocol/file-system)）。
+拡張機能は、そのパスのバッファの複製を持っていれば複製から、無ければファイルから読む。
+
+`fs/write_text_file` は、パスと書き込む内容（`content`）を受け取り、ファイルが無ければクライアントが作る（同 File System）。
+拡張機能は、そのパスのバッファが開いていなければ `editor/open` でカーソルを移さずに開き、全文を置き換える `buffer/edit` を送り、`buffer/save` で書き出す。
+エージェントは書き込みの後にファイルを読むコマンド（テストなど）を動かしうるので、バッファへの編集だけで止めずに書き出す。
+拡張機能がファイルへ直接書く形を取らず、本体にバッファとして開かせるのは、本体の開いているバッファとファイルの内容が食い違わないようにするためである。
+
+エージェントの端末の操作（`terminal/*`）は、最初の範囲では能力を申し出ない。
+
+プロンプトの本文は、`command/execute` の `args` に `{"text": "..."}`（仮）として渡す。
+利用者がコマンドラインから拡張機能のコマンドへ引数を渡す書き方は未決とする（10 章）。
+
+### 6.6 スクリプト
+
+スクリプトの拡張機能は、利用者が置く Go のソースファイルと宣言ファイルの組である（FR-10、FR-36）。
+宣言ファイルの `command` に、スクリプトを実行する実行ファイル `modal-editor-ext-script` を書き、スクリプトのファイルを引数として渡す。
+このために、宣言ファイルに `args`（仮）を足す（6.7）。
+本体は、スクリプトの拡張機能を、コンパイルする拡張機能と同じく 1 つのプロセスとして起動し、`modal-editor-ext-script` はスクリプトを 1 つだけ実行する。
+1 つのプロセスで複数のスクリプトを実行しないのは、1 つのスクリプトの無限ループや panic で他のスクリプトを止めないためである（NFR-03）。
+
+スクリプトは、コンパイルする拡張機能と同じ `ext` と `ext/server` を import して書き、5.3 の既存のメソッドで本体とやり取りする。
+最初の範囲で足すメソッドは無い。
+yaegi を埋め込むプログラムは、スクリプトに使わせるパッケージの記号の表を `Use` で渡す。
+README の例は、標準ライブラリの記号の表 `stdlib.Symbols` を渡している（[yaegi の README](https://github.com/traefik/yaegi)）。
+`ext` と `ext/server` の記号の表を作る手順は未確認である。
+yaegi の README は、Go のモジュールにまだ対応していないと書いており、スクリプトから外部のモジュールを import できるかどうかも未確認である。
+
+### 6.7 拡張機能をまたぐ取り決め
+
+#### ファイルの種類の判定
+
+ファイルの種類は本体が判定し、`buffer/open` の `fileType` で渡す。
+判定は、拡張子とファイル名からファイルの種類の名前への対応表（仮。既定の表を本体が持ち、利用者の設定で足せる）で行う。
+拡張機能に判定を問い合わせないのは、`filetype` の契機（5.1）で拡張機能を起動するかどうかを、その判定の結果で決めるからである。
+判定のために拡張機能を起動すると、FR-14 の「使うときに初めて起動する」が成り立たなくなる。
+
+#### 宣言ファイルと設定に足す項目
+
+| 項目（仮） | 置き場所 | 内容 | 使う拡張機能 |
+|---|---|---|---|
+| `activation` の `socket` の契機 | 宣言ファイル | MCP のソケットへの最初の接続で起動する。本体は待ち受けているソケットを子プロセスへ引き継ぐ（6.2） | MCP |
+| `saveHook` | 宣言ファイル | true なら、稼働中のときに `buffer/willSave` を受け取る | LSP |
+| `args` | 宣言ファイル | `command` に渡す引数の列 | スクリプト |
+| 拡張機能ごとの `activation` の追加 | 利用者の設定 | 宣言ファイルの `activation` に `filetype` の契機を足す | LSP、tree-sitter |
+| ファイルの種類の対応表 | 利用者の設定 | 拡張子とファイル名から、ファイルの種類の名前への対応を足す | すべて |
+
+#### 保存の流れ
+
+本体は、バッファを保存するとき、次の順に処理する。
+
+1. そのバッファを持っている稼働中の拡張機能のうち、宣言ファイルの `saveHook` が true のものへ、1 つずつ順に `buffer/willSave` を送る。未起動の拡張機能は起動しない
+2. 応答にトランザクションがあり、`BaseVersion` が現在のバージョン番号と一致すれば適用する。次の拡張機能には、適用した後のバージョン番号で問い合わせる
+3. 期限（仮に 1000 ms。設定で変えられる）を超えた拡張機能の応答は待たず、`$/cancel` を送って次へ進み、利用者に 1 行のメッセージで知らせる
+4. ファイルへ書き出し、そのバッファを持っている稼働中の拡張機能すべてへ `buffer/didSave` を送る
+
+順に問い合わせるのは、同じバージョン番号をもとにした 2 つのトランザクションのうち、後に適用するほうが必ずバージョン番号の不一致で破棄されるためである。
+`buffer/willSave` の期限を 5.4 の期限と分けるのは、整形が言語サーバーの処理を待つためで、キー入力ごとの操作より長くかかる。
+
+#### 表示のデータ
+
+診断と行の印は、送った拡張機能とバッファの組ごとに本体が持ち、同じ組の次の一覧で置き換える。
+空の一覧を送ると、その組の一覧を消す。
+`decoration/set` と同じ持ち方である（`ext.DecorationSetParams`）。
+`decoration/set` と違い、本体は、一覧を受け取った後のバッファの編集で行が増減したら、次の一覧が届くまで、診断と印の行を編集に合わせてずらす。
+ブレークポイントの印が、行を足した後に別の行を指したままになるのを避けるためである。
+拡張機能が再起動したときは、その拡張機能の一覧をすべて消す。
+
+`diagnostic/set` の params は次のとおりである。
+
+| 項目（仮） | 内容 |
+|---|---|
+| `buffer` | バッファの番号 |
+| `version` | 一覧を計算するもとにしたバージョン番号 |
+| `diagnostics` | 診断の一覧。各要素は次の行の項目を持つ |
+| `diagnostics[].range` | 範囲（4.1 の位置） |
+| `diagnostics[].severity` | 重要度。`error`、`warning`、`info`、`hint` のいずれか |
+| `diagnostics[].message` | 本文 |
+| `diagnostics[].source` | 出どころ（`gopls` など）。省略できる |
+| `diagnostics[].code` | 診断の種類を表す文字列。省略できる |
+
+`diagnostic/list` の params はバッファの番号で、省略すると開いているバッファすべてを対象にする。
+result は、バッファと送った拡張機能の組ごとに、拡張機能の ID、バージョン番号、診断の一覧を返す。
+診断の位置は、`diagnostic/set` で受け取った後に本体が編集に合わせてずらした位置である。
+
+`sign/set` の params は、`buffer`、`signs` で、`signs` の各要素は `line`（0 から数えた行）と `kind` を持つ。
+`kind` は、`breakpoint`（ブレークポイント）、`breakpointUnverified`（デバッグアダプターが検証できなかったブレークポイント）、`executionPoint`（停止した位置）のいずれか（仮）である。
+1 つの行に複数の印があれば、本体が表示の優先順位を決める。
+
+`popup/show` の params は次のとおりである。
+
+| 項目（仮） | 内容 |
+|---|---|
+| `buffer` | 表示の基準にするバッファの番号 |
+| `version` | 本文を計算するもとにしたバージョン番号 |
+| `position` | 表示の基準にする位置 |
+| `text` | 本文 |
+| `format` | 本文の形式。`plaintext` か `markdown`。本体が Markdown を整形して表示するかどうかは `internal/ui` が決め、整形しなければそのまま表示する |
+
+本体は、`buffer` がカーソルのあるバッファで、`version` が現在のバージョン番号と一致する場合だけ表示する。
+表示は、次のキー入力かカーソルの移動で消す。
+新しい `popup/show` は、前の表示を置き換える。
+
+`output/append` の params は、`channel`（欄の名前。`dap`、`acp` など）と `text`（書き足すテキスト。改行を含んでよい）である。
+本体は、拡張機能と欄の名前の組ごとにテキストを持ち、行数が上限（仮に 10000 行）を超えたら古い行から捨てる。
+欄を開いて読む操作は本体のコマンドとして用意する。
+欄はバッファではないので、拡張機能へ `buffer/open` で送らない。
+
+`choice/ask` の params は、`title`（問いの文）と `choices`（各要素は `id` と `label`）である。
+result は、選んだ選択肢の `id` を `selected` に、取り消した場合は `cancelled` に true を返す。
+利用者の応答を待つので、5.4 の期限を適用しない。
+本体は一度に 1 つの問いだけを表示し、表示中に届いた問いは順に待たせる。
+問いを出した拡張機能が再起動した場合、その拡張機能の問いを取り下げる。
+
+#### 編集の状態とバッファの操作
+
+`editor/state` の params は無く、result は次のとおりである。
+
+| 項目（仮） | 内容 |
+|---|---|
+| `buffer` | カーソルのあるバッファの番号 |
+| `cursor` | カーソル位置 |
+| `mode` | モード。`normal`、`insert`、`visual`、`visualLine`、`visualBlock`、`commandLine` のいずれか |
+| `selection` | ビジュアルモードの選択範囲。ビジュアルモードでなければ省く |
+| `buffers` | 開いているバッファの一覧。各要素は番号、パス、ファイルの種類、バージョン番号、未保存の変更の有無を持つ |
+
+`editor/open` の params は次のとおりである。
+
+| 項目（仮） | 内容 |
+|---|---|
+| `path` | 開くファイルの絶対パス。`buffer` とどちらか一方を指定する |
+| `buffer` | 開いているバッファの番号 |
+| `position` | カーソルの移動先。省くとカーソルを動かさない |
+| `version` | `position` を計算するもとにしたバージョン番号。指定すると、現在と一致したときだけカーソルを動かす。まだ開いていないファイルでは使わない |
+| `focus` | true なら、そのバッファをカーソルのあるバッファにする。false なら、開くだけでカーソルを移さない |
+
+result は、開いたバッファの番号（`buffer`）と、カーソルを動かしたかどうか（`moved`）である。
+既に開いているファイルなら、新しく開かずにそのバッファを使う。
+`version` の照合で動かさなかった場合も、バッファは開く。
+
+`buffer/save` の params は `buffer` と、省略できる `version` である。
+`version` を指定した場合、現在のバージョン番号と一致したときだけ書き出す。
+result は、書き出したかどうか（`saved`）と、その時点のバージョン番号（`version`）である。
+`buffer/save` による保存も、利用者の保存と同じ保存の流れを通る。
+
+`buffer/willSave` の params は `buffer` と `version` で、result は省略できる `transaction` である。
+`buffer/didSave` の params は `buffer`、`version`、`path` である。
 
 ## 7. 設定
 
@@ -332,3 +706,11 @@ NFR-01 や NFR-05 のように、Go のテストで検証しにくい要件は�
 | 生存確認の間隔と、再起動の待ち時間と、連続の失敗の上限 | 5.2 |
 | 拡張機能 API のバージョンの付け方 | 5.3 |
 | 未保存のバッファを本体の panic から守る仕組み | 8 |
+| 補完の候補の表示と、インサートモードの入力ごとに言語サーバーへ問い合わせる契機 | 6.3 |
+| tree-sitter の色の一覧を、大きなファイルで画面に見えている範囲だけに限るかどうか | 6.1 |
+| MCP の拡張機能が実装する MCP の仕様の版 | 6.2 |
+| MCP のソケットを置くディレクトリと名前の規則（要件定義 7 章の、中継コマンドがエディタを見つける規則と合わせて決める） | 6.2 |
+| 中継コマンドと `modal-editor-ext-script` の絶対パスを、拡張機能と宣言ファイルが知る方法（要件定義 7 章の、拡張機能を探す規則と合わせて決める） | 6.5、6.6 |
+| コマンドラインから拡張機能のコマンドへ引数を渡す書き方 | 6.5 |
+| DAP の列の単位と、停止位置の列の扱い | 6.4 |
+| スクリプトから `ext` と `ext/server` を使うための yaegi の記号の表の作り方 | 6.6 |
