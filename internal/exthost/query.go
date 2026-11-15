@@ -197,20 +197,20 @@ func (h *Host) sendAndWait(ctx context.Context, id, method string, params any, r
 	return nil
 }
 
-// ensureStartedLocked は、未起動の拡張機能を起動する。再起動待ちか無効なら誤りを返す。
+// ensureStartedLocked は、未起動の拡張機能を起動する。停止中か再起動待ちか無効なら誤りを返す。
 func (h *Host) ensureStartedLocked(e *extension) error {
 	switch e.state {
 	case StateNotStarted:
 		h.startLocked(e)
 	case StateStarting, StateRunning:
-	case StateRestartWait, StateDisabled:
+	case StateStopping, StateRestartWait, StateDisabled:
 		return fmt.Errorf("%w: state %s", ErrUnavailable, e.state)
 	}
 	return nil
 }
 
 // waitRunning は、拡張機能を必要なら起動し、稼働中になるまで待って、その接続を返す。
-// 待つ間に再起動待ちか無効になったら、[ErrUnavailable] を包んだ誤りを返す。
+// 待つ間に停止中か再起動待ちか無効になったら、[ErrUnavailable] を包んだ誤りを返す。
 func (h *Host) waitRunning(ctx context.Context, id string) (*rpc.Conn, error) {
 	h.mu.Lock()
 	e, err := h.lookupLocked(id)
@@ -227,7 +227,7 @@ func (h *Host) waitRunning(ctx context.Context, id string) (*rpc.Conn, error) {
 			conn := e.run.conn
 			h.mu.Unlock()
 			return conn, nil
-		case StateRestartWait, StateDisabled:
+		case StateStopping, StateRestartWait, StateDisabled:
 			st := e.state
 			h.mu.Unlock()
 			return nil, fmt.Errorf("%w: state %s", ErrUnavailable, st)

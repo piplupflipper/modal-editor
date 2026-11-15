@@ -24,6 +24,8 @@ var (
 	errPingTimeout = errors.New("exthost: ping timed out")
 	errExited      = errors.New("exthost: extension process exited")
 	errConnClosed  = errors.New("exthost: connection closed")
+	// errStopped は、[Host.Disable] で止めたことを表す。異常ではないので、連続の失敗に数えない。
+	errStopped = errors.New("exthost: extension stopped")
 )
 
 // stderrDrainTimeout は、子プロセスを終わらせた後に、標準エラー出力の残りを読み切るのを待つ上限である。
@@ -41,6 +43,8 @@ type run struct {
 	runningSince time.Time
 	// queued は、このプロセスから届き、まだイベントループへ渡していないイベントの数である。
 	queued int
+	// shuttingDown は、shutdown を送ったかどうかである。true の後に届いたリクエストは、イベントループへ渡さずに失敗を応答する。
+	shuttingDown bool
 
 	failOnce sync.Once
 	failErr  error
@@ -61,19 +65,28 @@ func (r *run) fail(err error) {
 }
 
 // supervise は、拡張機能のプロセスを起動して監視し、異常で終わったら待ち時間の後に再起動する。
-// 連続の失敗が上限に達するか、Host が閉じると戻る（基本設計 5.2、図 4）。
+// 連続の失敗が上限に達するか、stop が閉じるか（[Host.Disable]）、Host が閉じると戻る（基本設計 5.2、図 4）。
 //
 // req: NFR-03
-func (h *Host) supervise(e *extension, r *run) {
+func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 	defer h.wg.Done()
 	id := e.spec.Manifest.ID
 	for {
-		err := h.runOnce(e, r)
+		err := h.runOnce(e, r, stop)
 		if h.ctx.Err() != nil {
 			return
 		}
 
 		h.mu.Lock()
+		// Disable の後なら、プロセスがどの理由で終わっても、無効へ移す（再起動しない）。
+		if errors.Is(err, errStopped) || e.stopping {
+			e.run = nil
+			// 止めている間に届き、まだ渡していないイベントは捨てる（Close と同じ扱い）。
+			h.purgeLocked(r)
+			h.setStateLocked(e, StateDisabled, nil)
+			h.mu.Unlock()
+			return
+		}
 		if !r.runningSince.IsZero() && time.Since(r.runningSince) >= h.cfg.ResetAfter {
 			e.failures = 0
 		}
@@ -97,6 +110,14 @@ func (h *Host) supervise(e *extension, r *run) {
 		case <-t.C:
 		case <-h.ctx.Done():
 			t.Stop()
+			return
+		case <-stop:
+			t.Stop()
+			h.mu.Lock()
+			if !h.closing {
+				h.setStateLocked(e, StateDisabled, nil)
+			}
+			h.mu.Unlock()
 			return
 		}
 
@@ -122,8 +143,12 @@ func (h *Host) restartDelay(failures int) time.Duration {
 }
 
 // runOnce は、子プロセスを 1 回起動し、初期化し、異常が起きるまで監視する。
-// 戻る前に、プロセスグループごと強制終了し、接続を閉じる。返す値は異常の理由である。
-func (h *Host) runOnce(e *extension, r *run) error {
+// 戻る前にプロセスを終わらせ、接続を閉じる。返す値は終わらせた理由である。
+//
+// Host が閉じたとき（[ErrClosed]）と stop が閉じたとき（errStopped）は、正常な終了として [Host.terminate] の手順で止める。
+// 異常（5.2 の条件）のときは、プロセスグループごとすぐに SIGKILL を送る。
+// 異常な拡張機能は shutdown を処理できないことが多く、待つと再起動が遅れるためである。
+func (h *Host) runOnce(e *extension, r *run, stop <-chan struct{}) (err error) {
 	id := e.spec.Manifest.ID
 	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args, e.spec.Dir)
 	if err != nil {
@@ -141,6 +166,9 @@ func (h *Host) runOnce(e *extension, r *run) error {
 	h.mu.Unlock()
 
 	defer func() {
+		if errors.Is(err, ErrClosed) || errors.Is(err, errStopped) {
+			h.terminate(id, r, p)
+		}
 		p.kill()
 		_ = conn.Close()
 		<-p.exited
@@ -154,14 +182,69 @@ func (h *Host) runOnce(e *extension, r *run) error {
 		<-stderrDone
 	}()
 
-	if err := h.initialize(e, r, p); err != nil {
+	if err := h.initialize(e, r, p, stop); err != nil {
 		return err
 	}
-	return h.monitor(r, p)
+	return h.monitor(r, p, stop)
+}
+
+// terminate は、拡張機能のプロセスを正常に止める（基本設計 5.2）。
+// shutdown を送り、[Config.ShutdownTimeout] までに終わらなければプロセスグループへ SIGTERM を送り、
+// さらに [Config.TerminateTimeout] まで待つ。それでも終わらなければ、呼び出し側が SIGKILL を送る。
+// [Host.CloseContext] の ctx が終わったら（h.force）、期限を待たずに戻り、呼び出し側が SIGKILL を送る。
+// プロセスが既に終わっていれば何もしない。
+func (h *Host) terminate(id string, r *run, p *process) {
+	// wait は、プロセスが d の間に終わったら 0、期限を過ぎたら 1、h.force が閉じたら 2 を返す。
+	const (
+		exited = iota
+		timedOut
+		forced
+	)
+	wait := func(d time.Duration) int {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-p.exited:
+			return exited
+		case <-t.C:
+			return timedOut
+		case <-h.force:
+			return forced
+		}
+	}
+	select {
+	case <-p.exited:
+		return
+	default:
+	}
+	h.mu.Lock()
+	r.shuttingDown = true
+	conn := r.conn
+	h.mu.Unlock()
+	if err := conn.Notify(ext.MethodShutdown, ext.ShutdownParams{}); err != nil {
+		h.log.Warn("extension shutdown not sent", "extension", id, "error", err)
+	} else {
+		switch wait(h.cfg.ShutdownTimeout) {
+		case exited:
+			return
+		case forced:
+			h.log.Warn("host close cancelled; sending SIGKILL", "extension", id)
+			return
+		}
+		h.log.Warn("extension did not exit after shutdown; sending SIGTERM", "extension", id, "timeout", h.cfg.ShutdownTimeout)
+	}
+	p.signal(syscall.SIGTERM)
+	switch wait(h.cfg.TerminateTimeout) {
+	case exited:
+	case forced:
+		h.log.Warn("host close cancelled; sending SIGKILL", "extension", id)
+	default:
+		h.log.Warn("extension did not exit after SIGTERM; sending SIGKILL", "extension", id, "timeout", h.cfg.TerminateTimeout)
+	}
 }
 
 // initialize は、initialize を送って応答を待ち、届いたら稼働中にして、開いているバッファの全文を送る。
-func (h *Host) initialize(e *extension, r *run, p *process) error {
+func (h *Host) initialize(e *extension, r *run, p *process, stop <-chan struct{}) error {
 	f, err := r.conn.Go(ext.MethodInitialize, ext.InitializeParams{APIVersion: ext.APIVersion, Settings: e.spec.Settings})
 	if err != nil {
 		return fmt.Errorf("%w: %w", errConnClosed, err)
@@ -181,6 +264,8 @@ func (h *Host) initialize(e *extension, r *run, p *process) error {
 		return r.failErr
 	case <-h.ctx.Done():
 		return ErrClosed
+	case <-stop:
+		return errStopped
 	}
 	var res ext.InitializeResult
 	if err := f.Result(&res); err != nil {
@@ -201,6 +286,10 @@ func (h *Host) initialize(e *extension, r *run, p *process) error {
 	if h.closing {
 		return ErrClosed
 	}
+	if e.stopping {
+		// 初期化の応答を待つ間に Disable された。停止中から稼働中へ戻さない。
+		return errStopped
+	}
 	r.runningSince = time.Now()
 	h.setStateLocked(e, StateRunning, nil)
 	for _, d := range h.sortedDocsLocked() {
@@ -210,13 +299,13 @@ func (h *Host) initialize(e *extension, r *run, p *process) error {
 }
 
 // monitor は、稼働中のプロセスへ定期的に ping を送り、異常を見つけたら理由を返す。
-func (h *Host) monitor(r *run, p *process) error {
+func (h *Host) monitor(r *run, p *process, stop <-chan struct{}) error {
 	tick := time.NewTicker(h.cfg.PingInterval)
 	defer tick.Stop()
 	for {
 		select {
 		case <-tick.C:
-			if err := h.ping(r, p); err != nil {
+			if err := h.ping(r, p, stop); err != nil {
 				return err
 			}
 		case <-p.exited:
@@ -227,13 +316,15 @@ func (h *Host) monitor(r *run, p *process) error {
 			return r.failErr
 		case <-h.ctx.Done():
 			return ErrClosed
+		case <-stop:
+			return errStopped
 		}
 	}
 }
 
 // ping は、生存確認を 1 回行う。応答が期限までに届かなければ誤りを返す。
 // 拡張機能が ping に誤りで応答しても、応答したので生きているとみなす。
-func (h *Host) ping(r *run, p *process) error {
+func (h *Host) ping(r *run, p *process, stop <-chan struct{}) error {
 	f, err := r.conn.Go(ext.MethodPing, ext.PingParams{})
 	if err != nil {
 		return fmt.Errorf("%w: %w", errConnClosed, err)
@@ -257,6 +348,8 @@ func (h *Host) ping(r *run, p *process) error {
 		return r.failErr
 	case <-h.ctx.Done():
 		return ErrClosed
+	case <-stop:
+		return errStopped
 	}
 }
 
@@ -272,6 +365,11 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 				return
 			}
 			h.mu.Lock()
+			if r.shuttingDown {
+				h.mu.Unlock()
+				_ = reply(nil, &rpc.Error{Code: rpc.CodeInternalError, Message: req.Method + ": extension is shutting down"})
+				return
+			}
 			err := h.pushLocked(ev, r)
 			h.mu.Unlock()
 			if err != nil {
@@ -501,9 +599,14 @@ func startProcess(path string, args []string, dir string) (p *process, err error
 // 子プロセスが終わった後でも、同じグループに残った孫プロセスを終わらせる。
 // 孫プロセスがパイプを持ち続けると、子を終わらせても接続が閉じないためである。
 func (p *process) kill() {
+	p.signal(syscall.SIGKILL)
+}
+
+// signal は、子プロセスのプロセスグループ全体に sig を送る。グループへ送れなければ子プロセスだけに送る。
+func (p *process) signal(sig syscall.Signal) {
 	pid := p.cmd.Process.Pid
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-		_ = p.cmd.Process.Kill()
+	if err := syscall.Kill(-pid, sig); err != nil {
+		_ = p.cmd.Process.Signal(sig)
 	}
 }
 

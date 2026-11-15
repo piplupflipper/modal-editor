@@ -649,3 +649,62 @@ func TestEditInHook(t *testing.T) {
 		t.Errorf("host received %+v", p)
 	}
 }
+
+// shutdown を受け取ると、OnShutdown のフックを呼び、フックが送った通知を書き出してから Serve が nil で戻る。
+// shutdown より後に届いたメッセージは処理しない。
+func TestShutdown(t *testing.T) {
+	for _, withHook := range []bool{true, false} {
+		t.Run(fmt.Sprintf("hook=%v", withHook), func(t *testing.T) {
+			s := server.New()
+			var mu sync.Mutex
+			var calls []string
+			record := func(name string) {
+				mu.Lock()
+				calls = append(calls, name)
+				mu.Unlock()
+			}
+			if withHook {
+				s.OnShutdown(func(ctx context.Context, _ *server.ShutdownEvent) {
+					record("shutdown")
+					if _, err := s.Edit(ctx, ext.BufferEditParams{}); !errors.Is(err, server.ErrEditInHandler) {
+						t.Errorf("Edit in shutdown hook = %v, want ErrEditInHandler", err)
+					}
+					// 子プロセスの片付けに時間がかかる場合を演じる。
+					time.Sleep(50 * time.Millisecond)
+					_ = s.ShowMessage(ext.MessageInfo, "bye")
+				})
+			}
+			s.OnBufferOpen(func(context.Context, *server.BufferOpenEvent) { record("open") })
+			h := start(t, s)
+			h.notify(t, ext.MethodShutdown, ext.ShutdownParams{})
+			h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, Text: "a"})
+
+			select {
+			case err := <-h.served:
+				if err != nil {
+					t.Errorf("Serve = %v, want nil", err)
+				}
+				h.served <- nil // Cleanup でもう一度読む。
+			case <-time.After(timeout):
+				t.Fatal("Serve did not return after shutdown")
+			}
+			if withHook {
+				n := h.nextNote(t)
+				var p ext.MessageShowParams
+				_ = json.Unmarshal(n.Params, &p)
+				if n.Method != ext.MethodMessageShow || p.Text != "bye" {
+					t.Errorf("note = %s %s, want message/show bye", n.Method, n.Params)
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			want := []string{}
+			if withHook {
+				want = []string{"shutdown"}
+			}
+			if fmt.Sprint(calls) != fmt.Sprint(want) {
+				t.Errorf("calls = %v, want %v", calls, want)
+			}
+		})
+	}
+}

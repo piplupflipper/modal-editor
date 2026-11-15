@@ -60,6 +60,11 @@ const (
 	DefaultWillSaveTimeout = time.Second
 	// DefaultMaxQueuedEvents は、拡張機能 1 つあたりの、イベントループへ渡していないイベントの数の上限の既定値（仮）である。
 	DefaultMaxQueuedEvents = 1024
+	// DefaultShutdownTimeout は、shutdown を送ってから、拡張機能が自分で終わるのを待つ期限の既定値（仮）である。
+	// 言語サーバーの shutdown と exit、デバッグアダプターの disconnect を待てる長さにする。
+	DefaultShutdownTimeout = 3 * time.Second
+	// DefaultTerminateTimeout は、SIGTERM を送ってから、SIGKILL を送るまでの期限の既定値（仮）である。
+	DefaultTerminateTimeout = time.Second
 )
 
 // Config は、[Host] の動作の設定である。
@@ -95,6 +100,12 @@ type Config struct {
 	// MaxQueuedEvents は、拡張機能 1 つあたりの、イベントループへ渡していないイベントの数の上限である。
 	// 拡張機能が通知を送り続けたときに、本体のメモリを使い切らないための上限で、超えたら異常と判断する（NFR-03）。
 	MaxQueuedEvents int
+	// ShutdownTimeout は、拡張機能を正常に止めるとき（[Host.Close]、[Host.Disable]）に、
+	// shutdown を送ってから、拡張機能のプロセスが自分で終わるのを待つ期限である（基本設計 5.2）。
+	// 超えたらプロセスグループへ SIGTERM を送る。
+	ShutdownTimeout time.Duration
+	// TerminateTimeout は、SIGTERM を送ってから、プロセスが終わるのを待つ期限である。超えたら SIGKILL を送る。
+	TerminateTimeout time.Duration
 	// Logger は、拡張機能の標準エラー出力と、状態の変化を記録する先である。nil なら slog.Default() を使う。
 	Logger *slog.Logger
 }
@@ -133,6 +144,12 @@ func (c Config) withDefaults() Config {
 	if c.MaxQueuedEvents <= 0 {
 		c.MaxQueuedEvents = DefaultMaxQueuedEvents
 	}
+	if c.ShutdownTimeout <= 0 {
+		c.ShutdownTimeout = DefaultShutdownTimeout
+	}
+	if c.TerminateTimeout <= 0 {
+		c.TerminateTimeout = DefaultTerminateTimeout
+	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
@@ -170,9 +187,14 @@ const (
 	StateStarting
 	// StateRunning は、initialize の応答が届き、問い合わせに応答できる状態である。
 	StateRunning
+	// StateStopping は、[Host.Disable] で shutdown を送り、プロセスが終わるのを待っている状態である（基本設計 5.2）。
+	// 問い合わせと buffer/willSave は送らずに [ErrUnavailable] で失敗させ、buffer/change などの通知も送らない。
+	// プロセスが終わると StateDisabled へ移る。
+	StateStopping
 	// StateRestartWait は、異常で子プロセスを終わらせ、再起動の待ち時間が過ぎるのを待っている状態である。
 	StateRestartWait
-	// StateDisabled は、連続の失敗が上限に達し、自動では起動しない状態である。[Host.Restart] で起動し直せる。
+	// StateDisabled は、連続の失敗が上限に達したか、[Host.Disable] で止めたので、自動では起動しない状態である。
+	// [Host.Restart] で起動し直せる。
 	// 上限に達した失敗でも、いったん StateRestartWait へ移ってから、待たずにこの状態へ移る（図 4）。
 	StateDisabled
 )
@@ -186,6 +208,8 @@ func (s State) String() string {
 		return "starting"
 	case StateRunning:
 		return "running"
+	case StateStopping:
+		return "stopping"
 	case StateRestartWait:
 		return "restart-wait"
 	case StateDisabled:
@@ -223,6 +247,8 @@ type Host struct {
 	pumpDone chan struct{}
 	// wake は、queue に積んだことを、イベントを渡す goroutine へ知らせる。
 	wake chan struct{}
+	// force は、[Host.CloseContext] の ctx が終わると閉じる。正常な終了の期限を待たずに SIGKILL へ進める。
+	force chan struct{}
 
 	// mu は、ここから下のフィールドと、各 extension と run の可変のフィールドを守る。
 	mu      sync.Mutex
@@ -243,6 +269,10 @@ type extension struct {
 	failures int
 	// changed は、状態が変わると閉じ、新しいチャネルに取り替える。状態の変化を待つのに使う。
 	changed chan struct{}
+	// stop は、[Host.Disable] で閉じる。起動するたびに新しいチャネルにする。監視の goroutine はこれで止める。
+	stop chan struct{}
+	// stopping は、stop を閉じたかどうかである。
+	stopping bool
 }
 
 // New は、specs の拡張機能を管理する Host を作る。子プロセスは起動しない（FR-14、NFR-04）。
@@ -259,6 +289,7 @@ func New(specs []Spec, cfg Config) (*Host, error) {
 		events:   make(chan Event),
 		pumpDone: make(chan struct{}),
 		wake:     make(chan struct{}, 1),
+		force:    make(chan struct{}),
 		exts:     make(map[string]*extension),
 		docs:     make(map[ext.BufferID]*document),
 	}
@@ -356,6 +387,7 @@ func (h *Host) Start(id string) error {
 
 // Restart は、無効になった拡張機能の連続の失敗の数を 0 に戻し、起動し直す（図 4 の「利用者が再起動を指示」）。
 // 未起動の拡張機能なら起動する。それ以外の状態では何もしない。起動は非同期である。
+// 停止中（[StateStopping]）でも何もしないので、無効へ移った後に呼び直す。
 func (h *Host) Restart(id string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -367,15 +399,71 @@ func (h *Host) Restart(id string) error {
 	case StateDisabled, StateNotStarted:
 		e.failures = 0
 		h.startLocked(e)
-	case StateStarting, StateRunning, StateRestartWait:
+	case StateStarting, StateRunning, StateStopping, StateRestartWait:
 	}
 	return nil
 }
 
-// Close は、すべての拡張機能のプロセスを強制終了し、管理の goroutine が終わるのを待つ。
+// Disable は、拡張機能を正常に止め、無効にする（利用者の指示による無効化）。止めるのは非同期で、待たずに戻る。
+//
+// 起動中か稼働中なら、すぐに [StateStopping] へ移し、Close と同じ手順（shutdown、期限後に SIGTERM、さらに期限後に SIGKILL）で
+// プロセスを終わらせ、終わった後に [StateDisabled] へ移る。
+// 再起動待ちなら、待つのをやめて無効にする。未起動なら、そのまま無効にする。停止中か無効なら何もしない。
+// 止めたことは連続の失敗に数えない。[Host.Restart] で起動し直せる。
+//
+// shutdown を送った後に拡張機能から届いたリクエスト（buffer/edit など）は、イベントループへ渡さずに失敗を応答する。
+// 通知は渡すが、無効へ移った時点でイベントループへ渡していないイベントは、リクエストも通知も捨てる。
+func (h *Host) Disable(id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	e, err := h.lookupLocked(id)
+	if err != nil {
+		return err
+	}
+	switch e.state {
+	case StateNotStarted:
+		h.setStateLocked(e, StateDisabled, nil)
+	case StateStarting, StateRunning:
+		h.requestStopLocked(e)
+		h.setStateLocked(e, StateStopping, nil)
+	case StateRestartWait:
+		h.requestStopLocked(e)
+	case StateStopping, StateDisabled:
+	}
+	return nil
+}
+
+// requestStopLocked は、拡張機能の監視の goroutine へ、止めるよう知らせる。
+func (h *Host) requestStopLocked(e *extension) {
+	if !e.stopping {
+		e.stopping = true
+		close(e.stop)
+	}
+}
+
+// Close は、すべての拡張機能のプロセスを正常に止め、管理の goroutine が終わるのを待つ（基本設計 5.2）。
 // その後に [Host.Events] のチャネルを閉じる。
+//
+// 起動中か稼働中の拡張機能へは shutdown を送り、[Config.ShutdownTimeout] までにプロセスが終わらなければ
+// プロセスグループへ SIGTERM を、さらに [Config.TerminateTimeout] を過ぎたら SIGKILL を送る。
+// 拡張機能ごとに並行して行うので、Close が待つのは最も長くかかった拡張機能の分である。
+// プロセスが終わった後も、同じプロセスグループに残ったプロセスには SIGKILL を送る。
+// shutdown を送った後に拡張機能から届いたイベントは、[Host.Events] へ渡さない。
 // Close の後の問い合わせは [ErrClosed] を包んだ誤りを返す。2 回目以降の呼び出しは何もしない。
+//
+// Close は、拡張機能が応答しないと最大で ShutdownTimeout と TerminateTimeout の和だけ戻らない。
+// 待つ上限を呼び出し側で決めるときは [Host.CloseContext] を使う。
+// イベントループ（internal/editor）は、端末の後始末（画面の復元）を先に済ませてから呼ぶ。
+// 利用者に、エディタが終わらずに止まって見えないようにするためである。
 func (h *Host) Close() error {
+	return h.CloseContext(context.Background())
+}
+
+// CloseContext は、Close と同じく拡張機能を正常に止めるが、ctx が終わったら期限を待たずに、
+// 残っている拡張機能のプロセスグループへ SIGKILL を送って終わらせる。
+// ctx が終わったために SIGKILL へ切り替えたときは、ctx.Err() を返す。それ以外は nil を返す。
+// 2 回目以降の呼び出しは、1 回目の Close が終わるのを待つだけで、nil を返す。
+func (h *Host) CloseContext(ctx context.Context) error {
 	h.mu.Lock()
 	if h.closing {
 		h.mu.Unlock()
@@ -385,9 +473,21 @@ func (h *Host) Close() error {
 	h.closing = true
 	h.mu.Unlock()
 	h.cancel()
-	h.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		h.wg.Wait()
+		close(done)
+	}()
+	var err error
+	select {
+	case <-done:
+	case <-ctx.Done():
+		err = ctx.Err()
+		close(h.force)
+		<-done
+	}
 	<-h.pumpDone
-	return nil
+	return err
 }
 
 func (h *Host) lookupLocked(id string) (*extension, error) {
@@ -420,7 +520,9 @@ func (h *Host) setStateLocked(e *extension, st State, cause error) {
 func (h *Host) startLocked(e *extension) {
 	r := newRun()
 	e.run = r
+	e.stop = make(chan struct{})
+	e.stopping = false
 	h.setStateLocked(e, StateStarting, nil)
 	h.wg.Add(1)
-	go h.supervise(e, r)
+	go h.supervise(e, r, e.stop)
 }

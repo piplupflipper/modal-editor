@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -31,7 +33,14 @@ const (
 	modeExit = "exit"
 	// modeServer は、ext/server で書いた拡張機能として動く（serverext_test.go）。
 	modeServer = "server"
+	// modeIgnoreShutdown は、shutdown を無視する。SIGTERM では既定の動作どおりに終わる。
+	modeIgnoreShutdown = "ignoreshutdown"
+	// modeStubborn は、shutdown を無視し、SIGTERM を受け取っても標準エラー出力に記録するだけで終わらない。
+	modeStubborn = "stubborn"
 )
+
+// stubbornSIGTERM は、modeStubborn の拡張機能が SIGTERM を受け取ったときに標準エラー出力へ書く行である。
+const stubbornSIGTERM = "fake extension got SIGTERM"
 
 // テストから拡張機能へ送る、テスト専用のリクエスト。
 const (
@@ -101,6 +110,15 @@ func runFakeExt(mode string) int {
 	}
 	if mode == modeServer {
 		return runServerExt()
+	}
+	if mode == modeStubborn {
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGTERM)
+		go func() {
+			for range sigs {
+				fmt.Fprintln(os.Stderr, stubbornSIGTERM)
+			}
+		}()
 	}
 	f := &fakeExt{mode: mode, docs: map[ext.BufferID]*fakeDoc{}, ready: make(chan struct{})}
 	f.conn = rpc.NewConn(os.Stdin, os.Stdout, rpc.HandlerFuncs{Request: f.request, Notification: f.notification})
@@ -269,6 +287,12 @@ func (f *fakeExt) notification(_ context.Context, n *rpc.Notification) {
 		delete(f.docs, p.Buffer)
 		f.log = append(f.log, fmt.Sprintf("close:%d", p.Buffer))
 		f.mu.Unlock()
+	case ext.MethodShutdown:
+		f.record("notification:%s", n.Method)
+		if f.mode == modeNormal {
+			// 片付けるものは無いので、すぐに終わる。
+			os.Exit(0)
+		}
 	default:
 		f.record("notification:%s", n.Method)
 	}

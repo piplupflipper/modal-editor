@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 1000 340" role="img" aria-label="拡張機能は起動の契機で初めて起動し、異常があれば本体が再起動し、失敗が続けば無効にする" xmlns="http://www.w3.org/2000/svg" width="1000" height="340" class="fig">
+<svg viewBox="0 0 1000 370" role="img" aria-label="拡張機能は起動の契機で初めて起動し、異常があれば本体が再起動し、失敗が続くか利用者が無効にすれば無効にする" xmlns="http://www.w3.org/2000/svg" width="1000" height="370" class="fig">
 <style>
 svg{--bg:#f4f6f8; --surface:#ffffff; --fg:#1b2430; --muted:#5a6675; --line:#d5dce4;
   --accent:#0e5f70; --accent-soft:#deeef1; --accent-ink:#0b4a57;
@@ -74,4 +74,18 @@ svg .tick{stroke:var(--muted);stroke-width:1}
 <text x="218" y="252" class="tx-bad">連続の失敗が上限に到達</text>
 <path d="M 115,230 C 115,170 300,150 420,118" class="ln" fill="none" marker-end="url(#ar)"/>
 <text x="60" y="170" class="tx-m">利用者が再起動を指示</text>
+
+<rect x="800" y="230" width="170" height="60" rx="28" class="bx-info"/>
+<text x="885" y="254" text-anchor="middle" class="tx-b">停止中</text>
+<text x="885" y="274" text-anchor="middle" class="tx-m">問い合わせは送らない</text>
+<line x1="950" y1="120" x2="950" y2="228" class="ln-acc" marker-end="url(#ara)"/>
+<text x="944" y="150" text-anchor="end" class="tx-acc">利用者が無効化</text>
+<text x="944" y="166" text-anchor="end" class="tx-m">（起動中からも）</text>
+<text x="944" y="182" text-anchor="end" class="tx-m">shutdown を送る</text>
+<path d="M 885,290 L 885,330 L 115,330 L 115,292" class="ln-acc" fill="none" marker-end="url(#ara)"/>
+<text x="500" y="350" text-anchor="middle" class="tx-m">プロセスが終わる（期限を過ぎたら SIGTERM、さらに過ぎたら SIGKILL）。連続の失敗に数えない</text>
+<line x1="45" y1="120" x2="45" y2="228" class="ln-acc" marker-end="url(#ara)"/>
+<text x="52" y="145" class="tx-acc">利用者が無効化</text>
+<line x1="398" y1="282" x2="202" y2="282" class="ln-acc" marker-end="url(#ara)"/>
+<text x="218" y="302" class="tx-acc">利用者が無効化</text>
 </svg>

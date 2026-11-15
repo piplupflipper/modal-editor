@@ -34,6 +34,7 @@ func init() {
 		"MotionHandler":              reflect.ValueOf((*server.MotionHandler)(nil)),
 		"OperatorHandler":            reflect.ValueOf((*server.OperatorHandler)(nil)),
 		"Server":                     reflect.ValueOf((*server.Server)(nil)),
+		"ShutdownEvent":              reflect.ValueOf((*server.ShutdownEvent)(nil)),
 		"TextObjectHandler":          reflect.ValueOf((*server.TextObjectHandler)(nil)),
 	}
 }
