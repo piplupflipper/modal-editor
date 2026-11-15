@@ -783,9 +783,9 @@ func (h *host) ping(within time.Duration) {
 // req: FR-30
 func TestPingWhileWaiting(t *testing.T) {
 	h := startHost(t, hostOptions{args: []string{"-fmt-delay", "1m"}, maxRestarts: -1})
-	h.open(1, "a.go", "fmtme")
-	h.diagnosticsAt(1, 1)
-	if res := h.command(1, cmdFormat, pos(0, 0), false); !res.OK {
+	h.open(2, "a.go", "fmtme")
+	h.diagnosticsAt(2, 1)
+	if res := h.command(2, cmdFormat, pos(0, 0), false); !res.OK {
 		t.Fatal("format: ok = false")
 	}
 	// 応答を待ったままにする問い合わせ。取り消しは Cleanup で接続を閉じるときに起きる。
@@ -793,8 +793,8 @@ func TestPingWhileWaiting(t *testing.T) {
 		method string
 		params any
 	}{
-		{ext.MethodCommandExecute, ext.CommandExecuteParams{Buffer: 1, Version: 1, ID: cmdFormat, Sync: true}},
-		{ext.MethodBufferWillSave, ext.BufferWillSaveParams{Buffer: 1, Version: 1}},
+		{ext.MethodCommandExecute, ext.CommandExecuteParams{Buffer: 2, Version: 1, ID: cmdFormat, Sync: true}},
+		{ext.MethodBufferWillSave, ext.BufferWillSaveParams{Buffer: 2, Version: 1}},
 	} {
 		f, err := h.conn.Go(req.method, req.params)
 		if err != nil {
@@ -805,7 +805,7 @@ func TestPingWhileWaiting(t *testing.T) {
 	for range 5 {
 		h.ping(time.Second)
 	}
-	h.change(1, edit(0, 0, 0, 0, "x "))
+	h.change(2, edit(0, 0, 0, 0, "x "))
 	if got := h.waitText(2); got != "x fmtme\n" {
 		t.Errorf("text after change = %q", got)
 	}

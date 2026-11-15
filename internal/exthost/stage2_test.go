@@ -52,7 +52,7 @@ func TestStage2LSP(t *testing.T) {
 		t.Fatal(err)
 	}
 	var m ext.Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
+	if err = json.Unmarshal(data, &m); err != nil {
 		t.Fatal(err)
 	}
 	logPath := filepath.Join(dir, "fakels.log")
@@ -117,7 +117,7 @@ func TestStage2LSP(t *testing.T) {
 	}
 
 	path := filepath.Join(dir, "a.go")
-	if err := h.OpenBuffer(BufferSnapshot{ID: 1, Path: path, FileType: "go", Version: 1, Text: "package a // ERR"}); err != nil {
+	if err = h.OpenBuffer(BufferSnapshot{ID: 1, Path: path, FileType: "go", Version: 1, Text: "package a // ERR"}); err != nil {
 		t.Fatal(err)
 	}
 	waitState(StateRunning)
