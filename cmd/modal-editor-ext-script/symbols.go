@@ -2,9 +2,9 @@ package main
 
 import "reflect"
 
-// 記号の表は yaegi extract で生成する。yaegi の版は go.mod と揃える（TestSymbolsUpToDate が食い違いを検出する）。
-// ext か ext/server の公開の型や関数を変えたら、go generate ./cmd/modal-editor-ext-script を打つ。
-//go:generate go run github.com/traefik/yaegi/cmd/yaegi@v0.16.3 extract -name main github.com/piplupflipper/modal-editor/ext github.com/piplupflipper/modal-editor/ext/server
+// 記号の表は yaegi extract で生成する。版を書かずに go run するので、go.mod の yaegi の版で生成される。
+// ext か ext/server の公開の型や関数を変えたら、go generate ./cmd/modal-editor-ext-script を打つ（TestSymbolsUpToDate が打ち忘れを検出する）。
+//go:generate go run github.com/traefik/yaegi/cmd/yaegi extract -name main github.com/piplupflipper/modal-editor/ext github.com/piplupflipper/modal-editor/ext/server
 
 // Symbols は、スクリプトに使わせる ext と ext/server の記号の表である。
 // キーは yaegi の決まりで「import のパス/パッケージ名」である。

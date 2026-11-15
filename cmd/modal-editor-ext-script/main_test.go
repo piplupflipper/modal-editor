@@ -84,8 +84,8 @@ func loadManifest(t *testing.T, dir string) ext.Manifest {
 }
 
 // startHost は、宣言ファイル m の拡張機能を、本体の監視（exthost）の下で動かす。
-// command はテストの実行ファイル自身に置き換え、args のスクリプトのパスは dir からの絶対パスにする。
-// exthost は子プロセスの作業ディレクトリを変えないので、相対パスのままでは見つからない（PR の未確認事項）。
+// 宣言ファイルのディレクトリは testdata/<dir> とし、command はテストの実行ファイル自身に置き換える。
+// args は宣言ファイルのまま渡し、相対パスは exthost が渡す環境変数 ext.EnvExtensionDir から解決される。
 func startHost(t *testing.T, m ext.Manifest, dir string, cfg func(*exthost.Config)) *host {
 	t.Helper()
 	exe, err := os.Executable()
@@ -97,11 +97,6 @@ func startHost(t *testing.T, m ext.Manifest, dir string, cfg func(*exthost.Confi
 		t.Fatal(err)
 	}
 	m.Command = exe
-	args := make([]string, len(m.Args))
-	for i, a := range m.Args {
-		args[i] = filepath.Join(abs, a)
-	}
-	m.Args = args
 
 	logw := &syncBuffer{}
 	c := exthost.Config{
@@ -312,7 +307,7 @@ func TestLoadErrorUnderHost(t *testing.T) {
 
 // faultyManifest は、testdata/faulty のスクリプトの宣言ファイルである。
 func faultyManifest() ext.Manifest {
-	ids := []string{"faulty.print", "faulty.panic", "faulty.gopanic", "faulty.hang"}
+	ids := []string{"faulty.print", "faulty.panic", "faulty.gopanic", "faulty.hang", "faulty.stdin", "faulty.exit"}
 	m := ext.Manifest{ID: "faulty", Args: []string{"faulty.go"}}
 	for i, id := range ids {
 		m.Activation = append(m.Activation, ext.Activation{On: ext.ActivationTextObject, ID: id})
@@ -343,6 +338,67 @@ func TestStdoutGoesToLog(t *testing.T) {
 	hs.waitLog("printed to stdout")
 	if st, _ := hs.h.State("faulty"); st != exthost.StateRunning {
 		t.Errorf("state = %v, want running", st)
+	}
+}
+
+// TestStdinIsEmpty は、スクリプトが os.Stdin を読んでもすぐ EOF になり、本体とのメッセージを奪わないことを確かめる。
+// 生存確認の期限の数倍の時間をおいても稼働中のまま答え続ける。
+func TestStdinIsEmpty(t *testing.T) {
+	hs := startFaulty(t, func(c *exthost.Config) { c.PingTimeout = 300 * time.Millisecond })
+	got, err := hs.resolve("faulty", "faulty.stdin", pos(0, 0), 0)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !got.OK {
+		t.Fatalf("result = %+v, want OK (os.Stdin returned EOF)", got)
+	}
+	time.Sleep(time.Second)
+	if _, err := hs.resolve("faulty", "faulty.print", pos(0, 0), 0); err != nil {
+		t.Fatalf("resolve after reading stdin: %v", err)
+	}
+	if st, _ := hs.h.State("faulty"); st != exthost.StateRunning {
+		t.Errorf("state = %v, want running", st)
+	}
+}
+
+// TestExit は、スクリプトの os.Exit でプロセスがその終了コードで終わり、本体の監視が異常として扱うことを確かめる。
+// yaegi の制限なしのモードで動かすので、os.Exit は panic に置き換わらない。
+//
+// req: NFR-03
+func TestExit(t *testing.T) {
+	hs := startFaulty(t, nil)
+	if _, err := hs.resolve("faulty", "faulty.exit", pos(0, 0), 0); !errors.Is(err, exthost.ErrUnavailable) {
+		t.Fatalf("resolve = %v, want ErrUnavailable", err)
+	}
+	hs.waitState("faulty", exthost.StateRestartWait)
+	hs.waitLog("exit status 5")
+}
+
+// TestScriptPath は、args の相対パスを環境変数 ext.EnvExtensionDir のディレクトリから解決することを確かめる。
+func TestScriptPath(t *testing.T) {
+	tests := []struct{ arg, dir, want string }{
+		{"line.go", "/ext/line", "/ext/line/line.go"},
+		{"sub/line.go", "/ext", "/ext/sub/line.go"},
+		{"/abs/line.go", "/ext", "/abs/line.go"},
+		{"line.go", "", "line.go"},
+	}
+	for _, tt := range tests {
+		if got := scriptPath(tt.arg, tt.dir); got != tt.want {
+			t.Errorf("scriptPath(%q, %q) = %q, want %q", tt.arg, tt.dir, got, tt.want)
+		}
+	}
+	// run も同じ規則で探す。
+	abs, err := filepath.Abs(filepath.Join("testdata", "broken"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ext.EnvExtensionDir, abs)
+	var stderr bytes.Buffer
+	if code := run([]string{"syntax.go"}, &stderr); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if want := filepath.Join(abs, "syntax.go") + ":5:1:"; !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr does not contain %q:\n%s", want, stderr.String())
 	}
 }
 

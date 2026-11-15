@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -124,7 +125,7 @@ func (h *Host) restartDelay(failures int) time.Duration {
 // 戻る前に、プロセスグループごと強制終了し、接続を閉じる。返す値は異常の理由である。
 func (h *Host) runOnce(e *extension, r *run) error {
 	id := e.spec.Manifest.ID
-	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args)
+	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args, e.spec.Dir)
 	if err != nil {
 		return err
 	}
@@ -437,7 +438,8 @@ type process struct {
 
 // startProcess は、path の実行ファイルを、引数 args で、新しいプロセスグループの子プロセスとして起動する。
 // 標準入出力は os.Pipe でつなぎ、子の側の端は起動後に閉じる。
-func startProcess(path string, args []string) (p *process, err error) {
+// dir（宣言ファイルのディレクトリ。空でもよい）は、絶対パスにして環境変数 ext.EnvExtensionDir で渡す。
+func startProcess(path string, args []string, dir string) (p *process, err error) {
 	var opened []*os.File
 	defer func() {
 		if err != nil {
@@ -467,6 +469,14 @@ func startProcess(path string, args []string) (p *process, err error) {
 	}
 
 	cmd := exec.Command(path, args...) //nolint:gosec // 宣言ファイルに書かれた実行ファイルと引数を起動するのが、このパッケージの役目である。
+	// 作業ディレクトリは本体のものを引き継ぎ、宣言ファイルのディレクトリは環境変数で渡す（基本設計 5.1）。
+	// 本体の環境に同じ名前の変数があっても、後に足した値が使われる（os/exec は重複した名前の最後の値を使う）。
+	if dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+	}
+	cmd.Env = append(os.Environ(), ext.EnvExtensionDir+"="+dir)
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW

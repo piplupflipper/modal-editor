@@ -45,12 +45,20 @@ const (
 	methodNotify     = "test/notify"     // decoration/set と message/show を送る
 	methodGarbage    = "test/garbage"    // JSON-RPC として解釈できないメッセージを標準出力へ書く
 	methodFlood      = "test/flood"      // message/show を params の数だけ送る
+	methodEnv        = "test/env"        // 環境変数 ext.EnvExtensionDir の値と作業ディレクトリを返す
 )
 
 // fakeArgs は、問い合わせの Args に入れる、テスト用の指示である。
 type fakeArgs struct {
 	// DelayMs は、応答を遅らせるミリ秒である。
 	DelayMs int `json:"delayMs"`
+}
+
+// fakeEnv は、methodEnv の応答である。
+type fakeEnv struct {
+	Dir    string `json:"dir"`
+	DirSet bool   `json:"dirSet"`
+	Wd     string `json:"wd"`
 }
 
 // fakeBuffer は、拡張機能が持つバッファの写しである。
@@ -145,6 +153,10 @@ func (f *fakeExt) request(ctx context.Context, req *rpc.Request, reply rpc.Repli
 		})
 	case methodState:
 		_ = reply(f.state(), nil)
+	case methodEnv:
+		wd, err := os.Getwd()
+		dir, ok := os.LookupEnv(ext.EnvExtensionDir)
+		_ = reply(fakeEnv{Dir: dir, DirSet: ok, Wd: wd}, err)
 	case methodExit:
 		os.Exit(3)
 	case methodPanic:

@@ -3,8 +3,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"os"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/ext/server"
@@ -29,6 +32,23 @@ func main() {
 		for {
 			n++
 		}
+	})
+	// os.Stdin を読む。本体とのメッセージを奪わず、すぐ EOF になれば OK を返す。
+	s.TextObject("faulty.stdin", func(_ context.Context, _ *server.Buffer, p *ext.TextObjectResolveParams) (ext.TextObjectResolveResult, error) {
+		go func() {
+			b := make([]byte, 1)
+			for {
+				if _, err := os.Stdin.Read(b); err != nil {
+					return
+				}
+			}
+		}()
+		_, err := os.Stdin.Read(make([]byte, 1))
+		return ext.TextObjectResolveResult{OK: errors.Is(err, io.EOF), Range: ext.Range{Start: p.Cursor, End: p.Cursor}}, nil
+	})
+	s.TextObject("faulty.exit", func(_ context.Context, _ *server.Buffer, _ *ext.TextObjectResolveParams) (ext.TextObjectResolveResult, error) {
+		os.Exit(5)
+		return ext.TextObjectResolveResult{}, nil
 	})
 	if err := s.Run(context.Background()); err != nil {
 		log.Fatal(err)
