@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -56,7 +57,11 @@ type session struct {
 	// procDone は、子プロセスが終わると閉じる。
 	procDone chan struct{}
 
-	caps capabilities
+	// caps は、initialize の応答の capabilities である。stop が別の goroutine から読むので atomic にする。
+	caps atomic.Pointer[capabilities]
+	// terminatedCh は、terminated の event を受け取ると閉じる。
+	terminatedCh   chan struct{}
+	terminatedOnce sync.Once
 	// stopping は、利用者が dap.stop で終わらせたか、拡張機能が終わるところであることを表す。
 	stopping atomic.Bool
 	// terminated は、terminated の event を受け取ったことを表す。
@@ -78,11 +83,12 @@ func spawn(d *debugger, cfg adapterConfig) (*session, error) {
 		return nil, errors.New("adapter command is empty")
 	}
 	s := &session{
-		d:           d,
-		events:      newEventQueue(),
-		initialized: make(chan struct{}),
-		procDone:    make(chan struct{}),
-		ended:       make(chan struct{}),
+		d:            d,
+		events:       newEventQueue(),
+		initialized:  make(chan struct{}),
+		terminatedCh: make(chan struct{}),
+		procDone:     make(chan struct{}),
+		ended:        make(chan struct{}),
 	}
 	args := slices.Clone(cfg.Args)
 	useSocket := false
@@ -155,7 +161,7 @@ func spawn(d *debugger, cfg adapterConfig) (*session, error) {
 		// 標準入出力で話すときは、標準エラー出力はデバッグアダプターのログなので、拡張機能のログ（本体が記録する）へ書く。
 		go s.forward(errR, func(text string) { d.logf("adapter: %s", strings.TrimRight(text, "\n")) })
 	}
-	if err := cmd.Start(); err != nil {
+	if err := startAdapter(cmd); err != nil {
 		return fail(err)
 	}
 	closeAll(childEnds)
@@ -289,6 +295,7 @@ func (s *session) start(launch map[string]any) error {
 	c := s.getConn()
 	ctx, cancel := context.WithTimeout(context.Background(), t.initialize)
 	defer cancel()
+	var caps capabilities
 	err := c.call(ctx, "initialize", initializeArguments{
 		ClientID:        "modal-editor",
 		ClientName:      "modal-editor",
@@ -296,10 +303,11 @@ func (s *session) start(launch map[string]any) error {
 		LinesStartAt1:   linesStartAt1,
 		ColumnsStartAt1: linesStartAt1,
 		PathFormat:      "path",
-	}, &s.caps)
+	}, &caps)
 	if err != nil {
 		return err
 	}
+	s.caps.Store(&caps)
 
 	launchCtx, cancelLaunch := context.WithTimeout(context.Background(), t.launch)
 	defer cancelLaunch()
@@ -329,7 +337,7 @@ func (s *session) start(launch map[string]any) error {
 			s.d.logf("setBreakpoints %s: %v", path, err)
 		}
 	}
-	if s.caps.SupportsConfigurationDoneRequest {
+	if caps.SupportsConfigurationDoneRequest {
 		if err := c.call(launchCtx, "configurationDone", nil, nil); err != nil {
 			return err
 		}
@@ -386,13 +394,36 @@ func (s *session) resume(ctx context.Context, command string) error {
 
 // stop は、disconnect を送ってデバッグ対象とデバッグアダプターを終わらせる。
 // 期限までに子プロセスが終わらなければ強制終了する。後始末が終わるまで待つ。
+//
+// デバッグアダプターが supportsTerminateRequest を持てば、先に terminate を送り、デバッグ対象を穏やかに終わらせる
+// （DAP の仕様の Overview の Debug Session End）。期限までに子プロセスが終わらなければ disconnect を送る。
 func (s *session) stop() {
 	s.stopping.Store(true)
+	s.terminate()
 	s.disconnect()
 	select {
 	case <-s.ended:
 	case <-time.After(2 * s.d.timeouts.stop):
 		s.kill()
+	}
+}
+
+// terminate は、デバッグアダプターが対応していれば terminate を送り、terminated の event か子プロセスの終了を期限まで待つ。
+func (s *session) terminate() {
+	c := s.getConn()
+	if caps := s.caps.Load(); c == nil || caps == nil || !caps.SupportsTerminateRequest {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), s.d.timeouts.stop)
+	defer cancel()
+	if err := c.call(ctx, "terminate", nil, nil); err != nil {
+		s.d.logf("terminate: %v", err)
+		return
+	}
+	select {
+	case <-s.terminatedCh:
+	case <-s.procDone:
+	case <-ctx.Done():
 	}
 }
 
@@ -402,7 +433,7 @@ func (s *session) disconnect() {
 		ctx, cancel := context.WithTimeout(context.Background(), s.d.timeouts.stop)
 		err := c.call(ctx, "disconnect", disconnectArguments{TerminateDebuggee: true}, nil)
 		cancel()
-		if err != nil && !errors.Is(err, errDAPClosed) {
+		if err != nil && !errors.Is(err, errDAPClosed) && !s.exited() {
 			s.d.logf("disconnect: %v", err)
 		}
 	}
@@ -413,13 +444,30 @@ func (s *session) disconnect() {
 	}
 }
 
-// kill は、子プロセスを強制終了し、接続を閉じる。終わっていれば何もしない。
+// exited は、子プロセスが終わったかどうかを返す。
+func (s *session) exited() bool {
+	select {
+	case <-s.procDone:
+		return true
+	default:
+		return false
+	}
+}
+
+// kill は、子プロセスに SIGTERM を送り、killGrace までに終わらなければ SIGKILL を送り、接続を閉じる。終わっていれば何もしない。
+// 先に SIGTERM を送るのは、dlv が SIGTERM でデバッグ対象を終わらせ、ビルドした実行ファイルを消すからである（startAdapter の doc）。
+// SIGKILL だと、別のプロセスグループのデバッグ対象が孤児で残る。
 func (s *session) kill() {
 	select {
 	case <-s.procDone:
 	default:
 		if s.cmd.Process != nil {
-			_ = s.cmd.Process.Kill()
+			_ = s.cmd.Process.Signal(syscall.SIGTERM)
+			select {
+			case <-s.procDone:
+			case <-time.After(killGrace):
+				_ = s.cmd.Process.Kill()
+			}
 		}
 	}
 	if c := s.getConn(); c != nil {
@@ -427,6 +475,9 @@ func (s *session) kill() {
 	}
 	s.closeSocket()
 }
+
+// killGrace は、kill で SIGTERM を送ってから SIGKILL を送るまでの猶予である。値は仮。
+const killGrace = 2 * time.Second
 
 // handleEvents は、デバッグアダプターからの event を届いた順に 1 件ずつ処理する。
 // 読み取りの goroutine とは別の goroutine で動くので、stopped の処理で stackTrace の応答を待てる。
@@ -460,9 +511,13 @@ func (s *session) handleEvent(e dapEvent) {
 		}
 	case "terminated":
 		s.terminated.Store(true)
+		s.terminatedOnce.Do(func() { close(s.terminatedCh) })
 		s.d.clearExecution()
 		// デバッグアダプターがセッションを終えた。disconnect を送ってデバッグアダプターを終わらせる。
-		go s.disconnect()
+		// dap.stop で終わらせている最中なら、stop が disconnect を送るので、ここでは送らない（二重に送ると、閉じた接続への書き込みになる）。
+		if !s.stopping.Load() {
+			go s.disconnect()
+		}
 	case "output":
 		var body outputEvent
 		if err := json.Unmarshal(e.body, &body); err != nil {

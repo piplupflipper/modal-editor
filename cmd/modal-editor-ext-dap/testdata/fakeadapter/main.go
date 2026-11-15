@@ -14,11 +14,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // fakeOptions は、launch の引数の fake の項目である。
@@ -37,6 +40,9 @@ type fakeOptions struct {
 	NoThreadID bool `json:"noThreadId"`
 	// Column は、stackTrace のフレームの列である。0 なら 1。
 	Column int `json:"column"`
+	// Child は、launch で子プロセス（デバッグ対象の代役）を別のプロセスグループで起動し、その pid を出力する。
+	// SIGTERM を受け取ったら、子プロセスを終わらせてから終了する（dlv と同じ）。SIGKILL では子プロセスが残る。
+	Child bool `json:"child"`
 	// LaunchBeforeInitialized は、launch の応答を initialized の event より先に返す。
 	LaunchBeforeInitialized bool `json:"launchBeforeInitialized"`
 }
@@ -70,11 +76,20 @@ type adapter struct {
 	bps        map[string][]int
 	stops      []location
 	cur        int
+	terminate  bool
+
+	childMu sync.Mutex
+	child   *exec.Cmd
 }
 
 func main() {
 	clientAddr := flag.String("client-addr", "", "unix:<path> of the client socket")
+	terminate := flag.Bool("terminate", false, "support the terminate request")
+	sleep := flag.Bool("sleep", false, "sleep forever (the debuggee stand-in)")
 	flag.Parse()
+	if *sleep {
+		select {}
+	}
 	var r io.Reader = os.Stdin
 	var w io.Writer = os.Stdout
 	if *clientAddr != "" {
@@ -87,11 +102,19 @@ func main() {
 		fmt.Println("fakeadapter stdout")
 	}
 	fmt.Fprintln(os.Stderr, "fakeadapter started")
-	a := &adapter{r: bufio.NewReader(r), w: w, bps: map[string][]int{}, cur: -1}
+	a := &adapter{r: bufio.NewReader(r), w: w, bps: map[string][]int{}, cur: -1, terminate: *terminate}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		a.killChild()
+		os.Exit(0)
+	}()
 	for {
 		m, err := a.read()
 		if err != nil {
-			os.Exit(0)
+			// 接続が切れても自分では終わらず、シグナルを待つ。拡張機能が子プロセスを終わらせる経路（SIGTERM）を試すためである。
+			select {}
 		}
 		a.handle(m)
 	}
@@ -177,7 +200,7 @@ func (a *adapter) handle(m *message) {
 			a.respondError(m, "this fake requires linesStartAt1")
 			return
 		}
-		a.respond(m, map[string]any{"supportsConfigurationDoneRequest": true})
+		a.respond(m, map[string]any{"supportsConfigurationDoneRequest": true, "supportsTerminateRequest": a.terminate})
 	case "launch":
 		var args struct {
 			Program string      `json:"program"`
@@ -190,6 +213,13 @@ func (a *adapter) handle(m *message) {
 			return
 		}
 		a.output("console", "launch "+args.Program+"\n")
+		a.output("console", fmt.Sprintf("adapter %d\n", os.Getpid()))
+		if a.opts.Child {
+			if err := a.startChild(); err != nil {
+				a.respondError(m, err.Error())
+				return
+			}
+		}
 		if wd, err := os.Getwd(); err == nil {
 			a.output("console", "cwd "+wd+"\n")
 		}
@@ -253,11 +283,46 @@ func (a *adapter) handle(m *message) {
 	case "stepIn", "stepOut":
 		a.respond(m, nil)
 		a.stopped("step")
+	case "terminate":
+		a.respond(m, nil)
+		a.output("console", "terminate requested\n")
+		a.killChild()
+		a.event("terminated", nil)
 	case "disconnect":
 		a.respond(m, nil)
+		a.killChild()
 		os.Exit(0)
 	default:
 		a.respondError(m, "unknown command "+m.Command)
+	}
+}
+
+// startChild は、自分を -sleep で別のプロセスグループに起動し、pid を出力する。
+func (a *adapter) startChild() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, "-sleep")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	a.childMu.Lock()
+	a.child = cmd
+	a.childMu.Unlock()
+	a.output("console", fmt.Sprintf("child %d\n", cmd.Process.Pid))
+	return nil
+}
+
+// killChild は、子プロセスを終わらせて待つ。
+func (a *adapter) killChild() {
+	a.childMu.Lock()
+	defer a.childMu.Unlock()
+	if a.child != nil {
+		_ = a.child.Process.Kill()
+		_ = a.child.Wait()
+		a.child = nil
 	}
 }
 

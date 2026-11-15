@@ -18,6 +18,7 @@ type initializeArguments struct {
 // capabilities は、initialize の response の body（仕様の Capabilities）のうち、使う項目である。
 type capabilities struct {
 	SupportsConfigurationDoneRequest bool `json:"supportsConfigurationDoneRequest,omitempty"`
+	SupportsTerminateRequest         bool `json:"supportsTerminateRequest,omitempty"`
 }
 
 // source は、仕様の Source のうち、使う項目である。

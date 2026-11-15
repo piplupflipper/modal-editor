@@ -181,6 +181,10 @@ func (d *debugger) newServer() *server.Server {
 }
 
 // shutdown は、拡張機能が終わるときに、デバッグ中ならデバッグアダプターを終わらせる。
+//
+// 本体が標準入力を閉じたときと、シグナル（SIGINT、SIGTERM）を受け取ったときにだけ走る。
+// 本体の Close と生存確認の期限切れは、拡張機能のプロセスグループへすぐに SIGKILL を送る（internal/exthost の process.kill）ので、
+// その下では走らない。その場合は、デバッグアダプターが Pdeathsig の SIGTERM で自分で後始末する（startAdapter の doc）。
 func (d *debugger) shutdown() {
 	d.mu.Lock()
 	s := d.sess

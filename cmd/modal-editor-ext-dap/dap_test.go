@@ -25,6 +25,9 @@ const testTimeout = 10 * time.Second
 // fakeAdapter は、TestMain が testdata/fakeadapter をビルドした実行ファイルのパスである。
 var fakeAdapter string
 
+// extBinary は、TestMain がこの拡張機能をビルドした実行ファイルのパスである。拡張機能のプロセスを強制終了するテストで使う。
+var extBinary string
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "ext-dap-test-")
 	if err != nil {
@@ -35,6 +38,13 @@ func TestMain(m *testing.M) {
 	out, err := exec.Command("go", "build", "-o", fakeAdapter, "./testdata/fakeadapter").CombinedOutput() //nolint:gosec // テスト用のデバッグアダプターを一時ディレクトリへビルドする
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build fakeadapter: %v\n%s", err, out)
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	extBinary = filepath.Join(dir, "modal-editor-ext-dap")
+	out, err = exec.Command("go", "build", "-o", extBinary, ".").CombinedOutput() //nolint:gosec // テストのために拡張機能を一時ディレクトリへビルドする
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "build extension: %v\n%s", err, out)
 		_ = os.RemoveAll(dir)
 		os.Exit(1)
 	}
@@ -68,15 +78,8 @@ func newHost(t *testing.T, settings string) *host {
 		d.logger.SetOutput(io.Discard)
 	}
 	d.timeouts = timeouts{initialize: testTimeout, launch: testTimeout, stop: 2 * time.Second, request: testTimeout}
-	h := &host{
-		t: t, d: d,
-		signs:    make(chan ext.SignSetParams, 1024),
-		msgs:     make(chan ext.MessageShowParams, 1024),
-		outputs:  make(chan string, 1024),
-		opens:    make(chan ext.EditorOpenParams, 1024),
-		versions: map[ext.BufferID]ext.Version{},
-		ids:      map[string]ext.BufferID{},
-	}
+	h := newHostState(t)
+	h.d = d
 	hostR, extW := io.Pipe()
 	extR, hostW := io.Pipe()
 	served := make(chan error, 1)
@@ -97,15 +100,34 @@ func newHost(t *testing.T, settings string) *host {
 			t.Error("Serve did not return after the host closed")
 		}
 	})
+	h.initialize(settings)
+	return h
+}
+
+// newHostState は、接続の無い本体の役を作る。
+func newHostState(t *testing.T) *host {
+	return &host{
+		t:        t,
+		signs:    make(chan ext.SignSetParams, 1024),
+		msgs:     make(chan ext.MessageShowParams, 1024),
+		outputs:  make(chan string, 1024),
+		opens:    make(chan ext.EditorOpenParams, 1024),
+		versions: map[ext.BufferID]ext.Version{},
+		ids:      map[string]ext.BufferID{},
+	}
+}
+
+// initialize は、settings（JSON。空なら設定無し）で initialize を送る。
+func (h *host) initialize(settings string) {
+	h.t.Helper()
 	p := ext.InitializeParams{APIVersion: ext.APIVersion}
 	if settings != "" {
 		p.Settings = json.RawMessage(settings)
 	}
 	var res ext.InitializeResult
 	if err := h.conn.Call(h.ctx(), ext.MethodInitialize, p, &res); err != nil {
-		t.Fatalf("initialize: %v", err)
+		h.t.Fatalf("initialize: %v", err)
 	}
-	return h
 }
 
 func (h *host) ctx() context.Context {
@@ -542,6 +564,28 @@ func TestStop(t *testing.T) {
 	}
 	if !s.cmd.ProcessState.Success() {
 		t.Errorf("adapter exit = %v, want success (exited by disconnect, not killed)", s.cmd.ProcessState)
+	}
+}
+
+// TestStopWithTerminate は、デバッグアダプターが supportsTerminateRequest を持てば、dap.stop で先に terminate を送り、
+// その後の terminated の event で disconnect を二重に送らずに終わることを確かめる。
+//
+// req: FR-31
+func TestStopWithTerminate(t *testing.T) {
+	h := newHost(t, fakeSettings(t, []string{"-terminate"}, nil))
+	h.open(1, srcPath, srcText)
+	h.mustExec(cmdToggleBreakpoint, 2)
+	h.mustExec(cmdStart, 0)
+	h.waitSigns(bp2, exec2)
+	h.d.mu.Lock()
+	s := h.d.sess
+	h.d.mu.Unlock()
+	h.mustExec(cmdStop, 0)
+	h.waitOutput("terminate requested")
+	h.waitMessage("デバッグを終了した")
+	h.waitEnded()
+	if !s.cmd.ProcessState.Success() {
+		t.Errorf("adapter exit = %v, want success (exited by disconnect)", s.cmd.ProcessState)
 	}
 }
 
