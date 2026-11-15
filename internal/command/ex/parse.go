@@ -69,10 +69,28 @@ func isLetter(c byte) bool { return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
 func isDigit(c byte) bool { return '0' <= c && c <= '9' }
 
 // lineRange は、解析した範囲である。行は 1 始まりで、0 は「1 行目の前」を表す。
+// line1 と line2 は、バッファの行数を超えることがある（"10" を 3 行のバッファで書いたとき）。
+// 行数を超えた行をどう扱うかはコマンドによって違うので、使う側が check で誤りにするか、最後の行に丸めるかを決める。
 type lineRange struct {
 	line1, line2 int
 	count        int // 書かれていたアドレスの数（"%" は 2 と数える）。0 なら範囲は省略されている
 	pos          int // 範囲の始まりの位置
+	pos1, pos2   int // line1、line2 を書いたアドレスの始まりの位置（誤りの位置に使う）
+}
+
+// check は、line1 と line2 が lines 行のバッファの中（0 から lines まで）にあることを確かめる。
+// 行数を超えていれば、そのアドレスの位置で E16 を返す。
+// 範囲を伴うコマンド（:3d、:1,4s/a/b/）と、範囲の後に "|" が続くとき（:4|）に使う。Vim 9.1 の invalid_range と同じである。
+//
+// req: FR-08
+func (r lineRange) check(lines int) error {
+	switch {
+	case r.line1 > lines:
+		return errAt(r.pos1, codeInvalidRange, "範囲が正しくありません")
+	case r.line2 > lines:
+		return errAt(r.pos2, codeInvalidRange, "範囲が正しくありません")
+	}
+	return nil
 }
 
 // parseRange は、コマンド名の前の範囲を読み、行番号に評価する。
@@ -85,9 +103,11 @@ func (c *execCtx) parseRange(s *scanner) (lineRange, error) {
 	if s.peek() == '%' {
 		s.next()
 		r.line1, r.line2, r.count = 1, c.b.LineCount(), 2
+		r.pos1, r.pos2 = r.pos, r.pos
 		s.skipBlanks()
 	}
 	for {
+		start := s.pos()
 		lnum, has, err := c.parseAddress(s, cur)
 		if err != nil {
 			return lineRange{}, err
@@ -102,16 +122,19 @@ func (c *execCtx) parseRange(s *scanner) (lineRange, error) {
 			lnum = cur
 		}
 		r.line1, r.line2 = r.line2, lnum
+		r.pos1, r.pos2 = r.pos2, start
 		r.count++
 		switch sep {
 		case ',':
 			s.next()
 		case ';':
 			s.next()
-			cur = max(lnum, 1)
+			// 現在の行を移すときは、行数を超えた行を最後の行に丸める（Vim の check_cursor と同じ。"10;/pat/" は最後の行から探す）。
+			cur = min(max(lnum, 1), c.b.LineCount())
 		default:
 			if r.count == 1 {
 				r.line1 = r.line2
+				r.pos1 = r.pos2
 			}
 			return r, nil
 		}
@@ -119,6 +142,7 @@ func (c *execCtx) parseRange(s *scanner) (lineRange, error) {
 		if s.eof() || isLetter(s.peek()) || s.peek() == '"' {
 			// 区切りの後のアドレスを省くと、現在の行を指す（":3," は "3,."）。
 			r.line1, r.line2 = r.line2, cur
+			r.pos1, r.pos2 = r.pos2, s.pos()
 			r.count++
 			return r, nil
 		}
@@ -127,6 +151,8 @@ func (c *execCtx) parseRange(s *scanner) (lineRange, error) {
 
 // parseAddress は、アドレスを 1 つ読む。cur は "." が指す行（1 始まり）である。
 // アドレスが無ければ has は false である。
+// 行が負になれば E16 で失敗する。行数を超えた行は誤りにせず、そのまま返す（扱いは lineRange.check の呼び出し側が決める）。
+// "+n" と "-n" の途中で範囲の外に出ても、最後の値が範囲の中なら誤りにしない（3 行のバッファで "4-2" は 2 行目。Vim と同じ）。
 //
 // req: FR-08
 func (c *execCtx) parseAddress(s *scanner, cur int) (lnum int, has bool, err error) {
@@ -176,7 +202,7 @@ func (c *execCtx) parseAddress(s *scanner, cur int) (lnum int, has bool, err err
 		}
 		lnum += sign * n
 	}
-	if has && (lnum < 0 || lnum > c.b.LineCount()) {
+	if has && lnum < 0 {
 		return 0, false, errAt(start, codeInvalidRange, "範囲が正しくありません")
 	}
 	return lnum, has, nil

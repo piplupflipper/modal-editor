@@ -18,7 +18,7 @@
 //	:[range]g[lobal][!]/pat/cmd
 //	:[range]v[global]/pat/cmd
 //	:[range]d[elete] [x] [count]
-//	:[range]             範囲の最後の行へ移る（:3 など）
+//	:[range]             範囲の最後の行へ移る（:3 など）。行数を超えた行番号は最後の行に丸める
 //
 // コマンドは "|" で区切って続けられる（:w|q、:e foo|q）。
 // ファイル名や回数を取るコマンドでは、"\" の付かない最初の "|" で引数が終わり、"\|" は "|" そのものになる。
@@ -29,6 +29,8 @@
 //
 // アドレスは、行番号、"."（現在の行）、"$"（最後の行）、"/pat/"（次の行から前方へ探す）、"?pat?"（前の行から後方へ探す）と、
 // その後に続く "+n"、"-n" で書く。"%" は "1,$" と同じである。
+// 行数を超えた行番号は、コマンド名の無い範囲（:10）では最後の行に丸め、コマンドに付けた範囲（:10d、:1,10s/a/b/）と
+// "|" が続く範囲（:10|）では E16 にする。負の行番号はどれでも E16 にする。Vim 9.1 の Ex モードでない動作に合わせている。
 // アドレスは "," か ";" で区切り、";" は次のアドレスを読む前に現在の行を前のアドレスへ移す。
 // 検索は Vim の既定（wrapscan）と同じく、バッファの端で反対の端へ折り返す。
 // マーク（"'a"、"'<,'>" など）は State.Mark で行に解決する。
@@ -237,10 +239,18 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 	s.skipBlanks()
 	if s.eof() || s.peek() == '"' || s.peek() == '|' {
 		// コマンド名が無ければ、範囲の最後の行へ移る（:3、:/pat/）。
+		// 後に "|" が続くとき（:3|）は、Vim では :print に当たるので、範囲がバッファの外なら E16 にする。
+		// 続かないとき（:3、:1,10）は、行数を超えた line2 を最後の行に丸め、line1 は見ない（Vim 9.1 の ex_range_without_command と同じ）。
+		bar := s.peek() == '|'
 		if r.count > 0 {
-			c.setCursor(max(r.line2, 1)-1, CursorFirstNonBlank)
+			if bar {
+				if err := r.check(c.b.LineCount()); err != nil {
+					return "", 0, false, err
+				}
+			}
+			c.setCursor(min(max(r.line2, 1), c.b.LineCount())-1, CursorFirstNonBlank)
 		}
-		if s.peek() == '|' {
+		if bar {
 			s.next()
 			return s.rest(), s.pos(), true, nil
 		}
@@ -284,6 +294,11 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 		}
 		if r.line1 > r.line2 {
 			r.line1, r.line2 = r.line2, r.line1
+			r.pos1, r.pos2 = r.pos2, r.pos1
+		}
+		// 範囲を伴うコマンドは、行数を超えた行を丸めずに E16 にする（:4d、:1,4s/a/b/。Vim 9.1 と同じ）。
+		if err := r.check(c.b.LineCount()); err != nil {
+			return "", 0, false, err
 		}
 		// 行番号 0 は、範囲を取るコマンドでは 1 行目として扱う（Vim と同じ）。
 		r.line1, r.line2 = max(r.line1, 1)-1, max(r.line2, 1)-1
