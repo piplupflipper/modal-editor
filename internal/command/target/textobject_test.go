@@ -42,6 +42,18 @@ var textObjectTests = []textObjectCase{
 	{obj: "aw", text: "|a b\nc", count: 2, want: "a b", kind: Inclusive},
 	{obj: "iw", text: "|a b\nc", count: 4, want: "a b\nc", kind: Inclusive}, // 改行も 1 つと数える
 
+	// ASCII 以外の文字は Vim の utf_class() の分類で区切る（期待値は Vim 9.1 で確かめた）
+	{obj: "iw", text: "これは|、テストです。次", want: "、", kind: Inclusive},
+	{obj: "iw", text: "漢字かな|カナ abc", want: "カナ", kind: Inclusive},
+	{obj: "iw", text: "|漢字かなカナ", count: 3, want: "漢字かなカナ", kind: Inclusive},
+	{obj: "iw", text: "日本　|語 x", want: "語", kind: Inclusive},
+	{obj: "iw", text: "日本|　語", want: "　", kind: Inclusive},
+	{obj: "iw", text: "a\u00a0|b c", want: "b", kind: Inclusive},
+	{obj: "aw", text: "これは、テス|トです。", want: "テスト", kind: Inclusive}, // 後にも前にも空白が無い
+	{obj: "aw", text: "|ＡＢＣ（漢字）", want: "ＡＢＣ", kind: Inclusive},
+	{obj: "iW", text: "これは、テス|トです。 x", want: "これは、テストです。", kind: Inclusive},
+	{obj: "aW", text: "x 日本　|語 y", want: "語 ", kind: Inclusive},
+
 	// i" a" i' a'
 	{obj: `i"`, text: `x = "a|bc" y`, want: "abc", kind: Exclusive},
 	{obj: `a"`, text: `x = "a|bc" y`, want: `"abc" `, kind: Exclusive},

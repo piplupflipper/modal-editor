@@ -105,29 +105,6 @@ func (c *cursor) oneLeft() bool {
 	return true
 }
 
-// 文字の分類（Vim の cls()）。
-const (
-	classBlank = 0 // 空白、タブ、行末の位置
-	classPunct = 1 // 単語の文字でない記号。W などでは空白以外の全て
-	classWord  = 2 // 英数字、_、ASCII 以外の文字
-)
-
-// classOf は、文字の分類を返す。
-// 単語の文字は Vim の 'iskeyword' の既定に相当する英数字と _ に、ASCII 以外の文字を加えたものである。
-// Vim は ASCII 以外の文字を Unicode の分類（CJK の文字や全角の記号を別の分類にする）で分けるが、ここでは分けない。
-func classOf(r rune, big bool) int {
-	switch {
-	case r == 0 || r == ' ' || r == '\t':
-		return classBlank
-	case big:
-		return classPunct
-	case r == '_' || r >= utf8.RuneSelf ||
-		'0' <= r && r <= '9' || 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z':
-		return classWord
-	}
-	return classPunct
-}
-
 // cls は、位置の文字の分類を返す。
 func (c *cursor) cls(big bool) int {
 	return classOf(c.char(), big)

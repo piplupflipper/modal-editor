@@ -73,6 +73,21 @@ var motionTests = []motionCase{
 	{motion: "w", text: "|a\tb", want: "a\t|b", kind: Exclusive},
 	{motion: "W", text: "|a.b c.d e", count: 2, want: "a.b c.d |e", kind: Exclusive},
 
+	// ASCII 以外の文字は Vim の utf_class() の分類で区切る（期待値は Vim 9.1 で確かめた）
+	{motion: "w", text: "|これは、テストです。", want: "これは|、テストです。", kind: Exclusive},
+	{motion: "w", text: "|漢字かなカナ abc", want: "漢字|かなカナ abc", kind: Exclusive},
+	{motion: "w", text: "|東京タワーは333mです", count: 3, want: "東京タワーは|333mです", kind: Exclusive},
+	{motion: "w", text: "日本|　語 x", want: "日本　|語 x", kind: Exclusive},     // 全角空白は空白
+	{motion: "w", text: "|a\u00a0b", want: "a\u00a0|b", kind: Exclusive}, // NBSP も空白
+	{motion: "w", text: "|ＡＢＣ１２３！？", want: "ＡＢＣ１２３|！？", kind: Exclusive},
+	{motion: "w", text: "|絵文字😀😀テスト", want: "絵文字|😀😀テスト", kind: Exclusive},
+	{motion: "W", text: "|これは、テスト です", want: "これは、テスト |です", kind: Exclusive},
+	{motion: "W", text: "|日本　語", want: "日本　|語", kind: Exclusive}, // W でも全角空白は空白
+	{motion: "b", text: "これは、テス|ト", want: "これは、|テスト", kind: Exclusive},
+	{motion: "b", text: "「こんにちは|」と", want: "「|こんにちは」と", kind: Exclusive},
+	{motion: "e", text: "|これは、テスト", want: "これ|は、テスト", kind: Inclusive},
+	{motion: "e", text: "|한국어 텍스트", want: "한국|어 텍스트", kind: Inclusive},
+
 	// b B
 	{motion: "b", text: "foo |bar", want: "|foo bar", kind: Exclusive},
 	{motion: "b", text: "foo.b|ar", want: "foo.|bar", kind: Exclusive},
