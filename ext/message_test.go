@@ -46,9 +46,9 @@ func TestMessageJSON(t *testing.T) {
 
 	t.Run("initialize", func(t *testing.T) {
 		roundTrip(t, InitializeParams{APIVersion: APIVersion, Settings: json.RawMessage(`{"a":1}`)},
-			`{"apiVersion":"0.2.0","settings":{"a":1}}`)
-		roundTrip(t, InitializeParams{APIVersion: APIVersion}, `{"apiVersion":"0.2.0"}`)
-		roundTrip(t, InitializeResult{APIVersion: APIVersion}, `{"apiVersion":"0.2.0"}`)
+			`{"apiVersion":"0.3.0","settings":{"a":1}}`)
+		roundTrip(t, InitializeParams{APIVersion: APIVersion}, `{"apiVersion":"0.3.0"}`)
+		roundTrip(t, InitializeResult{APIVersion: APIVersion}, `{"apiVersion":"0.3.0"}`)
 	})
 	t.Run("buffer/open", func(t *testing.T) {
 		roundTrip(t, BufferOpenParams{Buffer: 1, Path: "/a.md", FileType: "markdown", Version: 0, Text: "a\nb"},

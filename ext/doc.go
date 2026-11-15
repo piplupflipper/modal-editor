@@ -43,4 +43,6 @@ package ext
 // 値は仮である。
 // バージョンの付け方と、食い違った場合の扱いは未決である（基本設計 10 章、要件定義 7 章）。
 // 0.2.0 で、decoration/set の範囲の一覧の JSON を整数の列（DecorationSetParams の MarshalJSON）に変えた（#53）。
-const APIVersion = "0.2.0"
+// 0.3.0 で、buffer/edit に noLines と endOfLine を足した（BufferEditParams。#98）。
+// 古い本体はこの 2 つを黙って捨てるので、ACP の拡張機能の書き込みの結果が Vim と揃わない。
+const APIVersion = "0.3.0"
