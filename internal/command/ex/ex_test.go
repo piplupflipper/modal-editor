@@ -61,7 +61,10 @@ func TestParseRange(t *testing.T) {
 		{name: "セミコロンは現在の行を移す", text: lines10, cursor: 0, cmdline: "5;+2", line1: 5, line2: 7, count: 2},
 		{name: "3 つ以上は最後の 2 つ", text: lines10, cmdline: "1,2,3", line1: 2, line2: 3, count: 3},
 		{name: "0 行目", text: lines10, cmdline: "0", line1: 0, line2: 0, count: 1},
-		{name: "バッファの外", text: lines10, cmdline: "11", wantCode: "E16", wantPos: 0, checkPos: true},
+		// 行数を超えた行番号は、範囲の解析では誤りにしない（丸めるか E16 にするかは使う側が決める）。
+		{name: "バッファの外", text: lines10, cmdline: "11", line1: 11, line2: 11, count: 1},
+		{name: "途中でバッファの外に出る相対", text: lines10, cmdline: "11-3", line1: 8, line2: 8, count: 1},
+		{name: "セミコロンはバッファの外の行を最後の行に丸めて移す", text: lines10, cursor: 0, cmdline: "20;-1", line1: 20, line2: 9, count: 2},
 		{name: "負の行", text: lines10, cursor: 0, cmdline: "1,.-2d", wantCode: "E16", wantPos: 2, checkPos: true},
 		{name: "検索の該当なし", text: lines10, cmdline: "/zz/", wantCode: "E486"},
 		{name: "検索の不正な正規表現", text: lines10, cmdline: "/a(/", wantCode: "E383", wantPos: 0, checkPos: true},
@@ -198,6 +201,87 @@ func TestExecuteEdit(t *testing.T) {
 			b := buffer.New(tt.text)
 			res, err := Execute(b, nil, tt.cursor, tt.cmdline)
 			if code := errCode(t, err); code != tt.wantCode || (err != nil) != (tt.wantCode != "" || tt.wantErr) {
+				t.Fatalf("code = %q, want %q (err = %v)", code, tt.wantCode, err)
+			}
+			if got := b.Text(); got != tt.want {
+				t.Errorf("text = %q, want %q", got, tt.want)
+			}
+			if err == nil && res.Cursor != tt.wantCursor {
+				t.Errorf("cursor = %d, want %d", res.Cursor, tt.wantCursor)
+			}
+		})
+	}
+}
+
+// 行番号が行数を超えたときの扱いを、Vim 9.1 と突き合わせる（issue #54）。
+// 表は、3 行のバッファ "a1\na2\na3" の 2 行目にカーソルを置いて、各コマンドを Vim 9.1 で実行した結果である。
+// Vim は "vim -Nu NONE -n --not-a-term -c <cmd>" で、Ex モードでない状態で実行した（2026-11-16）。
+// コマンド名の無い範囲（:10、:1,10）は最後の行へ移り、コマンドに付けた範囲（:10d）と "|" が続く範囲（:10|）は E16 になる。
+//
+// req: FR-08
+func TestLineOverflowVim(t *testing.T) {
+	tests := []struct {
+		cmdline    string
+		wantCode   string
+		wantCursor int // 0 始まり。誤りのときは見ない
+		want       string
+	}{
+		{cmdline: "4", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "10", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "$+1", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: ".+5", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "0+5", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "$+1-1", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "4-2", wantCode: "", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "%", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "3,4", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "1,4", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "5,4", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "4,1", wantCode: "", wantCursor: 0, want: "a1\na2\na3"},
+		{cmdline: "4,", wantCode: "", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: ",4", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "4;5", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "10;", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "4;-1", wantCode: "", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "4;+0", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "10;/a/", wantCode: "", wantCursor: 0, want: "a1\na2\na3"},
+		{cmdline: "/a3/+1", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "?a1?+5", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "g/a/10", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "4\"x", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "3|", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "2,3|", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "%|", wantCode: "", wantCursor: 2, want: "a1\na2\na3"},
+		{cmdline: "3d", wantCode: "", wantCursor: 1, want: "a1\na2"},
+		{cmdline: "4-2d", wantCode: "", wantCursor: 1, want: "a1\na3"},
+		{cmdline: "4-1,3d", wantCode: "", wantCursor: 1, want: "a1\na2"},
+		{cmdline: "10,1,2d", wantCode: "", wantCursor: 0, want: "a3"},
+		{cmdline: "2d 10", wantCode: "", wantCursor: 0, want: "a1"},
+		{cmdline: "s/a/b/ 10", wantCode: "", wantCursor: 2, want: "a1\nb2\nb3"},
+		{cmdline: "%s/a/b/ 10", wantCode: "", wantCursor: 2, want: "a1\na2\nb3"},
+		{cmdline: "4|", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "4 |", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "10|3", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "4,1|", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "4|s/a/b/", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "g/a2/10|s/a/b/", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "4d", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "$+1d", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "1,4d", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "2,10d", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "4s/a/b/", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "1,4s/a/b/", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "4g/a/d", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "1,4g/a/d", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "-5", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "0-1", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+		{cmdline: "1,.-5", wantCode: "E16", wantCursor: 1, want: "a1\na2\na3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmdline, func(t *testing.T) {
+			b := buffer.New("a1\na2\na3\n")
+			res, err := Execute(b, nil, 1, tt.cmdline)
+			if code := errCode(t, err); code != tt.wantCode {
 				t.Fatalf("code = %q, want %q (err = %v)", code, tt.wantCode, err)
 			}
 			if got := b.Text(); got != tt.want {
@@ -352,6 +436,10 @@ func TestErrorPosition(t *testing.T) {
 		{cmdline: "s/a/b/x", pos: 6, msg: "E319: "},
 		{cmdline: "g/a/zz", pos: 4, msg: "E492: "},
 		{cmdline: `s/a/x\U/`, pos: 5, msg: "E319: "},
+		{cmdline: "2d", pos: 0, msg: "E16: "},
+		{cmdline: "1, 3s/a/b/", pos: 3, msg: "E16: "},
+		{cmdline: "3,1d", pos: 0, msg: "E16: "},
+		{cmdline: "5|d", pos: 0, msg: "E16: "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.cmdline, func(t *testing.T) {
