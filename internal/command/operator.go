@@ -206,12 +206,20 @@ func opDelete(s *State, cmd editcmd.Command, rg region, o opOptions) error {
 	if rg.r.Start == rg.r.End && !rg.linewise {
 		return nil
 	}
+	if rg.linewise && s.noLines() {
+		// Vim は、全ての行を消したバッファ（--No lines in buffer--）の行単位の削除を、レジスターを変えずに何もせず終える。
+		return nil
+	}
+	all := rg.linewise && rg.r.Start.Line == 0 && rg.r.End.Line == s.lastLine()
 	reg, edit, err := s.cut(rg)
 	if err != nil {
 		return err
 	}
 	if err := s.apply(edit); err != nil {
 		return err
+	}
+	if all {
+		s.emptied, s.emptiedVersion = true, s.buf.Version()
 	}
 	s.registers.delete(cmd.Register, reg, smallDelete(rg), o.forceOne)
 	if rg.linewise {
@@ -335,4 +343,10 @@ func opCase(f func(rune) rune) operatorFunc {
 		s.setCursorNormal(rg.start)
 		return nil
 	}
+}
+
+// noLines は、直前の変更が行単位の削除で全ての行を消したもので、その後にバッファが変わっていないかを返す。
+// Vim の「行が無い」バッファに当たる。buffer は空の行 1 つと区別しないので、State が覚えておく。
+func (s *State) noLines() bool {
+	return s.emptied && s.emptiedVersion == s.buf.Version()
 }
