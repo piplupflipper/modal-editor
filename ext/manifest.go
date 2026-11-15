@@ -20,6 +20,12 @@ type Manifest struct {
 	// Command は、拡張機能の実行ファイルのパスである。
 	// 相対パスは、宣言ファイルのあるディレクトリから解決する。
 	Command string `json:"command"`
+	// Args は、Command に渡す引数の列である（基本設計 6.7 の宣言ファイルに足す項目）。
+	// スクリプトの拡張機能が、共通の実行ファイルにスクリプトのパスを渡すのに使う。無ければ省く。
+	Args []string `json:"args,omitempty"`
+	// SaveHook は、true なら、稼働中のときに保存の直前の buffer/willSave を受け取る（基本設計 6.7 の保存の流れ）。
+	// 保存の前に整形する LSP の拡張機能が使う。
+	SaveHook bool `json:"saveHook,omitempty"`
 	// Activation は、起動の契機の一覧である。どれか 1 つが成り立った時点で起動する。
 	Activation []Activation `json:"activation"`
 	// Contributes は、拡張機能が追加する操作である。

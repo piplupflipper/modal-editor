@@ -1,6 +1,11 @@
 package ext
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+)
 
 // メソッドの名前（基本設計 5.3）。名前は仮である。
 //
@@ -48,6 +53,40 @@ const (
 	// MethodBufferResync は、拡張機能から本体への通知である。params は BufferResyncParams。
 	// 差分が欠けたと判断した拡張機能が、全文の送り直しを求める（基本設計 5.3 の本文）。
 	MethodBufferResync = "buffer/resync"
+
+	// 以下は、標準の拡張機能（基本設計 6 章）のために足したメソッドである（基本設計 5.3 の 2 つ目の表）。
+
+	// MethodBufferWillSave は、本体から拡張機能へのリクエストである。
+	// params は BufferWillSaveParams、result は BufferWillSaveResult。
+	// 宣言ファイルの saveHook が true の稼働中の拡張機能にだけ、保存の直前に送る（基本設計 6.7 の保存の流れ）。
+	MethodBufferWillSave = "buffer/willSave"
+	// MethodBufferDidSave は、本体から拡張機能への通知である。params は BufferDidSaveParams。
+	MethodBufferDidSave = "buffer/didSave"
+
+	// MethodEditorState は、拡張機能から本体へのリクエストである。
+	// params は EditorStateParams（中身は無い）、result は EditorStateResult。
+	MethodEditorState = "editor/state"
+	// MethodEditorOpen は、拡張機能から本体へのリクエストである。
+	// params は EditorOpenParams、result は EditorOpenResult。
+	MethodEditorOpen = "editor/open"
+	// MethodBufferSave は、拡張機能から本体へのリクエストである。
+	// params は BufferSaveParams、result は BufferSaveResult。
+	MethodBufferSave = "buffer/save"
+	// MethodDiagnosticSet は、拡張機能から本体への通知である。params は DiagnosticSetParams。
+	MethodDiagnosticSet = "diagnostic/set"
+	// MethodDiagnosticList は、拡張機能から本体へのリクエストである。
+	// params は DiagnosticListParams、result は DiagnosticListResult。
+	MethodDiagnosticList = "diagnostic/list"
+	// MethodSignSet は、拡張機能から本体への通知である。params は SignSetParams。
+	MethodSignSet = "sign/set"
+	// MethodPopupShow は、拡張機能から本体への通知である。params は PopupShowParams。
+	MethodPopupShow = "popup/show"
+	// MethodOutputAppend は、拡張機能から本体への通知である。params は OutputAppendParams。
+	MethodOutputAppend = "output/append"
+	// MethodChoiceAsk は、拡張機能から本体へのリクエストである。
+	// params は ChoiceAskParams、result は ChoiceAskResult。
+	// 利用者の応答を待つので、本体はキー入力ごとの問い合わせの期限（基本設計 5.4）を適用しない。
+	MethodChoiceAsk = "choice/ask"
 )
 
 // InitializeParams は、initialize の params である。
@@ -73,7 +112,10 @@ type InitializeResult struct {
 // 拡張機能は、既に持っているバッファについて受け取った場合、持っている内容を Text で置き換える。
 type BufferOpenParams struct {
 	Buffer BufferID `json:"buffer"`
-	// Path は、バッファに対応するファイルのパスである。ファイルに対応しないバッファでは空。
+	// Path は、バッファに対応するファイルの絶対パスである。ファイルに対応しないバッファでは空。
+	// 本体は、利用者が相対パスで開いたファイルを、本体の作業ディレクトリをもとに絶対パスにして渡す。
+	// シンボリックリンクは解決しない（基本設計 6.7 のバッファのパス）。
+	// 拡張機能は、パスの文字列の一致で自分の複製を探せる。
 	Path string `json:"path,omitempty"`
 	// FileType は、ファイルの種類（"markdown" など）である。決まらなければ空。
 	FileType string `json:"fileType,omitempty"`
@@ -212,6 +254,11 @@ type CommandExecuteParams struct {
 	Count int `json:"count"`
 	// Args は、コマンドの引数である。無ければ省く。
 	Args json.RawMessage `json:"args,omitempty"`
+	// Sync は、本体がマクロかドットリピートを再生している（FR-19）ことを表す（基本設計 6 章の冒頭）。
+	// true なら、拡張機能は結果がそろうまで応答を返さず、編集を応答の Transaction で、カーソルの移動を応答の Open で返す。
+	// 後から buffer/edit で届けた編集は、再生の次の操作でバージョン番号が進んだ後に届いて破棄されるためである。
+	// 再生の結果を変えない表示（popup/show、output/append、message/show）は、true でも後から届けてよい。
+	Sync bool `json:"sync,omitempty"`
 }
 
 // CommandExecuteResult は、command/execute の result である。
@@ -222,6 +269,10 @@ type CommandExecuteResult struct {
 	// 本体は、BaseVersion が現在のバージョン番号と一致した場合だけ適用する。
 	// 編集を buffer/edit でなく応答で返すのは、本体が応答を待っている間に buffer/edit を処理できないからである。
 	Transaction *Transaction `json:"transaction,omitempty"`
+	// Open は、カーソルの移動である。形は editor/open の params と同じで、本体は Transaction を適用した後に移動する。
+	// 主に params の Sync が true のときに、後から editor/open で送る代わりに使う。移動しなければ省く。
+	// Open.Version を指定するなら、Transaction を適用した後のバージョン番号で書く。
+	Open *EditorOpenParams `json:"open,omitempty"`
 }
 
 // PingParams は、ping の params である。中身は無い。
@@ -303,4 +354,301 @@ type BufferResyncParams struct {
 	Buffer BufferID `json:"buffer"`
 	// Version は、拡張機能が持っているバージョン番号である。本体はログに記録するだけで、送り直しの判断には使わない。
 	Version Version `json:"version"`
+}
+
+// BufferWillSaveParams は、buffer/willSave の params である。
+// 本体は、バッファを保存する直前に、そのバッファを持っている稼働中の拡張機能のうち、
+// 宣言ファイルの saveHook が true のものへ、1 つずつ順に送る（基本設計 6.7 の保存の流れ）。
+// 未起動の拡張機能は起動しない。
+type BufferWillSaveParams struct {
+	Buffer BufferID `json:"buffer"`
+	// Version は、問い合わせた時点のバージョン番号である。
+	// 前の拡張機能の編集を適用した後なら、適用した後の番号である。
+	Version Version `json:"version"`
+}
+
+// BufferWillSaveResult は、buffer/willSave の result である。
+type BufferWillSaveResult struct {
+	// Transaction は、保存する前に適用する編集（整形など）である。編集しないなら省く。
+	// 本体は、BaseVersion が現在のバージョン番号と一致した場合だけ適用する。
+	// 期限（仮に 1000 ms）を超えた応答は待たずに次へ進み、後から届いた応答は捨てる。
+	Transaction *Transaction `json:"transaction,omitempty"`
+}
+
+// BufferDidSaveParams は、buffer/didSave の params である。
+// 本体は、バッファをファイルへ書き出した後に、そのバッファを持っている稼働中の拡張機能すべてへ送る。
+type BufferDidSaveParams struct {
+	Buffer BufferID `json:"buffer"`
+	// Version は、書き出した時点のバージョン番号である。
+	Version Version `json:"version"`
+	// Path は、書き出したファイルの絶対パスである。
+	Path string `json:"path"`
+}
+
+// EditorStateParams は、editor/state の params である。中身は無い。
+type EditorStateParams struct{}
+
+// Mode は、本体のモードの名前である。
+type Mode string
+
+// モードの名前（基本設計 6.7 の編集の状態とバッファの操作）。
+const (
+	ModeNormal      Mode = "normal"
+	ModeInsert      Mode = "insert"
+	ModeVisual      Mode = "visual"
+	ModeVisualLine  Mode = "visualLine"
+	ModeVisualBlock Mode = "visualBlock"
+	ModeCommandLine Mode = "commandLine"
+)
+
+// EditorStateResult は、editor/state の result である。
+type EditorStateResult struct {
+	// Buffer は、カーソルのあるバッファの番号である。
+	Buffer BufferID `json:"buffer"`
+	// Cursor は、カーソル位置である。
+	Cursor Position `json:"cursor"`
+	// Mode は、モードである。
+	Mode Mode `json:"mode"`
+	// Selections は、ビジュアルモードの選択範囲である。ビジュアルモードでなければ省く。
+	// ModeVisual では範囲 1 つ。
+	// ModeVisualLine では範囲 1 つで、最初の行の先頭から最後の行の終わりまでを指す。
+	// ModeVisualBlock では行ごとに 1 つの範囲を、上の行から順に並べる。
+	Selections []Range `json:"selections,omitempty"`
+	// Buffers は、開いているバッファの一覧である。
+	Buffers []BufferInfo `json:"buffers"`
+}
+
+// BufferInfo は、editor/state で返す、開いているバッファ 1 つの情報である。
+type BufferInfo struct {
+	Buffer BufferID `json:"buffer"`
+	// Path は、バッファに対応するファイルの絶対パスである。ファイルに対応しないバッファでは空。
+	Path string `json:"path,omitempty"`
+	// FileType は、ファイルの種類である。決まらなければ空。
+	FileType string `json:"fileType,omitempty"`
+	// Version は、現在のバージョン番号である。
+	Version Version `json:"version"`
+	// Modified は、保存していない変更があるかどうかである。
+	Modified bool `json:"modified"`
+}
+
+// EditorOpenParams は、editor/open の params である。
+// ファイルかバッファを開き、カーソルを指定の位置へ動かす。
+// command/execute の result の Open も同じ形である。
+//
+// 本体は、既に開いているファイルなら新しく開かずにそのバッファを使う。
+// 要求した拡張機能がそのバッファの複製を持っていなければ、応答より先にその拡張機能へ buffer/open を送る。
+// 拡張機能の側では、応答を受け取った時点で複製がまだできていないことがあるので、
+// ext/server の WaitBuffer で、応答のバージョン番号以降の複製ができるまで待ってから読む。
+type EditorOpenParams struct {
+	// Path は、開くファイルの絶対パスである。Buffer とどちらか一方を指定する。
+	Path string `json:"path,omitempty"`
+	// Buffer は、開いているバッファの番号である。Path とどちらか一方を指定する。
+	Buffer *BufferID `json:"buffer,omitempty"`
+	// Position は、カーソルの移動先である。省くとカーソルを動かさない。
+	Position *Position `json:"position,omitempty"`
+	// Version は、Position を計算するもとにしたバージョン番号である。
+	// 指定すると、現在のバージョン番号と一致したときだけカーソルを動かす（バッファは一致しなくても開く）。
+	// まだ開いていないファイルでは使わない。
+	Version *Version `json:"version,omitempty"`
+	// Focus は、true ならそのバッファをカーソルのあるバッファにする。false なら開くだけでカーソルを移さない。
+	Focus bool `json:"focus,omitempty"`
+}
+
+// Validate は、Path と Buffer のどちらか一方だけを指定していることと、Path が絶対パスであることを検査する。
+// 本体は、誤りのある params のリクエストに JSON-RPC のエラーで応答する。
+//
+// 絶対パスの判定は、"/" で始まるかどうかで行う（このパッケージは他のパッケージを import しないので、path/filepath を使わない）。
+func (p *EditorOpenParams) Validate() error {
+	switch {
+	case p.Path == "" && p.Buffer == nil:
+		return errors.New("path と buffer のどちらも指定していない")
+	case p.Path != "" && p.Buffer != nil:
+		return errors.New("path と buffer の両方を指定している")
+	case p.Path != "" && !strings.HasPrefix(p.Path, "/"):
+		return fmt.Errorf("path %q が絶対パスでない", p.Path)
+	}
+	return nil
+}
+
+// EditorOpenResult は、editor/open の result である。
+type EditorOpenResult struct {
+	// Buffer は、開いたバッファの番号である。
+	Buffer BufferID `json:"buffer"`
+	// Version は、応答の時点のバージョン番号である。
+	Version Version `json:"version"`
+	// Moved は、カーソルを動かしたかどうかである。
+	// Position を省いたときと、Version の照合で動かさなかったときは false。
+	Moved bool `json:"moved"`
+}
+
+// BufferSaveParams は、buffer/save の params である。
+// buffer/save による保存も、利用者の保存と同じ保存の流れ（buffer/willSave から buffer/didSave まで）を通る。
+type BufferSaveParams struct {
+	Buffer BufferID `json:"buffer"`
+	// Version を指定すると、現在のバージョン番号と一致したときだけ書き出す。
+	Version *Version `json:"version,omitempty"`
+	// SkipHooks は、true なら保存の流れの buffer/willSave を飛ばし、どの拡張機能にも問い合わせずに書き出す。
+	// ACP の拡張機能が、エージェントの書いた内容をそのまま書き出すために使う（基本設計 6.5）。
+	SkipHooks bool `json:"skipHooks,omitempty"`
+}
+
+// BufferSaveResult は、buffer/save の result である。
+type BufferSaveResult struct {
+	// Saved は、書き出したかどうかである。
+	Saved bool `json:"saved"`
+	// Version は、応答の時点のバージョン番号である。
+	Version Version `json:"version"`
+}
+
+// DiagnosticSeverity は、診断の重要度である。
+type DiagnosticSeverity string
+
+// 診断の重要度。
+const (
+	SeverityError   DiagnosticSeverity = "error"
+	SeverityWarning DiagnosticSeverity = "warning"
+	SeverityInfo    DiagnosticSeverity = "info"
+	SeverityHint    DiagnosticSeverity = "hint"
+)
+
+// Diagnostic は、1 つの診断である。
+type Diagnostic struct {
+	// Range は、診断の範囲である（基本設計 4.1 の位置）。
+	Range    Range              `json:"range"`
+	Severity DiagnosticSeverity `json:"severity"`
+	// Message は、本文である。
+	Message string `json:"message"`
+	// Source は、出どころ（"gopls" など）である。無ければ省く。
+	Source string `json:"source,omitempty"`
+	// Code は、診断の種類を表す文字列である。無ければ省く。
+	Code string `json:"code,omitempty"`
+}
+
+// DiagnosticSetParams は、diagnostic/set の params である。
+//
+// 本体は、送った拡張機能とバッファの組ごとに診断の一覧を持ち、同じ組の次の一覧で置き換える。
+// 空の一覧を送ると、その組の一覧を消す。
+// decoration/set と違い、Version が現在より古くても、本体が覚えている編集の範囲にあれば、その後の編集に合わせて位置をずらしてから持つ。
+// それより古いか、現在より新しい一覧は捨てる（基本設計 6.7 の表示のデータ）。
+type DiagnosticSetParams struct {
+	Buffer BufferID `json:"buffer"`
+	// Version は、一覧を計算するもとにしたバージョン番号である。
+	Version Version `json:"version"`
+	// Diagnostics は、このバッファについて、この拡張機能が持つ診断のすべてである。
+	Diagnostics []Diagnostic `json:"diagnostics"`
+}
+
+// DiagnosticListParams は、diagnostic/list の params である。
+type DiagnosticListParams struct {
+	// Buffer は、対象のバッファの番号である。省くと開いているバッファすべてを対象にする。
+	Buffer *BufferID `json:"buffer,omitempty"`
+}
+
+// DiagnosticListResult は、diagnostic/list の result である。
+type DiagnosticListResult struct {
+	// Entries は、バッファと、診断を送った拡張機能の組ごとの一覧である。
+	Entries []DiagnosticEntry `json:"entries"`
+}
+
+// DiagnosticEntry は、1 つのバッファについて、1 つの拡張機能から受け取った診断の一覧である。
+type DiagnosticEntry struct {
+	Buffer BufferID `json:"buffer"`
+	// Extension は、診断を送った拡張機能の ID である。
+	Extension string `json:"extension"`
+	// Version は、そのバッファの現在のバージョン番号である。
+	// Diagnostics の位置は、本体が編集に合わせてずらした位置で、この番号の時点のテキストを指す。
+	Version Version `json:"version"`
+	// Diagnostics は、診断の一覧である。
+	Diagnostics []Diagnostic `json:"diagnostics"`
+}
+
+// SignKind は、行に付ける印の種類である。名前は仮である。
+type SignKind string
+
+// 印の種類。
+const (
+	// SignBreakpoint は、ブレークポイントである。
+	SignBreakpoint SignKind = "breakpoint"
+	// SignBreakpointUnverified は、デバッグアダプターが検証できなかったブレークポイントである。
+	SignBreakpointUnverified SignKind = "breakpointUnverified"
+	// SignExecutionPoint は、デバッグ対象が停止した位置である。
+	SignExecutionPoint SignKind = "executionPoint"
+)
+
+// Sign は、行に付ける 1 つの印である。
+type Sign struct {
+	// Line は、0 から数えた行の番号である。
+	Line int      `json:"line"`
+	Kind SignKind `json:"kind"`
+}
+
+// SignSetParams は、sign/set の params である。
+// 本体の持ち方とバージョン番号の扱いは、diagnostic/set と同じである（DiagnosticSetParams）。
+// 1 つの行に複数の印があれば、本体が表示の優先順位を決める。
+type SignSetParams struct {
+	Buffer BufferID `json:"buffer"`
+	// Version は、一覧を計算するもとにしたバージョン番号である。
+	Version Version `json:"version"`
+	// Signs は、このバッファについて、この拡張機能が付ける印のすべてである。
+	Signs []Sign `json:"signs"`
+}
+
+// PopupFormat は、popup/show の本文の形式である。
+type PopupFormat string
+
+// 本文の形式。
+const (
+	PopupPlainText PopupFormat = "plaintext"
+	// PopupMarkdown は、Markdown である。本体が整形して表示するかどうかは internal/ui が決め、整形しなければそのまま表示する。
+	PopupMarkdown PopupFormat = "markdown"
+)
+
+// PopupShowParams は、popup/show の params である。
+// 本体は、Buffer がカーソルのあるバッファで、Version が現在のバージョン番号と一致する場合だけ表示する。
+// 表示は、次のキー入力かカーソルの移動で消す。新しい popup/show は、前の表示を置き換える。
+type PopupShowParams struct {
+	// Buffer は、表示の基準にするバッファの番号である。
+	Buffer BufferID `json:"buffer"`
+	// Version は、本文を計算するもとにしたバージョン番号である。
+	Version Version `json:"version"`
+	// Position は、表示の基準にする位置である。
+	Position Position `json:"position"`
+	// Text は、本文である。
+	Text   string      `json:"text"`
+	Format PopupFormat `json:"format"`
+}
+
+// OutputAppendParams は、output/append の params である。
+// 本体は、拡張機能と欄の名前の組ごとにテキストを持ち、行数が上限（仮に 10000 行）を超えたら古い行から捨てる。
+// 欄はバッファではないので、拡張機能へ buffer/open で送らない。
+type OutputAppendParams struct {
+	// Channel は、欄の名前（"dap"、"acp" など）である。
+	Channel string `json:"channel"`
+	// Text は、書き足すテキストである。改行を含んでよい。
+	Text string `json:"text"`
+}
+
+// Choice は、choice/ask の 1 つの選択肢である。
+type Choice struct {
+	// ID は、選択肢の ID である。問いの中で一意にする。
+	ID string `json:"id"`
+	// Label は、利用者に示す文である。
+	Label string `json:"label"`
+}
+
+// ChoiceAskParams は、choice/ask の params である。
+// 本体は一度に 1 つの問いだけを表示し、表示中に届いた問いは順に待たせる。
+// 問いを出した拡張機能が再起動した場合、その拡張機能の問いを取り下げる。
+type ChoiceAskParams struct {
+	// Title は、問いの文である。
+	Title   string   `json:"title"`
+	Choices []Choice `json:"choices"`
+}
+
+// ChoiceAskResult は、choice/ask の result である。
+type ChoiceAskResult struct {
+	// Selected は、選んだ選択肢の ID である。取り消した場合は空。
+	Selected string `json:"selected,omitempty"`
+	// Cancelled は、利用者が選ばずに取り消したかどうかである。
+	Cancelled bool `json:"cancelled,omitempty"`
 }
