@@ -63,11 +63,11 @@ func BenchmarkBuildDecorations20k(b *testing.B)  { benchBuild(b, 20000) }
 func BenchmarkBuildDecorations100k(b *testing.B) { benchBuild(b, 100000) }
 func BenchmarkBuildDecorations400k(b *testing.B) { benchBuild(b, 400000) }
 
-// BenchmarkSetDecorations100k は、10 万行の JSON の一覧が届いたときに、イベントループの上で行う処理
+// benchSet は、n 行の JSON の一覧が届いたときに、イベントループの上で行う処理
 // （一覧を持ち、表を作る goroutine を起こす setDecorations と、作り終えた表を受け取る decorationsBuilt）の時間を測る。
 // 表を作り終えるのを待つ間は計らない。
-func BenchmarkSetDecorations100k(b *testing.B) {
-	const n = 100000
+func benchSet(b *testing.B, n int) {
+	b.Helper()
 	buf := buffer.New(jsonText(n))
 	bs := &bufferState{id: 1, buf: buf, decorations: map[string]decorationSet{}}
 	e := &Editor{bufs: []*bufferState{bs}, decoDone: make(chan decoBuilt), stop: make(chan struct{})}
@@ -86,3 +86,7 @@ func BenchmarkSetDecorations100k(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkSetDecorations20k(b *testing.B)  { benchSet(b, 20000) }
+func BenchmarkSetDecorations100k(b *testing.B) { benchSet(b, 100000) }
+func BenchmarkSetDecorations400k(b *testing.B) { benchSet(b, 400000) }
