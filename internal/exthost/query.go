@@ -122,14 +122,20 @@ func (q *Query) Cancel() {
 //
 // req: FR-18
 func (h *Host) Send(id, method string, params any, opts SendOptions) (*Query, error) {
+	return h.send(id, method, params, opts, h.cfg.SendTimeout, h.ensureStartedLocked)
+}
+
+// send は、Send の本体である。opts.Timeout が 0 以下なら defaultTimeout を使う。
+// check は、送る前に Host.mu を持ったまま呼び、誤りを返したら送らない。
+func (h *Host) send(id, method string, params any, opts SendOptions, defaultTimeout time.Duration, check func(*extension) error) (*Query, error) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		timeout = h.cfg.SendTimeout
+		timeout = defaultTimeout
 	}
 	h.mu.Lock()
 	e, err := h.lookupLocked(id)
 	if err == nil {
-		err = h.ensureStartedLocked(e)
+		err = check(e)
 	}
 	if err != nil {
 		h.mu.Unlock()

@@ -9,6 +9,8 @@
 //     期限が正の設定（FR-17）では期限を渡し、期限 0 の設定（FR-18）では結果が届いた時点で照合する。
 //     応答を待って止まってよい呼び出し側（テストや計測のコマンド）は、[Host.Call] と [Host.ResolveMotion] などを使う
 //   - [Host.Events] のチャネルから、拡張機能からの要求と通知、状態の変化を受け取り、イベントループの goroutine で処理する
+//   - バッファを保存するときは、[Host.SaveHookExtensions] の拡張機能へ 1 つずつ buffer/willSave を問い合わせ（[Host.SendWillSave]）、
+//     書き出した後に [Host.DidSave] を呼ぶ（基本設計 6.7 の保存の流れ）
 //
 // 拡張機能のプロセスとの通信と監視は、このパッケージの中の goroutine が行う。
 // それらの goroutine はバッファ（internal/buffer）を触らない。
@@ -53,6 +55,9 @@ const (
 	DefaultSendTimeout = 10 * time.Second
 	// DefaultMaxOutboxBytes は、拡張機能 1 つあたりの送信の列の上限の既定値（仮）である。
 	DefaultMaxOutboxBytes = 64 << 20
+	// DefaultWillSaveTimeout は、保存の流れで buffer/willSave の応答を待つ期限の既定値（仮）である（基本設計 6.7）。
+	// 整形が言語サーバーの処理を待つので、キー入力ごとの問い合わせの期限より長くする。
+	DefaultWillSaveTimeout = time.Second
 	// DefaultMaxQueuedEvents は、拡張機能 1 つあたりの、イベントループへ渡していないイベントの数の上限の既定値（仮）である。
 	DefaultMaxQueuedEvents = 1024
 )
@@ -79,6 +84,8 @@ type Config struct {
 	// SendTimeout は、[SendOptions] の Timeout を指定しない [Host.Send] が、起動と応答を待つ上限である。
 	// 期限 0 の設定（FR-18）でも、応答しない問い合わせの待ち受けが溜まり続けないようにする。
 	SendTimeout time.Duration
+	// WillSaveTimeout は、[Host.SendWillSave] と [Host.WillSave] で、期限を指定しないときに使う期限である（基本設計 6.7 の保存の流れ）。
+	WillSaveTimeout time.Duration
 	// MaxOutboxBytes は、拡張機能 1 つあたりの、送信の列に積んだまま書いていないバイト数の上限である。
 	// 拡張機能が標準入力を読まなくなったときに、本体のメモリを使い切らないための上限である（NFR-03）。
 	// 送る時点で、列に残っている量がこの上限を超えていたら、送らずに異常と判断する（[ErrOutboxFull]）。
@@ -116,6 +123,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.SendTimeout <= 0 {
 		c.SendTimeout = DefaultSendTimeout
+	}
+	if c.WillSaveTimeout <= 0 {
+		c.WillSaveTimeout = DefaultWillSaveTimeout
 	}
 	if c.MaxOutboxBytes <= 0 {
 		c.MaxOutboxBytes = DefaultMaxOutboxBytes
@@ -267,7 +277,7 @@ func New(specs []Spec, cfg Config) (*Host, error) {
 }
 
 // Events は、イベントループへ渡すイベントのチャネルを返す。
-// イベントは [EditRequest]、[DecorationSet]、[MessageShow]、[StateChange]、[QueryResult] のいずれかである。
+// イベントの種類と、拡張機能からのリクエストの扱いは [Event] の doc にある。
 //
 // チャネルはバッファを持たず、Host の中の列から 1 件ずつ渡す。
 // 受け取らない間も、拡張機能との通信は止まらない（列の上限は [Config.MaxQueuedEvents]）。

@@ -10,9 +10,37 @@ import (
 )
 
 // Event は、[Host.Events] からイベントループへ渡すイベントである。
-// 値は [EditRequest]、[DecorationSet]、[MessageShow]、[StateChange]、[QueryResult] のポインターのいずれかである。
+// 値は次の型のポインターのいずれかである。
+//
+//   - 拡張機能からのリクエスト: [EditRequest]、[EditorStateRequest]、[EditorOpenRequest]、[BufferSaveRequest]、
+//     [DiagnosticListRequest]、[ChoiceAskRequest]
+//   - 拡張機能からの通知: [DecorationSet]、[MessageShow]、[DiagnosticSet]、[SignSet]、[PopupShow]、[OutputAppend]
+//   - Host が作るもの: [StateChange]、[QueryResult]
+//
+// # 拡張機能からのリクエストの扱い
+//
+// リクエストのイベントは、イベントループが 1 件ずつ処理し、Reply か ReplyError で 1 回だけ応答する。
+// 応答しないと、拡張機能の側の呼び出しは応答を待ち続ける。
+// 拡張機能が既に終わっていれば、応答は誤りを返す（返しても害は無い）。
+//
+// イベントループは、ある拡張機能へのキー入力ごとの問い合わせ（基本設計 5.4）か command/execute の結果を待っている間は、
+// その拡張機能から届いたリクエストを処理せずに取っておき、待ちが終わってから処理する。
+// 保存の流れで buffer/willSave の応答を待っている間は、すべての拡張機能から届いたリクエストを取っておく（基本設計 5.3）。
+// Host はこの待たせ方をしない（イベントを届いた順に渡すだけである）ので、取っておくのはイベントループの責務である。
 type Event interface {
 	isEvent()
+}
+
+// replyOnce は、リクエストのイベントが持つ応答の関数である。
+type replyOnce struct {
+	reply rpc.Replier
+}
+
+// ReplyError は、拡張機能へ失敗の応答を返す。err が *rpc.Error を包んでいればそのコードを、そうでなければ内部の誤りのコードを使う。
+// 開けないファイルへの editor/open のように、result の形で表せない失敗に使う。
+// Reply と合わせて 1 回だけ応答でき、2 回目以降の呼び出しは何も送らずに誤りを返す。
+func (r *replyOnce) ReplyError(err error) error {
+	return r.reply(nil, err)
 }
 
 // EditRequest は、拡張機能からの buffer/edit のリクエストである（基本設計 5.3）。
@@ -33,6 +61,84 @@ func (r *EditRequest) Reply(result ext.BufferEditResult) error {
 	return r.reply(result, nil)
 }
 
+// ReplyError は、拡張機能へ失敗の応答を返す。使い方は他のリクエストのイベントの ReplyError と同じである。
+func (r *EditRequest) ReplyError(err error) error {
+	return r.reply(nil, err)
+}
+
+// EditorStateRequest は、拡張機能からの editor/state のリクエストである（基本設計 6.7）。
+// イベントループは、カーソルのあるバッファ、カーソル位置、モード、選択範囲、開いているバッファの一覧を Reply で返す。
+type EditorStateRequest struct {
+	// Extension は、要求した拡張機能の ID である。
+	Extension string
+	Params    ext.EditorStateParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ editor/state の結果を返す。
+func (r *EditorStateRequest) Reply(result ext.EditorStateResult) error {
+	return r.reply(result, nil)
+}
+
+// EditorOpenRequest は、拡張機能からの editor/open のリクエストである（基本設計 6.7）。
+// Params は [ext.EditorOpenParams.Validate] を通ったものである（通らなければ Host が誤りを応答し、イベントにしない）。
+//
+// イベントループは、まだ開いていないファイルなら開いて [Host.OpenBuffer] を呼んでから Reply する。
+// OpenBuffer の buffer/open と応答は同じ接続で送るので、拡張機能には buffer/open が応答より先に届く。
+// 拡張機能の側は、応答を受け取った後に ext/server の WaitBuffer で複製を待つ。
+type EditorOpenRequest struct {
+	Extension string
+	Params    ext.EditorOpenParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ editor/open の結果を返す。
+func (r *EditorOpenRequest) Reply(result ext.EditorOpenResult) error {
+	return r.reply(result, nil)
+}
+
+// BufferSaveRequest は、拡張機能からの buffer/save のリクエストである（基本設計 6.7）。
+// イベントループは、利用者の保存と同じ保存の流れで書き出す。
+// Params.SkipHooks が true なら buffer/willSave を飛ばす。書き出した後に [Host.DidSave] を呼ぶ。
+type BufferSaveRequest struct {
+	Extension string
+	Params    ext.BufferSaveParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ buffer/save の結果を返す。
+func (r *BufferSaveRequest) Reply(result ext.BufferSaveResult) error {
+	return r.reply(result, nil)
+}
+
+// DiagnosticListRequest は、拡張機能からの diagnostic/list のリクエストである（基本設計 6.7）。
+// イベントループは、受け取り済みの診断を、編集に合わせてずらした位置で返す。
+type DiagnosticListRequest struct {
+	Extension string
+	Params    ext.DiagnosticListParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ diagnostic/list の結果を返す。
+func (r *DiagnosticListRequest) Reply(result ext.DiagnosticListResult) error {
+	return r.reply(result, nil)
+}
+
+// ChoiceAskRequest は、拡張機能からの choice/ask のリクエストである（基本設計 6.7）。
+// 利用者の応答を待つので、キー入力ごとの問い合わせの期限を適用しない。
+// イベントループは一度に 1 つの問いだけを表示し、表示中に届いた問いは順に待たせる。
+// 問いを出した拡張機能が再起動した（[StateChange] が届いた）場合は、その拡張機能の問いを取り下げる。
+type ChoiceAskRequest struct {
+	Extension string
+	Params    ext.ChoiceAskParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ choice/ask の結果を返す。
+func (r *ChoiceAskRequest) Reply(result ext.ChoiceAskResult) error {
+	return r.reply(result, nil)
+}
+
 // DecorationSet は、拡張機能からの decoration/set の通知である（基本設計 6.1）。
 type DecorationSet struct {
 	Extension string
@@ -43,6 +149,31 @@ type DecorationSet struct {
 type MessageShow struct {
 	Extension string
 	Params    ext.MessageShowParams
+}
+
+// DiagnosticSet は、拡張機能からの diagnostic/set の通知である（基本設計 6.7 の表示のデータ）。
+// イベントループは、拡張機能とバッファの組ごとに一覧を持ち、Params.Version に応じてずらすか捨てる（[ext.DiagnosticSetParams]）。
+type DiagnosticSet struct {
+	Extension string
+	Params    ext.DiagnosticSetParams
+}
+
+// SignSet は、拡張機能からの sign/set の通知である（基本設計 6.7 の表示のデータ）。
+type SignSet struct {
+	Extension string
+	Params    ext.SignSetParams
+}
+
+// PopupShow は、拡張機能からの popup/show の通知である（基本設計 6.7 の表示のデータ）。
+type PopupShow struct {
+	Extension string
+	Params    ext.PopupShowParams
+}
+
+// OutputAppend は、拡張機能からの output/append の通知である（基本設計 6.7 の表示のデータ）。
+type OutputAppend struct {
+	Extension string
+	Params    ext.OutputAppendParams
 }
 
 // StateChange は、拡張機能の状態が変わったことを知らせる。
@@ -79,11 +210,20 @@ func (r *QueryResult) Decode(v any) error {
 	return nil
 }
 
-func (*EditRequest) isEvent()   {}
-func (*DecorationSet) isEvent() {}
-func (*MessageShow) isEvent()   {}
-func (*StateChange) isEvent()   {}
-func (*QueryResult) isEvent()   {}
+func (*EditRequest) isEvent()           {}
+func (*EditorStateRequest) isEvent()    {}
+func (*EditorOpenRequest) isEvent()     {}
+func (*BufferSaveRequest) isEvent()     {}
+func (*DiagnosticListRequest) isEvent() {}
+func (*ChoiceAskRequest) isEvent()      {}
+func (*DecorationSet) isEvent()         {}
+func (*MessageShow) isEvent()           {}
+func (*DiagnosticSet) isEvent()         {}
+func (*SignSet) isEvent()               {}
+func (*PopupShow) isEvent()             {}
+func (*OutputAppend) isEvent()          {}
+func (*StateChange) isEvent()           {}
+func (*QueryResult) isEvent()           {}
 
 // queued は、イベントループへ渡す前の列の 1 件である。
 // r は、拡張機能から届いたイベントなら、それを受け取ったプロセスである。それ以外は nil。
