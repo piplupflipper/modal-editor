@@ -42,6 +42,26 @@ var textObjectTests = []textObjectCase{
 	{obj: "aw", text: "|a b\nc", count: 2, want: "a b", kind: Inclusive},
 	{obj: "iw", text: "|a b\nc", count: 4, want: "a b\nc", kind: Inclusive}, // 改行も 1 つと数える
 
+	// ASCII 以外の文字は Vim の utf_class() の分類で区切る（期待値は Vim 9.1 で確かめた）
+	{obj: "iw", text: "これは|、テストです。次", want: "、", kind: Inclusive},
+	{obj: "iw", text: "漢字かな|カナ abc", want: "カナ", kind: Inclusive},
+	{obj: "iw", text: "|漢字かなカナ", count: 3, want: "漢字かなカナ", kind: Inclusive},
+	{obj: "iw", text: "日本　|語 x", want: "語", kind: Inclusive},
+	{obj: "iw", text: "日本|　語", want: "　", kind: Inclusive},
+	{obj: "iw", text: "a\u00a0|b c", want: "b", kind: Inclusive},
+	{obj: "aw", text: "これは、テス|トです。", want: "テスト", kind: Inclusive}, // 後にも前にも空白が無い
+	{obj: "aw", text: "|ＡＢＣ（漢字）", want: "ＡＢＣ", kind: Inclusive},
+	{obj: "iW", text: "これは、テス|トです。 x", want: "これは、テストです。", kind: Inclusive},
+	{obj: "aW", text: "x 日本　|語 y", want: "語 ", kind: Inclusive},
+
+	// 結合文字は前の文字と合わせて 1 文字、不正な UTF-8 のバイトはその値で分類する（期待値は Vim 9.1 で確かめた）
+	{obj: "iw", text: "|カ\u3099イト\u3099 x", want: "カ\u3099イト\u3099", kind: Inclusive}, // NFD の「ガイド」
+	{obj: "iw", text: "|\u2764\ufe0fabc d", want: "\u2764\ufe0f", kind: Inclusive},
+	{obj: "aw", text: "x |\u2764\ufe0f y", want: "\u2764\ufe0f ", kind: Inclusive},
+	{obj: "iw", text: "|葛\U000E0100飾 x", want: "葛\U000E0100飾", kind: Inclusive}, // 異体字セレクタ
+	{obj: "iw", text: "a| \u0301b c", want: " \u0301", kind: Inclusive},
+	{obj: "iw", text: "|foo\x80bar baz", want: "foo", kind: Inclusive},
+
 	// i" a" i' a'
 	{obj: `i"`, text: `x = "a|bc" y`, want: "abc", kind: Exclusive},
 	{obj: `a"`, text: `x = "a|bc" y`, want: `"abc" `, kind: Exclusive},

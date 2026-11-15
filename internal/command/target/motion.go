@@ -26,8 +26,7 @@ func left(b *buffer.Buffer, req Request) (Result, error) {
 		if p.Byte == 0 {
 			break
 		}
-		_, size := utf8.DecodeLastRuneInString(line[:p.Byte])
-		p.Byte -= size
+		p.Byte = prevCell(line, p.Byte)
 	}
 	return at(b, req, p, Exclusive), nil
 }
@@ -49,8 +48,7 @@ func right(b *buffer.Buffer, req Request) (Result, error) {
 		if p.Byte >= limit {
 			break
 		}
-		_, size := utf8.DecodeRuneInString(line[p.Byte:])
-		p.Byte += size
+		p.Byte = nextCell(line, p.Byte)
 	}
 	return at(b, req, p, Exclusive), nil
 }

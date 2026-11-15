@@ -73,6 +73,35 @@ var motionTests = []motionCase{
 	{motion: "w", text: "|a\tb", want: "a\t|b", kind: Exclusive},
 	{motion: "W", text: "|a.b c.d e", count: 2, want: "a.b c.d |e", kind: Exclusive},
 
+	// ASCII 以外の文字は Vim の utf_class() の分類で区切る（期待値は Vim 9.1 で確かめた）
+	{motion: "w", text: "|これは、テストです。", want: "これは|、テストです。", kind: Exclusive},
+	{motion: "w", text: "|漢字かなカナ abc", want: "漢字|かなカナ abc", kind: Exclusive},
+	{motion: "w", text: "|東京タワーは333mです", count: 3, want: "東京タワーは|333mです", kind: Exclusive},
+	{motion: "w", text: "日本|　語 x", want: "日本　|語 x", kind: Exclusive},     // 全角空白は空白
+	{motion: "w", text: "|a\u00a0b", want: "a\u00a0|b", kind: Exclusive}, // NBSP も空白
+	{motion: "w", text: "|ＡＢＣ１２３！？", want: "ＡＢＣ１２３|！？", kind: Exclusive},
+	{motion: "w", text: "|絵文字😀😀テスト", want: "絵文字|😀😀テスト", kind: Exclusive},
+	{motion: "W", text: "|これは、テスト です", want: "これは、テスト |です", kind: Exclusive},
+	{motion: "W", text: "|日本　語", want: "日本　|語", kind: Exclusive}, // W でも全角空白は空白
+	{motion: "b", text: "これは、テス|ト", want: "これは、|テスト", kind: Exclusive},
+	{motion: "b", text: "「こんにちは|」と", want: "「|こんにちは」と", kind: Exclusive},
+	{motion: "e", text: "|これは、テスト", want: "これ|は、テスト", kind: Inclusive},
+	{motion: "e", text: "|한국어 텍스트", want: "한국|어 텍스트", kind: Inclusive},
+
+	// 結合文字は前の文字と合わせて 1 文字、不正な UTF-8 のバイトはその値で分類する（期待値は Vim 9.1 で確かめた）
+	{motion: "w", text: "|カ\u3099イト\u3099 x", want: "カ\u3099イト\u3099 |x", kind: Exclusive},                     // NFD の「ガイド」
+	{motion: "w", text: "|カ\u3099イト\u3099 x", op: ChangeOperator, want: "カ\u3099イ|ト\u3099 x", kind: Inclusive}, // cw は ce
+	{motion: "w", text: "|\u2764\ufe0fabc d", want: "\u2764\ufe0f|abc d", kind: Exclusive},
+	{motion: "w", text: "|a \u0301b c", want: "a \u0301|b c", kind: Exclusive}, // 空白の後の結合文字は空白
+	{motion: "e", text: "|cafe\u0301 x", want: "caf|e\u0301 x", kind: Inclusive},
+	{motion: "e", text: "caf|e\u0301 x", want: "cafe\u0301 |x", kind: Inclusive},
+	{motion: "w", text: "|foo\x80bar baz", want: "foo|\x80bar baz", kind: Exclusive}, // 0x80 は記号
+	{motion: "w", text: "|foo\xe3bar baz", want: "foo\xe3bar |baz", kind: Exclusive}, // 0xe3 は単語の文字
+	{motion: "w", text: "|\xffabc d", want: "\xffabc |d", kind: Exclusive},
+	{motion: "l", text: "|カ\u3099イ", want: "カ\u3099|イ", kind: Exclusive},
+	{motion: "h", text: "カ\u3099|イ", want: "|カ\u3099イ", kind: Exclusive},
+	{motion: "$", text: "|カ\u3099イト\u3099", want: "カ\u3099イ|ト\u3099", kind: Inclusive},
+
 	// b B
 	{motion: "b", text: "foo |bar", want: "|foo bar", kind: Exclusive},
 	{motion: "b", text: "foo.b|ar", want: "foo.|bar", kind: Exclusive},
