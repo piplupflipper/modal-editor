@@ -10,10 +10,10 @@
 
 | 状態 | 件数 | 意味 |
 |---|---|---|
-| 実装とテスト | 20 | 実装とテストの両方に注釈がある |
+| 実装とテスト | 21 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 15 | 注釈が無い |
+| 未着手 | 14 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -45,7 +45,7 @@
 | FR-32 | 未着手 | - | - | MCP のサーバーを持つ。開いているバッファ、カーソル位置、選択範囲、診断などの取得と、編集の操作を、ツールとして提供する |
 | FR-33 | 実装とテスト | [cmd/modal-editor-mcp-bridge/main.go:47](../cmd/modal-editor-mcp-bridge/main.go#L47)<br>[cmd/modal-editor-mcp-bridge/main.go:97](../cmd/modal-editor-mcp-bridge/main.go#L97) | [cmd/modal-editor-mcp-bridge/main_test.go:116](../cmd/modal-editor-mcp-bridge/main_test.go#L116)<br>[cmd/modal-editor-mcp-bridge/main_test.go:172](../cmd/modal-editor-mcp-bridge/main_test.go#L172)<br>[cmd/modal-editor-mcp-bridge/main_test.go:214](../cmd/modal-editor-mcp-bridge/main_test.go#L214)<br>[cmd/modal-editor-mcp-bridge/main_test.go:241](../cmd/modal-editor-mcp-bridge/main_test.go#L241)<br>[cmd/modal-editor-mcp-bridge/main_test.go:305](../cmd/modal-editor-mcp-bridge/main_test.go#L305) | MCP のクライアントからの接続は、中継コマンドで受ける。クライアントが中継コマンドを標準入出力の MCP サーバーとして起動し、中継コマンドが起動中のエディタへ Unix ドメインソケットで接続する |
 | FR-34 | 未着手 | - | - | ACP のクライアントを持つ。コーディングエージェントを子プロセスとして起動する |
-| FR-35 | 未着手 | - | - | tree-sitter による構文解析を持つ。構文ハイライトは、tree-sitter の拡張機能が色を付ける範囲の一覧を本体へ送り、本体は受け取り済みの一覧で描画する |
+| FR-35 | 実装とテスト | [cmd/modal-editor-ext-treesitter/decorate.go:30](../cmd/modal-editor-ext-treesitter/decorate.go#L30)<br>[cmd/modal-editor-ext-treesitter/document.go:61](../cmd/modal-editor-ext-treesitter/document.go#L61)<br>[cmd/modal-editor-ext-treesitter/highlighter.go:70](../cmd/modal-editor-ext-treesitter/highlighter.go#L70)<br>[cmd/modal-editor-ext-treesitter/highlighter.go:91](../cmd/modal-editor-ext-treesitter/highlighter.go#L91) | [cmd/modal-editor-ext-treesitter/treesitter_test.go:81](../cmd/modal-editor-ext-treesitter/treesitter_test.go#L81)<br>[cmd/modal-editor-ext-treesitter/treesitter_test.go:133](../cmd/modal-editor-ext-treesitter/treesitter_test.go#L133)<br>[cmd/modal-editor-ext-treesitter/treesitter_test.go:254](../cmd/modal-editor-ext-treesitter/treesitter_test.go#L254)<br>[cmd/modal-editor-ext-treesitter/treesitter_test.go:399](../cmd/modal-editor-ext-treesitter/treesitter_test.go#L399) | tree-sitter による構文解析を持つ。構文ハイライトは、tree-sitter の拡張機能が色を付ける範囲の一覧を本体へ送り、本体は受け取り済みの一覧で描画する |
 | FR-36 | 未着手 | - | - | スクリプトの拡張機能を実行する。yaegi は本体には入れず、スクリプトを実行する別の実行ファイルに入れる |
 | FR-40 | 未着手 | - | - | 設定ファイルの形式は JSONC とする |
 | FR-41 | 未着手 | - | - | 設定ファイルは本体が直接読む。キーマップなどの設定は、拡張機能の起動を待たずに反映する |

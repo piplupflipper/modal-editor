@@ -14,6 +14,8 @@ BINARY  := $(BIN_DIR)/modal-editor
 MCP_BRIDGE := $(BIN_DIR)/modal-editor-mcp-bridge
 # 標準の拡張機能。本体とは別の実行ファイルとして作る（NFR-01）。
 EXTENSIONS := modal-editor-ext-line
+# cgo を使う標準の拡張機能。C コンパイラが要る。cgo を使うのはこれだけで、本体は CGO_ENABLED=0 で作る（NFR-02）。
+CGO_EXTENSIONS := modal-editor-ext-treesitter
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/piplupflipper/modal-editor/internal/version.version=$(VERSION)
 
@@ -68,6 +70,7 @@ build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行フ
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/modal-editor
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(MCP_BRIDGE) ./cmd/modal-editor-mcp-bridge
 	for e in $(EXTENSIONS); do CGO_ENABLED=0 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
+	for e in $(CGO_EXTENSIONS); do CGO_ENABLED=1 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
 
 .PHONY: run
 run: ## ビルドせずに実行する

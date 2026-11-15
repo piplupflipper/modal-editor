@@ -46,6 +46,7 @@ Go はコンパイル言語なので、型チェックはコンパイルの一�
 | `cmd/modal-editor/` | エディタ本体の実行ファイルの入口 |
 | `cmd/modal-editor-mcp-bridge/` | MCP の中継コマンド。標準入出力と起動中のエディタの Unix ドメインソケットの間でメッセージを転送する |
 | `cmd/modal-editor-ext-line/` | 標準の拡張機能（行のテキストオブジェクト）の実行ファイルと宣言ファイル |
+| `cmd/modal-editor-ext-treesitter/` | 標準の拡張機能（tree-sitter による構文ハイライト）の実行ファイルと宣言ファイル。cgo を使い、ビルドに C コンパイラが要る |
 | `cmd/reqtrace/` | 要件ごとの進捗を生成するツール |
 | `internal/` | このリポジトリの中だけで使うパッケージ |
 | `docs/` | 要件定義などの文書 |
