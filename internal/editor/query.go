@@ -1,0 +1,433 @@
+package editor
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/command"
+	"github.com/piplupflipper/modal-editor/internal/command/target"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/rpc"
+)
+
+// queryTag は、exthost.SendOptions の Tag に入れる、問い合わせを見分ける値である。
+type queryTag uint64
+
+// pendingQuery は、期限 0 の設定（FR-18）で、結果を待たずに戻った問い合わせである。
+type pendingQuery struct {
+	q      *exthost.Query
+	tag    queryTag
+	bs     *bufferState
+	method string
+	// d は、command.State が保留した操作である。Feed が戻ってから trackDeferred が入れる。
+	d *command.Deferred
+}
+
+// openRequest は、command/execute の結果の Open のうち、Feed が戻ってから行うものである。
+type openRequest struct {
+	ext string
+	p   ext.EditorOpenParams
+}
+
+// extQuery は、command.Extensions を exthost で実装する（基本設計 5.4）。
+// answer があれば、method が answerMethod の最初の問い合わせには、送らずに answer を返す（ApplyDeferred で、届いた結果を使う）。
+type extQuery struct {
+	e            *Editor
+	bs           *bufferState
+	answer       *exthost.QueryResult
+	answerMethod string
+}
+
+// errExtension は、拡張機能の操作の失敗を、利用者へ知らせる文言に包む。
+func errExtension(ref editcmd.Ref, err error) error {
+	return fmt.Errorf("拡張機能 %s の %s が失敗しました: %w", ref.Extension, ref.ID, err)
+}
+
+// call は、問い合わせて結果を out へ読む。
+func (x *extQuery) call(ref editcmd.Ref, method string, params any, info command.QueryInfo, out any) error {
+	if x.answer != nil && method == x.answerMethod {
+		r := x.answer
+		x.answer = nil
+		if err := r.Decode(out); err != nil {
+			return errExtension(ref, err)
+		}
+		return nil
+	}
+	return x.e.query(x.bs, ref, method, params, info, out)
+}
+
+// query は、拡張機能 ref.Extension へ method を問い合わせる。期限の扱いは package の doc にある。
+//
+// req: FR-17, FR-18, FR-19
+func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params any, info command.QueryInfo, out any) error {
+	// マクロの再生の途中なら、ここまでの変更を拡張機能の複製へ送ってから問い合わせる（FR-16）。
+	e.syncChanges(bs, bs.state.PendingChanges())
+	e.tagSeq++
+	tag := queryTag(e.tagSeq)
+	timeout := e.syncTimeout()
+	switch {
+	case info.Replaying:
+		timeout = e.cfg.ReplayTimeout
+	case timeout == 0:
+		q, err := e.host.Send(ref.Extension, method, params, exthost.SendOptions{Tag: tag})
+		if err != nil {
+			return errExtension(ref, err)
+		}
+		if e.deferred != nil {
+			e.deferred.q.Cancel()
+		}
+		e.deferred = &pendingQuery{q: q, tag: tag, bs: bs, method: method}
+		return command.ErrDeferred
+	}
+	q, err := e.host.Send(ref.Extension, method, params, exthost.SendOptions{Tag: tag, Timeout: max(timeout, 0)})
+	if err != nil {
+		return errExtension(ref, err)
+	}
+	r := e.wait(q, tag)
+	if err := r.Decode(out); err != nil {
+		return errExtension(ref, err)
+	}
+	return nil
+}
+
+// wait は、Tag が tag の QueryResult が届くまで待つ（入れ子の待ち）。
+// 待つ間は、リサイズに応じて描画し、<C-c> で問い合わせを取り消す。他のイベントは hold で取っておく。
+// キーは列に残したままにし、待ちが終わってから処理する。
+// Run の ctx が終わったら、問い合わせを取り消し、結果を待たずに ctx.Err() の結果を返す。
+func (e *Editor) wait(q *exthost.Query, tag queryTag) *exthost.QueryResult {
+	e.waiting++
+	defer func() { e.waiting-- }()
+	e.render()
+	done := context.Background().Done()
+	if e.ctx != nil {
+		done = e.ctx.Done()
+	}
+	for {
+		if e.interrupt.Load() {
+			q.Cancel()
+		}
+		select {
+		case <-done:
+			q.Cancel()
+			return &exthost.QueryResult{Err: e.ctx.Err()}
+		case ev, ok := <-e.host.Events():
+			if !ok {
+				return &exthost.QueryResult{Err: exthost.ErrClosed}
+			}
+			if r, ok := ev.(*exthost.QueryResult); ok && r.Tag == tag {
+				return r
+			}
+			e.hold(ev)
+		case <-e.resizeCh:
+			e.applySize()
+			e.render()
+		case <-e.intrCh:
+		}
+	}
+}
+
+// hold は、入れ子の待ちの間と確認の問いの間に届いたイベントを、後で届いた順に処理するために取っておく。
+//
+// 取っておく数の上限は exthost の Config.MaxQueuedEvents（既定 1024）である。
+// 待ちの間は exthost の列からここへ移すので、exthost の上限（NFR-03）が効かない。その代わりにここで抑える。
+// 上限を超えたら、最も古い通知（表示のデータとメッセージ）から捨てる。通知が無ければ、最も古いリクエストに誤りで応答して捨てる。
+// 問い合わせの結果（QueryResult）と状態の変化（StateChange）は捨てない。
+func (e *Editor) hold(ev exthost.Event) {
+	e.held = append(e.held, ev)
+	limit := e.cfg.Host.MaxQueuedEvents
+	if limit <= 0 {
+		limit = exthost.DefaultMaxQueuedEvents
+	}
+	if len(e.held) <= limit {
+		return
+	}
+	drop := -1
+	for i, h := range e.held {
+		switch h.(type) {
+		case *exthost.DecorationSet, *exthost.MessageShow, *exthost.DiagnosticSet, *exthost.SignSet,
+			*exthost.PopupShow, *exthost.OutputAppend:
+			drop = i
+		}
+		if drop >= 0 {
+			break
+		}
+	}
+	if drop < 0 {
+		for i, h := range e.held {
+			if r, ok := h.(request); ok {
+				_ = r.ReplyError(&rpc.Error{Code: rpc.CodeInternalError, Message: "editor is busy: too many pending requests"})
+				drop = i
+				break
+			}
+		}
+	}
+	if drop < 0 {
+		return
+	}
+	e.log.Warn("取っておくイベントが上限を超えたので捨てる", "type", fmt.Sprintf("%T", e.held[drop]))
+	e.held = append(e.held[:drop], e.held[drop+1:]...)
+}
+
+// trackDeferred は、Feed などが保留した操作 d を、送った問い合わせと結びつける。
+// 結びつく操作が無ければ（保留が失敗として扱われた場合）、問い合わせを取り消す。
+func (e *Editor) trackDeferred(bs *bufferState, d *command.Deferred) {
+	p := e.deferred
+	if p == nil || p.d != nil {
+		return
+	}
+	if d == nil || p.bs != bs {
+		p.q.Cancel()
+		e.deferred = nil
+		return
+	}
+	p.d = d
+}
+
+// applyDeferred は、期限 0 の設定で保留した問い合わせの結果 r を適用する（FR-18）。
+// バージョン番号とカーソル位置が問い合わせたときと同じ場合だけ適用し、違えば破棄する（command.State.ApplyDeferred）。
+//
+// req: FR-18
+func (e *Editor) applyDeferred(p *pendingQuery, r *exthost.QueryResult) {
+	e.deferred = nil
+	if p.d == nil {
+		return
+	}
+	if p.bs.state.Pending() {
+		// キーの列の解釈の途中（d の後など）に届いた結果は破棄する。利用者は続きのキーを、保留した操作の後のつもりで打っていない。
+		return
+	}
+	if r.Err != nil {
+		if !errors.Is(r.Err, context.Canceled) {
+			e.showError(fmt.Errorf("拡張機能 %s の %s が失敗しました: %w", r.Extension, r.Method, r.Err))
+		}
+		return
+	}
+	x := &extQuery{e: e, bs: p.bs, answer: r, answerMethod: p.method}
+	_ = e.handleResult(p.bs, p.bs.state.ApplyDeferred(*p.d, x)) // 失敗は handleResult が知らせる
+}
+
+// count は、ext の回数（0 は省略）を返す。
+func count(n int, given bool) int {
+	if !given {
+		return 0
+	}
+	return n
+}
+
+// args は、操作の後に取った文字の引数を、拡張機能へ渡す Args にする（{"char":"x"}）。引数が無ければ nil。
+// 本体が引数のキー入力をどのように集めて渡すかは ext で未決なので、この形は仮である。
+func args(ch rune) json.RawMessage {
+	if ch == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(map[string]string{"char": string(ch)})
+	return b
+}
+
+func toExtPos(p buffer.Position) ext.Position { return ext.Position{Line: p.Line, Byte: p.Byte} }
+
+func fromExtPos(p ext.Position) buffer.Position { return buffer.Position{Line: p.Line, Byte: p.Byte} }
+
+func toExtRange(r buffer.Range) ext.Range {
+	return ext.Range{Start: toExtPos(r.Start), End: toExtPos(r.End)}
+}
+
+func fromExtRange(r ext.Range) buffer.Range {
+	return buffer.Range{Start: fromExtPos(r.Start), End: fromExtPos(r.End)}
+}
+
+func fromExtTx(tx ext.Transaction) buffer.Transaction {
+	out := buffer.Transaction{BaseVersion: uint64(tx.BaseVersion), Edits: make([]buffer.Edit, len(tx.Edits))}
+	for i, ed := range tx.Edits {
+		out.Edits[i] = buffer.Edit{Range: fromExtRange(ed.Range), Text: ed.Text}
+	}
+	return out
+}
+
+// checkResult は、拡張機能の結果の OK と、計算のもとにしたバージョン番号を確かめる。
+func checkResult(ref editcmd.Ref, ok bool, version ext.Version, b *buffer.Buffer) error {
+	if !ok {
+		return fmt.Errorf("%w: extension %s returned no result for %s", command.ErrFailed, ref.Extension, ref.ID)
+	}
+	if uint64(version) != b.Version() {
+		return errExtension(ref, fmt.Errorf("バージョン番号が %d で、現在の %d と違います", version, b.Version()))
+	}
+	return nil
+}
+
+// checkPos は、拡張機能が返した位置がバッファの中の文字の境界であるかを確かめる。
+func checkPos(ref editcmd.Ref, b *buffer.Buffer, ps ...buffer.Position) error {
+	for _, p := range ps {
+		if _, err := b.Slice(buffer.Range{Start: p, End: p}); err != nil {
+			return errExtension(ref, err)
+		}
+	}
+	return nil
+}
+
+// Motion は、motion/resolve を問い合わせる。
+func (x *extQuery) Motion(ref editcmd.Ref, b *buffer.Buffer, req target.Request, info command.QueryInfo) (target.Result, error) {
+	p := ext.MotionResolveParams{
+		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
+		Cursor: toExtPos(req.Cursor), Count: count(req.Count, req.CountGiven), Args: args(req.Char),
+	}
+	var r ext.MotionResolveResult
+	if err := x.call(ref, ext.MethodMotionResolve, p, info, &r); err != nil {
+		return target.Result{}, err
+	}
+	if err := checkResult(ref, r.OK, r.Version, b); err != nil {
+		return target.Result{}, err
+	}
+	pos := fromExtPos(r.Position)
+	if err := checkPos(ref, b, pos); err != nil {
+		return target.Result{}, err
+	}
+	kind := target.Exclusive
+	switch {
+	case r.Linewise:
+		kind = target.Linewise
+	case r.Inclusive:
+		kind = target.Inclusive
+	}
+	cols := req.Columns
+	if cols == nil {
+		cols = target.CharColumns{}
+	}
+	return target.Result{Pos: pos, Kind: kind, Want: cols.Column(b.Line(pos.Line), pos.Byte)}, nil
+}
+
+// TextObject は、textObject/resolve を問い合わせる。
+func (x *extQuery) TextObject(ref editcmd.Ref, b *buffer.Buffer, req target.Request, info command.QueryInfo) (target.Span, error) {
+	p := ext.TextObjectResolveParams{
+		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
+		Cursor: toExtPos(req.Cursor), Count: count(req.Count, req.CountGiven), Args: args(req.Char),
+	}
+	var r ext.TextObjectResolveResult
+	if err := x.call(ref, ext.MethodTextObjectResolve, p, info, &r); err != nil {
+		return target.Span{}, err
+	}
+	if err := checkResult(ref, r.OK, r.Version, b); err != nil {
+		return target.Span{}, err
+	}
+	rg := fromExtRange(r.Range)
+	if err := checkPos(ref, b, rg.Start, rg.End); err != nil {
+		return target.Span{}, err
+	}
+	if rg.End.Less(rg.Start) {
+		return target.Span{}, errExtension(ref, buffer.ErrInvalidRange)
+	}
+	kind := target.Exclusive
+	if r.Linewise {
+		kind = target.Linewise
+	}
+	return target.Span{Start: rg.Start, End: rg.End, Kind: kind}, nil
+}
+
+// Operator は、operator/apply を問い合わせる。
+func (x *extQuery) Operator(ref editcmd.Ref, b *buffer.Buffer, q command.OperatorQuery, info command.QueryInfo) (buffer.Transaction, error) {
+	p := ext.OperatorApplyParams{
+		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
+		Range: toExtRange(q.Span.Range(b)), Count: q.Count, Args: args(q.Char),
+	}
+	var r ext.OperatorApplyResult
+	if err := x.call(ref, ext.MethodOperatorApply, p, info, &r); err != nil {
+		return buffer.Transaction{}, err
+	}
+	if err := checkResult(ref, r.OK, r.Transaction.BaseVersion, b); err != nil {
+		return buffer.Transaction{}, err
+	}
+	return fromExtTx(r.Transaction), nil
+}
+
+// Action は、command/execute を問い合わせる。
+// 再生中（FR-19）は params の Sync を true にし、結果の Open（カーソルの移動）も、次の操作の前に行う。
+func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQuery, info command.QueryInfo) (buffer.Transaction, error) {
+	p := ext.CommandExecuteParams{
+		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
+		Cursor: toExtPos(q.Cursor), Count: count(q.Count, q.CountGiven), Args: args(q.Char), Sync: info.Replaying,
+	}
+	var r ext.CommandExecuteResult
+	if err := x.call(ref, ext.MethodCommandExecute, p, info, &r); err != nil {
+		return buffer.Transaction{}, err
+	}
+	if !r.OK {
+		return buffer.Transaction{}, fmt.Errorf("%w: extension %s command %s failed", command.ErrFailed, ref.Extension, ref.ID)
+	}
+	if err := exthost.ValidateCommandResult(&r); err != nil {
+		return buffer.Transaction{}, errExtension(ref, err)
+	}
+	tx := buffer.Transaction{BaseVersion: b.Version()}
+	if r.Transaction != nil {
+		tx = fromExtTx(*r.Transaction)
+	}
+	if r.Open == nil {
+		return tx, nil
+	}
+	// Open は Transaction を適用した後に行うので、ここで適用し、State には空のトランザクションを返す。
+	if len(tx.Edits) > 0 {
+		ch, err := b.Apply(tx)
+		if err != nil {
+			return buffer.Transaction{}, errExtension(ref, err)
+		}
+		x.e.syncChanges(x.bs, x.bs.state.PendingChanges())
+		x.e.commitChange(x.bs, ch)
+	}
+	if err := x.e.openFromCommand(ref.Extension, x.bs, *r.Open, info.Replaying); err != nil {
+		return buffer.Transaction{}, err
+	}
+	return buffer.Transaction{BaseVersion: b.Version()}, nil
+}
+
+// openFromCommand は、command/execute の結果の Open を行う。
+//
+// 同じバッファの中の移動はすぐに行う（再生の次の操作の前に動かす）。
+// 別のバッファへ移るもの（Focus が true）は、再生中ならすぐに移り、command.ErrBufferSwitched を返す。
+// command.State は再生の残りを Result.Remaining に入れて止まり、handleResult が移った先のバッファで続ける
+// （Vim と同じく、マクロの残りのキーはカーソルのあるバッファへ入る。基本設計 6 章の冒頭の「transaction を適用した後に移動する」）。
+// 再生中でなければ、Feed が戻ってから移る。
+func (e *Editor) openFromCommand(extID string, bs *bufferState, p ext.EditorOpenParams, replaying bool) error {
+	same := (p.Buffer != nil && *p.Buffer == bs.id) || (p.Path != "" && p.Path == bs.path)
+	if same && (!p.Focus || e.cur == bs) {
+		e.moveCursor(bs, p)
+		return nil
+	}
+	if !replaying || !p.Focus {
+		e.pendingOpen = append(e.pendingOpen, openRequest{ext: extID, p: p})
+		return nil
+	}
+	if _, _, err := e.editorOpen(p); err != nil {
+		return errExtension(editcmd.Ref{Extension: extID, ID: "open"}, err)
+	}
+	if e.cur == bs {
+		return nil
+	}
+	return command.ErrBufferSwitched
+}
+
+// moveCursor は、editor/open の Position と Version に従って bs のカーソルを動かし、動かしたかを返す。
+func (e *Editor) moveCursor(bs *bufferState, p ext.EditorOpenParams) bool {
+	if p.Position == nil {
+		return false
+	}
+	if p.Version != nil && uint64(*p.Version) != bs.buf.Version() {
+		return false
+	}
+	bs.state.SetCursor(fromExtPos(*p.Position))
+	return true
+}
+
+// doPendingOpens は、Feed の間に溜めた Open を行う。
+func (e *Editor) doPendingOpens() {
+	ops := e.pendingOpen
+	e.pendingOpen = nil
+	for _, op := range ops {
+		if _, _, err := e.editorOpen(op.p); err != nil {
+			e.showError(fmt.Errorf("拡張機能 %s の移動: %w", op.ext, err))
+		}
+	}
+}

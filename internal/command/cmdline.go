@@ -66,6 +66,15 @@ func (s *State) runCommandLine(line string) {
 	s.lastCmd = line
 	s.registers.cmdline = line
 	res, err := ex.Execute(s.buf, &s.Ex, s.cursor.Line, line)
+	s.applyExResult(res, err)
+}
+
+// applyExResult は、Ex コマンドの結果を、カーソルとレジスターと Result に反映する。
+// 確認が要る結果（Result.Confirm）は、Result.Confirm へ渡す。
+func (s *State) applyExResult(res ex.Result, err error) {
+	if res.Confirm != nil {
+		s.res.Confirm = res.Confirm
+	}
 	s.res.Changes = append(s.res.Changes, res.Changes...)
 	s.res.Actions = append(s.res.Actions, res.Actions...)
 	for _, d := range res.Deletions {
@@ -84,4 +93,20 @@ func (s *State) runCommandLine(line string) {
 	if err != nil {
 		s.fail(err)
 	}
+}
+
+// Confirm は、Result.Confirm で求められた確認への利用者の答えを受け取り、yes なら Ex コマンドの続きを実行する。
+// no なら何もせずに空の Result を返す。
+// 確認を求めた Feed などの後、バッファと State を変えずに呼ぶ（ex.Confirm.Resume の前提）。
+// 続きがまた確認を求めたら、Result.Confirm に入る。
+//
+// req: FR-08
+func (s *State) Confirm(cf *ex.Confirm, yes bool) Result {
+	s.res = Result{}
+	if cf == nil || !yes {
+		return s.take()
+	}
+	res, err := cf.Resume(s.buf, &s.Ex)
+	s.applyExResult(res, err)
+	return s.take()
 }
