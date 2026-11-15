@@ -54,7 +54,7 @@ const (
 	methodNotify     = "test/notify"     // decoration/set と message/show を送る
 	methodGarbage    = "test/garbage"    // JSON-RPC として解釈できないメッセージを標準出力へ書く
 	methodFlood      = "test/flood"      // message/show を params の数だけ送る
-	methodEnv        = "test/env"        // 環境変数 ext.EnvExtensionDir の値と作業ディレクトリを返す
+	methodEnv        = "test/env"        // 環境変数 ext.EnvExtensionDir と ext.EnvMCPSocket の値と作業ディレクトリを返す
 )
 
 // fakeArgs は、問い合わせの Args に入れる、テスト用の指示である。
@@ -68,6 +68,9 @@ type fakeEnv struct {
 	Dir    string `json:"dir"`
 	DirSet bool   `json:"dirSet"`
 	Wd     string `json:"wd"`
+	// MCP は、環境変数 ext.EnvMCPSocket の値である。
+	MCP    string `json:"mcp"`
+	MCPSet bool   `json:"mcpSet"`
 }
 
 // fakeBuffer は、拡張機能が持つバッファの写しである。
@@ -177,7 +180,8 @@ func (f *fakeExt) request(ctx context.Context, req *rpc.Request, reply rpc.Repli
 	case methodEnv:
 		wd, err := os.Getwd()
 		dir, ok := os.LookupEnv(ext.EnvExtensionDir)
-		_ = reply(fakeEnv{Dir: dir, DirSet: ok, Wd: wd}, err)
+		mcp, mcpSet := os.LookupEnv(ext.EnvMCPSocket)
+		_ = reply(fakeEnv{Dir: dir, DirSet: ok, Wd: wd, MCP: mcp, MCPSet: mcpSet}, err)
 	case methodExit:
 		os.Exit(3)
 	case methodPanic:

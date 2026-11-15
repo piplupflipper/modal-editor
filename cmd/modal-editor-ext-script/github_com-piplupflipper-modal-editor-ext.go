@@ -19,6 +19,7 @@ func init() {
 		"ActivationOperator":       reflect.ValueOf(ext.ActivationOperator),
 		"ActivationTextObject":     reflect.ValueOf(ext.ActivationTextObject),
 		"EnvExtensionDir":          reflect.ValueOf(constant.MakeFromLiteral("\"MODAL_EDITOR_EXTENSION_DIR\"", token.STRING, 0)),
+		"EnvMCPSocket":             reflect.ValueOf(constant.MakeFromLiteral("\"MODAL_EDITOR_MCP_SOCKET\"", token.STRING, 0)),
 		"MessageError":             reflect.ValueOf(ext.MessageError),
 		"MessageInfo":              reflect.ValueOf(ext.MessageInfo),
 		"MessageWarning":           reflect.ValueOf(ext.MessageWarning),

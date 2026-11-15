@@ -39,6 +39,12 @@ type Manifest struct {
 // スクリプトの拡張機能の実行ファイルは、args の相対パスのスクリプトをここから解決する（基本設計 6.6）。
 const EnvExtensionDir = "MODAL_EDITOR_EXTENSION_DIR"
 
+// EnvMCPSocket は、本体がすべての拡張機能の子プロセスに渡す環境変数の名前である（名前は仮。基本設計 6.2）。
+// 値は、MCP の中継コマンドが接続する Unix ドメインソケットの絶対パスで、本体が起動ごとに一意に決める。
+// 本体はパスを決めて渡すだけで、そのパスで待ち受けるかどうかは起動の契機の裁定（基本設計 10 章）による。
+// MCP の拡張機能はこのパスで待ち受け、ACP の拡張機能はこのパスを中継コマンドの引数にしてエージェントへ渡す（基本設計 6.5）。
+const EnvMCPSocket = "MODAL_EDITOR_MCP_SOCKET"
+
 // ActivationKind は、起動の契機の種類である。
 type ActivationKind string
 

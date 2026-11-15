@@ -416,6 +416,76 @@ func TestWriteUnopenedFile(t *testing.T) {
 	}
 }
 
+// TestWriteFinalNewline は、fs/write_text_file で書き出したファイルの末尾の改行が、バッファの FinalNewline によらず
+// content と一致することを確かめる。
+//
+// 本体の役は、末尾の改行の無いファイルを FinalNewline が false のバッファとして開く。これは末尾の改行を補う設定を無効にした本体の役である。
+// 今の本体は、この設定をバッファごとに無効にする手段をまだ持たず（基本設計 4.1 のバッファごとの設定は未実装）、
+// "old" のファイルも FinalNewline が true のバッファとして届くので、"no eol" のケースは今の本体では通らない経路である。
+//
+// 最後の 2 つのケースは、Vim と結果が違う現状を固定する（bufferText の doc、基本設計 6.5）。
+//
+// req: FR-34
+func TestWriteFinalNewline(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		initial  *string
+		content  string
+		wantFile string
+	}{
+		// FinalNewline が false のバッファへ、改行で終わる content を書く。
+		{"no eol, content with eol", ptr("old"), "a\nb\n", "a\nb\n"},
+		{"no eol, content without eol", ptr("old"), "a\nb", "a\nb"},
+		{"no eol, content of one newline", ptr("old"), "\n", "\n"},
+		// FinalNewline が true のバッファ。
+		{"eol, content with eol", ptr("old\n"), "a\nb\n", "a\nb\n"},
+		{"eol, content with two eols", ptr("old\n"), "a\n\n", "a\n\n"},
+		// 行の無いバッファ（無いファイル）は、編集で行ができると改行を補うので、true と同じに扱う。
+		{"new file, content with eol", nil, "a\nb\n", "a\nb\n"},
+		// 現状の結果。Vim なら、1 つ目は空のファイル、2 つ目は "\n" になる。
+		{"eol, empty content (differs from Vim)", ptr("x\n"), "", "\n"},
+		{"new file, content of one newline (differs from Vim)", nil, "\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "file.txt")
+			if tc.initial != nil {
+				if err := os.WriteFile(path, []byte(*tc.initial), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h := newHost(t, fakeSettings(), nil)
+			h.prompt(map[string]any{"op": "write", "path": path, "content": tc.content})
+			out := h.waitOutput("[end_turn]")
+			if !strings.Contains(out, "write={}") {
+				t.Fatalf("output = %q, want write={}", out)
+			}
+			assertFile(t, path, tc.wantFile)
+		})
+	}
+}
+
+// TestBufferText は、fs/write_text_file の content から作るバッファのテキストを、FinalNewline ごとに確かめる。
+// FinalNewline が true のバッファへ改行で終わらない content を書くと、本体が書き出すときに改行を足す（Vim の 'fixendofline'）。
+func TestBufferText(t *testing.T) {
+	for _, tc := range []struct {
+		content, cur string
+		finalNewline bool
+		want         string
+	}{
+		{"a\nb\n", "x", true, "a\nb"},
+		{"a\nb", "x", true, "a\nb"},
+		{"", "x", true, ""},
+		{"a\nb\n", "x", false, "a\nb\n"},
+		{"a\nb", "x", false, "a\nb"},
+		{"a\nb\n", "", false, "a\nb"},
+		{"a\nb\n", "", true, "a\nb"},
+	} {
+		if got := bufferText(tc.content, tc.cur, tc.finalNewline); got != tc.want {
+			t.Errorf("bufferText(%q, %q, %v) = %q, want %q", tc.content, tc.cur, tc.finalNewline, got, tc.want)
+		}
+	}
+}
+
 // TestWriteRetriesOnConflict は、拡張機能の複製が本体より古く、buffer/edit が適用されなかったときに、
 // 新しい複製を待って書き直すことを確かめる。
 //

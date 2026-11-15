@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -89,6 +90,11 @@ type Config struct {
 	Host exthost.Config
 	// WorkDir は、相対パスを解決する作業ディレクトリである。空なら os.Getwd を使う。
 	WorkDir string
+	// MCPSocket は、すべての拡張機能へ環境変数 ext.EnvMCPSocket で渡す MCP のソケットのパスである（基本設計 6.2）。
+	// 空なら、New が exthost.NewMCPSocket で起動ごとに一意なパスを決め、Close でそのディレクトリを消す。
+	// 決められなければ、空の値を渡す（本体の環境の同じ名前の変数は引き継がない）。
+	// 指定したパスは、呼び出し側が用意し、後始末する。
+	MCPSocket string
 	// Logger は、ログの記録先である。nil なら slog.Default() を使う。
 	Logger *slog.Logger
 }
@@ -104,6 +110,9 @@ type Editor struct {
 	keymap   *input.Keymap
 	remap    *remapper
 	fileType map[string]string
+
+	// mcpSocket は、New が決めた MCP のソケットのパスである。Config.MCPSocket を指定したときと、決められなかったときは nil。
+	mcpSocket *exthost.MCPSocket
 
 	bufs   []*bufferState
 	cur    *bufferState
@@ -191,8 +200,24 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		}
 		cfg.WorkDir = wd
 	}
+	var sock *exthost.MCPSocket
+	if cfg.MCPSocket == "" {
+		// 決められなくてもエディタは動かす。MCP の拡張機能は待ち受けられなかったことを mcp.start で利用者へ知らせ、
+		// ACP の拡張機能はエージェントへ MCP サーバーを渡さない。
+		s, err := exthost.NewMCPSocket()
+		if err != nil {
+			lg.Warn("MCP のソケットのパスを決められない", "err", err)
+		} else {
+			sock = s
+			cfg.MCPSocket = s.Path
+		}
+	}
+	// 決められなかったときも空の値で上書きし、本体の環境の古い値（ACP のエージェントの中で起動したときの外側のエディタのパスなど）を
+	// 拡張機能へ引き継がない。拡張機能と中継コマンドは、空の値を変数が無いのと同じに扱う（os.Getenv）。
+	cfg.Host.Env = append(slices.Clone(cfg.Host.Env), ext.EnvMCPSocket+"="+cfg.MCPSocket)
 	host, err := exthost.New(cfg.Extensions, cfg.Host)
 	if err != nil {
+		_ = sock.Remove()
 		return nil, err
 	}
 	e := &Editor{
@@ -200,6 +225,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		log:       lg,
 		term:      term,
 		host:      host,
+		mcpSocket: sock,
 		renderer:  &ui.Renderer{},
 		keys:      newKeyQueue(),
 		intrCh:    make(chan struct{}, 1),
@@ -272,7 +298,20 @@ func buildKeymap(specs []exthost.Spec) (*input.Keymap, []error) {
 //     その間にエディタが止まって見えないように、先に端末を戻す
 //  3. Close を呼ぶ
 //  4. 端末の入力を閉じる。Run が戻った後も、入力を読む goroutine は Terminal.Input が閉じるまで残る
-func (e *Editor) Close(ctx context.Context) error { return e.host.CloseContext(ctx) }
+//
+// 拡張機能を止めた後に、New が決めた MCP のソケットのディレクトリを消す（Config.MCPSocket）。
+// 消せなかったときは記録だけして、拡張機能の終了の結果を返す。
+func (e *Editor) Close(ctx context.Context) error {
+	err := e.host.CloseContext(ctx)
+	if rerr := e.mcpSocket.Remove(); rerr != nil {
+		e.log.Warn("MCP のソケットのディレクトリを消せない", "err", rerr)
+	}
+	return err
+}
+
+// MCPSocket は、拡張機能へ環境変数 ext.EnvMCPSocket で渡す MCP のソケットのパスを返す（Config.MCPSocket）。
+// パスを決められなかったときは空を返す。
+func (e *Editor) MCPSocket() string { return e.cfg.MCPSocket }
 
 // Open は、path のファイルを開き、カーソルのあるバッファにする。
 // ファイルが無ければ、そのパスの空のバッファを作る（Vim の :e newfile と同じ）。

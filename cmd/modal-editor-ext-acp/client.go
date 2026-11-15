@@ -28,7 +28,8 @@ const outputChannel = "acp"
 
 // envMCPSocket は、本体が拡張機能へ MCP のソケットのパスを渡す環境変数の名前である（基本設計 6.2。仮）。
 // MCP の中継コマンド（cmd/modal-editor-mcp-bridge）が読む名前と同じにする。
-const envMCPSocket = "MODAL_EDITOR_MCP_SOCKET"
+// 本体（internal/editor）が起動ごとにパスを決め、MCP の拡張機能はそのパスで待ち受ける。
+const envMCPSocket = ext.EnvMCPSocket
 
 // mcpBridgeName は、MCP の中継コマンドの実行ファイルの名前である。
 const mcpBridgeName = "modal-editor-mcp-bridge"
