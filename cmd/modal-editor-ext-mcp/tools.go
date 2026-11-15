@@ -48,7 +48,9 @@ type toolError struct{ msg string }
 
 func (e *toolError) Error() string { return e.msg }
 
-func toolErrorf(format string, args ...any) error { return &toolError{msg: fmt.Sprintf(format, args...)} }
+func toolErrorf(format string, args ...any) error {
+	return &toolError{msg: fmt.Sprintf(format, args...)}
+}
 
 // tool は、1 つのツールの定義と実装である。
 type tool struct {
@@ -148,7 +150,9 @@ type mcpRange struct {
 
 func fromExtPos(p ext.Position) mcpPosition { return mcpPosition{Line: p.Line + 1, Column: p.Byte + 1} }
 
-func fromExtRange(r ext.Range) mcpRange { return mcpRange{Start: fromExtPos(r.Start), End: fromExtPos(r.End)} }
+func fromExtRange(r ext.Range) mcpRange {
+	return mcpRange{Start: fromExtPos(r.Start), End: fromExtPos(r.End)}
+}
 
 // toExtPos は、ツールの位置を拡張機能 API の位置にする。行と列が 1 未満なら誤りを返す。
 // 行と列がバッファの中にあるかは、本体が確かめる。

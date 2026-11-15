@@ -257,9 +257,8 @@ func (s *mcpSession) notification(m *wireMessage) {
 	if err := json.Unmarshal(m.Params, &p); err != nil || len(p.RequestID) == 0 {
 		return
 	}
-	key := string(normalizeID(p.RequestID))
 	s.mu.Lock()
-	cancel := s.inflight[key]
+	cancel := s.inflight[string(normalizeID(p.RequestID))]
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
