@@ -24,6 +24,9 @@ linters:
       enable-all: true
       disable:
         - fieldalignment # 構造体のフィールド順の最適化は読みやすさを優先して行わない
+    gosec:
+      excludes:
+        - G304 # 変数のパスでファイルを開くことの警告。エディタは利用者が指定したファイルを開くので除外する
     nolintlint:
       require-explanation: true
       require-specific: true

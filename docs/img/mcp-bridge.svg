@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 260" role="img" aria-label="エージェントは中継コマンドを標準入出力の MCP サーバーとして起動し、中継コマンドが起動中のエディタへソケットで接続する" xmlns="http://www.w3.org/2000/svg" width="1000" height="260" class="fig">
+<style>
+svg{--bg:#f4f6f8; --surface:#ffffff; --fg:#1b2430; --muted:#5a6675; --line:#d5dce4;
+  --accent:#0e5f70; --accent-soft:#deeef1; --accent-ink:#0b4a57;
+  --sev-high:#a93226; --high-soft:#f7e3e0;
+  --sev-mid:#a66a12; --mid-soft:#f8ecd6;
+  --sev-low:#2e6f4e; --low-soft:#e0efe6;
+  --good:#2e6f4e; --good-soft:#e0efe6;
+  --info:#3a5b8c; --info-soft:#e4eaf4;
+  --code-bg:#eef1f4; --tip-bg:#1b2430; --tip-fg:#f4f6f8;
+  --font-body:"BIZ UDPGothic","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Noto Serif JP",serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;}
+svg.fig{font-family:var(--font-body);font-size:12px;color:var(--fg)}
+svg .bx{fill:var(--surface);stroke:var(--fg);stroke-width:1.2}
+svg .bx-acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.3}
+svg .bx-warn{fill:var(--mid-soft);stroke:var(--sev-mid);stroke-width:1.3}
+svg .bx-bad{fill:var(--high-soft);stroke:var(--sev-high);stroke-width:1.3}
+svg .bx-good{fill:var(--good-soft);stroke:var(--good);stroke-width:1.3}
+svg .bx-info{fill:var(--info-soft);stroke:var(--info);stroke-width:1.3}
+svg .bx-ghost{fill:none;stroke:var(--muted);stroke-width:1.1;stroke-dasharray:5 4}
+svg .zone{fill:none;stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .zone-fill{fill:var(--bg);stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .ln{stroke:var(--fg);stroke-width:1.3;fill:none}
+svg .ln-acc{stroke:var(--accent);stroke-width:1.5;fill:none}
+svg .ln-bad{stroke:var(--sev-high);stroke-width:1.4;fill:none}
+svg .ln-warn{stroke:var(--sev-mid);stroke-width:1.4;fill:none}
+svg .ln-dash{stroke-dasharray:5 4}
+svg .ln-thin{stroke:var(--muted);stroke-width:1}
+svg text{fill:var(--fg)}
+svg .tx-m{fill:var(--muted);font-size:11px}
+svg .tx-b{font-weight:700}
+svg .tx-s{font-size:10.5px}
+svg .tx-acc{fill:var(--accent-ink);font-weight:700}
+svg .tx-bad{fill:var(--sev-high);font-weight:700}
+svg .tx-warn{fill:var(--sev-mid);font-weight:700}
+svg .tx-good{fill:var(--good);font-weight:700}
+svg .mk{fill:var(--fg)} svg .mk-acc{fill:var(--accent)} svg .mk-bad{fill:var(--sev-high)} svg .mk-warn{fill:var(--sev-mid)} svg .mk-muted{fill:var(--muted)}
+svg .tick{stroke:var(--muted);stroke-width:1}
+</style>
+<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker><marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker><marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-bad"/></marker></defs>
+<rect x="20" y="30" width="440" height="200" rx="8" class="zone"/>
+<text x="32" y="50" class="tx-m">エージェントのプロセスと、その子プロセス</text>
+<rect x="40" y="100" width="150" height="60" rx="6" class="bx"/>
+<text x="115" y="124" text-anchor="middle" class="tx-b">エージェント</text>
+<text x="115" y="144" text-anchor="middle" class="tx-m">MCP のクライアント</text>
+<rect x="290" y="100" width="150" height="60" rx="6" class="bx-acc"/>
+<text x="365" y="124" text-anchor="middle" class="tx-b">中継コマンド</text>
+<text x="365" y="144" text-anchor="middle" class="tx-m">メッセージを転送するだけ</text>
+<line x1="190" y1="130" x2="288" y2="130" class="ln-acc" marker-start="url(#ara)" marker-end="url(#ara)"/>
+<text x="204" y="110" class="tx-acc">MCP</text>
+<text x="204" y="122" class="tx-s">標準入出力</text>
+<text x="196" y="180" class="tx-m">子プロセスとして起動</text>
+
+<rect x="540" y="30" width="440" height="200" rx="8" class="zone"/>
+<text x="552" y="50" class="tx-m">エディタのプロセスと、その子プロセス</text>
+<rect x="560" y="100" width="150" height="60" rx="6" class="bx-acc"/>
+<text x="635" y="124" text-anchor="middle" class="tx-b">MCP の拡張機能</text>
+<text x="635" y="144" text-anchor="middle" class="tx-m">MCP のサーバー</text>
+<rect x="810" y="100" width="150" height="60" rx="6" class="bx"/>
+<text x="885" y="124" text-anchor="middle" class="tx-b">本体</text>
+<text x="885" y="144" text-anchor="middle" class="tx-m">バッファ、カーソル、診断</text>
+<line x1="710" y1="130" x2="808" y2="130" class="ln-acc" marker-start="url(#ara)" marker-end="url(#ara)"/>
+<text x="722" y="110" class="tx-acc">JSON-RPC</text>
+<text x="722" y="122" class="tx-s">標準入出力</text>
+<text x="716" y="180" class="tx-m">子プロセスとして起動</text>
+
+<line x1="440" y1="130" x2="558" y2="130" class="ln-acc" marker-start="url(#ara)" marker-end="url(#ara)"/>
+<text x="470" y="92" class="tx-acc">MCP</text>
+<text x="462" y="110" class="tx-s">Unix ドメイン</text>
+<text x="474" y="122" class="tx-s">ソケット</text>
+</svg>
