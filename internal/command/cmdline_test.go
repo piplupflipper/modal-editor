@@ -117,8 +117,8 @@ func TestCommandLineConfirm(t *testing.T) {
 	if got := s.buf.Text(); got != "a\nb\nc\nd" {
 		t.Fatalf("確認の前に消した: %q", got)
 	}
-	if r := s.Confirm(r.Confirm, false); r.Err != nil || len(r.Changes) != 0 {
-		t.Errorf("n: %+v", r)
+	if no := s.Confirm(r.Confirm, false); no.Err != nil || len(no.Changes) != 0 {
+		t.Errorf("n: %+v", no)
 	}
 	r = s.ExecuteCommandLine("3,1d")
 	r = s.Confirm(r.Confirm, true)

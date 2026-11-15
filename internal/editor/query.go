@@ -118,8 +118,6 @@ func (e *Editor) wait(q *exthost.Query, tag queryTag) *exthost.QueryResult {
 			e.applySize()
 			e.render()
 		case <-e.intrCh:
-		case f := <-e.inspect:
-			f()
 		}
 	}
 }
@@ -192,14 +190,6 @@ func fromExtTx(tx ext.Transaction) buffer.Transaction {
 	out := buffer.Transaction{BaseVersion: uint64(tx.BaseVersion), Edits: make([]buffer.Edit, len(tx.Edits))}
 	for i, ed := range tx.Edits {
 		out.Edits[i] = buffer.Edit{Range: fromExtRange(ed.Range), Text: ed.Text}
-	}
-	return out
-}
-
-func toExtEdits(eds []buffer.Edit) []ext.Edit {
-	out := make([]ext.Edit, len(eds))
-	for i, ed := range eds {
-		out[i] = ext.Edit{Range: toExtRange(ed.Range), Text: ed.Text}
 	}
 	return out
 }

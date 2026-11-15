@@ -106,6 +106,8 @@ type Editor struct {
 
 	keys      *keyQueue
 	interrupt atomic.Bool
+	// forwarded は、端末から読んで列に積んだキーの数である。テストが、送ったキーを処理し終えたかを知るために使う。
+	forwarded atomic.Int64
 	intrCh    chan struct{}
 	resizeCh  chan struct{}
 	size      atomic.Value // [2]int
@@ -255,9 +257,13 @@ func (e *Editor) Open(path string) error {
 
 // Run は、イベントループを動かす。:q で終了するか、端末の入力が閉じるか、ctx が終わるまで戻らない。
 // :q と端末の入力の終わりでは nil を、ctx の終わりでは ctx.Err() を返す。
+//
+// 拡張機能の起動は待たない。起動は exthost の goroutine で進み、その間もキーを処理する（NFR-04）。
+//
+// req: NFR-04
 func (e *Editor) Run(ctx context.Context) error {
 	if e.cur == nil {
-		e.newBuffer(buffer.New(""), "", "")
+		e.newBuffer(buffer.New("\n"), "", "")
 	}
 	w, h := e.term.Size()
 	e.setSize(w, h)
@@ -316,6 +322,7 @@ func (e *Editor) forwardInput() {
 			signal(e.intrCh)
 		}
 		e.keys.push(k)
+		e.forwarded.Add(1)
 	}
 }
 
@@ -349,6 +356,9 @@ func (e *Editor) do(f func()) {
 }
 
 // newBuffer は、バッファを開いた状態に加え、exthost へ知らせ、カーソルのあるバッファにする。
+// exthost は、fileType の契機を宣言した未起動の拡張機能をここで初めて起動する（FR-14）。
+//
+// req: FR-14
 func (e *Editor) newBuffer(b *buffer.Buffer, path, fileType string) *bufferState {
 	bs := &bufferState{
 		id:          e.nextID,
@@ -413,7 +423,8 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	b, err := buffer.ReadFile(abs)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		b = buffer.New("")
+		// 新しいファイルは、Vim の 'fixeol' と同じく、書き出すときに末尾の改行を付ける。
+		b = buffer.New("\n")
 	case err != nil:
 		return nil, fmt.Errorf("%s を開けない: %w", path, err)
 	}

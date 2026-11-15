@@ -140,7 +140,7 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 	b, err := buffer.ReadFile(bs.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		b = buffer.New("")
+		b = buffer.New("\n")
 	case err != nil:
 		return fmt.Errorf("%s を読めません: %w", filepath.Base(bs.path), err)
 	}

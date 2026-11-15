@@ -45,6 +45,9 @@ type remapper struct {
 }
 
 // newRemapper は、設定のキーマップから remapper を作る。表記の誤りのある項目は捨て、誤りを返す。
+// キーマップは本体が持つので、拡張機能の起動を待たずに効く（FR-41）。
+//
+// req: FR-41
 func newRemapper(cfg map[string]map[string]string) (*remapper, []error) {
 	r := &remapper{maps: map[mapMode][]mapping{}}
 	var errs []error
@@ -61,8 +64,12 @@ func newRemapper(cfg map[string]map[string]string) (*remapper, []error) {
 		}
 		for lhsText, rhsText := range cfg[name] {
 			lhs, err := editcmd.ParseKeys(lhsText)
-			if err != nil || len(lhs) == 0 {
-				errs = append(errs, fmt.Errorf("keymap.%s: キーの列 %q を読めない: %v", name, lhsText, err))
+			if err != nil {
+				errs = append(errs, fmt.Errorf("keymap.%s: キーの列 %q を読めない: %w", name, lhsText, err))
+				continue
+			}
+			if len(lhs) == 0 {
+				errs = append(errs, fmt.Errorf("keymap.%s: キーの列が空です", name))
 				continue
 			}
 			rhs, err := editcmd.ParseKeys(rhsText)
