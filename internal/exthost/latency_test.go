@@ -33,7 +33,11 @@ const (
 	latencyStartups = 100   // 起動から最初の応答までを測る回数
 	latencyWarmup   = 1000  // 起動済みの往復で、測る前に捨てる回数
 	latencyQueries  = 10000 // 起動済みの往復を測る回数
-	latencyEdits    = 5000  // 大きなバッファで、編集と往復の組を測る回数
+	latencyEdits    = 5000  // 大きなバッファで、間隔を置かずに編集と往復の組を測る回数
+
+	// 問い合わせの前に間隔（キー入力の間隔を模す）を置いて測る回数と、測る前に捨てる回数。
+	latencyGapQueries = 300
+	latencyGapWarmup  = 20
 )
 
 // latencyQueryTimeout は、計測の問い合わせの期限である。計測では期限を超えないことを前提にし、超えたら失敗にする。
@@ -50,9 +54,8 @@ func TestStage1Latency(t *testing.T) {
 	spec := lineSpec(t, dir)
 
 	t.Logf("GOMAXPROCS=%d GOOS=%s GOARCH=%s %s", runtime.GOMAXPROCS(0), runtime.GOOS, runtime.GOARCH, runtime.Version())
-	if load, err := os.ReadFile("/proc/loadavg"); err == nil {
-		t.Logf("loadavg before: %s", strings.TrimSpace(string(load)))
-	}
+	cpuBefore, cpuOK := readCPUTimes()
+	csBefore := readNonvoluntarySwitches()
 
 	t.Run("startup", func(t *testing.T) {
 		d := make([]time.Duration, 0, latencyStartups)
@@ -61,29 +64,131 @@ func TestStage1Latency(t *testing.T) {
 		}
 		logStats(t, "起動から最初の応答まで", d)
 	})
-	t.Run("warm", func(t *testing.T) {
+	t.Run("interval", func(t *testing.T) {
 		h := newLatencyHost(t, spec)
 		openText(t, h, 1, strings.Repeat(latencyLine+"\n", 99)+latencyLine)
 		p := ext.TextObjectResolveParams{Buffer: 1, Version: 1, ID: "line.inner", Cursor: ext.Position{Line: 50}}
 		for range latencyWarmup {
 			resolveOK(t, h, p)
 		}
-		d := make([]time.Duration, 0, latencyQueries)
-		for range latencyQueries {
-			start := time.Now()
-			resolveOK(t, h, p)
-			d = append(d, time.Since(start))
+		for _, iv := range []struct {
+			gap time.Duration
+			n   int
+		}{{0, latencyQueries}, {20 * time.Millisecond, latencyGapQueries}, {200 * time.Millisecond, latencyGapQueries}} {
+			for _, path := range []string{"Call", "Send"} {
+				d := make([]time.Duration, 0, iv.n)
+				for i := range iv.n + latencyGapWarmup {
+					time.Sleep(iv.gap)
+					start := time.Now()
+					if path == "Call" {
+						resolveOK(t, h, p)
+					} else {
+						sendOK(t, h, p)
+					}
+					if i >= latencyGapWarmup {
+						d = append(d, time.Since(start))
+					}
+				}
+				logStats(t, fmt.Sprintf("起動済みの往復（100 行）、間隔 %s、%s", iv.gap, path), d)
+			}
 		}
-		logStats(t, "起動済みの往復（100 行）", d)
 	})
 	for _, lines := range []int{10_000, 100_000} {
 		t.Run(fmt.Sprintf("edit-%d", lines), func(t *testing.T) {
 			measureEdits(t, spec, lines)
 		})
 	}
-	if load, err := os.ReadFile("/proc/loadavg"); err == nil {
-		t.Logf("loadavg after: %s", strings.TrimSpace(string(load)))
+	t.Run("open-1000000", func(t *testing.T) {
+		h := newLatencyHost(t, spec)
+		measureOpen(t, h, 1_000_000)
+	})
+
+	if after, ok := readCPUTimes(); ok && cpuOK {
+		busy := float64(after.busy-cpuBefore.busy) / float64(after.total-cpuBefore.total) * 100
+		t.Logf("マシン全体の CPU の使用率（計測の間の平均、/proc/stat）: %.1f%%", busy)
 	}
+	if csBefore >= 0 {
+		if csAfter := readNonvoluntarySwitches(); csAfter >= 0 {
+			t.Logf("このテストのプロセスの非自発的なコンテキストスイッチ（/proc/self/status）: %d 回", csAfter-csBefore)
+		}
+	}
+}
+
+// cpuTimes は、/proc/stat の cpu 行の合計と、そのうち idle と iowait を除いた時間（単位は USER_HZ）である。
+type cpuTimes struct{ busy, total uint64 }
+
+// readCPUTimes は、マシン全体の CPU 時間を読む。読めなければ ok は false である（Linux 以外を含む）。
+func readCPUTimes() (c cpuTimes, ok bool) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return c, false
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	fields := strings.Fields(line)
+	if len(fields) < 6 || fields[0] != "cpu" {
+		return c, false
+	}
+	for i, f := range fields[1:] {
+		var v uint64
+		if _, err := fmt.Sscan(f, &v); err != nil {
+			return c, false
+		}
+		c.total += v
+		if i != 3 && i != 4 { // idle と iowait
+			c.busy += v
+		}
+	}
+	return c, true
+}
+
+// readNonvoluntarySwitches は、このプロセスの非自発的なコンテキストスイッチの数を返す。読めなければ -1 である。
+func readNonvoluntarySwitches() int64 {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return -1
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "nonvoluntary_ctxt_switches:"); ok {
+			var n int64
+			if _, err := fmt.Sscan(strings.TrimSpace(v), &n); err == nil {
+				return n
+			}
+		}
+	}
+	return -1
+}
+
+// sendOK は、イベントループと同じ Host.Send の経路で問い合わせ、Events から結果を受け取る。
+func sendOK(t *testing.T, h *Host, p ext.TextObjectResolveParams) {
+	t.Helper()
+	if _, err := h.Send("line", ext.MethodTextObjectResolve, p, SendOptions{Timeout: latencyQueryTimeout}); err != nil {
+		t.Fatal(err)
+	}
+	for ev := range h.Events() {
+		qr, ok := ev.(*QueryResult)
+		if !ok {
+			continue
+		}
+		var res ext.TextObjectResolveResult
+		if err := qr.Decode(&res); err != nil {
+			t.Fatal(err)
+		}
+		if !res.OK || res.Version != p.Version {
+			t.Fatalf("result = %+v, want OK at version %d", res, p.Version)
+		}
+		return
+	}
+	t.Fatal("events channel closed")
+}
+
+// measureOpen は、lines 行のバッファを開いた未起動の拡張機能へ問い合わせ、起動、全文の送信、最初の応答までの時間を記録する。
+func measureOpen(t *testing.T, h *Host, lines int) {
+	t.Helper()
+	text := strings.Repeat(latencyLine+"\n", lines-1) + latencyLine
+	start := time.Now()
+	openText(t, h, 1, text)
+	resolveOK(t, h, ext.TextObjectResolveParams{Buffer: 1, Version: 1, ID: "line.inner", Cursor: ext.Position{Line: lines / 2}})
+	t.Logf("%d 行: 起動、全文の送信、最初の応答まで %s（1 回だけの値）", lines, time.Since(start))
 }
 
 // buildLineExtension は、cmd/modal-editor-ext-line をビルドし、宣言ファイルと一緒に一時ディレクトリへ置く。
@@ -168,18 +273,14 @@ func measureStartup(t *testing.T, spec Spec) time.Duration {
 }
 
 // measureEdits は、lines 行のバッファで、1 回の編集の差分の送信（ChangeBuffer）と、その直後の往復を合わせた時間を測る。
+// 間隔を置かずに続けて測る場合と、各組の前に 20 ms の間隔を置く場合を測る。
 // 編集は 2 種類を測る。行の中の 1 文字の挿入と削除を交互に行うもの（行の数が変わらない）と、
 // 1 行の挿入と削除を交互に行うもの（行の数が変わり、本体の写しと拡張機能の複製で行の配列の後ろ半分を動かす）である。
 func measureEdits(t *testing.T, spec Spec, lines int) {
 	t.Helper()
 	h := newLatencyHost(t, spec)
-	text := strings.Repeat(latencyLine+"\n", lines-1) + latencyLine
 	mid := lines / 2
-
-	start := time.Now()
-	openText(t, h, 1, text)
-	resolveOK(t, h, ext.TextObjectResolveParams{Buffer: 1, Version: 1, ID: "line.inner", Cursor: ext.Position{Line: mid}})
-	t.Logf("%d 行: 起動、全文の送信、最初の応答まで %s（1 回だけの値）", lines, time.Since(start))
+	measureOpen(t, h, lines)
 
 	version := uint64(1)
 	at := func(line, b int) buffer.Position { return buffer.Position{Line: line, Byte: b} }
@@ -191,24 +292,31 @@ func measureEdits(t *testing.T, spec Spec, lines int) {
 		{"行の中の編集", buffer.Edit{Range: buffer.Range{Start: at(mid, 1), End: at(mid, 1)}, Text: "x"}, buffer.Edit{Range: buffer.Range{Start: at(mid, 1), End: at(mid, 2)}}},
 		{"行を足す編集", buffer.Edit{Range: buffer.Range{Start: at(mid, 0), End: at(mid, 0)}, Text: latencyLine + "\n"}, buffer.Edit{Range: buffer.Range{Start: at(mid, 0), End: at(mid+1, 0)}}},
 	}
-	for _, k := range kinds {
-		d := make([]time.Duration, 0, latencyEdits)
-		for i := range latencyEdits + latencyWarmup/10 {
-			e := k.insert
-			if i%2 == 1 {
-				e = k.remove
-			}
-			start := time.Now()
-			if err := h.ChangeBuffer(1, buffer.Change{Before: version, After: version + 1, Edits: []buffer.Edit{e}}); err != nil {
-				t.Fatal(err)
-			}
-			version++
-			resolveOK(t, h, ext.TextObjectResolveParams{Buffer: 1, Version: ext.Version(version), ID: "line.inner", Cursor: ext.Position{Line: mid}})
-			if i >= latencyWarmup/10 {
-				d = append(d, time.Since(start))
-			}
+	for _, gap := range []time.Duration{0, 20 * time.Millisecond} {
+		n := latencyEdits
+		if gap > 0 {
+			n = latencyGapQueries
 		}
-		logStats(t, fmt.Sprintf("%d 行、%s、差分の送信と往復", lines, k.name), d)
+		for _, k := range kinds {
+			d := make([]time.Duration, 0, n)
+			for i := range n + latencyWarmup/10 {
+				e := k.insert
+				if i%2 == 1 {
+					e = k.remove
+				}
+				time.Sleep(gap)
+				start := time.Now()
+				if err := h.ChangeBuffer(1, buffer.Change{Before: version, After: version + 1, Edits: []buffer.Edit{e}}); err != nil {
+					t.Fatal(err)
+				}
+				version++
+				resolveOK(t, h, ext.TextObjectResolveParams{Buffer: 1, Version: ext.Version(version), ID: "line.inner", Cursor: ext.Position{Line: mid}})
+				if i >= latencyWarmup/10 {
+					d = append(d, time.Since(start))
+				}
+			}
+			logStats(t, fmt.Sprintf("%d 行、%s、間隔 %s、差分の送信と往復", lines, k.name, gap), d)
+		}
 	}
 }
 
