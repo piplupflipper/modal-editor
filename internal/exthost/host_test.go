@@ -1054,3 +1054,38 @@ func TestExecuteCommand(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 }
+
+// 子プロセスは本体の作業ディレクトリを引き継ぎ、宣言ファイルのディレクトリを環境変数 ext.EnvExtensionDir で受け取る（基本設計 5.1）。
+// 相対パスの Dir は絶対パスにして渡す。Dir が空なら空の値を渡す。
+func TestExtensionDirEnv(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs := t.TempDir()
+	for _, tc := range []struct {
+		name, dir, want string
+	}{
+		{"absolute", abs, abs},
+		{"relative", "testdata", filepath.Join(wd, "testdata")},
+		{"empty", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// 本体の環境にある同じ名前の変数は、宣言ファイルのディレクトリで上書きする。
+			t.Setenv(ext.EnvExtensionDir, "/stale")
+			spec := fakeSpec(t, "x", modeNormal, "") // command は絶対パスなので、Dir からは解決されない。
+			spec.Dir = tc.dir
+			hs := newHarness(t, []Spec{spec}, nil, true)
+			var got fakeEnv
+			if err := hs.h.Call(ctx, "x", methodEnv, nil, callTimeout, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !got.DirSet || got.Dir != tc.want {
+				t.Errorf("%s = %q (set %v), want %q", ext.EnvExtensionDir, got.Dir, got.DirSet, tc.want)
+			}
+			if got.Wd != wd {
+				t.Errorf("working directory = %q, want %q", got.Wd, wd)
+			}
+		})
+	}
+}

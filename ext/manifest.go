@@ -22,6 +22,7 @@ type Manifest struct {
 	Command string `json:"command"`
 	// Args は、Command に渡す引数の列である（基本設計 6.7 の宣言ファイルに足す項目）。
 	// スクリプトの拡張機能が、共通の実行ファイルにスクリプトのパスを渡すのに使う。無ければ省く。
+	// 本体は解決せずにそのまま渡す。相対パスの引数は、拡張機能が EnvExtensionDir のディレクトリから解決する（基本設計 5.1）。
 	Args []string `json:"args,omitempty"`
 	// SaveHook は、true なら、稼働中のときに保存の直前の buffer/willSave を受け取る（基本設計 6.7 の保存の流れ）。
 	// 保存の前に整形する LSP の拡張機能が使う。
@@ -31,6 +32,12 @@ type Manifest struct {
 	// Contributes は、拡張機能が追加する操作である。
 	Contributes Contributes `json:"contributes"`
 }
+
+// EnvExtensionDir は、本体が拡張機能の子プロセスに渡す環境変数の名前である（名前は仮。基本設計 5.1）。
+// 値は、宣言ファイルのあるディレクトリの絶対パスである。
+// 子プロセスの作業ディレクトリは本体のものを引き継ぐので、宣言ファイルの隣のファイルを探すときはこの値を使う。
+// スクリプトの拡張機能の実行ファイルは、args の相対パスのスクリプトをここから解決する（基本設計 6.6）。
+const EnvExtensionDir = "MODAL_EDITOR_EXTENSION_DIR"
 
 // ActivationKind は、起動の契機の種類である。
 type ActivationKind string

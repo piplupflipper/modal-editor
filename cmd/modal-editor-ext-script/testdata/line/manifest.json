@@ -1,0 +1,13 @@
+{
+  "id": "script-line",
+  "command": "./modal-editor-ext-script",
+  "args": ["line.go"],
+  "activation": [
+    { "on": "textObject", "id": "script.inner" }
+  ],
+  "contributes": {
+    "textObjects": [
+      { "id": "script.inner", "keys": "is" }
+    ]
+  }
+}
