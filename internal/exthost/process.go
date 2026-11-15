@@ -385,7 +385,7 @@ func startProcess(path string) (p *process, err error) {
 		return nil, err
 	}
 
-	cmd := exec.Command(path) //nolint:gosec // 起動するのは利用者が置いた宣言ファイルの command であり、拡張機能の起動がこのパッケージの役割である。
+	cmd := exec.Command(path)
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW

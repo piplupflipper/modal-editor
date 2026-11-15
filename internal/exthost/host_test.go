@@ -164,11 +164,11 @@ func (hs *harness) waitState(id string, st State) *StateChange {
 	return ev.(*StateChange)
 }
 
-// fakeState は、拡張機能の test/state を呼ぶ。
-func (hs *harness) fakeState(id string) fakeState {
+// fakeState は、拡張機能 x の test/state を呼ぶ。
+func (hs *harness) fakeState() fakeState {
 	hs.t.Helper()
 	var s fakeState
-	if err := hs.h.Call(id, methodState, nil, callTimeout, &s); err != nil {
+	if err := hs.h.Call("x", methodState, nil, callTimeout, &s); err != nil {
 		hs.t.Fatalf("test/state: %v", err)
 	}
 	return s
@@ -337,7 +337,7 @@ func TestBufferSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := hs.fakeState("x")
+	s := hs.fakeState()
 	want := map[ext.BufferID]fakeBuffer{
 		1: {Version: ext.Version(b1.Version()), Text: b1.Text()},
 		2: {Version: ext.Version(b2.Version()), Text: b2.Text()},
@@ -405,7 +405,7 @@ func TestResync(t *testing.T) {
 		t.Fatal(err)
 	}
 	hs.waitLog("extension requested resync")
-	s := hs.fakeState("x")
+	s := hs.fakeState()
 	if got := s.Buffers[7]; got.Text != "one\ntwo!" || got.Version != 1 {
 		t.Fatalf("after resync: %+v", got)
 	}
@@ -479,7 +479,7 @@ func TestCallTimeoutDiscardsLateResponse(t *testing.T) {
 		}
 	}
 
-	s := hs.fakeState("x")
+	s := hs.fakeState()
 	if !slices.Contains(s.Log, "cancelled:textObject/resolve:100") {
 		t.Fatalf("extension did not receive $/cancel: %v", s.Log)
 	}
@@ -596,7 +596,7 @@ func TestRestartAfterCrash(t *testing.T) {
 			}
 			hs.h.Activate(ext.ActivationTextObject, "x.obj")
 			hs.waitState("x", StateRunning)
-			before := hs.fakeState("x").PID
+			before := hs.fakeState().PID
 
 			if err := hs.h.Call("x", tc.method, nil, callTimeout, nil); !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("call %s: %v, want ErrUnavailable", tc.method, err)
@@ -614,7 +614,7 @@ func TestRestartAfterCrash(t *testing.T) {
 				t.Fatal(err)
 			}
 			hs.waitState("x", StateRunning)
-			s := hs.fakeState("x")
+			s := hs.fakeState()
 			if s.PID == before {
 				t.Fatal("extension was not restarted")
 			}
@@ -636,7 +636,7 @@ func TestKillHungExtension(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, func(c *Config) { c.PingTimeout = 300 * time.Millisecond }, true)
 	hs.h.Activate(ext.ActivationTextObject, "x.obj")
 	hs.waitState("x", StateRunning)
-	before := hs.fakeState("x").PID
+	before := hs.fakeState().PID
 
 	if err := hs.h.Call("x", methodHang, nil, 100*time.Millisecond, nil); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("call test/hang: %v, want ErrTimeout", err)

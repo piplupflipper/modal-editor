@@ -159,7 +159,7 @@ func (f *fakeExt) request(ctx context.Context, req *rpc.Request, reply rpc.Repli
 		_ = json.Unmarshal(req.Params, &p)
 		go func() {
 			var res ext.BufferEditResult
-			err := f.conn.Call(context.Background(), ext.MethodBufferEdit, p, &res)
+			err := f.conn.Call(ctx, ext.MethodBufferEdit, p, &res)
 			_ = reply(res, err)
 		}()
 	case methodNotify:

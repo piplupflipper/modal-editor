@@ -385,7 +385,8 @@ func (h *Host) setStateLocked(e *extension, st State, cause error) {
 	} else {
 		h.log.Info("extension state changed", "extension", id, "state", st.String())
 	}
-	h.pushLocked(&StateChange{Extension: id, State: st, Err: cause}, nil)
+	// 拡張機能から届いたイベントではない（r が nil）ので、上限で拒まれることは無い。
+	_ = h.pushLocked(&StateChange{Extension: id, State: st, Err: cause}, nil)
 }
 
 // startLocked は、拡張機能の状態を起動中にし、プロセスを管理する goroutine を起動する。
