@@ -169,6 +169,9 @@ type bufferState struct {
 
 	// decoBuilding は、decoView を別の goroutine で作っている途中かである（rebuildDecorations）。
 	decoBuilding bool
+	// decoGen は、拡張機能ごとの一覧の世代の番号である。一覧を消すたびに進める（removeDecorations）。
+	// バッファを読み込み直したときは進めない。読み込み直す前の表は、decoBuilt.buf で見分ける。
+	decoGen map[string]uint64
 }
 
 // New は、エディタを作る。拡張機能は起動しない（FR-14、NFR-04）。バッファは Open で開き、開かなければ Run が空のバッファを作る。

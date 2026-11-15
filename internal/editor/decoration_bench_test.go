@@ -2,8 +2,10 @@ package editor
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -90,3 +92,47 @@ func benchSet(b *testing.B, n int) {
 func BenchmarkSetDecorations20k(b *testing.B)  { benchSet(b, 20000) }
 func BenchmarkSetDecorations100k(b *testing.B) { benchSet(b, 100000) }
 func BenchmarkSetDecorations400k(b *testing.B) { benchSet(b, 400000) }
+
+// BenchmarkDecorationsLoopDelay は、10 万行の JSON の一覧が届いてから表を受け取るまでの間に、
+// イベントループに見立てた select の 1 ms ごとの tick（描画に見立てた 4 KiB の割り当てを伴う）が、
+// 発火からどれだけ遅れて処理されたかを測る。1 回が、一覧の到着から作り終えた表の受け取りまでである。
+// BenchmarkSetDecorations* は表を作り終えるのを待つ間を計らないので、別の goroutine の割り当てによる
+// ガベージコレクションの補助（assist）がイベントループに掛かる分は、こちらで見る。
+// 報告する値: tick の遅れの p99 と最大（ms）。前（表をイベントループの上で作った版）は、最大が 100 ms を超えた（#74）。
+//
+//	go test -run '^$' -bench DecorationsLoopDelay -benchtime 20x ./internal/editor
+func BenchmarkDecorationsLoopDelay(b *testing.B) {
+	const n = 100000
+	buf := buffer.New(jsonText(n))
+	bs := &bufferState{id: 1, buf: buf, decorations: map[string]decorationSet{}}
+	e := &Editor{bufs: []*bufferState{bs}, decoDone: make(chan decoBuilt), stop: make(chan struct{})}
+	defer close(e.stop)
+	lists := [][]ext.Decoration{jsonDecorations(n), jsonDecorations(n)}
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	var delays []time.Duration
+	var sink []byte
+	b.ResetTimer()
+	for i := range b.N {
+		e.setDecorations("treesitter", ext.DecorationSetParams{Buffer: 1, Version: ext.Version(buf.Version()), Decorations: lists[i%2]})
+		for done := false; !done; {
+			select {
+			case r := <-e.decoDone:
+				e.decorationsBuilt(r)
+				done = true
+			case at := <-tick.C:
+				delays = append(delays, time.Since(at))
+				sink = make([]byte, 4096)
+			}
+		}
+	}
+	b.StopTimer()
+	_ = sink
+	if len(delays) == 0 {
+		return
+	}
+	slices.Sort(delays)
+	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+	b.ReportMetric(ms(delays[len(delays)*99/100]), "p99-delay-ms")
+	b.ReportMetric(ms(delays[len(delays)-1]), "max-delay-ms")
+}

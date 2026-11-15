@@ -64,7 +64,7 @@ func TestDecorationsRebuiltOffLoop(t *testing.T) {
 	e.setDecos("x", b) // 作っている間に届いた。もう 1 つは作り始めない
 	e.setDecos("x", c)
 	r := built(t, e)
-	if !sameSources(r.src, []decoSource{{"x", a}}) {
+	if !sameSources(r.src, []decoSource{{ext: "x", decs: a}}) {
 		t.Fatalf("作った元 = %+v", r.src)
 	}
 	e.decorationsBuilt(r)
@@ -73,7 +73,7 @@ func TestDecorationsRebuiltOffLoop(t *testing.T) {
 		t.Fatalf("途中の表を使わないか、作り直さない（view=%p, building=%v）", bs.decoView, bs.decoBuilding)
 	}
 	r = built(t, e)
-	if !sameSources(r.src, []decoSource{{"x", c}}) {
+	if !sameSources(r.src, []decoSource{{ext: "x", decs: c}}) {
 		t.Fatalf("作り直した元 = %+v", r.src)
 	}
 	e.decorationsBuilt(r)
@@ -109,7 +109,7 @@ func TestDecorationsStaleBuildDropped(t *testing.T) {
 			t.Fatal("消した拡張機能の表を使った")
 		}
 		r := built(t, e)
-		if !sameSources(r.src, []decoSource{{"y", y}}) {
+		if !sameSources(r.src, []decoSource{{ext: "y", decs: y}}) {
 			t.Fatalf("作り直した元 = %+v", r.src)
 		}
 		e.decorationsBuilt(r)
@@ -117,6 +117,41 @@ func TestDecorationsStaleBuildDropped(t *testing.T) {
 			t.Fatal("作り直した表を使わない")
 		}
 	})
+	// 消した後に同じ拡張機能が一覧を送り直しても、消す前の一覧から作った表は使わない（PR #78 のレビューの必須 1）。
+	// tree-sitter の拡張機能が上限を超えて空の一覧を送り、次の編集で送り直したときと、拡張機能が再起動して送り直したときに起きる。
+	resend := []struct {
+		name  string
+		clear func(e *Editor)
+	}{
+		{"空にしてから送り直した", func(e *Editor) { e.setDecos("x", nil) }},
+		{"異常終了で消してから送り直した", func(e *Editor) { e.clearExtension("x") }},
+	}
+	for _, tt := range resend {
+		t.Run(tt.name, func(t *testing.T) {
+			e, bs := decoEditor(t)
+			a, b := decoList(0), decoList(1)
+			e.setDecos("x", a) // a の表を作り始める
+			tt.clear(e)        // 色を消す
+			e.setDecos("x", b) // 作っている途中なので、まだ作り始めない
+			r := built(t, e)   // a の表が届く
+			if !sameSources(r.src, []decoSource{{ext: "x", decs: a}}) {
+				t.Fatalf("作った元 = %+v", r.src)
+			}
+			e.decorationsBuilt(r)
+			if bs.decoView != nil {
+				t.Fatal("消す前の一覧の表を使った")
+			}
+			r = built(t, e)
+			if len(r.src) != 1 || &r.src[0].decs[0] != &b[0] {
+				t.Fatalf("作り直した元 = %+v", r.src)
+			}
+			e.decorationsBuilt(r)
+			if bs.decoView != r.view {
+				t.Fatal("送り直した一覧の表を使わない")
+			}
+			noBuild(t, e, bs)
+		})
+	}
 	t.Run("読み込み直した", func(t *testing.T) {
 		e, bs := decoEditor(t)
 		e.setDecos("x", decoList(0))
