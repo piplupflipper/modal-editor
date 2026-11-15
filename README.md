@@ -49,6 +49,7 @@ Go はコンパイル言語なので、型チェックはコンパイルの一�
 | `cmd/modal-editor-ext-line/` | 標準の拡張機能（行のテキストオブジェクト）の実行ファイルと宣言ファイル |
 | `cmd/modal-editor-ext-script/` | スクリプトの拡張機能（利用者が置く Go のソースファイル）を yaegi で実行する実行ファイル。宣言ファイルの `args` でスクリプトのパスを受け取る。スクリプトの書き方と yaegi の制限はパッケージの doc（`go doc ./cmd/modal-editor-ext-script`）にある |
 | `cmd/modal-editor-ext-treesitter/` | 標準の拡張機能（tree-sitter による構文ハイライト）の実行ファイルと宣言ファイル。cgo を使い、ビルドに C コンパイラが要る |
+| `cmd/modal-editor-ext-dap/` | 標準の拡張機能（DAP によるデバッグ）の実行ファイルと宣言ファイル。デバッグアダプター（既定は delve の `dlv dap`）を子プロセスとして起動する |
 | `cmd/reqtrace/` | 要件ごとの進捗を生成するツール |
 | `internal/` | このリポジトリの中だけで使うパッケージ |
 | `docs/` | 要件定義などの文書 |
