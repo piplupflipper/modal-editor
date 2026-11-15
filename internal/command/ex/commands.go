@@ -13,6 +13,7 @@ const (
 	rangeNone    rangeKind = iota // 範囲を取らない
 	rangeCurrent                  // 範囲を取り、省略すると現在の行
 	rangeWhole                    // 範囲を取り、省略するとバッファ全体
+	rangeWindow                   // 範囲にウィンドウの番号を取る（:q）。ウィンドウは 1 つなので、値は使わない
 )
 
 // barKind は、コマンドが "|" をどう扱うかを表す。
@@ -46,6 +47,7 @@ type invocation struct {
 	// line1 と line2 は、範囲の始まりと終わりの行（0 始まり、両端を含む）である。rng が rangeNone のコマンドでは意味を持たない。
 	line1, line2 int
 	rangeCount   int    // 書かれていたアドレスの数。0 なら範囲は省略されている
+	rangePos     int    // 範囲の始まりの位置
 	arg          string // コマンド名と "!" の後の、先頭の空白を除いた引数。barSplit のコマンドでは "|" の手前まで
 	argPos       int
 	// next と nextPos は、"|" の後に続くコマンドとその位置である。hasNext が false なら続くコマンドは無い。
@@ -61,10 +63,10 @@ var commands []command
 
 func init() {
 	commands = []command{
-		{name: "write", min: 1, bang: true, rng: rangeNone, run: runWrite},
-		{name: "wq", min: 2, bang: true, rng: rangeNone, run: runWriteQuit},
-		{name: "xit", min: 1, bang: true, rng: rangeNone, run: runXit},
-		{name: "quit", min: 1, bang: true, rng: rangeNone, run: runQuit},
+		{name: "write", min: 1, bang: true, rng: rangeWhole, run: runWrite},
+		{name: "wq", min: 2, bang: true, rng: rangeWhole, run: runWriteQuit},
+		{name: "xit", min: 1, bang: true, rng: rangeWhole, run: runXit},
+		{name: "quit", min: 1, bang: true, rng: rangeWindow, run: runQuit},
 		{name: "edit", min: 1, bang: true, rng: rangeNone, run: runEdit},
 		{name: "substitute", min: 1, rng: rangeCurrent, inGlobal: true, bar: barSelf, run: runSubstitute},
 		{name: "global", min: 1, bang: true, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal},
@@ -82,6 +84,16 @@ func lookup(name string) *command {
 		if len(name) >= cmd.min && strings.HasPrefix(cmd.name, name) {
 			return cmd
 		}
+	}
+	return nil
+}
+
+// wholeRange は、:w、:wq、:x の範囲がバッファ全体でなければ E319 を返す。
+// 範囲を省いたとき、:%w、:1,$w はバッファ全体である。Action は書き出す行の範囲を持たないので、一部の行（:2,3w）の書き出しは断る。
+// 行数を超えた範囲（:5w）と逆順の範囲（:3,1w）は、ここに来る前に E16 と E493 にしている（Vim 9.1 と同じ）。
+func (c *execCtx) wholeRange(inv *invocation) error {
+	if inv.line1 != 0 || inv.line2 != c.b.LineCount()-1 {
+		return errAt(inv.rangePos, codeNotAvailable, "一部の行の書き出しは使えません（範囲を省くか %% にします）")
 	}
 	return nil
 }
@@ -130,6 +142,9 @@ func (c *execCtx) addWrite(file string, force bool) {
 
 // req: FR-08
 func runWrite(c *execCtx, inv *invocation) error {
+	if err := c.wholeRange(inv); err != nil {
+		return err
+	}
 	file, err := fileArg(inv)
 	if err != nil {
 		return err
@@ -140,6 +155,9 @@ func runWrite(c *execCtx, inv *invocation) error {
 
 // req: FR-08
 func runWriteQuit(c *execCtx, inv *invocation) error {
+	if err := c.wholeRange(inv); err != nil {
+		return err
+	}
 	file, err := fileArg(inv)
 	if err != nil {
 		return err
@@ -153,6 +171,9 @@ func runWriteQuit(c *execCtx, inv *invocation) error {
 //
 // req: FR-08
 func runXit(c *execCtx, inv *invocation) error {
+	if err := c.wholeRange(inv); err != nil {
+		return err
+	}
 	file, err := fileArg(inv)
 	if err != nil {
 		return err

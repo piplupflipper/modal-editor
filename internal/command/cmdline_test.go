@@ -51,6 +51,25 @@ func TestExecuteCommandLine(t *testing.T) {
 	}
 }
 
+// 範囲の ";" で移したカーソルは、誤りで終わっても残り、列は元のバイトの位置を行に収めて保つ（Vim 9.1 と同じ、issue #57）。
+//
+// req: FR-01
+func TestCommandLineSemicolonCursor(t *testing.T) {
+	s := setup(t, "  aaaa\n  bbbbbbb\n  ccc|cccc\n  dd\ne")
+	if r := s.ExecuteCommandLine("2;9d"); r.Err == nil {
+		t.Fatal("2;9d: want E16")
+	}
+	if got := s.Cursor().String(); got != "1:5" {
+		t.Errorf("2;9d: cursor = %s, want 1:5", got)
+	}
+	if r := s.ExecuteCommandLine("4;/zzz/d"); r.Err == nil {
+		t.Fatal("4;/zzz/d: want E486")
+	}
+	if got := s.Cursor().String(); got != "3:3" {
+		t.Errorf("4;/zzz/d: cursor = %s, want 3:3", got)
+	}
+}
+
 // ビジュアルモードの : は、選択した行の範囲 '<,'> を入力した状態で始まり、その範囲に働く。
 //
 // req: FR-01

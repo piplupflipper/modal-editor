@@ -78,13 +78,17 @@ type lineRange struct {
 	pos1, pos2   int // line1、line2 を書いたアドレスの始まりの位置（誤りの位置に使う）
 }
 
-// check は、line1 と line2 が lines 行のバッファの中（0 から lines まで）にあることを確かめる。
-// 行数を超えていれば、そのアドレスの位置で E16 を返す。
-// 範囲を伴うコマンド（:3d、:1,4s/a/b/）と、範囲の後に "|" が続くとき（:4|）に使う。Vim 9.1 の invalid_range と同じである。
+// check は、line1 と line2 が lines 行のバッファの中（0 から lines まで）にあり、line1 が line2 を超えないことを確かめる。
+// 外れていれば E16 を返す。位置は、行数を超えたときはそのアドレス、逆順のときは範囲の始まりである。
+// 範囲を伴うコマンド（:3d、:1,4s/a/b/）と、範囲の後に "|" が続くとき（:4|、:3,1|）に使う。Vim 9.1 の invalid_range と同じである。
+// 範囲を伴うコマンドの逆順の範囲は、check の前に E493 の確認で扱う（runOne）。
+// :q のようにウィンドウの番号を取るコマンドでは、lines にウィンドウの数を渡す。
 //
 // req: FR-08
 func (r lineRange) check(lines int) error {
 	switch {
+	case r.line1 > r.line2:
+		return errAt(r.pos, codeInvalidRange, "範囲が正しくありません")
 	case r.line1 > lines:
 		return errAt(r.pos1, codeInvalidRange, "範囲が正しくありません")
 	case r.line2 > lines:
@@ -93,14 +97,66 @@ func (r lineRange) check(lines int) error {
 	return nil
 }
 
-// parseRange は、コマンド名の前の範囲を読み、行番号に評価する。
+// addrKind は、範囲のアドレスが何を数えるかを表す。Vim の addr_type に当たる。
+type addrKind int
+
+const (
+	// addrLines は、アドレスがバッファの行を数えることを表す（:d、:s、:w など）。
+	addrLines addrKind = iota
+	// addrWindows は、アドレスがウィンドウの番号を数えることを表す（:q）。
+	// このエディタのウィンドウは 1 つなので、"." と "$" は 1 を指し、検索とマークと "%" は E16 にする（Vim 9.1 で 1 つのウィンドウのときと同じ）。
+	addrWindows
+)
+
+// windowCount は、ウィンドウの数である。このエディタは画面を分割しないので 1 である。
+const windowCount = 1
+
+// skipRange は、s の先頭の範囲を、評価せずに読み飛ばす。Vim 9.1 の skip_range と同じ規則で読む。
+// 範囲を評価する前にコマンド名を知り、アドレスが行とウィンドウのどちらを数えるかを決めるのに使う。
+func skipRange(s *scanner) {
+	for !s.eof() && strings.IndexByte(" \t0123456789.$%'/?-+,;\\", s.peek()) >= 0 {
+		switch ch := s.peek(); ch {
+		case '\\':
+			if s.i+1 >= len(s.src) || strings.IndexByte("/?&", s.src[s.i+1]) < 0 {
+				return
+			}
+			s.next()
+		case '\'':
+			s.next()
+		case '/', '?':
+			s.next()
+			for !s.eof() && s.peek() != ch {
+				if s.peek() == '\\' && s.i+1 < len(s.src) {
+					s.next()
+				}
+				s.next()
+			}
+		}
+		if !s.eof() {
+			s.next()
+		}
+	}
+	s.skipBlanksAndColons()
+}
+
+// parseRange は、コマンド名の前の範囲を読み、kind の数え方で行番号（またはウィンドウの番号）に評価する。
 // 3 つ以上のアドレスがあれば、Vim と同じく最後の 2 つを使う。
+// ";" は、次のアドレスを読む前に、カーソルの行を前のアドレスへ移す（行数を超えた行は最後の行に丸める）。
+// 移したカーソルは、範囲の後で誤りになっても戻さない（Vim 9.1 と同じ。:2;9d は E16 で失敗し、カーソルは 2 行目に残る）。
+// 移したときの Result.Move は CursorKeepColumn で、後に続くコマンドがカーソルを置けば、そちらで上書きする。
+// kind が addrWindows のときも ";" はカーソルの行を移す（Vim 9.1 で :2;3q が 2 行目へ移るのと同じ）。
 //
 // req: FR-08
-func (c *execCtx) parseRange(s *scanner) (lineRange, error) {
+func (c *execCtx) parseRange(s *scanner, kind addrKind) (lineRange, error) {
 	r := lineRange{pos: s.pos()}
 	cur := c.cursor + 1
+	if kind == addrWindows {
+		cur = windowCount
+	}
 	if s.peek() == '%' {
+		if kind == addrWindows {
+			return lineRange{}, errAt(s.pos(), codeInvalidRange, "範囲が正しくありません")
+		}
 		s.next()
 		r.line1, r.line2, r.count = 1, c.b.LineCount(), 2
 		r.pos1, r.pos2 = r.pos, r.pos
@@ -108,7 +164,7 @@ func (c *execCtx) parseRange(s *scanner) (lineRange, error) {
 	}
 	for {
 		start := s.pos()
-		lnum, has, err := c.parseAddress(s, cur)
+		lnum, has, err := c.parseAddress(s, cur, kind)
 		if err != nil {
 			return lineRange{}, err
 		}
@@ -130,7 +186,11 @@ func (c *execCtx) parseRange(s *scanner) (lineRange, error) {
 		case ';':
 			s.next()
 			// 現在の行を移すときは、行数を超えた行を最後の行に丸める（Vim の check_cursor と同じ。"10;/pat/" は最後の行から探す）。
-			cur = min(max(lnum, 1), c.b.LineCount())
+			line := min(max(lnum, 1), c.b.LineCount())
+			c.setCursor(line-1, CursorKeepColumn)
+			if kind == addrLines {
+				cur = line
+			}
 		default:
 			if r.count == 1 {
 				r.line1 = r.line2
@@ -151,13 +211,19 @@ func (c *execCtx) parseRange(s *scanner) (lineRange, error) {
 
 // parseAddress は、アドレスを 1 つ読む。cur は "." が指す行（1 始まり）である。
 // アドレスが無ければ has は false である。
+// kind が addrWindows なら、"$" はウィンドウの数を指し、検索とマークは E16 にする。
 // 行が負になれば E16 で失敗する。行数を超えた行は誤りにせず、そのまま返す（扱いは lineRange.check の呼び出し側が決める）。
 // "+n" と "-n" の途中で範囲の外に出ても、最後の値が範囲の中なら誤りにしない（3 行のバッファで "4-2" は 2 行目。Vim と同じ）。
 //
 // req: FR-08
-func (c *execCtx) parseAddress(s *scanner, cur int) (lnum int, has bool, err error) {
+func (c *execCtx) parseAddress(s *scanner, cur int, kind addrKind) (lnum int, has bool, err error) {
 	start := s.pos()
 	switch ch := s.peek(); {
+	case kind == addrWindows && (ch == '/' || ch == '?' || ch == '\''):
+		return 0, false, errAt(start, codeInvalidRange, "範囲が正しくありません")
+	case kind == addrWindows && ch == '$':
+		s.next()
+		lnum, has = windowCount, true
 	case ch == '.':
 		s.next()
 		lnum, has = cur, true

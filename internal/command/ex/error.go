@@ -37,11 +37,16 @@ const (
 	codeTrailing         = "E488" // 余計な文字が続く
 	codeNotFound         = "E486" // パターンが見つからない
 	codeNotEditorCommand = "E492" // コマンドではない
+	codeBackwardsRange   = "E493" // 逆順の範囲
 )
 
 // CodeNoWrite は、未保存の変更があるので :q や :e を実行できないことを表すエラー番号である。
 // 呼び出し側は、errors.As で *Error を取り出し、Code と比べて判定できる。
 const CodeNoWrite = codeNoWrite
+
+// CodeBackwardsRange は、逆順の範囲（:4,2d）で確認が要ることを表すエラー番号である。
+// このとき Result.Confirm が nil でなければ、確認を得て Confirm.Resume で続きを実行できる。
+const CodeBackwardsRange = codeBackwardsRange
 
 func errAt(pos int, code, format string, args ...any) *Error {
 	return &Error{Code: code, Pos: pos, Msg: fmt.Sprintf(format, args...)}
