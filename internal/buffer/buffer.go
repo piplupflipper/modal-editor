@@ -250,6 +250,14 @@ func (b *Buffer) HasTrailingNewline() bool {
 	return b.eol
 }
 
+// SetTrailingNewline は、読み込んだテキストの最後の行の後に改行があったかどうか（HasTrailingNewline。Vim の 'endofline'）を設定する。
+// テキストを変えずに、ファイルを読み直したのと同じ末尾の改行の記録にするときに呼ぶ（拡張機能の buffer/edit の endOfLine）。
+// 設定はアンドゥの履歴に記録しない（Vim の 'endofline' も、アンドゥで戻らない）。
+// 設定はバージョン番号、アンドゥの履歴、保存済みの記録を変えない。
+func (b *Buffer) SetTrailingNewline(on bool) {
+	b.eol = on
+}
+
 // SetFixEndOfLine は、書き出すときに末尾の改行を補うかどうか（Vim の 'fixendofline'）を設定する。
 // New で作ったバッファでは有効である。
 // 設定はバージョン番号、アンドゥの履歴、保存済みの記録を変えない。

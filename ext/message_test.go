@@ -109,6 +109,9 @@ func TestMessageJSON(t *testing.T) {
 	})
 	t.Run("buffer/edit", func(t *testing.T) {
 		roundTrip(t, BufferEditParams{Buffer: 1, Transaction: tx}, `{"buffer":1,"transaction":`+txJSON+`}`)
+		yes, no := true, false
+		roundTrip(t, BufferEditParams{Buffer: 1, Transaction: tx, NoLines: &yes, EndOfLine: &no},
+			`{"buffer":1,"transaction":`+txJSON+`,"noLines":true,"endOfLine":false}`)
 		roundTrip(t, BufferEditResult{Applied: false, Version: 4}, `{"applied":false,"version":4}`)
 	})
 	t.Run("decoration/set", func(t *testing.T) {

@@ -125,8 +125,29 @@ func (e *Editor) editRequest(ev *exthost.EditRequest) {
 	case err != nil:
 		_ = ev.ReplyError(invalidParams("%v", err))
 	default:
+		e.applyLineState(bs, ev.Params)
 		_ = ev.Reply(ext.BufferEditResult{Applied: ch.Before != ch.After, Version: ext.Version(bs.buf.Version())})
 	}
+}
+
+// applyLineState は、buffer/edit の noLines と endOfLine を、適用した後のバッファへ反映する（ext.BufferEditParams）。
+// 外から書き換えたファイルを :e で読み直したのと同じ状態（reload）にするためのもので、変更としては扱わない。
+// 拡張機能へ送る finalNewline が変われば、buffer/open で送り直させる。
+func (e *Editor) applyLineState(bs *bufferState, p ext.BufferEditParams) {
+	if p.NoLines == nil && p.EndOfLine == nil {
+		return
+	}
+	if p.EndOfLine != nil {
+		bs.buf.SetTrailingNewline(*p.EndOfLine)
+	}
+	switch {
+	case p.NoLines == nil:
+	case *p.NoLines:
+		bs.buf.MarkNoLines()
+	default:
+		bs.buf.MarkHasLines()
+	}
+	e.syncFinalNewline(bs)
 }
 
 // applyExternal は、利用者の操作でない編集（buffer/edit、buffer/willSave）を、アンドゥの 1 単位として適用する。

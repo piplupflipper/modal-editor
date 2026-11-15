@@ -568,6 +568,67 @@ func TestHoldLimit(t *testing.T) {
 	})
 }
 
+// buffer/edit の noLines と endOfLine は、適用した後のバッファの行の無い状態と末尾の改行の記録を変え、書き出しの結果に効く。
+// 拡張機能へは、変わった finalNewline を buffer/open で送り直す。
+// 書き出しの結果は、Vim 9.1 で外から書き換えたファイルを :e! で読み直して :w したもの（"" は ""、"\n" は "\n"）と同じである。
+func TestExtensionEditLineState(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "x\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	read := func(name string) string {
+		b, _ := os.ReadFile(filepath.Join(dir, name))
+		return string(b)
+	}
+
+	// 全文を消して行の無いバッファにすると、空のファイルとして書き出す。
+	h.keys(`\z`)
+	h.eventually("fake.empty", func() bool { return h.e.message.Text == "fake.empty applied=true v1 err=<nil>" })
+	h.keys(`\e`)
+	h.eventually("fake.empty の後の finalNewline", func() bool { return h.e.message.Text == "b1 finalNewline=false" })
+	h.keys(":w<CR>")
+	h.settle()
+	if got := read("a.txt"); got != "" {
+		t.Errorf("fake.empty の後の :w: a.txt = %q, want %q", got, "")
+	}
+
+	// 編集を持たずに行の無いバッファでなくすと、バージョン番号は変わらず、空の行 1 つとして書き出す。
+	h.keys(`\n`)
+	h.eventually("fake.lines", func() bool { return h.e.message.Text == "fake.lines applied=false v1 err=<nil>" })
+	h.keys(`\e`)
+	h.eventually("fake.lines の後の finalNewline", func() bool { return h.e.message.Text == "b1 finalNewline=true" })
+	h.keys(":w<CR>")
+	h.settle()
+	if got := read("a.txt"); got != "\n" {
+		t.Errorf("fake.lines の後の :w: a.txt = %q, want %q", got, "\n")
+	}
+
+	// 行の無い記録はアンドゥの履歴の位置に付くので、その位置で外した記録は、アンドゥとリドゥでその位置へ戻っても外れたままである。
+	h.keys("u")
+	h.settle()
+	h.keys("<C-r>")
+	h.settle()
+	var noLines bool
+	h.e.do(func() { noLines = h.e.cur.buf.NoLines() })
+	if noLines {
+		t.Error("fake.lines で外した記録が、アンドゥとリドゥで戻った")
+	}
+
+	// endOfLine は末尾の改行の記録を変える。末尾の改行を補う設定を無効にしたバッファで確かめる。
+	h.e.do(func() {
+		b := buffer.New("y")
+		b.SetFixEndOfLine(false)
+		h.e.newBuffer(b, filepath.Join(dir, "b.txt"), "")
+	})
+	h.keys(`\o`)
+	h.eventually("fake.endofline", func() bool { return h.e.message.Text == "fake.endofline applied=false v0 err=<nil>" })
+	h.keys(`\e`)
+	h.eventually("fake.endofline の後の finalNewline", func() bool { return h.e.message.Text == "b2 finalNewline=true" })
+	h.keys(":w<CR>")
+	h.settle()
+	if got := read("b.txt"); got != "y\n" {
+		t.Errorf("fake.endofline の後の :w: b.txt = %q, want %q", got, "y\n")
+	}
+}
+
 // 拡張機能へ送る buffer/open の finalNewline は、バッファの FinalNewline（末尾の改行の有無と、末尾の改行を補う設定）である。
 // 末尾の改行の無いファイルも、既定の設定では改行を付けて書き出すので true になる。
 func TestFinalNewlineToExtension(t *testing.T) {

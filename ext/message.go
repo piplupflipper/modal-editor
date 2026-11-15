@@ -332,9 +332,25 @@ type ShutdownParams struct{}
 
 // BufferEditParams は、buffer/edit の params である。
 // 補完の確定や整形など、拡張機能の側から始める編集に使う。
+//
+// NoLines と EndOfLine は、テキストの編集では表せない、書き出したときの末尾の改行を決める状態（基本設計 4.1）を変える。
+// 外から書き換えたファイルを読み直したのと同じ状態にするために使う（ACP の fs/write_text_file。基本設計 6.5）。
+// 本体は、BaseVersion が現在のバージョン番号と一致した場合だけ、Edits を適用した後にこの 2 つを反映する。
+// Edits が空でも反映する。そのときバージョン番号は変わらず、result の Applied は false になる。
+// 反映して FinalNewline（BufferOpenParams）が変わったら、本体は buffer/open を送り直す。
 type BufferEditParams struct {
 	Buffer      BufferID    `json:"buffer"`
 	Transaction Transaction `json:"transaction"`
+	// NoLines は、Edits を適用した後のバッファを、行の無いバッファ（Vim の --No lines in buffer--）にするかどうかである。
+	// true なら行の無いバッファにし、書き出すと空のファイルになる。適用した後のテキストが空でなければ、true は無視する。
+	// false なら、テキストが空でも行の無いバッファでなくする（空の行 1 つとして書き出す）。
+	// 行の無いバッファの記録はアンドゥの履歴の位置に付き、アンドゥとリドゥでその位置へ戻ると、また行の無いバッファになる。
+	// 省いた場合（nil）は変えない。
+	NoLines *bool `json:"noLines,omitempty"`
+	// EndOfLine は、読み込んだファイルの最後の行の後に改行があったものとして扱うかどうか（Vim の 'endofline'）である。
+	// 本体は、これが true か、末尾の改行を補う設定（Vim の 'fixendofline'）が有効なら、書き出すときに最後の行の後に改行を付ける。
+	// アンドゥでは戻らない。省いた場合（nil）は変えない。
+	EndOfLine *bool `json:"endOfLine,omitempty"`
 }
 
 // BufferEditResult は、buffer/edit の result である。

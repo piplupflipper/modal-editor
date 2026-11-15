@@ -165,38 +165,40 @@ func (w openAsBuffer) writeUnopened(ctx context.Context, path, content string) e
 // writeBuffer は、バッファ id の全文を content に置き換え、保存の前の整形を通さずに書き出す（基本設計 6.5）。
 // 複製がバージョン番号 version 以降になるのを待ってから編集を作る。
 //
-// バッファのテキストは、書き出したファイルが content と一致するように、複製の FinalNewline に合わせて作る（bufferText）。
+// バッファは、content のファイルを本体が読み直したのと同じ状態にする（fileState）。
+// テキストに加えて、行の無いバッファかどうかと末尾の改行の記録を buffer/edit の noLines と endOfLine で送る。
+// テキストが同じでも、この 2 つを送るために buffer/edit を送る。
 //
 // 本体のバッファが編集を作った後に変わっていて、編集か保存が通らなければ、新しい複製を待って writeAttempts 回まで試す。
 // 待つ間か待つ前にバッファが閉じられたら、server.ErrBufferClosed を返す。
 //
 // req: FR-34
 func (c *client) writeBuffer(ctx context.Context, id ext.BufferID, version ext.Version, content string) error {
+	text, noLines, endOfLine := fileState(content)
 	for range writeAttempts {
 		b, err := c.srv.WaitBuffer(ctx, id, version)
 		if err != nil {
 			return err
 		}
-		text := bufferText(content, b.Text(), b.FinalNewline())
 		base := b.Version()
+		p := ext.BufferEditParams{Buffer: id, Transaction: ext.Transaction{BaseVersion: base}, NoLines: &noLines, EndOfLine: &endOfLine}
 		if b.Text() != text {
 			last := b.LineCount() - 1
-			res, eerr := c.srv.Edit(ctx, ext.BufferEditParams{Buffer: id, Transaction: ext.Transaction{
-				BaseVersion: base,
-				Edits: []ext.Edit{{
-					Range: ext.Range{End: ext.Position{Line: last, Byte: len(b.Line(last))}},
-					Text:  text,
-				}},
-			}})
-			if eerr != nil {
-				return fmt.Errorf("buffer/edit: %w", eerr)
-			}
-			if !res.Applied {
-				version = res.Version
-				continue
-			}
-			base = res.Version
+			p.Transaction.Edits = []ext.Edit{{
+				Range: ext.Range{End: ext.Position{Line: last, Byte: len(b.Line(last))}},
+				Text:  text,
+			}}
 		}
+		res, err := c.srv.Edit(ctx, p)
+		if err != nil {
+			return fmt.Errorf("buffer/edit: %w", err)
+		}
+		// Edits が空なら、本体はバージョン番号を進めず Applied を false で答える。版が進んでいなければ反映されている。
+		if !res.Applied && res.Version != base {
+			version = res.Version
+			continue
+		}
+		base = res.Version
 		sres, err := c.srv.SaveBuffer(ctx, ext.BufferSaveParams{Buffer: id, Version: &base, SkipHooks: true})
 		if err != nil {
 			return fmt.Errorf("buffer/save: %w", err)
@@ -213,33 +215,13 @@ func (c *client) writeBuffer(ctx context.Context, id ext.BufferID, version ext.V
 	return fmt.Errorf("buffer %d kept changing while writing; gave up after %d attempts", id, writeAttempts)
 }
 
-// bufferText は、fs/write_text_file の content を書き出すために、バッファのテキストをどうするかを返す。
-// cur は複製の現在のテキスト、finalNewline は複製の FinalNewline（本体が書き出すときに最後の行の後に改行を足すか）である。
+// fileState は、fs/write_text_file の content のファイルを本体が読み直したときの、バッファの状態を返す（internal/buffer の New と同じ規則）。
+// text は位置を数えるもとのテキスト（末尾の改行 1 つを除いたもの）、noLines は行の無いバッファか（content が空）、
+// endOfLine は末尾の改行の記録（content が改行で終わるか空）である。
 //
-// 拡張機能 API には FinalNewline を変える手段が無い（buffer/edit はテキストだけを変える）ので、テキストの側で合わせる。
-//
-//   - finalNewline が true: 本体が改行を足すので、content の末尾の改行 1 つを除く
-//   - finalNewline が false: 本体は改行を足さないので、content をそのまま使う。末尾の改行は空の最後の行として残り、
-//     書き出したファイルは content と一致する
-//
-// 複製が空で finalNewline が false のバッファは、行の無いバッファ（本体が無いファイルを開いたときの空のバッファなど）として、
-// true と同じに扱う。行の無いバッファは空のファイルとして書き出すために false で届くが、編集で行ができると、
-// 本体の末尾の改行を補う設定（Vim の 'fixendofline'。既定で有効）に従って改行を足すようになるためである。
-//
-// finalNewline が true のバッファへ、改行で終わらない空でない content を書くと、書き出したファイルの末尾に改行が付く。
-// これは末尾の改行を補う設定のとおりの結果で、Vim で content のファイルを読み直して書き出したとき（'fixendofline'）と同じである。
-//
-// 次の 2 つは Vim と結果が違う。buffer/edit では、行の無いバッファを作ることも、行の無いバッファでなくすこと（テキストを変えずに）もできないためである。
-//
-//   - 行のあるバッファ（"x\n" のファイルなど）へ空の content を書くと、空の行 1 つのバッファになり、ファイルは "\n" になる。
-//     Vim は空のファイルを行の無いバッファとして読むので、書き出すと空のファイルになる
-//   - 行の無いバッファ（無いファイルや空のファイルを開いたもの）へ "\n" を書くと、テキストは空のまま変わらず、ファイルは空になる。
-//     Vim では "\n" のファイルは空の行 1 つで、書き出すと "\n" になる
-//
-// Vim に揃えるには、拡張機能 API に行の無いバッファか FinalNewline を変える手段が要る（別 issue）。
-func bufferText(content, cur string, finalNewline bool) string {
-	if finalNewline || cur == "" {
-		return strings.TrimSuffix(content, "\n")
-	}
-	return content
+// 本体は、行の無いバッファを空のファイルとして書き出し、それ以外は endOfLine が true か末尾の改行を補う設定（Vim の 'fixendofline'）が
+// 有効なら最後の行の後に改行を付ける。このため書き出したファイルは、Vim 9.1 で外から content に書き換えたファイルを :e! で読み直して
+// :w した結果と同じになる。設定が有効（既定）なら、改行で終わらない空でない content の末尾に改行が付き、それ以外は content のままである。
+func fileState(content string) (text string, noLines, endOfLine bool) {
+	return strings.TrimSuffix(content, "\n"), content == "", content == "" || strings.HasSuffix(content, "\n")
 }

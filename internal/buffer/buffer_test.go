@@ -868,6 +868,29 @@ func TestFinalNewline(t *testing.T) {
 	}
 }
 
+// SetTrailingNewline は、末尾の改行の記録だけを変え、書き出しの結果に効く。変更としては扱わず、アンドゥでも戻らない。
+func TestSetTrailingNewline(t *testing.T) {
+	b := New("a")
+	b.SetFixEndOfLine(false)
+	b.SetTrailingNewline(true)
+	if !b.HasTrailingNewline() || !b.FinalNewline() || b.Modified() || b.Version() != 0 {
+		t.Errorf("SetTrailingNewline(true) の後: HasTrailingNewline() = %v, FinalNewline() = %v, Modified() = %v, Version() = %d",
+			b.HasTrailingNewline(), b.FinalNewline(), b.Modified(), b.Version())
+	}
+	var out bytes.Buffer
+	if _, err := b.WriteTo(&out); err != nil || out.String() != "a\n" {
+		t.Errorf("WriteTo() = %q, %v; want %q", out.String(), err, "a\n")
+	}
+	if _, err := b.Apply(Transaction{BaseVersion: b.Version(), Edits: []Edit{{Range: rng(0, 1, 0, 1), Text: "b"}}}); err != nil {
+		t.Fatal(err)
+	}
+	b.SetTrailingNewline(false)
+	b.Undo()
+	if b.HasTrailingNewline() || b.FinalNewline() {
+		t.Errorf("アンドゥの後: HasTrailingNewline() = %v, FinalNewline() = %v; want false, false（アンドゥで戻らない）", b.HasTrailingNewline(), b.FinalNewline())
+	}
+}
+
 func TestWriteTo(t *testing.T) {
 	b, err := Read(bytes.NewBufferString("x\ny\n"))
 	if err != nil {

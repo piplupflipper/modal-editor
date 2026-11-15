@@ -97,6 +97,26 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.empty、fake.lines、fake.endofline は、buffer/edit の noLines と endOfLine を試す。
+		// fake.empty は全文を消して行の無いバッファにし、残りの 2 つは編集を持たずに状態だけを変える。
+		lineState := func(id string, noLines, endOfLine *bool, erase bool) {
+			s.Command(id, func(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+				tx := ext.Transaction{BaseVersion: p.Version}
+				if erase {
+					last := b.LineCount() - 1
+					tx.Edits = []ext.Edit{{Range: ext.Range{End: ext.Position{Line: last, Byte: len(b.Line(last))}}}}
+				}
+				go func() {
+					r, err := s.Edit(hostCtx, ext.BufferEditParams{Buffer: b.ID(), Transaction: tx, NoLines: noLines, EndOfLine: endOfLine})
+					_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("%s applied=%v v%d err=%v", id, r.Applied, r.Version, err))
+				}()
+				return ext.CommandExecuteResult{OK: true}, nil
+			})
+		}
+		yes, no := true, false
+		lineState("fake.empty", &yes, nil, true)
+		lineState("fake.lines", &no, nil, false)
+		lineState("fake.endofline", nil, &yes, false)
 		s.Command("fake.dump", func(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			if b == nil {
 				// 本体がバッファを送っていない（p.Withheld。基本設計 5.3）。
@@ -219,7 +239,8 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.upper", `\u`), contrib("fake.jump", `\j`), contrib("fake.later", `\l`),
 					contrib("fake.dump", `\d`), contrib("fake.ask", `\a`), contrib("fake.state", `\s`),
 					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
-					contrib("fake.env", `\v`),
+					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
+					contrib("fake.endofline", `\o`),
 				},
 			},
 		},
