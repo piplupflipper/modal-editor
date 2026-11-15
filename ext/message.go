@@ -272,6 +272,7 @@ type CommandExecuteResult struct {
 	// Open は、カーソルの移動である。形は editor/open の params と同じで、本体は Transaction を適用した後に移動する。
 	// 主に params の Sync が true のときに、後から editor/open で送る代わりに使う。移動しなければ省く。
 	// Open.Version を指定するなら、Transaction を適用した後のバージョン番号で書く。
+	// 本体は、Open が EditorOpenParams.Validate を通らなければ、操作を失敗として扱う。
 	Open *EditorOpenParams `json:"open,omitempty"`
 }
 

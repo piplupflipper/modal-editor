@@ -27,13 +27,27 @@ import (
 // その拡張機能から届いたリクエストを処理せずに取っておき、待ちが終わってから処理する。
 // 保存の流れで buffer/willSave の応答を待っている間は、すべての拡張機能から届いたリクエストを取っておく（基本設計 5.3）。
 // Host はこの待たせ方をしない（イベントを届いた順に渡すだけである）ので、取っておくのはイベントループの責務である。
+//
+// 取っておいたリクエストを処理する前に、イベントループはその Done を調べ、閉じていれば応答せずに捨てる。
+// Done は、拡張機能がリクエストを取り消したとき（$/cancel）と、拡張機能のプロセスが終わって接続が閉じたときに閉じる。
+// Host は、異常と判断した拡張機能について、接続を閉じてから [StateChange] を積む。
+// このため、StateChange を受け取った時点で、その拡張機能から取っておいたリクエストの Done はすべて閉じている。
+// これで、異常と判断した拡張機能の編集を後から適用しない（まだ渡していないイベントは Host が捨てる）。
+// 表示中の choice/ask も、Done が閉じたら取り下げる。
 type Event interface {
 	isEvent()
 }
 
-// replyOnce は、リクエストのイベントが持つ応答の関数である。
+// replyOnce は、リクエストのイベントが持つ応答の関数と、取り消しの知らせである。
 type replyOnce struct {
 	reply rpc.Replier
+	done  <-chan struct{}
+}
+
+// Done は、拡張機能がこのリクエストを取り消したか、拡張機能の接続が閉じたか、応答した後に閉じるチャネルを返す。
+// 閉じた後の応答は、拡張機能に届かないか、届いても使われない。イベントループの使い方は [Event] の doc にある。
+func (r *replyOnce) Done() <-chan struct{} {
+	return r.done
 }
 
 // ReplyError は、拡張機能へ失敗の応答を返す。err が *rpc.Error を包んでいればそのコードを、そうでなければ内部の誤りのコードを使う。
@@ -53,6 +67,13 @@ type EditRequest struct {
 	Params    ext.BufferEditParams
 
 	reply rpc.Replier
+	done  <-chan struct{}
+}
+
+// Done は、拡張機能がこのリクエストを取り消したか、拡張機能の接続が閉じたか、応答した後に閉じるチャネルを返す。
+// 使い方は [Event] の doc にある。
+func (r *EditRequest) Done() <-chan struct{} {
+	return r.done
 }
 
 // Reply は、拡張機能へ buffer/edit の結果を返す。2 回目以降の呼び出しは何も送らずに誤りを返す。

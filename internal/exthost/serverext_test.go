@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/ext/server"
@@ -35,9 +36,13 @@ const (
 	cmdNotify = "srv.notify" // diagnostic/set、sign/set、popup/show を送る
 	cmdSync   = "srv.sync"   // params の Sync が true なら、応答の Open でカーソルの移動を返す
 	cmdArgs   = "srv.args"   // 起動したときの引数を書き出す
+	// cmdChoiceCancel は、choice/ask を送り、100 ms で取り消す。
+	cmdChoiceCancel = "srv.choiceCancel"
+	// argSlow を引数に渡すと、buffer/willSave に応答せず、取り消されたら記録してから遅れて応答する。
+	argSlow = "slow"
 )
 
-var serverCommands = []string{cmdState, cmdOpen, cmdSave, cmdDiag, cmdChoice, cmdNotify, cmdSync, cmdArgs}
+var serverCommands = []string{cmdState, cmdOpen, cmdSave, cmdDiag, cmdChoice, cmdNotify, cmdSync, cmdArgs, cmdChoiceCancel}
 
 func runServerExt() int {
 	s := server.New()
@@ -98,6 +103,12 @@ func runServerExt() int {
 		res, err := s.AskChoice(ctx, p)
 		outJSON(cmdChoice, res, err)
 	})
+	background(cmdChoiceCancel, func(ctx context.Context, _ json.RawMessage) {
+		ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+		res, err := s.AskChoice(ctx, ext.ChoiceAskParams{Title: "q"})
+		outJSON(cmdChoiceCancel, res, err)
+	})
 	s.Command(cmdNotify, func(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 		_ = s.SetDiagnostics(ext.DiagnosticSetParams{Buffer: b.ID(), Version: p.Version, Diagnostics: []ext.Diagnostic{
 			{Range: ext.Range{End: ext.Position{Byte: 1}}, Severity: ext.SeverityError, Message: "bad", Source: "srv"},
@@ -107,6 +118,9 @@ func runServerExt() int {
 		return ext.CommandExecuteResult{OK: true}, nil
 	})
 	s.Command(cmdSync, func(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+		if string(p.Args) == `"bad"` {
+			return ext.CommandExecuteResult{OK: true, Open: &ext.EditorOpenParams{Path: "relative"}}, nil
+		}
 		if !p.Sync {
 			return ext.CommandExecuteResult{OK: true}, nil
 		}
@@ -118,13 +132,17 @@ func runServerExt() int {
 		out("%s %s", cmdArgs, strings.Join(os.Args[1:], "|"))
 		return ext.CommandExecuteResult{OK: true}, nil
 	})
-	// 保存の前に、先頭へ "// " を足す。
-	s.BufferWillSave(func(_ context.Context, b *server.Buffer, _ *ext.BufferWillSaveParams) (ext.BufferWillSaveResult, error) {
-		if strings.HasPrefix(b.Line(0), "// ") {
-			return ext.BufferWillSaveResult{}, nil
-		}
-		return ext.BufferWillSaveResult{Transaction: &ext.Transaction{Edits: []ext.Edit{{Text: "// "}}}}, nil
-	})
+	if slices.Contains(os.Args[1:], argSlow) {
+		s.BufferWillSaveAsync(func(ctx context.Context, _ *server.Buffer, _ *ext.BufferWillSaveParams, reply func(ext.BufferWillSaveResult, error)) {
+			go func() {
+				<-ctx.Done()
+				out("willSave cancelled")
+				reply(ext.BufferWillSaveResult{Transaction: &ext.Transaction{Edits: []ext.Edit{{Text: "late"}}}}, nil)
+			}()
+		})
+	} else {
+		registerFormatter(s)
+	}
 	s.OnBufferDidSave(func(_ context.Context, e *server.BufferDidSaveEvent) {
 		out("didSave %d %d %s %q", e.Params.Buffer, e.Params.Version, e.Params.Path, e.Buffer.Text())
 	})
@@ -133,6 +151,16 @@ func runServerExt() int {
 		return 1
 	}
 	return 0
+}
+
+// registerFormatter は、保存の前に先頭へ "// " を足す buffer/willSave のハンドラーを登録する。
+func registerFormatter(s *server.Server) {
+	s.BufferWillSave(func(_ context.Context, b *server.Buffer, _ *ext.BufferWillSaveParams) (ext.BufferWillSaveResult, error) {
+		if strings.HasPrefix(b.Line(0), "// ") {
+			return ext.BufferWillSaveResult{}, nil
+		}
+		return ext.BufferWillSaveResult{Transaction: &ext.Transaction{Edits: []ext.Edit{{Text: "// "}}}}, nil
+	})
 }
 
 // serverSpec は、サーバーの拡張機能の定義を作る。
@@ -157,9 +185,15 @@ func serverSpec(t *testing.T, id string, args []string) Spec {
 // waitOutput は、拡張機能 srv から欄 outChannel へ、prefix で始まるテキストが書き足されるのを待って返す。
 func (hs *harness) waitOutput(prefix string) string {
 	hs.t.Helper()
+	return hs.waitOutputFrom("srv", prefix)
+}
+
+// waitOutputFrom は、拡張機能 id から欄 outChannel へ、prefix で始まるテキストが書き足されるのを待って返す。
+func (hs *harness) waitOutputFrom(id, prefix string) string {
+	hs.t.Helper()
 	ev := hs.waitEvent("output "+prefix, func(ev Event) bool {
 		o, ok := ev.(*OutputAppend)
-		return ok && o.Extension == "srv" && o.Params.Channel == outChannel && strings.HasPrefix(o.Params.Text, prefix+" ")
+		return ok && o.Extension == id && o.Params.Channel == outChannel && strings.HasPrefix(o.Params.Text, prefix+" ")
 	})
 	return strings.TrimPrefix(ev.(*OutputAppend).Params.Text, prefix+" ")
 }
@@ -423,13 +457,13 @@ func TestRequestEventInvalidParams(t *testing.T) {
 		{"editor/unknown", `{}`, rpc.CodeMethodNotFound},
 	}
 	for _, tt := range tests {
-		ev, err := requestEvent("x", &rpc.Request{Method: tt.method, Params: json.RawMessage(tt.params)}, nil)
+		ev, err := requestEvent(ctx, "x", &rpc.Request{Method: tt.method, Params: json.RawMessage(tt.params)}, nil)
 		if ev != nil || err == nil || err.Code != tt.code {
 			t.Errorf("%s %s = %v, %v, want code %d", tt.method, tt.params, ev, err, tt.code)
 		}
 	}
 	// editor/state は params が無くてもよい。
-	if ev, err := requestEvent("x", &rpc.Request{Method: ext.MethodEditorState}, nil); err != nil || ev == nil {
+	if ev, err := requestEvent(ctx, "x", &rpc.Request{Method: ext.MethodEditorState}, nil); err != nil || ev == nil {
 		t.Errorf("editor/state without params = %v, %v", ev, err)
 	}
 }
@@ -447,4 +481,115 @@ func changeOf(before, after uint64, edits []ext.Edit) buffer.Change {
 		})
 	}
 	return c
+}
+
+// 保存の流れで、期限を超えた拡張機能は $/cancel で取り消し、遅れた応答は捨てて、次の拡張機能へ進める（基本設計 6.7 の 3）。
+func TestStdExtSaveFlowTimeout(t *testing.T) {
+	hs := newHarness(t, []Spec{serverSpec(t, "slow", []string{argSlow}), serverSpec(t, "srv", nil)}, nil, true)
+	if err := hs.h.OpenBuffer(BufferSnapshot{ID: 1, Version: 1, Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"slow", "srv"} {
+		if err := hs.h.Start(id); err != nil {
+			t.Fatal(err)
+		}
+		hs.waitState(id, StateRunning)
+	}
+	// saveHook の拡張機能は、宣言の順に並ぶ。
+	if got := hs.h.SaveHookExtensions(); !slices.Equal(got, []string{"slow", "srv"}) {
+		t.Fatalf("SaveHookExtensions = %q, want [slow srv]", got)
+	}
+
+	start := time.Now()
+	if _, err := hs.h.SendWillSave("slow", ext.BufferWillSaveParams{Buffer: 1, Version: 1}, SendOptions{Tag: "slow", Timeout: 200 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	isSlow := func(ev Event) bool { q, ok := ev.(*QueryResult); return ok && q.Tag == "slow" }
+	qr := hs.waitEvent("slow willSave result", isSlow).(*QueryResult)
+	if !errors.Is(qr.Err, ErrTimeout) {
+		t.Fatalf("slow willSave Err = %v, want ErrTimeout", qr.Err)
+	}
+	if elapsed := time.Since(start); elapsed < 200*time.Millisecond {
+		t.Errorf("timed out after %s, before the 200ms deadline", elapsed)
+	}
+	// 拡張機能の側のハンドラーは $/cancel で取り消され、その後に遅れて応答する。
+	hs.waitOutputFrom("slow", "willSave")
+
+	// 次の拡張機能へは、同じバージョン番号で問い合わせられる。
+	if _, err := hs.h.SendWillSave("srv", ext.BufferWillSaveParams{Buffer: 1, Version: 1}, SendOptions{Tag: "srv"}); err != nil {
+		t.Fatal(err)
+	}
+	qr = hs.waitEvent("srv willSave result", func(ev Event) bool { q, ok := ev.(*QueryResult); return ok && q.Tag == "srv" }).(*QueryResult)
+	var res ext.BufferWillSaveResult
+	if err := qr.Decode(&res); err != nil || res.Transaction == nil || res.Transaction.Edits[0].Text != "// " {
+		t.Fatalf("srv willSave = %+v, %v", res, err)
+	}
+
+	// 遅れた応答から、2 つ目の結果は渡らない。
+	time.Sleep(100 * time.Millisecond)
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	for i, ev := range hs.events {
+		if isSlow(ev) && !hs.consumed[i] {
+			t.Errorf("late willSave result delivered: %+v", ev)
+		}
+	}
+}
+
+// 拡張機能が choice/ask を取り消すと、本体の側のイベントの Done が閉じる。
+func TestStdExtChoiceCancelled(t *testing.T) {
+	hs := newHarness(t, []Spec{serverSpec(t, "srv", nil)}, nil, true)
+	if err := hs.h.OpenBuffer(BufferSnapshot{ID: 1, Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	hs.execute(cmdChoiceCancel, nil, false)
+	req := hs.waitEvent("choice/ask", func(ev Event) bool { _, ok := ev.(*ChoiceAskRequest); return ok }).(*ChoiceAskRequest)
+	select {
+	case <-req.Done():
+	case <-time.After(waitTimeout):
+		t.Fatal("Done was not closed after the extension cancelled choice/ask")
+	}
+	if got := hs.waitOutput(cmdChoiceCancel); !strings.Contains(got, "error") {
+		t.Errorf("extension output %q", got)
+	}
+}
+
+// 異常で終わった拡張機能から届き、イベントループが取っておいたリクエストは、StateChange の時点で Done が閉じている。
+func TestHeldRequestDoneAfterCrash(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)
+	params := ext.BufferEditParams{Buffer: 1, Transaction: ext.Transaction{BaseVersion: 1}}
+	if _, err := hs.h.Send("x", methodEdit, params, SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	er := hs.waitEvent("edit request", func(ev Event) bool { _, ok := ev.(*EditRequest); return ok }).(*EditRequest)
+	select {
+	case <-er.Done():
+		t.Fatal("Done closed before the extension ended")
+	default:
+	}
+	// 応答せずに取っておいたまま、拡張機能を異常で終わらせる。
+	if _, err := hs.h.Send("x", methodExit, nil, SendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("x", StateRestartWait)
+	select {
+	case <-er.Done():
+	default:
+		t.Fatal("Done is open when StateChange arrived")
+	}
+}
+
+// command/execute の結果の Open が Validate を通らなければ、ExecuteCommand は誤りを返す。
+func TestExecuteCommandInvalidOpen(t *testing.T) {
+	hs := newHarness(t, []Spec{serverSpec(t, "srv", nil)}, nil, true)
+	if err := hs.h.OpenBuffer(BufferSnapshot{ID: 1, Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := hs.h.ExecuteCommand(ctx, "srv", ext.CommandExecuteParams{Buffer: 1, Version: 1, ID: cmdSync, Args: json.RawMessage(`"bad"`)}, callTimeout)
+	if err == nil || res.Open == nil {
+		t.Errorf("ExecuteCommand = %+v, %v, want an error", res, err)
+	}
+	if err := ValidateCommandResult(&ext.CommandExecuteResult{OK: true}); err != nil {
+		t.Errorf("ValidateCommandResult without Open = %v", err)
+	}
 }

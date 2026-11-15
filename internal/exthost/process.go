@@ -264,8 +264,8 @@ func (h *Host) ping(r *run, p *process) error {
 func (h *Host) handler(e *extension, r *run) rpc.Handler {
 	id := e.spec.Manifest.ID
 	return rpc.HandlerFuncs{
-		Request: func(_ context.Context, req *rpc.Request, reply rpc.Replier) {
-			ev, rerr := requestEvent(id, req, reply)
+		Request: func(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
+			ev, rerr := requestEvent(ctx, id, req, reply)
 			if rerr != nil {
 				_ = reply(nil, rerr)
 				return
@@ -339,16 +339,17 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 }
 
 // requestEvent は、拡張機能 id から届いたリクエストを、イベントループへ渡すイベントにする。
+// ctx は、rpc のハンドラーに渡された ctx で、取り消しと接続の終了と応答で終わる。イベントの Done にする。
 // 知らないメソッドか、読めない params なら、応答に使う誤りを返す。
-func requestEvent(id string, req *rpc.Request, reply rpc.Replier) (Event, *rpc.Error) {
-	ro := replyOnce{reply: reply}
+func requestEvent(ctx context.Context, id string, req *rpc.Request, reply rpc.Replier) (Event, *rpc.Error) {
+	ro := replyOnce{reply: reply, done: ctx.Done()}
 	switch req.Method {
 	case ext.MethodBufferEdit:
 		var p ext.BufferEditParams
 		if err := decodeRequest(req, &p); err != nil {
 			return nil, err
 		}
-		return &EditRequest{Extension: id, Params: p, reply: reply}, nil
+		return &EditRequest{Extension: id, Params: p, reply: reply, done: ctx.Done()}, nil
 	case ext.MethodEditorState:
 		var p ext.EditorStateParams
 		if err := decodeRequest(req, &p); err != nil {
