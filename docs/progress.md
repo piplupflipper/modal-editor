@@ -10,10 +10,10 @@
 
 | 状態 | 件数 | 意味 |
 |---|---|---|
-| 実装とテスト | 17 | 実装とテストの両方に注釈がある |
+| 実装とテスト | 18 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 18 | 注釈が無い |
+| 未着手 | 17 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -43,7 +43,7 @@
 | FR-30 | 未着手 | - | - | LSP のクライアントを持つ |
 | FR-31 | 未着手 | - | - | DAP のクライアントを持つ |
 | FR-32 | 未着手 | - | - | MCP のサーバーを持つ。開いているバッファ、カーソル位置、選択範囲、診断などの取得と、編集の操作を、ツールとして提供する |
-| FR-33 | 未着手 | - | - | MCP のクライアントからの接続は、中継コマンドで受ける。クライアントが中継コマンドを標準入出力の MCP サーバーとして起動し、中継コマンドが起動中のエディタへ Unix ドメインソケットで接続する |
+| FR-33 | 実装とテスト | [cmd/modal-editor-mcp-bridge/main.go:47](../cmd/modal-editor-mcp-bridge/main.go#L47)<br>[cmd/modal-editor-mcp-bridge/main.go:97](../cmd/modal-editor-mcp-bridge/main.go#L97) | [cmd/modal-editor-mcp-bridge/main_test.go:116](../cmd/modal-editor-mcp-bridge/main_test.go#L116)<br>[cmd/modal-editor-mcp-bridge/main_test.go:172](../cmd/modal-editor-mcp-bridge/main_test.go#L172)<br>[cmd/modal-editor-mcp-bridge/main_test.go:214](../cmd/modal-editor-mcp-bridge/main_test.go#L214)<br>[cmd/modal-editor-mcp-bridge/main_test.go:241](../cmd/modal-editor-mcp-bridge/main_test.go#L241)<br>[cmd/modal-editor-mcp-bridge/main_test.go:305](../cmd/modal-editor-mcp-bridge/main_test.go#L305) | MCP のクライアントからの接続は、中継コマンドで受ける。クライアントが中継コマンドを標準入出力の MCP サーバーとして起動し、中継コマンドが起動中のエディタへ Unix ドメインソケットで接続する |
 | FR-34 | 未着手 | - | - | ACP のクライアントを持つ。コーディングエージェントを子プロセスとして起動する |
 | FR-35 | 未着手 | - | - | tree-sitter による構文解析を持つ。構文ハイライトは、tree-sitter の拡張機能が色を付ける範囲の一覧を本体へ送り、本体は受け取り済みの一覧で描画する |
 | FR-36 | 未着手 | - | - | スクリプトの拡張機能を実行する。yaegi は本体には入れず、スクリプトを実行する別の実行ファイルに入れる |

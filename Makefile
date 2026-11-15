@@ -10,6 +10,8 @@ GOVULNCHECK   := go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 
 BIN_DIR := bin
 BINARY  := $(BIN_DIR)/modal-editor
+# MCP の中継コマンド。MCP のクライアントが標準入出力のサーバーとして起動する（FR-33）。
+MCP_BRIDGE := $(BIN_DIR)/modal-editor-mcp-bridge
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/piplupflipper/modal-editor/internal/version.version=$(VERSION)
 
@@ -62,6 +64,7 @@ check: fmt-check typecheck lint test tidy-check progress-check ## コミット�
 .PHONY: build
 build: ## 実行ファイルを bin/ に作る
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/modal-editor
+	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(MCP_BRIDGE) ./cmd/modal-editor-mcp-bridge
 
 .PHONY: run
 run: ## ビルドせずに実行する
