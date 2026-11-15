@@ -542,8 +542,20 @@ ACP の仕様は、クライアントがエージェントを子プロセスと�
 最初の範囲で足すメソッドは無い。
 yaegi を埋め込むプログラムは、スクリプトに使わせるパッケージの記号の表を `Use` で渡す。
 README の例は、標準ライブラリの記号の表 `stdlib.Symbols` を渡している（[yaegi の README](https://github.com/traefik/yaegi)）。
-`ext` と `ext/server` の記号の表を作る手順は未確認である。
-yaegi の README は、Go のモジュールにまだ対応していないと書いており、スクリプトから外部のモジュールを import できるかどうかも未確認である。
+`ext` と `ext/server` の記号の表は、yaegi の `extract` で生成し、`modal-editor-ext-script` に埋め込む（`cmd/modal-editor-ext-script/symbols.go` の `go:generate`）。
+生成したファイルが、いまの `ext` と `ext/server` から生成し直したものと一致することを、テスト（`TestSymbolsUpToDate`）で確かめる。
+
+スクリプトから外部のモジュールは import できない。
+2026-11-16 に yaegi v0.16.3 で確かめた結果は次のとおりである。
+
+- yaegi は、記号の表に無いパッケージを `GOPATH/src` の下のソースから探す。モジュールのキャッシュは探さないので、`go.mod` で取得したモジュールは import できない
+- `GoPath` を指定すれば、`GOPATH/src` の形に置いたソースは import できる。`modal-editor-ext-script` は `GoPath` を空にし、使わせるのを標準ライブラリと `ext` と `ext/server` に限る
+
+スクリプトの書き方（`package main` と `func main` で `server.Server` の `Run` を呼ぶ）、宣言ファイルの例、yaegi が Go の言語仕様と違う点は、`cmd/modal-editor-ext-script` のパッケージの doc に書く。
+
+`args` の相対パスの解決は未決である。
+本体（`internal/exthost`）は、`command` の相対パスを宣言ファイルのディレクトリから解決するが、子プロセスの作業ディレクトリは本体のものを引き継ぐ。
+このため、`args` に相対パスでスクリプトを書くと、本体の作業ディレクトリから探すことになる。
 
 ### 6.7 拡張機能をまたぐ取り決め
 
