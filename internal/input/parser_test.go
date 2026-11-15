@@ -238,6 +238,12 @@ func TestParserVisual(t *testing.T) {
 			t.Errorf("%q:\n got  %+v\n want %+v", tt.keys, got, tt.want)
 		}
 	}
+	// 記録中の q は、ビジュアルモードでも記録の停止である。
+	p.SetRecording(true)
+	if got, want := feed(p, "q"), []Result{done(Command{Kind: KindRecordStop, Count: 1})}; !reflect.DeepEqual(got, want) {
+		t.Errorf("記録中の q:\n got  %+v\n want %+v", got, want)
+	}
+	p.SetRecording(false)
 	// ノーマルモードへ戻ると、o は行を開く操作、d はオペレーターに戻る。
 	p.SetVisual(false)
 	if got := feed(p, "o"); len(got) != 1 || got[0].Command.Action.ID != "open-below" {

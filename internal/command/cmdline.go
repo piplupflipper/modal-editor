@@ -49,6 +49,9 @@ func (s *State) cmdlineKey(k input.Key) {
 // req: FR-01
 func (s *State) ExecuteCommandLine(line string) Result {
 	s.res = Result{}
+	if s.mode.visual() {
+		s.exitVisual()
+	}
 	s.mode = ModeNormal
 	s.cmdline = s.cmdline[:0]
 	s.runCommandLine(line)

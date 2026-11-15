@@ -104,3 +104,17 @@ func equalKeys(keys []input.Key, s string) bool {
 	}
 	return true
 }
+
+// ビジュアルモードでも、記録中の q で記録を止める。
+//
+// req: FR-05
+func TestMacroStopInVisual(t *testing.T) {
+	s := setup(t, "|abc")
+	feedKeys(s, "qavlq")
+	if s.Recording() != 0 || s.Mode() != ModeVisual {
+		t.Fatalf("Recording = %q, mode = %v", s.Recording(), s.Mode())
+	}
+	if reg, _ := s.registers.Get('a'); reg.Text != "vl" {
+		t.Errorf("a = %q", reg.Text)
+	}
+}

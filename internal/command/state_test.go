@@ -54,8 +54,6 @@ func TestFeedOperator(t *testing.T) {
 }
 
 // 編集した結果の Changes は、適用した順に、バージョン番号がつながって並ぶ（拡張機能へ差分を送る材料）。
-//
-// req: FR-02
 func TestFeedChanges(t *testing.T) {
 	s := setup(t, "|a\nb\nc")
 	r := s.Feed(input.Rune('J'))
@@ -138,8 +136,6 @@ func TestInsertUndoUnit(t *testing.T) {
 }
 
 // 999999999p のような、メモリを使い切る量の挿入は失敗する。
-//
-// req: FR-02
 func TestPutTooLarge(t *testing.T) {
 	s := setup(t, "|abc")
 	if err := errOf(feedKeys(s, "yl999999999p")); !errors.Is(err, ErrFailed) {

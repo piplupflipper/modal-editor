@@ -95,7 +95,7 @@ func (p *Parser) SetRecording(on bool) { p.recording = on }
 // SetVisual は、ビジュアルモードかを Parser に知らせる。
 // ビジュアルモードでは、MapVisual の登録を引く。オペレーターは選択を対象にするので、対象を待たずに値を完成させる
 // （Target.Kind は TargetNone）。テキストオブジェクトは、オペレーターの後と同じく引き、KindMotion の値にする。
-// q、@、. は、マクロとドットリピートとして先に読まず、キーマップから引く。
+// @ と . は、マクロとドットリピートとして先に読まず、キーマップから引く。q も、記録中の停止を除いてキーマップから引く。
 // モードを切り替えた呼び出し元が、その都度呼ぶ。解釈の途中の状態は捨てる。
 func (p *Parser) SetVisual(on bool) {
 	if p.visual != on {
@@ -177,7 +177,7 @@ func (p *Parser) step(k Key) (results []Result, rest []Key) {
 			p.cur = min(p.cur*10+d, MaxCount)
 			return nil, nil
 		}
-		if p.st == stNormal && (!p.visual || k.Rune == '"') {
+		if p.st == stNormal && (!p.visual || k.Rune == '"' || k.Rune == 'q' && p.recording) {
 			if rs, ok := p.special(k.Rune); ok {
 				return rs, nil
 			}

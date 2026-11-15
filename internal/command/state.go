@@ -90,8 +90,6 @@ type Result struct {
 
 // State は、1 つのバッファを編集する状態である。
 // ゼロ値は使わず、New で作る。
-//
-// req: FR-01
 type State struct {
 	// Columns は、望みの列の数え方である。nil なら target.CharColumns を使う。
 	// 表示幅で数える実装（internal/ui）は、呼び出し側が差し込む。
