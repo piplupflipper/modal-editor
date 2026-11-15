@@ -177,6 +177,10 @@ func (x *extension) sendFor(
 	has func(*serverCapabilities) bool,
 	params func(uri string, ls lines, enc encoding) any,
 ) (*request, error) {
+	if p.Withheld {
+		// 本体が不正な UTF-8 のためにバッファを送っていない。理由は本体が利用者へ知らせるので、ここでは表示しない。
+		return nil, errors.New("buffer is withheld by the editor")
+	}
 	c := x.byBuffer[p.Buffer]
 	if c == nil {
 		x.showMessage(ext.MessageWarning, "このバッファには言語サーバーが無い")
@@ -427,6 +431,11 @@ func hasFormatting(c *serverCapabilities) bool { return provides(c.DocumentForma
 //
 // req: FR-30
 func (x *extension) format(ctx context.Context, _ *server.Buffer, p *ext.CommandExecuteParams, reply func(ext.CommandExecuteResult, error)) {
+	if p.Withheld {
+		// sendFor と同じく、理由は本体が知らせる。
+		reply(ext.CommandExecuteResult{OK: false}, nil)
+		return
+	}
 	c := x.byBuffer[p.Buffer]
 	if c == nil {
 		x.showMessage(ext.MessageWarning, "このバッファには言語サーバーが無い")

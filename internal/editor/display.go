@@ -53,6 +53,10 @@ func (e *Editor) commitChange(bs *bufferState, ch buffer.Change) {
 	}
 	bs.sent = ch.After
 	e.syncFinalNewline(bs)
+	if e.host.Withheld(bs.id) {
+		// 不正な UTF-8 が入り、拡張機能へ送らなくなった（基本設計 5.3）。拡張機能は新しい一覧を送ってこないので、古い表示のデータを消す。
+		e.clearWithheld(bs)
+	}
 	for id, ds := range bs.diagnostics {
 		bs.diagnostics[id] = shiftDiagnostics(ds, ch.Edits)
 	}
@@ -144,11 +148,33 @@ func shiftSigns(ss []ext.Sign, eds []buffer.Edit) []ext.Sign {
 	return out
 }
 
+// clearWithheld は、拡張機能へ送っていないバッファ bs（不正な UTF-8 を含むもの。基本設計 5.3）の、
+// すべての拡張機能の色と診断と印を消す。
+// 送らない間は拡張機能から新しい一覧が届かず、古い一覧が残ると、色は位置をずらさずに描くので行がずれて見える。
+func (e *Editor) clearWithheld(bs *bufferState) {
+	clear(bs.diagnostics)
+	clear(bs.signs)
+	if len(bs.decorations) == 0 {
+		return
+	}
+	for id := range bs.decorations {
+		bs.removeDecorations(id)
+	}
+	e.rebuildDecorations(bs)
+}
+
+// withheldBuffer は、id のバッファを拡張機能へ送っていない（不正な UTF-8 を含む）かを返す。
+// 送っていない間に届いた表示のデータは、送る前の版か、buffer/close と行き違ったものなので捨てる（基本設計 5.3）。
+// 拡張機能を持たない Editor（表示のデータだけを試すテスト）では host が nil なので、送っていないものは無い。
+func (e *Editor) withheldBuffer(id ext.BufferID) bool {
+	return e.host != nil && e.host.Withheld(id)
+}
+
 // setDiagnostics は、diagnostic/set の一覧を、バージョン番号に応じてずらすか捨てて持つ（基本設計 6.7 の表）。
-// 空の一覧はその組の一覧を消す。持ったかを返す。
+// 空の一覧はその組の一覧を消す。持ったかを返す。拡張機能へ送っていないバッファの一覧は捨てる（withheldBuffer）。
 func (e *Editor) setDiagnostics(extID string, p ext.DiagnosticSetParams) bool {
 	bs := e.findBuffer(p.Buffer)
-	if bs == nil {
+	if bs == nil || e.withheldBuffer(p.Buffer) {
 		return false
 	}
 	eds, ok := bs.editsSince(uint64(p.Version))
@@ -166,7 +192,7 @@ func (e *Editor) setDiagnostics(extID string, p ext.DiagnosticSetParams) bool {
 // setSigns は、sign/set の一覧を、diagnostic/set と同じ規則で持つ。
 func (e *Editor) setSigns(extID string, p ext.SignSetParams) bool {
 	bs := e.findBuffer(p.Buffer)
-	if bs == nil {
+	if bs == nil || e.withheldBuffer(p.Buffer) {
 		return false
 	}
 	eds, ok := bs.editsSince(uint64(p.Version))
@@ -184,9 +210,10 @@ func (e *Editor) setSigns(extID string, p ext.SignSetParams) bool {
 // setDecorations は、decoration/set の一覧を持つ。現在より新しいバージョン番号の一覧は捨てる。
 // 基本設計 6.1 のとおり、古い一覧も置き換えずに持ち、新しい一覧が届くまで前の色のまま描く（位置はずらさない）。
 // 描画に使う表は、イベントループの外で作り直す（rebuildDecorations）。
+// 拡張機能へ送っていないバッファの一覧は捨てる（withheldBuffer）。
 func (e *Editor) setDecorations(extID string, p ext.DecorationSetParams) {
 	bs := e.findBuffer(p.Buffer)
-	if bs == nil || uint64(p.Version) > bs.buf.Version() {
+	if bs == nil || uint64(p.Version) > bs.buf.Version() || e.withheldBuffer(p.Buffer) {
 		return
 	}
 	if len(p.Decorations) == 0 {

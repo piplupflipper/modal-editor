@@ -438,6 +438,32 @@ func TestOperatorAndCommand(t *testing.T) {
 	}
 }
 
+// 本体がバッファを送っていない command/execute（Withheld。基本設計 5.3）は、複製を探さずに nil をハンドラーへ渡す。
+// 他の問い合わせは、これまでどおり開いていないバッファの誤りで応答する。
+func TestCommandWithheld(t *testing.T) {
+	s := server.New()
+	var gotNil bool
+	s.Command("resume", func(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+		gotNil = b == nil
+		return ext.CommandExecuteResult{OK: true}, nil
+	})
+	s.TextObject("obj", func(context.Context, *server.Buffer, *ext.TextObjectResolveParams) (ext.TextObjectResolveResult, error) {
+		return ext.TextObjectResolveResult{OK: true}, nil
+	})
+	h := start(t, s)
+	var cmd ext.CommandExecuteResult
+	if err := h.call(t, ext.MethodCommandExecute, ext.CommandExecuteParams{Buffer: 3, Version: 1, ID: "resume", Withheld: true}, &cmd); err != nil || !cmd.OK || !gotNil {
+		t.Fatalf("withheld command/execute = %+v, %v (buffer nil %v)", cmd, err, gotNil)
+	}
+	if err := h.call(t, ext.MethodCommandExecute, ext.CommandExecuteParams{Buffer: 3, Version: 1, ID: "resume"}, &cmd); err == nil {
+		t.Error("command/execute for a buffer not open without Withheld succeeded")
+	}
+	var obj ext.TextObjectResolveResult
+	if err := h.call(t, ext.MethodTextObjectResolve, ext.TextObjectResolveParams{Buffer: 3, Version: 1, ID: "obj"}, &obj); err == nil {
+		t.Error("textObject/resolve for a buffer not open succeeded")
+	}
+}
+
 // 拡張機能から本体へ、buffer/edit、decoration/set、message/show を送る。
 func TestSendToHost(t *testing.T) {
 	s := server.New()

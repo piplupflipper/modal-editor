@@ -315,21 +315,21 @@ func (s *Server) handleRequest(ctx context.Context, req *rpc.Request, reply rpc.
 	case ext.MethodMotionResolve:
 		query(ctx, s, req, reply, s.motions, func(p *ext.MotionResolveParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
-		}, func(r *ext.MotionResolveResult, v ext.Version) { r.Version = v })
+		}, nil, func(r *ext.MotionResolveResult, v ext.Version) { r.Version = v })
 	case ext.MethodTextObjectResolve:
 		query(ctx, s, req, reply, s.textObjects, func(p *ext.TextObjectResolveParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
-		}, func(r *ext.TextObjectResolveResult, v ext.Version) { r.Version = v })
+		}, nil, func(r *ext.TextObjectResolveResult, v ext.Version) { r.Version = v })
 	case ext.MethodOperatorApply:
 		query(ctx, s, req, reply, s.operators, func(p *ext.OperatorApplyParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
-		}, func(r *ext.OperatorApplyResult, v ext.Version) { r.Transaction.BaseVersion = v })
+		}, nil, func(r *ext.OperatorApplyResult, v ext.Version) { r.Transaction.BaseVersion = v })
 	case ext.MethodBufferWillSave:
 		s.bufferWillSave(ctx, req, reply)
 	case ext.MethodCommandExecute:
 		query(ctx, s, req, reply, s.commands, func(p *ext.CommandExecuteParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
-		}, func(r *ext.CommandExecuteResult, v ext.Version) {
+		}, func(p *ext.CommandExecuteParams) bool { return p.Withheld }, func(r *ext.CommandExecuteResult, v ext.Version) {
 			if r.Transaction != nil {
 				r.Transaction.BaseVersion = v
 			}

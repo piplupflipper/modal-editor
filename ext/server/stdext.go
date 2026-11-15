@@ -128,7 +128,7 @@ func (s *Server) bufferWillSave(ctx context.Context, req *rpc.Request, reply rpc
 	}
 	query(ctx, s, req, reply, s.willSave, func(p *ext.BufferWillSaveParams) (ext.BufferID, ext.Version, string) {
 		return p.Buffer, p.Version, ""
-	}, func(r *ext.BufferWillSaveResult, v ext.Version) {
+	}, nil, func(r *ext.BufferWillSaveResult, v ext.Version) {
 		if r.Transaction != nil {
 			r.Transaction.BaseVersion = v
 		}

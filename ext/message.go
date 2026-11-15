@@ -283,6 +283,11 @@ type CommandExecuteParams struct {
 	// 後から buffer/edit で届けた編集は、再生の次の操作でバージョン番号が進んだ後に届いて破棄されるためである。
 	// 再生の結果を変えない表示（popup/show、output/append、message/show）は、true でも後から届けてよい。
 	Sync bool `json:"sync,omitempty"`
+	// Withheld は、本体が Buffer を不正な UTF-8 のために拡張機能へ送っていない（[BufferOpenParams]）ことを表す。
+	// 拡張機能は Buffer の複製を持っていないが、バッファを使わないコマンド（デバッグの再開など）は実行できる。
+	// バッファを使うコマンドは、OK を false で返す。本体は、送っていないために使えないことを利用者へ知らせる。
+	// ext/server は、true のとき、ハンドラーへ複製の代わりに nil を渡す。
+	Withheld bool `json:"withheld,omitempty"`
 }
 
 // CommandExecuteResult は、command/execute の result である。

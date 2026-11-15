@@ -79,6 +79,18 @@ func (d *document) openParams() ext.BufferOpenParams {
 	}
 }
 
+// Withheld は、開いているバッファ id が不正な UTF-8 を含み、拡張機能へ送っていないかどうかを返す（基本設計 4.1、5.3）。
+// 開いていないバッファなら false を返す。
+//
+// イベントループは、送っていないバッファについて、拡張機能の表示のデータ（色、診断、印）を消して受け取らず、
+// motion/resolve などの問い合わせを送らずに失敗させ、command/execute には params の Withheld を立てて送る。
+func (h *Host) Withheld(id ext.BufferID) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	d, ok := h.docs[id]
+	return ok && d.withheld()
+}
+
 // OpenBuffer は、バッファを開いたことを知らせる。
 // 稼働中の拡張機能へ buffer/open で全文を送り、ファイルの種類の契機が成り立つ未起動の拡張機能を起動する（FR-14）。
 // 起動中の拡張機能には、稼働中になった時点で全文を送る。

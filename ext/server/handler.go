@@ -26,6 +26,8 @@ type OperatorHandler func(ctx context.Context, b *Buffer, p *ext.OperatorApplyPa
 
 // CommandHandler は、command/execute に答えるハンドラーである。
 // b は p.Buffer の複製で、そのバージョン番号は p.Version と一致する。
+// ただし p.Withheld が true（本体が不正な UTF-8 のためにバッファを送っていない）なら b は nil である。
+// バッファを使うコマンドは、そのとき OK を false で返す。
 // 返した result に Transaction があれば、その BaseVersion は、Server が p.Version で上書きする。
 type CommandHandler func(ctx context.Context, b *Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error)
 
@@ -52,6 +54,7 @@ type AsyncTextObjectHandler func(ctx context.Context, b *Buffer, p *ext.TextObje
 type AsyncOperatorHandler func(ctx context.Context, b *Buffer, p *ext.OperatorApplyParams, reply func(ext.OperatorApplyResult, error))
 
 // AsyncCommandHandler は、command/execute に後から答えるハンドラーである。
+// b が nil になる場合は CommandHandler と同じである。
 type AsyncCommandHandler func(ctx context.Context, b *Buffer, p *ext.CommandExecuteParams, reply func(ext.CommandExecuteResult, error))
 
 // entry は、登録したハンドラーを、同期と非同期の区別なく呼ぶための形である。
@@ -129,10 +132,12 @@ func register[P, R any](s *Server, m map[string]entry[P, R], kind, id string, h 
 
 // query は、キー入力ごとの問い合わせ（とコマンド）を、id のハンドラーへ渡す。
 // バッファの複製が params の Version と一致する場合だけハンドラーを呼び、結果のバージョン番号を stamp で埋めて応答する。
+// withheld が nil でなく true を返したら（本体がバッファを送っていない command/execute）、複製を探さずに nil を渡す。
 func query[P, R any](
 	ctx context.Context, s *Server, req *rpc.Request, reply rpc.Replier,
 	handlers map[string]entry[P, R],
 	meta func(*P) (ext.BufferID, ext.Version, string),
+	withheld func(*P) bool,
 	stamp func(*R, ext.Version),
 ) {
 	var p P
@@ -146,10 +151,13 @@ func query[P, R any](
 		s.reply(req.Method, reply, nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: fmt.Sprintf("%s: unknown id %q", req.Method, id)})
 		return
 	}
-	b, err := s.bufferAt(bufID, version)
-	if err != nil {
-		s.reply(req.Method, reply, nil, err)
-		return
+	var b *Buffer
+	if withheld == nil || !withheld(&p) {
+		var err error
+		if b, err = s.bufferAt(bufID, version); err != nil {
+			s.reply(req.Method, reply, nil, err)
+			return
+		}
 	}
 	name := req.Method + " " + id
 	var replied atomic.Bool
@@ -165,7 +173,7 @@ func query[P, R any](
 		stamp(&res, version)
 		s.reply(req.Method, reply, res, nil)
 	}
-	err = s.protect(name, func() error {
+	err := s.protect(name, func() error {
 		h(ctx, b, &p, respond)
 		return nil
 	})

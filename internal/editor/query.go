@@ -48,6 +48,12 @@ func errExtension(ref editcmd.Ref, err error) error {
 	return fmt.Errorf("拡張機能 %s の %s が失敗しました: %w", ref.Extension, ref.ID, err)
 }
 
+// errWithheld は、拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの。基本設計 5.3）で、
+// 拡張機能の操作が使えないことを、利用者へ知らせる文言にする。
+func errWithheld(ref editcmd.Ref) error {
+	return fmt.Errorf("拡張機能 %s の %s は使えません: このバッファは不正な UTF-8 を含むので、拡張機能へ送っていません", ref.Extension, ref.ID)
+}
+
 // call は、問い合わせて結果を out へ読む。
 func (x *extQuery) call(ref editcmd.Ref, method string, params any, info command.QueryInfo, out any) error {
 	if x.answer != nil && method == x.answerMethod {
@@ -67,6 +73,16 @@ func (x *extQuery) call(ref editcmd.Ref, method string, params any, info command
 func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params any, info command.QueryInfo, out any) error {
 	// マクロの再生の途中なら、ここまでの変更を拡張機能の複製へ送ってから問い合わせる（FR-16）。
 	e.syncChanges(bs, bs.state.PendingChanges())
+	if e.host.Withheld(bs.id) {
+		// 拡張機能はこのバッファの複製を持っていない（基本設計 5.3）。
+		// command/execute は、バッファを使わないコマンド（デバッグの再開など）のために Withheld を立てて送り、それ以外は送らない。
+		p, ok := params.(ext.CommandExecuteParams)
+		if !ok {
+			return errWithheld(ref)
+		}
+		p.Withheld = true
+		params = p
+	}
 	e.tagSeq++
 	tag := queryTag(e.tagSeq)
 	timeout := e.syncTimeout()
@@ -203,7 +219,11 @@ func (e *Editor) applyDeferred(p *pendingQuery, r *exthost.QueryResult) {
 	}
 	if r.Err != nil {
 		if !errors.Is(r.Err, context.Canceled) {
-			e.showError(fmt.Errorf("拡張機能 %s の %s が失敗しました: %w", r.Extension, r.Method, r.Err))
+			if e.host.Withheld(p.bs.id) {
+				e.showError(errWithheld(editcmd.Ref{Extension: r.Extension, ID: r.Method}))
+			} else {
+				e.showError(fmt.Errorf("拡張機能 %s の %s が失敗しました: %w", r.Extension, r.Method, r.Err))
+			}
 		}
 		return
 	}
@@ -352,7 +372,12 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 		Cursor: toExtPos(q.Cursor), Count: count(q.Count, q.CountGiven), Args: args(q.Char), Sync: info.Replaying,
 	}
 	var r ext.CommandExecuteResult
-	if err := x.call(ref, ext.MethodCommandExecute, p, info, &r); err != nil {
+	err := x.call(ref, ext.MethodCommandExecute, p, info, &r)
+	if (err != nil || !r.OK) && x.e.host.Withheld(x.bs.id) && !errors.Is(err, context.Canceled) && !errors.Is(err, command.ErrDeferred) {
+		// 送っていないバッファでは、バッファを使うコマンドは失敗する。拡張機能の返す理由より、送っていないことを知らせる。
+		return buffer.Transaction{}, errWithheld(ref)
+	}
+	if err != nil {
 		return buffer.Transaction{}, err
 	}
 	if !r.OK {
