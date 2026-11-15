@@ -73,26 +73,12 @@ func (d *document) applyEdits(edits []ext.Edit) error {
 
 // applyEdit は、1 つの編集を構文木と全文に適用する。構文木の解析し直しはしない。
 func (d *document) applyEdit(e ext.Edit) error {
-	start, err := d.offset(e.Range.Start)
+	ie, err := d.inputEdit(e)
 	if err != nil {
 		return err
 	}
-	oldEnd, err := d.offset(e.Range.End)
-	if err != nil {
-		return err
-	}
-	if oldEnd < start {
-		return fmt.Errorf("%w: end %d:%d is before start %d:%d", errEditOutOfRange, e.Range.End.Line, e.Range.End.Byte, e.Range.Start.Line, e.Range.Start.Byte)
-	}
-	newEnd := endPosition(e.Range.Start, e.Text)
-	d.tree.Edit(&sitter.InputEdit{
-		StartByte:      uint(start),
-		OldEndByte:     uint(oldEnd),
-		NewEndByte:     uint(start + len(e.Text)),
-		StartPosition:  toPoint(e.Range.Start),
-		OldEndPosition: toPoint(e.Range.End),
-		NewEndPosition: toPoint(newEnd),
-	})
+	d.tree.Edit(&ie)
+	start, oldEnd := int(ie.StartByte), int(ie.OldEndByte)
 	src := make([]byte, 0, len(d.src)-(oldEnd-start)+len(e.Text))
 	src = append(src, d.src[:start]...)
 	src = append(src, e.Text...)
@@ -100,6 +86,30 @@ func (d *document) applyEdit(e ext.Edit) error {
 	d.src = src
 	d.lineStarts = lineStartsOf(d.src)
 	return nil
+}
+
+// inputEdit は、いまの全文に対する編集 e を、tree-sitter の InputEdit に写す。
+// 開始と古い終わりは編集の範囲そのもの、新しい終わりは開始の位置に e.Text を挿入した直後の位置である。
+func (d *document) inputEdit(e ext.Edit) (sitter.InputEdit, error) {
+	start, err := d.offset(e.Range.Start)
+	if err != nil {
+		return sitter.InputEdit{}, err
+	}
+	oldEnd, err := d.offset(e.Range.End)
+	if err != nil {
+		return sitter.InputEdit{}, err
+	}
+	if oldEnd < start {
+		return sitter.InputEdit{}, fmt.Errorf("%w: end %d:%d is before start %d:%d", errEditOutOfRange, e.Range.End.Line, e.Range.End.Byte, e.Range.Start.Line, e.Range.Start.Byte)
+	}
+	return sitter.InputEdit{
+		StartByte:      uint(start),
+		OldEndByte:     uint(oldEnd),
+		NewEndByte:     uint(start + len(e.Text)),
+		StartPosition:  toPoint(e.Range.Start),
+		OldEndPosition: toPoint(e.Range.End),
+		NewEndPosition: toPoint(endPosition(e.Range.Start, e.Text)),
+	}, nil
 }
 
 // offset は、位置 p の全文の中のバイト位置を返す。行末（改行の直前）までを指せる。

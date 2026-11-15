@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
@@ -228,13 +229,13 @@ func applyText(text string, edits []ext.Edit) string {
 	return strings.Join(lines, "\n")
 }
 
-// randomPosition は、text の中の、ASCII の文字の境界の位置を 1 つ選ぶ。多バイト文字の途中は避ける。
+// randomPosition は、text の中の文字の境界の位置（行末を含む）を 1 つ選ぶ。多バイト文字の途中は避ける。
 func randomPosition(r *rand.Rand, text string) ext.Position {
 	lines := strings.Split(text, "\n")
 	for {
 		l := r.IntN(len(lines))
 		b := r.IntN(len(lines[l]) + 1)
-		if b == len(lines[l]) || lines[l][b] < 0x80 {
+		if b == len(lines[l]) || utf8.RuneStart(lines[l][b]) {
 			return ext.Position{Line: l, Byte: b}
 		}
 	}
@@ -245,7 +246,7 @@ func lessPos(p, q ext.Position) bool {
 }
 
 // fragments は、無作為な編集で挿入するテキストの候補である。構文を壊すものと直すものを混ぜる。
-var fragments = []string{"", "x", "\n", "{", "}", "(", ")", `"`, "`", "/*", "*/", "// c\n", "func f() {\n\treturn 1\n}\n", "\t", "日本", ":= 3", "if a {", "\n\n"}
+var fragments = []string{"", "x", "\n", "{", "}", "(", ")", `"`, "`", "/*", "*/", "// c\n", "func f() {\n\treturn 1\n}\n", "\t", "日本", ":= 3", "if a {", "\n\n", "𝄞", "あ\nい", "\"い\n"}
 
 // TestIncrementalMatchesFull は、buffer/change の編集を増分で適用して解析し直した結果が、
 // 編集後の全文を全文から解析し直した結果と、構文木も色の一覧も一致することを確かめる。
@@ -269,8 +270,14 @@ func TestIncrementalMatchesFull(t *testing.T) {
 				if lessPos(b, a) {
 					a, b = b, a
 				}
-				if r.IntN(2) == 0 {
-					b = a // 挿入だけ
+				switch r.IntN(50) {
+				case 0: // 全文を置き換える
+					lines := strings.Split(cur, "\n")
+					a, b = ext.Position{}, ext.Position{Line: len(lines) - 1, Byte: len(lines[len(lines)-1])}
+				default:
+					if r.IntN(2) == 0 {
+						b = a // 挿入だけ
+					}
 				}
 				edits[i] = ext.Edit{Range: ext.Range{Start: a, End: b}, Text: fragments[r.IntN(len(fragments))]}
 				cur = applyText(cur, edits[i:i+1])
@@ -337,6 +344,13 @@ func TestApplyEditsOutOfRange(t *testing.T) {
 
 // connect は、highlighter の Server を io.Pipe の上で動かし、本体の役の接続と、受け取った decoration/set の通り道を返す。
 func connect(t *testing.T) (*rpc.Conn, <-chan ext.DecorationSetParams) {
+	conn, got, _ := connectWithMessages(t)
+	return conn, got
+}
+
+// connectWithMessages は、connect に加えて、受け取った message/show の通り道を返す。
+// 通り道の容量を大きく取り、受け取りの goroutine が詰まって ping の応答の受信が遅れないようにする。
+func connectWithMessages(t *testing.T) (*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams) {
 	t.Helper()
 	h, err := newHighlighter()
 	if err != nil {
@@ -347,9 +361,18 @@ func connect(t *testing.T) (*rpc.Conn, <-chan ext.DecorationSetParams) {
 	served := make(chan error, 1)
 	s := h.server()
 	go func() { served <- s.Serve(context.Background(), extR, extW) }()
-	got := make(chan ext.DecorationSetParams, 16)
+	got := make(chan ext.DecorationSetParams, 1024)
+	msgs := make(chan ext.MessageShowParams, 1024)
 	conn := rpc.NewConn(hostR, hostW, rpc.HandlerFuncs{
 		Notification: func(_ context.Context, n *rpc.Notification) {
+			if n.Method == ext.MethodMessageShow {
+				var m ext.MessageShowParams
+				if err := json.Unmarshal(n.Params, &m); err != nil {
+					t.Errorf("message/show: %v", err)
+				}
+				msgs <- m
+				return
+			}
 			if n.Method != ext.MethodDecorationSet {
 				return
 			}
@@ -379,7 +402,7 @@ func connect(t *testing.T) (*rpc.Conn, <-chan ext.DecorationSetParams) {
 	if err := conn.Call(ctx, ext.MethodInitialize, ext.InitializeParams{APIVersion: ext.APIVersion}, &init); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	return conn, got
+	return conn, got, msgs
 }
 
 func receive(t *testing.T, ch <-chan ext.DecorationSetParams) ext.DecorationSetParams {
@@ -480,5 +503,219 @@ func TestManifest(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(patterns, want) {
 		t.Errorf("filetype patterns = %v, want %v", patterns, want)
+	}
+}
+
+// pointAt は、src の中のバイト位置 off の行と列を、document を使わずに数える（検証用の参照実装）。
+func pointAt(src string, off int) sitter.Point {
+	before := src[:off]
+	row := strings.Count(before, "\n")
+	return sitter.Point{Row: uint(row), Column: uint(off - (strings.LastIndexByte(before, "\n"[0]) + 1))}
+}
+
+// offsetOf は、text の中の位置 p のバイト位置を、document を使わずに数える（検証用の参照実装）。
+func offsetOf(text string, p ext.Position) int {
+	lines := strings.Split(text, "\n")
+	off := 0
+	for _, l := range lines[:p.Line] {
+		off += len(l) + 1
+	}
+	return off + p.Byte
+}
+
+// checkInputEdit は、text に対する編集 e から作った InputEdit の 6 つの値を、参照実装と比べる。
+// 新しい終わりの行と列は、編集を適用した後の全文で、開始のバイト位置に挿入したテキストの長さを足した位置を数え直して求める。
+func checkInputEdit(t *testing.T, h *highlighter, text string, e ext.Edit) {
+	t.Helper()
+	d := newDocument(h.langs["go"], text)
+	defer d.close()
+	got, err := d.inputEdit(e)
+	if err != nil {
+		t.Fatalf("inputEdit(%q, %+v): %v", text, e, err)
+	}
+	start, oldEnd := offsetOf(text, e.Range.Start), offsetOf(text, e.Range.End)
+	after := text[:start] + e.Text + text[oldEnd:]
+	want := sitter.InputEdit{
+		StartByte:      uint(start),
+		OldEndByte:     uint(oldEnd),
+		NewEndByte:     uint(start + len(e.Text)),
+		StartPosition:  pointAt(text, start),
+		OldEndPosition: pointAt(text, oldEnd),
+		NewEndPosition: pointAt(after, start+len(e.Text)),
+	}
+	if got != want {
+		t.Fatalf("inputEdit(%q, %+v)\n got: %+v\nwant: %+v", text, e, got, want)
+	}
+}
+
+// TestInputEdit は、tree-sitter に渡す InputEdit の開始・古い終わり・新しい終わりの位置（バイト位置と行・列）を直接確かめる。
+// 構文木は再解析で位置を求め直すので、行・列の誤りは解析の結果に現れず、TestIncrementalMatchesFull では見つからない。
+func TestInputEdit(t *testing.T) {
+	h := newTestHighlighter(t)
+	pos := func(l, b int) ext.Position { return ext.Position{Line: l, Byte: b} }
+	edit := func(sl, sb, el, eb int, text string) ext.Edit {
+		return ext.Edit{Range: ext.Range{Start: pos(sl, sb), End: pos(el, eb)}, Text: text}
+	}
+	const text = "ab\nあい\n\n𝄞x"
+	tests := []struct {
+		name string
+		e    ext.Edit
+	}{
+		{"insert ascii", edit(0, 1, 0, 1, "zz")},
+		{"insert multi-line with multibyte last line", edit(0, 2, 0, 2, "q\nr\nいう")},
+		{"insert before multibyte", edit(1, 3, 1, 3, "𝄞")},
+		{"replace multibyte across lines", edit(1, 3, 3, 4, "え")},
+		{"delete across lines", edit(0, 1, 2, 0, "")},
+		{"insert at end of last line", edit(3, 5, 3, 5, "\n")},
+		{"replace whole text with empty", edit(0, 0, 3, 5, "")},
+		{"replace whole text with lines", edit(0, 0, 3, 5, "a\nb\n")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { checkInputEdit(t, h, text, tt.e) })
+	}
+	// 無作為な編集でも確かめる。
+	r := rand.New(rand.NewPCG(46, 2)) //nolint:gosec // 再現できる無作為な編集の列を作るためで、暗号の用途ではない
+	cur := goSource
+	for range 500 {
+		a, b := randomPosition(r, cur), randomPosition(r, cur)
+		if lessPos(b, a) {
+			a, b = b, a
+		}
+		e := ext.Edit{Range: ext.Range{Start: a, End: b}, Text: fragments[r.IntN(len(fragments))]}
+		checkInputEdit(t, h, cur, e)
+		cur = applyText(cur, []ext.Edit{e})
+	}
+}
+
+// TestDecorationSetSize は、符号化せずに数えた decoration/set の大きさが、encoding/json で符号化した大きさと一致することを確かめる。
+func TestDecorationSetSize(t *testing.T) {
+	h := newTestHighlighter(t)
+	d := parse(t, h, "go", goSource)
+	for _, decs := range [][]ext.Decoration{{}, d.decorations()[:1], d.decorations()} {
+		p := ext.DecorationSetParams{Buffer: 12345, Version: 1 << 40, Decorations: decs}
+		data, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := decorationSetSize(p.Buffer, p.Version, p.Decorations); got != len(data) {
+			t.Errorf("%d decorations: size = %d, want %d", len(decs), got, len(data))
+		}
+	}
+}
+
+// bigJSON は、n 行の JSON の配列を返す。各行は {"id": N, "name": "itemN", "ok": true, "v": null}, の形で、8 つの範囲に色が付く。
+func bigJSON(n int) string {
+	var sb strings.Builder
+	sb.WriteString("[\n")
+	for i := range n {
+		fmt.Fprintf(&sb, "{\"id\": %d, \"name\": \"item%d\", \"ok\": true, \"v\": null},\n", i, i)
+	}
+	sb.WriteString("{}\n]")
+	return sb.String()
+}
+
+// ping は、本体の役から ping を送り、応答までの時間を返す。
+func ping(t *testing.T, conn *rpc.Conn) time.Duration {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	start := time.Now()
+	if err := conn.Call(ctx, ext.MethodPing, nil, nil); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+	return time.Since(start)
+}
+
+// typeChars は、行 10 の先頭へ 1 文字ずつ n 回、interval の間隔で挿入する buffer/change を送る。バージョンは 2 から n+1 になる。
+// 送った後の全文を返す。
+func typeChars(t *testing.T, conn *rpc.Conn, text string, n int, interval time.Duration) string {
+	t.Helper()
+	for i := range n {
+		e := ext.Edit{Range: ext.Range{Start: ext.Position{Line: 10}, End: ext.Position{Line: 10}}, Text: " "}
+		p := ext.BufferChangeParams{Buffer: 1, FromVersion: ext.Version(i + 1), ToVersion: ext.Version(i + 2), Edits: []ext.Edit{e}}
+		if err := conn.Notify(ext.MethodBufferChange, p); err != nil {
+			t.Fatal(err)
+		}
+		text = applyText(text, []ext.Edit{e})
+		time.Sleep(interval)
+	}
+	return text
+}
+
+// receiveVersion は、want のバージョンの decoration/set が届くまで受け取り、それを返す。
+// 届いた一覧のバージョンが増え続けること（古いバージョンの一覧を後から送らないこと）も確かめる。
+// 受け取った件数も返す。
+func receiveVersion(t *testing.T, got <-chan ext.DecorationSetParams, want ext.Version) (ext.DecorationSetParams, int) {
+	t.Helper()
+	var prev ext.Version
+	for n := 1; ; n++ {
+		p := receive(t, got)
+		if p.Version <= prev {
+			t.Fatalf("decoration/set version %d after %d", p.Version, prev)
+		}
+		prev = p.Version
+		if p.Version == want {
+			return p, n
+		}
+		if p.Version > want {
+			t.Fatalf("decoration/set version %d, want up to %d", p.Version, want)
+		}
+	}
+}
+
+// TestServeStaysResponsive は、解析に時間のかかる大きなファイルを打鍵しても、ping が本体の期限（internal/exthost の DefaultPingTimeout、2 秒）より十分に早く返ることを確かめる。
+// レビューの再現の手順（20,003 行・約 1.2 MB の JSON に 100 ms の間隔で 15 文字を挿入した直後に ping）と同じである。
+// 解析をループの上で同期に行っていたときは 3.25 秒かかった。
+// このファイルの一覧は maxDecorationSetBytes を超えるので、一覧は空になり、message/show が 1 回だけ届くことも確かめる。
+//
+// req: FR-35
+func TestServeStaysResponsive(t *testing.T) {
+	conn, got, msgs := connectWithMessages(t)
+	text := bigJSON(20000)
+	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, FileType: "json", Text: text}); err != nil {
+		t.Fatal(err)
+	}
+	typeChars(t, conn, text, 15, 100*time.Millisecond)
+	if d := ping(t, conn); d > 500*time.Millisecond {
+		t.Errorf("ping took %v, want at most 500ms", d)
+	} else {
+		t.Logf("ping took %v", d)
+	}
+	p, n := receiveVersion(t, got, 16)
+	t.Logf("received %d decoration/set for 16 versions", n)
+	if len(p.Decorations) != 0 {
+		t.Errorf("decoration/set has %d decorations, want an empty list over the size limit", len(p.Decorations))
+	}
+	select {
+	case m := <-msgs:
+		if m.Level != ext.MessageWarning || m.Text != tooLargeMessage {
+			t.Errorf("message/show = %+v, want the warning %q", m, tooLargeMessage)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("message/show did not arrive")
+	}
+	if len(msgs) != 0 {
+		t.Errorf("message/show arrived %d more times, want once", len(msgs))
+	}
+}
+
+// TestServeCoalescesChanges は、解析の間に溜まった buffer/change をまとめて 1 回で解析し直し、
+// 最後のバージョンの一覧が全文から解析した一覧と一致することを確かめる。途中のバージョンは飛ばしてよい。
+//
+// req: FR-35
+func TestServeCoalescesChanges(t *testing.T) {
+	conn, got := connect(t)
+	// 一覧が maxDecorationSetBytes を超えない大きさにする（1 行あたり約 370 バイト）。
+	text := bigJSON(10000)
+	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, FileType: "json", Text: text}); err != nil {
+		t.Fatal(err)
+	}
+	text = typeChars(t, conn, text, 15, 0)
+	p, n := receiveVersion(t, got, 16)
+	t.Logf("received %d decoration/set for 16 versions", n)
+	h := newTestHighlighter(t)
+	want := parse(t, h, "json", text).decorations()
+	if len(want) == 0 || !slices.Equal(p.Decorations, want) {
+		t.Errorf("decorations of version 16 differ from a full parse (%d vs %d)", len(p.Decorations), len(want))
 	}
 }

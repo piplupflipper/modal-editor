@@ -13,6 +13,7 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 
 - Go（バージョンは [go.mod](go.mod) を参照）
 - make
+- C コンパイラ（gcc など）。tree-sitter の拡張機能（`cmd/modal-editor-ext-treesitter/`）が cgo で文法をコンパイルするので、`make check`、`make test`、`make build` に要る。本体は cgo を使わない
 
 リンターなどの開発ツールは、`make` が `go run` でバージョンを固定して実行するので、インストールは不要である。
 初回の実行時だけ、ツールのビルドに数分かかる。
