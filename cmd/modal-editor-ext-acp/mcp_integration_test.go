@@ -104,7 +104,7 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 
 	mcpManifest := readManifest(t, "../modal-editor-ext-mcp/manifest.json")
 	acpManifest := readManifest(t, "manifest.json")
-	if _, err := ext.ValidateManifests([]ext.Manifest{mcpManifest, acpManifest}); err != nil {
+	if _, err = ext.ValidateManifests([]ext.Manifest{mcpManifest, acpManifest}); err != nil {
 		t.Fatal(err)
 	}
 	acpSettings, err := json.Marshal(settings{Agent: agentConfig{Command: fakeAgent}, MCPBridge: bridge})
@@ -132,8 +132,8 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 		defer cancel()
-		if err := host.CloseContext(ctx); err != nil {
-			t.Errorf("Close = %v", err)
+		if cerr := host.CloseContext(ctx); cerr != nil {
+			t.Errorf("Close = %v", cerr)
 		}
 		<-collected
 	})
@@ -142,8 +142,9 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 	defer cancel()
 	// バッファを開かずに呼ぶので、Withheld でバッファの複製が無いことを伝える（どちらのコマンドもバッファを使わない）。
 	// MCP の拡張機能を起動する。起動すると本体が決めたパスで待ち受ける。
-	if res, err := host.ExecuteCommand(ctx, "mcp", ext.CommandExecuteParams{ID: "mcp.start", Withheld: true}, testTimeout); err != nil || !res.OK {
-		t.Fatalf("mcp.start = %+v, %v", res, err)
+	start, err := host.ExecuteCommand(ctx, "mcp", ext.CommandExecuteParams{ID: "mcp.start", Withheld: true}, testTimeout)
+	if err != nil || !start.OK {
+		t.Fatalf("mcp.start = %+v, %v", start, err)
 	}
 	// ACP の拡張機能にプロンプトを送り、テスト用のエージェントが session/new で受け取った内容を欄へ書かせる。
 	args, err := json.Marshal(map[string]string{"text": `{"op":"session"}`})
@@ -173,7 +174,7 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 	var got struct {
 		Session sessionNewParams `json:"session"`
 	}
-	if err := json.Unmarshal([]byte(line), &got); err != nil {
+	if err = json.Unmarshal([]byte(line), &got); err != nil {
 		t.Fatalf("%v: %s", err, line)
 	}
 	if len(got.Session.MCPServers) != 1 {
@@ -202,11 +203,11 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	if err = cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	req := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}` + "\n"
-	if _, err := io.WriteString(stdin, req); err != nil {
+	if _, err = io.WriteString(stdin, req); err != nil {
 		t.Fatal(err)
 	}
 	resp, err := bufio.NewReader(stdout).ReadString('\n')

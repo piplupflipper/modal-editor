@@ -76,7 +76,7 @@ func makeMCPSocket(parent, pattern string) (*MCPSocket, error) {
 	if n := len(filepath.Join(parent, pattern+"0123456789", mcpSocketName)); n > maxSocketPath {
 		return nil, fmt.Errorf("exthost: mcp socket: path under %s is too long (%d bytes)", parent, n)
 	}
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+	if err = os.MkdirAll(parent, 0o700); err != nil { //nolint:gosec // 利用者自身の XDG_RUNTIME_DIR か一時ディレクトリの下に作るのが、この関数の役目である。
 		return nil, fmt.Errorf("exthost: mcp socket: %w", err)
 	}
 	dir, err := os.MkdirTemp(parent, pattern)
