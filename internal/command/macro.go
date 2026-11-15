@@ -40,7 +40,8 @@ func (s *State) stopRecording() {
 	if n := len(keys); n > 0 {
 		keys = keys[:n-1]
 	}
-	reg := Register{Text: rawText(keys), keys: append([]editcmd.Key{}, keys...)}
+	// qaq のように何も記録しなかった場合も、Vim と同じく空のテキストを書き込む（レジスターを空にする用途）。
+	reg := Register{Text: rawText(keys), keys: append([]editcmd.Key{}, keys...), filled: true}
 	name := s.recording
 	if p := s.registers.slot(name); p != nil {
 		if name >= 'A' && name <= 'Z' {

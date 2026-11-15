@@ -145,6 +145,9 @@ func actDeleteCharBefore(s *State, cmd editcmd.Command) error {
 		}
 		start = prevChar(line, start)
 	}
+	// X は dh に当たり、Vim はカーソルを範囲の始まりへ移してから消す。アンドゥの後のカーソルもそこへ戻る。
+	s.markUndoCursor(pos(s.cursor.Line, start))
+	defer s.clearUndoCursor()
 	return s.deleteInLine(cmd, start, s.cursor.Byte)
 }
 
@@ -290,6 +293,10 @@ func actPut(after bool) actionFunc {
 		if reg.empty() {
 			return failf("register %q is empty", cmd.Register)
 		}
+		if reg.Text == "" && !reg.Linewise {
+			// 空のテキストが入ったレジスター（空の行の C の後など）は、Vim と同じく何も入れず、カーソルも動かさない。
+			return nil
+		}
 		n := max(cmd.Count, 1)
 		unit := reg.Text
 		if reg.Linewise {
@@ -374,18 +381,12 @@ func actInsert(s *State, cmd editcmd.Command) error {
 // actUndo は、u（redo が false）と <C-r> である。回数の単位を取り消すかやり直す（FR-07）。
 // 1 つも取り消せなければ失敗する。
 //
-// カーソルは変更の始まりへ移す。Vim は変更の前のカーソルをアンドゥの単位ごとに覚えて戻すが、
-// ここでは変更の内容から次の規則で決める（Vim と列が違うことがある。dj の取り消しなど）。
-// 行の区切りを含まない変更は、変更の始まりの位置へ移す。
-// 行の区切りを含む変更は、変更の始まりの行（行末への行の挿入なら次の行）の、最初の空白でない文字へ移す。
+// カーソルは、Vim の u_undoredo() と同じ規則で、最後に取り消した（やり直した）単位から決める（undoCursor）。
 //
 // req: FR-07
 func actUndo(redo bool) actionFunc {
 	return func(s *State, cmd editcmd.Command) error {
-		var (
-			last buffer.Change
-			done int
-		)
+		done := 0
 		for range max(cmd.Count, 1) {
 			var (
 				ch buffer.Change
@@ -400,7 +401,7 @@ func actUndo(redo bool) actionFunc {
 				break
 			}
 			s.res.Changes = append(s.res.Changes, ch)
-			last = ch
+			s.cursor = s.undoCursor(s.buf.LastUndo())
 			done++
 		}
 		if done == 0 {
@@ -409,31 +410,38 @@ func actUndo(redo bool) actionFunc {
 			}
 			return failf("already at oldest change")
 		}
-		s.setCursorNormal(s.changeCursor(last))
+		s.setCursorNormal(s.cursor)
 		return nil
 	}
 }
 
-// changeCursor は、アンドゥとリドゥの後のカーソルの位置を、変更の内容から決める（actUndo を参照）。
-func (s *State) changeCursor(ch buffer.Change) buffer.Position {
-	if len(ch.Edits) == 0 {
-		return s.cursor
+// undoCursor は、アンドゥとリドゥの後のカーソルの位置を、Vim 9.1 の u_undoredo() と同じ規則で決める。
+//
+// 単位に記録した変更の前のカーソル（u.Cursor。Vim の uh_cursor）の行が、変わった行の範囲か、その前後の 1 行にあれば、その位置へ戻す。
+// そうでなければ、変わった行の範囲の最初の行へ移る。ただし、その行が記録したカーソルの次の行なら、記録したカーソルの行へ移る
+// （o の取り消しで、o を打った行へ戻る）。
+// 移った行が記録したカーソルの行なら記録した列へ、そうでなければ最初の空白でない文字へ移る。
+// 移った行がバッファの外なら、最後の行の先頭へ移る。
+//
+// 記録したカーソルは、変更を始めたときのカーソルである。Vim と同じく、オペレーターでは範囲の始まり、
+// dd や cc では最初の空白でない文字へ動かした後の位置を記録する（markUndoCursor）。
+func (s *State) undoCursor(u buffer.UndoInfo) buffer.Position {
+	cur := s.cursor
+	if u.HasCursor && u.Cursor.Line >= u.Top-1 && u.Cursor.Line <= u.Top+u.Lines {
+		cur = u.Cursor
+	} else {
+		cur.Line = u.Top
 	}
-	e := ch.Edits[0]
-	for _, x := range ch.Edits[1:] {
-		if x.Range.Start.Less(e.Range.Start) {
-			e = x
-		}
+	if u.HasCursor && u.Cursor.Line+1 == cur.Line && cur.Line > 0 {
+		cur.Line--
 	}
-	if !strings.Contains(e.Text, "\n") && e.Range.Start.Line == e.Range.End.Line {
-		return e.Range.Start
+	if cur.Line > s.lastLine() {
+		return pos(s.lastLine(), 0)
 	}
-	l := e.Range.Start.Line
-	if e.Range.Start == e.Range.End && e.Range.Start.Byte > 0 && strings.HasPrefix(e.Text, "\n") {
-		l++
+	if u.HasCursor && u.Cursor.Line == cur.Line {
+		return s.clampPos(pos(cur.Line, u.Cursor.Byte))
 	}
-	l = min(l, s.lastLine())
-	return s.firstNonBlankPos(l)
+	return s.firstNonBlankPos(cur.Line)
 }
 
 // actCommandLine は、: である。コマンドラインモードへ移る。

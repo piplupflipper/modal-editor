@@ -9,12 +9,7 @@ import "testing"
 // 途中で失敗した操作があっても、後のキーは続けて入力される（Vim の feedkeys と同じ）。
 //
 // 省略形と同じ働きの cl、dl、cc の境界（空の行、行の無いバッファ）も含める。
-//
-// Vim と違うために表から外したケースがある。
-//   - 空の行の C（c$）は、Vim では無名のレジスターと - に空の文字単位のテキストを書くが、
-//     Register は「空のテキストが入っている」と「空である」を区別しないので、レジスターを変えない
-//   - 行をまたぐ変更のアンドゥの後のカーソル（a|bc、de での 2Du は、Vim では 0:1）と、字下げのある行の SX<Esc>u のカーソルは、
-//     actUndo の規則（変更の内容から決める）に従うので、Vim と列が違う
+// 空の行の C と、行をまたぐ変更のアンドゥの後のカーソル（2Du、字下げのある行の SX<Esc>u）は、#79 で Vim に合わせて表に戻した。
 var shorthandCases = []vimCase{
 	{"abc d|ef", "D", "abc d", "0:4", "v:ef", "v:U", ":", "v:ef", "v:A"},
 	{"abc d|ef", "\"aD", "abc d", "0:4", "v:ef", "v:U", ":", ":", "v:ef"},
@@ -107,6 +102,12 @@ var shorthandCases = []vimCase{
 	{"|ab\ncd\nef", "qaSX<Esc>jq2@a", "X\nX\nX", "2:0", "V:ef\n", "v:U", "V:ef\n", ":", "v:SX\u001bj"},
 	{"|ab\ncd\nef", "qasX<Esc>jq@a", "Xb\nXd\nef", "2:0", "v:c", "v:U", ":", "v:c", "v:sX\u001bj"},
 	{"a\nb|c\nd", "2\"aY", "a\nbc\nd", "1:1", "V:bc\nd\n", "v:U", ":", ":", "V:bc\nd\n"},
+	{"a|bc\nde", "2Du", "abc\nde", "0:1", "v:bc\nde", "v:U", "v:bc\nde", ":", "v:A"},
+	{"a\n  b|c\nd", "SX<Esc>u", "a\n  bc\nd", "1:2", "V:  bc\n", "v:U", "V:  bc\n", ":", "v:A"},
+	{"a\n|\nb", "CX<Esc>", "a\nX\nb", "1:0", "v:", "v:U", ":", "v:", "v:A"},
+	{"|", "CX<Esc>", "X", "0:0", "v:", "v:U", ":", "v:", "v:A"},
+	{"a\n|\nb", "C<Esc>p", "a\n\nb", "1:0", "v:", "v:U", ":", "v:", "v:A"},
+	{"a\n|\nb", "\"aCX<Esc>", "a\nX\nb", "1:0", "v:", "v:U", ":", ":", "v:"},
 }
 
 // 省略形のコマンドの、回数、レジスター、ドットリピート、アンドゥ、マクロと、行末、最終行、空の行、行の無いバッファの境界が、

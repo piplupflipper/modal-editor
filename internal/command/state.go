@@ -130,6 +130,11 @@ type State struct {
 	// res は、処理中の Feed などの結果を溜める。
 	res Result
 
+	// undoAt は、次の apply が新しいアンドゥの単位を作るときに、変更の前のカーソルとして記録する位置である。
+	// undoAtSet が false なら、apply の時点のカーソルを記録する。apply が使うと undoAtSet を戻す（markUndoCursor）。
+	undoAt    buffer.Position
+	undoAtSet bool
+
 	// ドットリピート（FR-06）。
 	dot        *editcmd.Command
 	dotVisual  visualExtent
@@ -352,20 +357,37 @@ func (s *State) apply(edits ...buffer.Edit) error {
 	if len(edits) == 0 {
 		return nil
 	}
-	ch, err := s.buf.Apply(buffer.Transaction{BaseVersion: s.buf.Version(), Edits: edits})
+	return s.applyTx(buffer.Transaction{BaseVersion: s.buf.Version(), Edits: edits})
+}
+
+// applyTx は、拡張機能が返したトランザクションを適用する。元にしたバージョン番号が違えば失敗する（FR-15）。
+// 適用が新しいアンドゥの単位を作ったなら、その単位に変更の前のカーソルを記録する（markUndoCursor）。
+func (s *State) applyTx(tx buffer.Transaction) error {
+	at := s.cursor
+	if s.undoAtSet {
+		at = s.undoAt
+	}
+	ch, err := s.buf.Apply(tx)
 	if err != nil {
 		return err
+	}
+	if len(tx.Edits) > 0 {
+		s.undoAtSet = false
+		s.buf.SetUndoCursor(at)
 	}
 	s.res.Changes = append(s.res.Changes, ch)
 	return nil
 }
 
-// applyTx は、拡張機能が返したトランザクションを適用する。元にしたバージョン番号が違えば失敗する（FR-15）。
-func (s *State) applyTx(tx buffer.Transaction) error {
-	ch, err := s.buf.Apply(tx)
-	if err != nil {
-		return err
-	}
-	s.res.Changes = append(s.res.Changes, ch)
-	return nil
+// markUndoCursor は、次の apply が作るアンドゥの単位に記録する、変更の前のカーソルの位置を p にする。
+// Vim は、変更を始める前にカーソルを動かしてから単位を作る操作がある（dd は最初の空白でない文字へ、オペレーターは範囲の始まりへ）。
+// その位置を、アンドゥとリドゥの後にカーソルを戻す先として記録する（actUndo）。
+func (s *State) markUndoCursor(p buffer.Position) {
+	s.undoAt, s.undoAtSet = p, true
+}
+
+// clearUndoCursor は、markUndoCursor で決めた位置を、apply が使わなかった場合も含めて捨てる。
+// 変更しなかった操作（y など）の位置が、後の操作のアンドゥの単位に残らないようにする。
+func (s *State) clearUndoCursor() {
+	s.undoAtSet = false
 }

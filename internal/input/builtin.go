@@ -69,6 +69,12 @@ var (
 		{keys: "~", id: "toggle-case", modes: MapVisual},
 		{keys: "u", id: "lowercase", modes: MapVisual},
 		{keys: "U", id: "uppercase", modes: MapVisual},
+		// ビジュアルモードの D、C、S、Y は、選択を行単位にしてから d、c、c、y を働かせる（Vim の v_D、v_C、v_S、v_Y）。
+		// 文字単位の選択でも、選択した行の全体を対象にする。
+		{keys: "D", id: "delete-lines", modes: MapVisual},
+		{keys: "C", id: "change-lines", next: editcmd.ModeInsert, modes: MapVisual},
+		{keys: "S", id: "change-lines", next: editcmd.ModeInsert, modes: MapVisual},
+		{keys: "Y", id: "yank-lines", modes: MapVisual},
 	}
 
 	builtinTextObjects = []spec{
@@ -110,7 +116,7 @@ var (
 		{keys: "r", id: "replace-char", takesChar: true},
 		// 省略形のコマンド。D は d$、C は c$、S は cc、s は cl、Y は yy に当たり、実行の側（internal/command）が
 		// オペレーターと対象の組に置き換えて実行する。オペレーターの表ではなく操作の表に置くのは、
-		// 対象を待たずに 1 キーで完結するからである。ビジュアルモードの D、C、S、Y（行単位の操作）は未登録である。
+		// 対象を待たずに 1 キーで完結するからである。ビジュアルモードの D、C、S、Y は、オペレーターの表のビジュアルモードだけの行である。
 		{keys: "D", id: "delete-to-line-end"},
 		{keys: "C", id: "change-to-line-end", next: editcmd.ModeInsert},
 		{keys: "S", id: "substitute-line", next: editcmd.ModeInsert},

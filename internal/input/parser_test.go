@@ -224,7 +224,7 @@ func TestParserRecording(t *testing.T) {
 }
 
 // ビジュアルモードでは、オペレーターは対象を待たずに完成し、テキストオブジェクトは移動の値になり、
-// ビジュアルモードだけの登録（x、o）を引く。q と . はマクロとドットリピートとして読まない。
+// ビジュアルモードだけの登録（x、o、行単位の D、C、S、Y）を引く。q と . はマクロとドットリピートとして読まない。
 //
 // req: FR-01
 func TestParserVisual(t *testing.T) {
@@ -239,6 +239,12 @@ func TestParserVisual(t *testing.T) {
 		{"x", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete")})}},
 		{"s", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("change"), Mode: editcmd.ModeInsert})}},
 		{"gU", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("uppercase")})}},
+		{"D", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete-lines")})}},
+		{`"aC`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Register: 'a', Count: 1, Operator: builtin("change-lines"), Mode: editcmd.ModeInsert,
+		})}},
+		{"S", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("change-lines"), Mode: editcmd.ModeInsert})}},
+		{"Y", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("yank-lines")})}},
 		{"iw", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-word")},
 		})}},
@@ -270,6 +276,11 @@ func TestParserVisual(t *testing.T) {
 	}
 	if got := feed(p, "d"); len(got) != 0 || !p.Pending() {
 		t.Errorf("ノーマルモードの d = %+v", got)
+	}
+	feed(p, "<Esc>")
+	// ノーマルモードの D は、ビジュアルモードの D（delete-lines）ではなく省略形の操作である。
+	if got := feed(p, "D"); len(got) != 1 || got[0].Command.Action.ID != "delete-to-line-end" {
+		t.Errorf("ノーマルモードの D = %+v", got)
 	}
 }
 

@@ -13,15 +13,23 @@ import (
 type region struct {
 	// start は、範囲の始まりとして扱うカーソルの位置である。y や g~ の後のカーソルはここへ移る。
 	// 行単位の範囲でも列を持つ（yk の後は、k で移った列に置く）。
+	// Vim がオペレーターを働かせる直前のカーソル（do_pending_operator の oap->start）に当たり、
+	// アンドゥの単位に、変更の前のカーソルとして記録する（markUndoCursor）。
 	start buffer.Position
 	// r は、半開区間の範囲である。行単位の範囲では、始まりの行の先頭から終わりの行の行末までである。
 	r        buffer.Range
 	linewise bool
+	// empty は、排他的（exclusive）な範囲で、始まりと終わりが同じであることを表す（Vim の oap->empty）。
+	// 包含的（inclusive）な範囲は、空の行で r が空になっても empty ではない（空の行の c$ は空のテキストをレジスターに書く）。
+	empty bool
 }
 
 // regionOf は、Span を region にする。
 func (s *State) regionOf(sp target.Span) region {
-	return region{start: sp.Start, r: sp.Range(s.buf), linewise: sp.Kind == target.Linewise}
+	return region{
+		start: sp.Start, r: sp.Range(s.buf), linewise: sp.Kind == target.Linewise,
+		empty: sp.Kind == target.Exclusive && sp.Start == sp.End,
+	}
 }
 
 // opOptions は、オペレーターの実行の条件である。
@@ -98,9 +106,10 @@ func (s *State) operatorSpan(cmd editcmd.Command) (target.Span, error) {
 		}
 		end := min(s.cursor.Line+n-1, s.lastLine())
 		start := s.cursor
-		if n == 1 && !isYank(cmd.Operator) {
+		if fnb := s.firstNonBlankPos(start.Line); n == 1 && !isYank(cmd.Operator) && fnb.Less(start) {
 			// Vim の nv_lineop は、回数が 1 なら y 以外でカーソルを最初の空白でない文字へ移してから働く（g~~ の後のカーソル）。
-			start = s.firstNonBlankPos(start.Line)
+			// 範囲の始まりは、動かす前と後のカーソルの前の方である（do_pending_operator）。0g~~ のカーソルは行頭に残る。
+			start = fnb
 		}
 		return target.Span{Start: start, End: pos(end, 0), Kind: target.Linewise}, nil
 	case editcmd.TargetMotion:
@@ -126,6 +135,10 @@ func (s *State) operatorSpan(cmd editcmd.Command) (target.Span, error) {
 
 // runOperator は、範囲に対してオペレーターを実行する。拡張機能のオペレーターなら問い合わせる（FR-12）。
 func (s *State) runOperator(cmd editcmd.Command, sp target.Span, rg region, o opOptions) error {
+	// Vim は、カーソルを範囲の始まりへ移してからオペレーターを働かせる（do_pending_operator）。
+	// その位置を、アンドゥの単位に変更の前のカーソルとして記録する。
+	s.markUndoCursor(rg.start)
+	defer s.clearUndoCursor()
 	if !cmd.Operator.Builtin() {
 		return s.extOperator(cmd, sp)
 	}
@@ -242,12 +255,19 @@ func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if err != nil {
 		return err
 	}
-	// 行の無いバッファの cc（S）は、Vim と同じくレジスターを変えずにインサートモードへ移る（opDelete の dd と同じ扱い）。
-	noLines := rg.linewise && s.noLines()
+	// 行の無いバッファの cc（S）と c$（C）は、Vim と同じくレジスターを変えずにインサートモードへ移る（opDelete の dd と同じ扱い）。
+	noLines := s.noLines()
+	if rg.linewise && rg.r.End.Line > rg.r.Start.Line && s.undoAtSet {
+		// Vim の op_change は、2 行目以降を消すときに、カーソルを一時的に次の行へ移してアンドゥの単位を作る（op_delete）。
+		// アンドゥの後のカーソルは、その位置（cj の取り消しなら 2 行目）へ戻る。
+		s.markUndoCursor(pos(s.undoAt.Line+1, s.undoAt.Byte))
+	}
 	if err := s.apply(buffer.Edit{Range: rg.r}); err != nil {
 		return err
 	}
-	if (rg.linewise || text != "") && !noLines {
+	if !rg.empty && !noLines {
+		// Vim の op_change は、範囲が空でなければ（空の行の c$、ciw のように包含的な範囲なら、テキストが空でも）、
+		// 消したテキストをレジスターに書く。cl のような排他的で空の範囲では書かない。
 		s.registers.delete(cmd.Register, Register{Text: text, Linewise: rg.linewise}, smallDelete(rg), false)
 	}
 	s.cursor = rg.r.Start
