@@ -167,15 +167,15 @@ func (c *client) writeBuffer(ctx context.Context, id ext.BufferID, version ext.V
 		base := b.Version()
 		if b.Text() != text {
 			last := b.LineCount() - 1
-			res, err := c.srv.Edit(ctx, ext.BufferEditParams{Buffer: id, Transaction: ext.Transaction{
+			res, eerr := c.srv.Edit(ctx, ext.BufferEditParams{Buffer: id, Transaction: ext.Transaction{
 				BaseVersion: base,
 				Edits: []ext.Edit{{
 					Range: ext.Range{End: ext.Position{Line: last, Byte: len(b.Line(last))}},
 					Text:  text,
 				}},
 			}})
-			if err != nil {
-				return fmt.Errorf("buffer/edit: %w", err)
+			if eerr != nil {
+				return fmt.Errorf("buffer/edit: %w", eerr)
 			}
 			if !res.Applied {
 				version = res.Version

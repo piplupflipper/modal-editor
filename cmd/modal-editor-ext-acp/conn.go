@@ -72,7 +72,6 @@ type lineConn struct {
 	// reqCtx は、相手からのリクエストのハンドラーに渡す ctx である。接続が終わると取り消す。
 	reqCtx    context.Context
 	reqCancel context.CancelFunc
-	handlers  sync.WaitGroup
 	done      chan struct{}
 }
 
@@ -129,9 +128,6 @@ func (c *lineConn) close(cause error) {
 	close(c.done)
 }
 
-// wait は、相手からのリクエストのハンドラーがすべて戻るまで待つ。
-func (c *lineConn) wait() { c.handlers.Wait() }
-
 func (c *lineConn) dispatch(line []byte) {
 	var m wireMessage
 	if err := json.Unmarshal(line, &m); err != nil {
@@ -140,11 +136,7 @@ func (c *lineConn) dispatch(line []byte) {
 	}
 	switch {
 	case m.Method != "" && len(m.ID) > 0:
-		c.handlers.Add(1)
-		go func() {
-			defer c.handlers.Done()
-			c.handleRequest(&m)
-		}()
+		go c.handleRequest(&m)
 	case m.Method != "":
 		if c.onNotification != nil {
 			c.onNotification(m.Method, m.Params)

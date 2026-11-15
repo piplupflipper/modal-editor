@@ -444,21 +444,27 @@ func (c *client) cancel(_ context.Context, _ *server.Buffer, _ *ext.CommandExecu
 		c.mu.Unlock()
 		return c.fail(cmdCancel + ": 処理中のプロンプトが無い")
 	}
-	c.cancelTurn()
+	cancelTurn := c.cancelTurn
 	ag := c.agent
 	var sid string
 	if ag != nil {
 		sid = ag.sessionID
 	}
 	c.mu.Unlock()
-	if sid != "" {
-		// エージェントが標準入力を読んでいないと書き込みが詰まりうるので、ループの上で書かない。
-		go func() {
-			if err := ag.conn.notify(methodSessionCancel, sessionCancelParams{SessionID: sid}); err != nil {
-				c.logf("session/cancel: %v", err)
-			}
-		}()
+	if sid == "" {
+		// セッションを作る前なら、作るのをやめさせる（runPrompt）。
+		cancelTurn()
+		return ext.CommandExecuteResult{OK: true}, nil
 	}
+	// session/cancel を、権限の確認の cancelled の応答より先に送る。エージェントが cancelled の応答を受け取った時点で
+	// 取り消しを知っていれば、プロンプトを cancelled の stopReason で終えられる（ACP の Prompt Turn の Cancellation）。
+	// エージェントが標準入力を読んでいないと書き込みが詰まりうるので、ループの上で書かない。
+	go func() {
+		if err := ag.conn.notify(methodSessionCancel, sessionCancelParams{SessionID: sid}); err != nil {
+			c.logf("session/cancel: %v", err)
+		}
+		cancelTurn()
+	}()
 	return ext.CommandExecuteResult{OK: true}, nil
 }
 
