@@ -71,6 +71,9 @@ type Buffer struct {
 	nextID uint64
 	// savedID は、MarkSaved を呼んだ時点の stateID である。
 	savedID uint64
+
+	// lastUndo は、直前の Undo か Redo の情報である（LastUndo）。
+	lastUndo UndoInfo
 }
 
 // step は、アンドゥとリドゥの 1 単位である。
@@ -79,10 +82,14 @@ type Buffer struct {
 // 逆順で持たないのは、グループの中の Apply をまとめるときに末尾へ足すだけで済ませるためである（#29）。
 // 先頭へ足す形にすると、まとめるたびに全体を写し直し、グループの中の Apply の回数の 2 乗に比例して遅くなる。
 // id は、この単位を適用し終えた状態を見分けるための、履歴の中で一意な番号（1 以上）である。
+// cursor は、SetUndoCursor で記録した、この単位の変更の前のカーソルの位置である。hasCursor が false なら記録が無い。
 type step struct {
 	id      uint64
 	edits   []Edit
 	inverse []Edit
+
+	cursor    Position
+	hasCursor bool
 }
 
 // New は、text を内容とするバッファを、バージョン番号 0 で作る。
@@ -434,6 +441,7 @@ func (b *Buffer) CanRedo() bool {
 // 取り消しも変更の 1 つとして扱い、バージョン番号を 1 増やす。
 // 取り消せるものが無ければ、何もせずに false を返す。
 // 開いているアンドゥのグループは閉じる。
+// 取り消した単位のカーソルの記録と変わった行の範囲は、LastUndo で読める。
 //
 // req: FR-07, FR-16
 func (b *Buffer) Undo() (Change, bool) {
@@ -445,7 +453,7 @@ func (b *Buffer) Undo() (Change, bool) {
 	b.undo = b.undo[:len(b.undo)-1]
 	undoEdits := slices.Clone(s.inverse)
 	slices.Reverse(undoEdits)
-	b.mustApplyAll(undoEdits)
+	b.applyTracked(undoEdits, s)
 	b.redo = append(b.redo, s)
 	return b.commit(undoEdits), true
 }
@@ -454,6 +462,7 @@ func (b *Buffer) Undo() (Change, bool) {
 // やり直しも変更の 1 つとして扱い、バージョン番号を 1 増やす。
 // やり直せるものが無ければ、何もせずに false を返す。
 // 開いているアンドゥのグループは閉じる。
+// やり直した単位のカーソルの記録と変わった行の範囲は、LastUndo で読める。
 //
 // req: FR-07, FR-16
 func (b *Buffer) Redo() (Change, bool) {
@@ -463,7 +472,7 @@ func (b *Buffer) Redo() (Change, bool) {
 	}
 	s := b.redo[len(b.redo)-1]
 	b.redo = b.redo[:len(b.redo)-1]
-	b.mustApplyAll(s.edits)
+	b.applyTracked(s.edits, s)
 	b.undo = append(b.undo, s)
 	return b.commit(s.edits), true
 }

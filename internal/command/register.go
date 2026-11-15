@@ -12,6 +12,10 @@ import (
 // Linewise が true なら行単位のテキストで、Text は行を "\n" でつないだもの（最後の行の後の改行は含めない）である。
 // Vim の getreg() が返す行単位のテキストは最後に改行が付くが、ここでは付けない。
 // false なら文字単位のテキストで、Text の "\n" は行の区切りである。
+//
+// Vim と同じく、「空のテキストが入っている」と「何も入っていない」を区別する。
+// 空の行の C（c$）や yl は、空の文字単位のテキストを書き込む（Vim の getregtype() は v を返す）。
+// 何も入っていないのはゼロ値だけで、Registers が書き込んだ値（Set で書いたものを含む）は、テキストが空でも入っているものとして扱う。
 type Register struct {
 	Text     string
 	Linewise bool
@@ -19,10 +23,12 @@ type Register struct {
 	// keys は、q で記録したキーの列である。Text からキーへ戻すと失われるキー（矢印キーなど）を保つ。
 	// 記録したもの以外では nil である。
 	keys []editcmd.Key
+	// filled は、Registers が書き込んだ値であることを表す。空のテキストが入っているレジスターを、空のレジスターと区別する。
+	filled bool
 }
 
-// empty は、内容が無いかを返す。
-func (r Register) empty() bool { return r.Text == "" && !r.Linewise && len(r.keys) == 0 }
+// empty は、何も入っていない（一度も書き込んでいない）かを返す。空のテキストが入っていれば false である。
+func (r Register) empty() bool { return !r.filled && r.Text == "" && !r.Linewise && len(r.keys) == 0 }
 
 // appendTo は、r の後に add を追記した内容を返す（"A のような大文字の名前への書き込み）。
 // どちらかが行単位なら、結果は行単位になり、間に改行を入れる（Vim と同じ）。
@@ -30,7 +36,7 @@ func (r Register) appendTo(add Register) Register {
 	if r.empty() {
 		return add
 	}
-	out := Register{Linewise: r.Linewise || add.Linewise}
+	out := Register{Linewise: r.Linewise || add.Linewise, filled: true}
 	sep := ""
 	if out.Linewise {
 		sep = "\n"
@@ -101,6 +107,7 @@ func (r *Registers) Set(name rune, reg Register) bool {
 	if p == nil {
 		return name == '_'
 	}
+	reg.filled = true
 	if name >= 'A' && name <= 'Z' {
 		reg = p.appendTo(reg)
 	}
@@ -133,6 +140,7 @@ func writable(name rune) bool {
 
 // yank は、ヤンクした内容を書き込む。名前が無ければ 0 と無名のレジスターに入れる。
 func (r *Registers) yank(name rune, reg Register) {
+	reg.filled = true
 	if name == 0 || name == '"' {
 		r.numbered[0] = reg
 		r.unnamed = reg
@@ -151,6 +159,7 @@ func (r *Registers) delete(name rune, reg Register, small, forceOne bool) {
 	if name == '_' {
 		return
 	}
+	reg.filled = true
 	if !small || forceOne {
 		copy(r.numbered[2:], r.numbered[1:9])
 		r.numbered[1] = reg

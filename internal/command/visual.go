@@ -146,8 +146,14 @@ func (s *State) visualTextObject(cmd editcmd.Command) error {
 func (s *State) visualRegion() region {
 	start, end, linewise, _ := s.Selection()
 	if linewise {
+		// Vim は、行単位の選択の端（VIsual）が始まりなら列を 0 にし、カーソルが始まりならカーソルの列を残す（do_pending_operator）。
+		// y の後のカーソルと、アンドゥの後のカーソルがこの位置になる。
+		at := pos(start.Line, 0)
+		if s.cursor.Less(s.visual.anchor) {
+			at = s.cursor
+		}
 		return region{
-			start:    pos(start.Line, 0),
+			start:    at,
 			r:        buffer.Range{Start: pos(start.Line, 0), End: s.lineEnd(end.Line)},
 			linewise: true,
 		}
@@ -201,11 +207,26 @@ func (s *State) regionFromExtent(ex visualExtent) region {
 	return s.charRegion(start, end, ex.eol || s.line(end.Line) == "")
 }
 
+// linewiseVisualOperators は、ビジュアルモードだけのオペレーターのうち、選択を行単位にして働くもの（D、C、S、Y）と、
+// その働きに当たる本体のオペレーターの対応である。キーは input の表の ID である。
+var linewiseVisualOperators = map[string]string{
+	"delete-lines": "delete",
+	"change-lines": "change",
+	"yank-lines":   "yank",
+}
+
 // visualOperator は、ビジュアルモードの選択に対してオペレーターを実行し、ノーマルモードへ戻る。
 // 回数は、> と < では字下げを繰り返す回数で、それ以外のオペレーターでは使わない。
+// D、C、S、Y（linewiseVisualOperators）は、選択を行単位に切り替えてから働く。
 //
-// req: FR-01
+// req: FR-01, FR-02
 func (s *State) visualOperator(cmd editcmd.Command) error {
+	if base, ok := linewiseVisualOperators[cmd.Operator.ID]; ok && cmd.Operator.Builtin() {
+		// D、C、S、Y は、選択を行単位に切り替えてから、もとのオペレーターとして働く（Vim の nv_visop は
+		// VIsual_mode を 'V' にしてから d、c、y を実行する）。ドットリピートも、行単位の選択に対するもとのオペレーターとして繰り返す。
+		s.mode = ModeVisualLine
+		cmd.Operator.ID = base
+	}
 	rg := s.visualRegion()
 	ext := s.extentOf(rg)
 	s.exitVisual()

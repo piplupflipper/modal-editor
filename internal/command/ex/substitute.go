@@ -127,6 +127,9 @@ func runSubstitute(c *execCtx, inv *invocation) error {
 		if err = c.apply(edits...); err != nil {
 			return err
 		}
+		// Vim の do_sub は、カーソルを置き換える最初の行の列 0 へ移してからアンドゥの単位を作る。
+		// アンドゥとリドゥの後のカーソルはその位置へ戻る（字下げのある行でも列 0）。:g の中では、最初の :s の位置が残る。
+		c.b.SetUndoCursor(buffer.Position{Line: edits[0].Range.Start.Line})
 	}
 	c.setCursor(lastLine, CursorFirstNonBlank)
 	return nil
