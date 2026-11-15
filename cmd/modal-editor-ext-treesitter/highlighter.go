@@ -11,9 +11,11 @@ import (
 )
 
 // maxDecorationSetBytes は、1 回の decoration/set の本文（JSON）の大きさの上限である。
-// 本体の JSON-RPC の受信の上限（internal/rpc の DefaultMaxMessageSize、64 MiB）を超えると接続が切れて拡張機能が再起動を繰り返すので、十分に下に置く。
-// 値は仮である。大きなファイルの色付けの方法（見えている範囲だけ送るなど）と合わせて決める（基本設計 10 章）。
-const maxDecorationSetBytes = 8 << 20
+// 本体は一覧を受け取るたびに、イベントループの上で描画用の表を全体から作り直す（internal/editor の rebuildDecorations）。
+// 範囲を整数の列で送る形（基本設計 6.1）では 1 つの範囲が 10 バイトほどで、上限の 10 MiB は約 10 万行の JSON（約 80 万の範囲）に当たり、
+// そのときの本体のイベントループの停止は 83〜122 ms だった（PR #73 のレビューの実測。40 万行では 445〜459 ms）。
+// 値は仮である（基本設計 10 章）。
+const maxDecorationSetBytes = 10 << 20
 
 // tooLargeMessage は、一覧が maxDecorationSetBytes を超えたバッファについて、利用者へ 1 回だけ知らせる文言である。
 const tooLargeMessage = "tree-sitter: 色を付ける範囲の一覧が大きすぎるので、このバッファには色を付けない"
@@ -45,6 +47,8 @@ type job struct {
 type highlighter struct {
 	langs map[string]*language // ファイルの種類から言語へ。作った後は変えない
 	log   *log.Logger
+	// maxBytes は、decoration/set の本文の大きさの上限である。maxDecorationSetBytes を入れる。テストは小さくしてよい。
+	maxBytes int
 
 	// active は、ループが、解析の対象にしているバッファとその言語を覚える表である。ループだけが触る。
 	active map[ext.BufferID]*language
@@ -68,14 +72,15 @@ type highlighter struct {
 // クエリを解釈できないなど、用意できない言語があれば誤りを返す。
 func newHighlighter() (*highlighter, error) {
 	h := &highlighter{
-		langs:   map[string]*language{},
-		log:     log.New(os.Stderr, "modal-editor-ext-treesitter: ", log.LstdFlags),
-		active:  map[ext.BufferID]*language{},
-		pending: map[ext.BufferID]*job{},
-		wake:    make(chan struct{}, 1),
-		stop:    make(chan struct{}),
-		docs:    map[ext.BufferID]*document{},
-		warned:  map[ext.BufferID]bool{},
+		langs:    map[string]*language{},
+		log:      log.New(os.Stderr, "modal-editor-ext-treesitter: ", log.LstdFlags),
+		maxBytes: maxDecorationSetBytes,
+		active:   map[ext.BufferID]*language{},
+		pending:  map[ext.BufferID]*job{},
+		wake:     make(chan struct{}, 1),
+		stop:     make(chan struct{}),
+		docs:     map[ext.BufferID]*document{},
+		warned:   map[ext.BufferID]bool{},
 	}
 	for _, spec := range languages {
 		l, err := newLanguage(spec)
@@ -242,8 +247,8 @@ func (h *highlighter) process(id ext.BufferID, j *job) {
 	if h.superseded(id) {
 		return
 	}
-	if size := decorationSetSize(id, j.version, decs); size > maxDecorationSetBytes {
-		h.log.Printf("buffer %d: decoration/set would be %d bytes (limit %d); sending an empty list", id, size, maxDecorationSetBytes)
+	if size := (ext.DecorationSetParams{Buffer: id, Version: j.version, Decorations: decs}).JSONSize(); size > h.maxBytes {
+		h.log.Printf("buffer %d: decoration/set would be %d bytes (limit %d); sending an empty list", id, size, h.maxBytes)
 		decs = []ext.Decoration{}
 		if !h.warned[id] {
 			h.warned[id] = true

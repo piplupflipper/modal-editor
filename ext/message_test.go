@@ -46,9 +46,9 @@ func TestMessageJSON(t *testing.T) {
 
 	t.Run("initialize", func(t *testing.T) {
 		roundTrip(t, InitializeParams{APIVersion: APIVersion, Settings: json.RawMessage(`{"a":1}`)},
-			`{"apiVersion":"0.1.0","settings":{"a":1}}`)
-		roundTrip(t, InitializeParams{APIVersion: APIVersion}, `{"apiVersion":"0.1.0"}`)
-		roundTrip(t, InitializeResult{APIVersion: APIVersion}, `{"apiVersion":"0.1.0"}`)
+			`{"apiVersion":"0.2.0","settings":{"a":1}}`)
+		roundTrip(t, InitializeParams{APIVersion: APIVersion}, `{"apiVersion":"0.2.0"}`)
+		roundTrip(t, InitializeResult{APIVersion: APIVersion}, `{"apiVersion":"0.2.0"}`)
 	})
 	t.Run("buffer/open", func(t *testing.T) {
 		roundTrip(t, BufferOpenParams{Buffer: 1, Path: "/a.md", FileType: "markdown", Version: 0, Text: "a\nb"},
@@ -98,7 +98,7 @@ func TestMessageJSON(t *testing.T) {
 	})
 	t.Run("decoration/set", func(t *testing.T) {
 		roundTrip(t, DecorationSetParams{Buffer: 1, Version: 3, Decorations: []Decoration{{Range: testRange, Style: "keyword"}}},
-			`{"buffer":1,"version":3,"decorations":[{"range":`+testRJSON+`,"style":"keyword"}]}`)
+			`{"buffer":1,"version":3,"styles":["keyword"],"data":[1,2,2,4,0]}`)
 	})
 	t.Run("message/show", func(t *testing.T) {
 		roundTrip(t, MessageShowParams{Level: MessageWarning, Text: "注意"}, `{"level":"warning","text":"注意"}`)
