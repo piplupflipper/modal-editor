@@ -19,8 +19,8 @@ import (
 // 受け取ったメッセージの jsonrpc の値がこれと異なれば、プロトコルの誤りとして扱う。
 const Version = "2.0"
 
-// CancelMethod は、期限を超えたリクエストの取り消しを相手に知らせる通知のメソッド名である（基本設計 5.3）。
-// 引数は [CancelParams] である。
+// CancelMethod は、期限を超えたリクエストの取り消しを相手に知らせる通知のメソッド名の既定値である（基本設計 5.3）。
+// 引数は [CancelParams] である。接続ごとの名前は [WithCancelMethod] で変えられる（LSP なら "$/cancelRequest"）。
 const CancelMethod = "$/cancel"
 
 // CancelParams は、[CancelMethod] の通知の引数である。

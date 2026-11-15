@@ -9,12 +9,13 @@ import (
 	"strconv"
 )
 
-// MaxMessageSize は、1 件のメッセージの本文の上限のバイト数である。
-// Content-Length がこれを超えるメッセージは、本文を読まずにプロトコルの誤りとする。
+// DefaultMaxMessageSize は、受信する 1 件のメッセージの本文の上限のバイト数の既定値である。
 // 壊れた相手が巨大な長さを送ってきたときに、本体のメモリを使い切らないための上限である。
-const MaxMessageSize = 64 << 20
+// 接続ごとの値は [WithMaxMessageSize] で変えられる。64 MiB は仮の値で、根拠は無い。
+const DefaultMaxMessageSize = 64 << 20
 
 // ReadMessage は、r から Content-Length ヘッダーで区切られたメッセージを 1 件読み、本文を返す。
+// Content-Length が maxSize を超えるメッセージは、本文を読まずにプロトコルの誤りとする。
 //
 // ヘッダーは LSP と同じ形式で、各行を "\r\n" で終え、空行で本文と区切る。
 // Content-Length 以外のヘッダー（Content-Type など）は読み飛ばす。ヘッダー名の大文字と小文字は区別しない。
@@ -22,7 +23,7 @@ const MaxMessageSize = 64 << 20
 // メッセージの境目で入力が終わっていれば io.EOF を返す。
 // メッセージの途中で終わっていれば io.ErrUnexpectedEOF を返す。
 // ヘッダーの形が誤っていれば [ErrProtocol] を包んだ誤りを返す。
-func ReadMessage(r *bufio.Reader) ([]byte, error) {
+func ReadMessage(r *bufio.Reader, maxSize int) ([]byte, error) {
 	length := -1
 	first := true
 	for {
@@ -61,8 +62,8 @@ func ReadMessage(r *bufio.Reader) ([]byte, error) {
 		if err != nil || n < 0 {
 			return nil, fmt.Errorf("%w: invalid Content-Length %q", ErrProtocol, value)
 		}
-		if n > MaxMessageSize {
-			return nil, fmt.Errorf("%w: Content-Length %d exceeds limit %d", ErrProtocol, n, MaxMessageSize)
+		if n > maxSize {
+			return nil, fmt.Errorf("%w: Content-Length %d exceeds limit %d", ErrProtocol, n, maxSize)
 		}
 		length = n
 	}
