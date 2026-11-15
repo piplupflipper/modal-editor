@@ -190,6 +190,9 @@ func (a *adapter) handle(m *message) {
 			return
 		}
 		a.output("console", "launch "+args.Program+"\n")
+		if wd, err := os.Getwd(); err == nil {
+			a.output("console", "cwd "+wd+"\n")
+		}
 		if a.opts.LaunchBeforeInitialized {
 			a.respond(m, nil)
 		} else {

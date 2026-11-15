@@ -564,6 +564,21 @@ func TestSocketTransport(t *testing.T) {
 	}
 }
 
+// TestAdapterCwd は、デバッグアダプターの作業ディレクトリを、dap.start を呼んだバッファのファイルのあるディレクトリにすることを確かめる。
+// dlv dap は program を自分の作業ディレクトリでビルドするので、本体の作業ディレクトリがモジュールの外だと失敗する。
+//
+// req: FR-31
+func TestAdapterCwd(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHost(t, fakeSettings(t, nil, nil))
+	h.open(1, filepath.Join(dir, "main.go"), srcText)
+	h.mustExec(cmdStart, 0)
+	h.waitOutput("cwd " + dir + "\n")
+}
+
 // TestReverseRequest は、対応しない逆向きの request（runInTerminal）に失敗の応答を返し、デバッグを続けられることを確かめる。
 func TestReverseRequest(t *testing.T) {
 	h := newHost(t, fakeSettings(t, nil, map[string]any{"reverse": true}))

@@ -109,6 +109,7 @@ func spawn(d *debugger, cfg adapterConfig) (*session, error) {
 	}
 	// 子プロセスの実行ファイルと引数は、利用者の設定から来る。拡張機能はそれを起動するためにある。
 	cmd := exec.Command(cfg.Command, args...) //nolint:gosec // 利用者が設定したデバッグアダプターを起動する
+	cmd.Dir = cfg.Cwd
 	s.cmd = cmd
 	var parentEnds, childEnds []*os.File
 	closeAll := func(fs []*os.File) {

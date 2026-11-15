@@ -34,12 +34,18 @@ type adapterConfig struct {
 	Command string `json:"command"`
 	// Args は、Command に渡す引数である。clientAddrPlaceholder を含めると、ソケットで話す。
 	Args []string `json:"args,omitempty"`
+	// Cwd は、子プロセスの作業ディレクトリである。省くと、dap.start を呼んだバッファのファイルのあるディレクトリにする。
+	// そのバッファがファイルに対応しないか、ディレクトリが無ければ、拡張機能の作業ディレクトリ（本体の作業ディレクトリ）にする。
+	// dlv dap は、program のビルドを自分の作業ディレクトリで行い、program と出力の実行ファイルのパスを作業ディレクトリから解決する
+	// （https://github.com/go-delve/delve/blob/master/Documentation/usage/dlv_dap.md）。
+	// 本体の作業ディレクトリが program のモジュールの外にあると、ビルドに失敗する（2026-11-16 に dlv 1.27.2 で確かめた）。
+	Cwd string `json:"cwd,omitempty"`
 }
 
 // settings は、利用者の設定のうち、この拡張機能に向けた部分（initialize の settings）である。項目の名前は仮である。
 //
 //	{
-//	  "adapter": { "command": "dlv", "args": ["dap", "--client-addr=${clientAddr}"] },
+//	  "adapter": { "command": "dlv", "args": ["dap", "--client-addr=${clientAddr}"], "cwd": "/path/to/module" },
 //	  "adapterID": "go",
 //	  "launch": { "mode": "debug" }
 //	}
@@ -359,7 +365,13 @@ func (d *debugger) start(_ context.Context, b *server.Buffer, _ *ext.CommandExec
 	if d.sess != nil {
 		return d.fail("デバッグは既に始まっている")
 	}
-	s, err := spawn(d, d.settings.Adapter)
+	cfg := d.settings.Adapter
+	if cfg.Cwd == "" && b.Path() != "" {
+		if fi, err := os.Stat(filepath.Dir(b.Path())); err == nil && fi.IsDir() {
+			cfg.Cwd = filepath.Dir(b.Path())
+		}
+	}
+	s, err := spawn(d, cfg)
 	if err != nil {
 		return d.fail(fmt.Sprintf("デバッグアダプター %s を起動できない: %v", d.settings.Adapter.Command, err))
 	}
