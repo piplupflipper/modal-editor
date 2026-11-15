@@ -10,10 +10,10 @@
 
 | 状態 | 件数 | 意味 |
 |---|---|---|
-| 実装とテスト | 23 | 実装とテストの両方に注釈がある |
+| 実装とテスト | 24 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 12 | 注釈が無い |
+| 未着手 | 11 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -41,7 +41,7 @@
 | FR-19 | 未着手 | - | - | マクロとドットリピートの再生中は、FR-18 の設定に関わらず、前の操作の完了を待ってから次の操作へ進む。拡張機能が応答しなければ、その位置で再生を止める |
 | FR-20 | 未着手 | - | - | 拡張機能ごとのメモリの上限を、設定で指定できる |
 | FR-30 | 未着手 | - | - | LSP のクライアントを持つ |
-| FR-31 | 未着手 | - | - | DAP のクライアントを持つ |
+| FR-31 | 実装とテスト | [cmd/modal-editor-ext-dap/debugger.go:209](../cmd/modal-editor-ext-dap/debugger.go#L209)<br>[cmd/modal-editor-ext-dap/debugger.go:309](../cmd/modal-editor-ext-dap/debugger.go#L309)<br>[cmd/modal-editor-ext-dap/debugger.go:345](../cmd/modal-editor-ext-dap/debugger.go#L345)<br>[cmd/modal-editor-ext-dap/debugger.go:374](../cmd/modal-editor-ext-dap/debugger.go#L374)<br>[cmd/modal-editor-ext-dap/debugger.go:391](../cmd/modal-editor-ext-dap/debugger.go#L391)<br>[cmd/modal-editor-ext-dap/debugger.go:444](../cmd/modal-editor-ext-dap/debugger.go#L444)<br>[cmd/modal-editor-ext-dap/debugger.go:473](../cmd/modal-editor-ext-dap/debugger.go#L473)<br>[cmd/modal-editor-ext-dap/debugger.go:536](../cmd/modal-editor-ext-dap/debugger.go#L536) | [cmd/modal-editor-ext-dap/dap_test.go:347](../cmd/modal-editor-ext-dap/dap_test.go#L347)<br>[cmd/modal-editor-ext-dap/dap_test.go:370](../cmd/modal-editor-ext-dap/dap_test.go#L370)<br>[cmd/modal-editor-ext-dap/dap_test.go:421](../cmd/modal-editor-ext-dap/dap_test.go#L421)<br>[cmd/modal-editor-ext-dap/dap_test.go:444](../cmd/modal-editor-ext-dap/dap_test.go#L444)<br>[cmd/modal-editor-ext-dap/dap_test.go:455](../cmd/modal-editor-ext-dap/dap_test.go#L455)<br>[cmd/modal-editor-ext-dap/dap_test.go:473](../cmd/modal-editor-ext-dap/dap_test.go#L473)<br>[cmd/modal-editor-ext-dap/dap_test.go:496](../cmd/modal-editor-ext-dap/dap_test.go#L496)<br>[cmd/modal-editor-ext-dap/dap_test.go:509](../cmd/modal-editor-ext-dap/dap_test.go#L509)<br>[cmd/modal-editor-ext-dap/dap_test.go:521](../cmd/modal-editor-ext-dap/dap_test.go#L521)<br>[cmd/modal-editor-ext-dap/dap_test.go:551](../cmd/modal-editor-ext-dap/dap_test.go#L551)<br>[cmd/modal-editor-ext-dap/dap_test.go:579](../cmd/modal-editor-ext-dap/dap_test.go#L579)<br>[cmd/modal-editor-ext-dap/dap_test.go:593](../cmd/modal-editor-ext-dap/dap_test.go#L593) | DAP のクライアントを持つ |
 | FR-32 | 未着手 | - | - | MCP のサーバーを持つ。開いているバッファ、カーソル位置、選択範囲、診断などの取得と、編集の操作を、ツールとして提供する |
 | FR-33 | 実装とテスト | [cmd/modal-editor-mcp-bridge/main.go:47](../cmd/modal-editor-mcp-bridge/main.go#L47)<br>[cmd/modal-editor-mcp-bridge/main.go:97](../cmd/modal-editor-mcp-bridge/main.go#L97) | [cmd/modal-editor-mcp-bridge/main_test.go:116](../cmd/modal-editor-mcp-bridge/main_test.go#L116)<br>[cmd/modal-editor-mcp-bridge/main_test.go:172](../cmd/modal-editor-mcp-bridge/main_test.go#L172)<br>[cmd/modal-editor-mcp-bridge/main_test.go:214](../cmd/modal-editor-mcp-bridge/main_test.go#L214)<br>[cmd/modal-editor-mcp-bridge/main_test.go:241](../cmd/modal-editor-mcp-bridge/main_test.go#L241)<br>[cmd/modal-editor-mcp-bridge/main_test.go:305](../cmd/modal-editor-mcp-bridge/main_test.go#L305) | MCP のクライアントからの接続は、中継コマンドで受ける。クライアントが中継コマンドを標準入出力の MCP サーバーとして起動し、中継コマンドが起動中のエディタへ Unix ドメインソケットで接続する |
 | FR-34 | 未着手 | - | - | ACP のクライアントを持つ。コーディングエージェントを子プロセスとして起動する |

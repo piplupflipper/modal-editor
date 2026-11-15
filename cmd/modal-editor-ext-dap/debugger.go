@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -289,7 +290,7 @@ func (d *debugger) onBufferDidSave(_ context.Context, e *server.BufferDidSaveEve
 	send := s != nil && d.configured && path != ""
 	d.mu.Unlock()
 	if send {
-		go d.sendBreakpoints(s, path)
+		go d.sendBreakpoints(s, path) //nolint:gosec // G118: ハンドラーとフックの ctx は戻ると無効になるので引き継がない
 	}
 }
 
@@ -332,7 +333,7 @@ func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.
 	send := s != nil && d.configured
 	d.mu.Unlock()
 	if send {
-		go d.sendBreakpoints(s, path)
+		go d.sendBreakpoints(s, path) //nolint:gosec // G118: ハンドラーとフックの ctx は戻ると無効になるので引き継がない
 	}
 	return ext.CommandExecuteResult{OK: true}, nil
 }
@@ -398,11 +399,15 @@ func (d *debugger) resume(_ context.Context, _ *server.Buffer, p *ext.CommandExe
 		return d.fail("デバッグを始めていない")
 	}
 	prev := d.clearExecution()
-	go func() {
+	go func() { //nolint:gosec // G118: ハンドラーの ctx は応答すると取り消されるので引き継がない
 		ctx, cancel := context.WithTimeout(context.Background(), d.timeouts.request)
 		defer cancel()
 		if err := s.resume(ctx, command); err != nil {
 			d.logf("%s: %v", command, err)
+			if errors.Is(err, errDAPClosed) {
+				// デバッグアダプターが終わった。知らせるのは後始末（sessionEnded）である。
+				return
+			}
 			d.restoreExecution(prev)
 			d.showError(fmt.Sprintf("%s に失敗した: %v", command, err))
 		}

@@ -40,7 +40,7 @@ type session struct {
 	d   *debugger
 	cmd *exec.Cmd
 	// ln は、ソケットで話すときに待ち受けるソケットである。標準入出力で話すときは nil。
-	ln     *net.UnixListener
+	ln      *net.UnixListener
 	sockDir string
 	// stdio は、標準入出力で話すときの、子プロセスの標準入力への書き込み口と標準出力の読み取り口である。
 	stdinW  *os.File
@@ -172,7 +172,7 @@ func spawn(d *debugger, cfg adapterConfig) (*session, error) {
 
 // forward は、r から読んだテキストを、塊ごとに f へ渡す。r が終わるまで続ける。
 func (s *session) forward(r io.ReadCloser, f func(string)) {
-	defer r.Close()
+	defer r.Close() //nolint:errcheck // 読み取りの口を閉じるだけで、失敗しても失うデータが無い
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := r.Read(buf)
