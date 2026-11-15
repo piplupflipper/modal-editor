@@ -335,6 +335,26 @@ func TestWaitBuffer(t *testing.T) {
 		t.Errorf("WaitBuffer after close = %+v, want ErrBufferClosed", r)
 	}
 
+	// 待ち始める前に閉じていても ErrBufferClosed を返す。
+	// 本体は、不正な UTF-8 を含むバッファへの editor/open の応答より先に、持っていないバッファの buffer/close を送る（基本設計 6.7）。
+	h.notify(t, ext.MethodBufferClose, ext.BufferCloseParams{Buffer: 9})
+	h.ping(t)
+	if _, err := s.WaitBuffer(ctx, 9, 0); !errors.Is(err, server.ErrBufferClosed) {
+		t.Errorf("WaitBuffer after earlier close = %v, want ErrBufferClosed", err)
+	}
+	// その後に buffer/open が届けば、閉じた記録を消して複製を返す。
+	h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 9, Version: 2, Text: "z"})
+	h.ping(t)
+	if b, err := s.WaitBuffer(ctx, 9, 2); err != nil || b.Text() != "z" {
+		t.Errorf("WaitBuffer after reopen = %+v, %v", b, err)
+	}
+	reopened := wait(9, 3)
+	pending(reopened)
+	h.notify(t, ext.MethodBufferChange, ext.BufferChangeParams{Buffer: 9, FromVersion: 2, ToVersion: 3, Edits: []ext.Edit{{Text: "y"}}})
+	if r := <-reopened; r.err != nil || r.b.Text() != "yz" {
+		t.Errorf("WaitBuffer after reopen and change = %+v", r)
+	}
+
 	// ctx が終わったら ctx の誤りを返す。
 	short, cancelShort := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancelShort()

@@ -11,7 +11,8 @@ import (
 
 // この節は、標準の拡張機能（基本設計 6 章）のために足したメッセージ（基本設計 5.3 の 2 つ目の表）を扱う。
 
-// ErrBufferClosed は、WaitBuffer で待っている間に、そのバッファの buffer/close が届いたことを表す。
+// ErrBufferClosed は、WaitBuffer で待っている間か、待ち始める前に、そのバッファの buffer/close が届いた（その後に buffer/open が届いていない）ことを表す。
+// 本体は、不正な UTF-8 を含むバッファを拡張機能へ送らず、editor/open で開いたときは buffer/open の代わりに buffer/close を送る（ext.BufferCloseParams）。
 var ErrBufferClosed = errors.New("server: buffer closed while waiting")
 
 // call は、本体へリクエスト method を送り、応答を待つ。ループの上から呼ぶと送らずに ErrEditInHandler を返す。
@@ -169,7 +170,7 @@ func (s *Server) bufferDidSave(ctx context.Context, p *ext.BufferDidSaveParams) 
 // 複製は、ループが buffer/open か buffer/change を処理した時点で調べる。
 // 送り直しを待っている（buffer/resync を送った）複製は、次の buffer/open まで条件を満たさない。
 //
-// ctx が終わったら ctx.Err() を、待つ間にそのバッファの buffer/close が届いたら ErrBufferClosed を、
+// ctx が終わったら ctx.Err() を、待つ間か待ち始める前にそのバッファの buffer/close が届いたら（その後に buffer/open が届いていなければ）ErrBufferClosed を、
 // 接続が終わったか Serve の前なら ErrNotRunning を返す。
 // Edit と同じく、ループの上から呼ぶと、ループが自分を待って止まるので、待たずに ErrEditInHandler を返す。
 func (s *Server) WaitBuffer(ctx context.Context, id ext.BufferID, version ext.Version) (*Buffer, error) {
@@ -225,6 +226,10 @@ func (s *Server) addWaiter(id ext.BufferID, w *bufWaiter) {
 	}
 	if b, ok := s.ready(id, w); ok {
 		w.resolve(b.Clone(), nil)
+		return
+	}
+	if s.closed[id] {
+		w.resolve(nil, ErrBufferClosed)
 		return
 	}
 	s.waiters[id] = append(s.waiters[id], w)

@@ -115,6 +115,11 @@ type Server struct {
 	stale map[ext.BufferID]bool
 	// waiters は、WaitBuffer で複製を待っている呼び出しである。
 	waiters map[ext.BufferID][]*bufWaiter
+	// closed は、buffer/close を受け取り、その後に buffer/open を受け取っていないバッファである。
+	// 本体は、不正な UTF-8 を含むバッファへの editor/open の応答より先に buffer/close を送る（ext.BufferCloseParams）。
+	// WaitBuffer がその応答の後に呼ばれても待ち続けないように、閉じたことを覚えておく。
+	// 本体はバッファの番号を使い回さないので、閉じた番号が増えても 1 つあたり数バイトである。
+	closed map[ext.BufferID]bool
 	// shutdown は、shutdown を処理したかどうかである。true になったら Serve は接続を閉じて戻る。
 	shutdown bool
 }
@@ -130,6 +135,7 @@ func New() *Server {
 		buffers:     make(map[ext.BufferID]*Buffer),
 		stale:       make(map[ext.BufferID]bool),
 		waiters:     make(map[ext.BufferID][]*bufWaiter),
+		closed:      make(map[ext.BufferID]bool),
 	}
 }
 
@@ -376,6 +382,7 @@ func (s *Server) handleNotification(ctx context.Context, n *rpc.Notification) {
 		b := newBuffer(&p)
 		s.buffers[p.Buffer] = b
 		delete(s.stale, p.Buffer)
+		delete(s.closed, p.Buffer)
 		if s.onOpen != nil {
 			e := &BufferOpenEvent{Buffer: b, Reopen: held}
 			s.hook("buffer open hook", func() { s.onOpen(ctx, e) })
@@ -397,6 +404,7 @@ func (s *Server) handleNotification(ctx context.Context, n *rpc.Notification) {
 		_, open := s.buffers[p.Buffer]
 		delete(s.buffers, p.Buffer)
 		delete(s.stale, p.Buffer)
+		s.closed[p.Buffer] = true
 		if open && s.onClose != nil {
 			e := &BufferCloseEvent{Buffer: p.Buffer}
 			s.hook("buffer close hook", func() { s.onClose(ctx, e) })
