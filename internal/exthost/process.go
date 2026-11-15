@@ -465,7 +465,7 @@ func startProcess(path string, args []string) (p *process, err error) {
 		return nil, err
 	}
 
-	cmd := exec.Command(path, args...)
+	cmd := exec.Command(path, args...) //nolint:gosec // 宣言ファイルに書かれた実行ファイルと引数を起動するのが、このパッケージの役目である。
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW

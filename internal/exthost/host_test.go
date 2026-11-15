@@ -69,7 +69,7 @@ func fakeCommand(t *testing.T, mode string) string {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "fake-ext-"+mode)
-	script := fmt.Sprintf("#!/bin/sh\nexec env %s=%s '%s'\n", fakeModeEnv, mode, exe)
+	script := fmt.Sprintf("#!/bin/sh\nexec env %s=%s '%s' \"$@\"\n", fakeModeEnv, mode, exe)
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil { //nolint:gosec // テストの一時ディレクトリに置く実行用のスクリプトである。
 		t.Fatal(err)
 	}
