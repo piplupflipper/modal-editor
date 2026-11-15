@@ -1,0 +1,12 @@
+{
+  "id": "mcp",
+  "command": "./modal-editor-ext-mcp",
+  "activation": [
+    { "on": "command", "id": "mcp.start" }
+  ],
+  "contributes": {
+    "commands": [
+      { "id": "mcp.start" }
+    ]
+  }
+}
