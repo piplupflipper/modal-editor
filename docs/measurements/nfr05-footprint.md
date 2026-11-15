@@ -32,9 +32,13 @@
 | `modal-editor-ext-line` | 4,342,193 | 4.14 |
 | `modal-editor-ext-lsp` | 5,051,030 | 4.82 |
 | `modal-editor-ext-dap` | 5,196,045 | 4.96 |
-| `modal-editor-ext-treesitter` | 6,668,576 | 6.36 |
+| `modal-editor-ext-treesitter`（musl を静的にリンク） | 5,693,656 | 5.43 |
 | `modal-editor-ext-script` | 29,590,157 | 28.22 |
-| 配布物の `tar.gz`（`make dist`） | 30,969,670 | 29.54 |
+| 配布物の `tar.gz`（`make dist`。ライセンスの文面を含む） | 30,552,029 | 29.14 |
+
+tree-sitter の拡張機能と配布物の値は、glibc から musl の静的リンクへ切り替えた後（同じ日、`b4797f5` の後のコミット）に測り直した。
+glibc を静的にリンクしていたときの tree-sitter の拡張機能は 6,668,576 バイト、配布物は 30,969,670 バイトだった。
+他の実行ファイルは切り替えの前後で同じ値だった。
 
 `modal-editor-ext-script` が大きいのは、スクリプトから呼べる Go の標準ライブラリのシンボルの表（yaegi の `stdlib`）を含むためと見ている。
 内訳は測っていない。

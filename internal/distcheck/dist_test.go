@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/piplupflipper/modal-editor/ext"
 )
 
 // EnvDistDir は、`make dist` が配布物をまとめたディレクトリを渡す環境変数の名前である。
@@ -70,6 +73,43 @@ func TestDistLayout(t *testing.T) {
 			assertExecutable(t, path)
 			assertStaticELF(t, path)
 		})
+	}
+}
+
+// TestDistLicenses は、配布物が、実行ファイルに静的にリンクするサードパーティのライセンスの文面を含むことを確かめる。
+// Go の標準ライブラリとランタイム、musl、tree-sitter とその文法は、配布するときに著作権の表示とライセンスの文面を添える必要がある。
+func TestDistLicenses(t *testing.T) {
+	dir := distDir(t)
+	for _, rel := range []string{
+		"licenses/go/LICENSE",
+		"licenses/musl/copyright",
+		"licenses/github.com/tree-sitter/go-tree-sitter/LICENSE",
+		"licenses/github.com/tree-sitter/tree-sitter-go/LICENSE",
+		"licenses/github.com/tree-sitter/tree-sitter-json/LICENSE",
+		"licenses/github.com/traefik/yaegi/LICENSE",
+	} {
+		info, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Errorf("%s が無い: %v", rel, err)
+			continue
+		}
+		if info.Size() == 0 {
+			t.Errorf("%s が空", rel)
+		}
+	}
+}
+
+// TestSmokeAPIVersion は、make dist-smoke の確認のスクリプトが送る initialize の apiVersion が、
+// 拡張機能 API のバージョンと一致することを確かめる。
+// API のバージョンを上げたときに、スクリプトの直し忘れを make check で見つける。
+func TestSmokeAPIVersion(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "smoke.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"apiVersion":"` + ext.APIVersion + `"`
+	if !strings.Contains(string(data), want) {
+		t.Errorf("testdata/smoke.sh に %s が無い", want)
 	}
 }
 

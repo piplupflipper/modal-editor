@@ -14,7 +14,7 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 - Go（バージョンは [go.mod](go.mod) を参照）
 - make
 - C コンパイラ（gcc など）。tree-sitter の拡張機能（`cmd/modal-editor-ext-treesitter/`）が cgo で文法をコンパイルするので、`make check`、`make test`、`make build` に要る。本体は cgo を使わない
-- 静的リンク用の C の標準ライブラリ（Debian と Ubuntu では `libc6-dev`）。`make build` が tree-sitter の拡張機能を静的にリンクするので要る
+- musl-gcc（Debian と Ubuntu では `musl-tools`）。`make build` が tree-sitter の拡張機能を musl で静的にリンクするので要る。別の場所にあるなら `make build MUSL_CC=<パス>` で指定する
 
 配布物の利用者には、C コンパイラも Go も要らない。
 

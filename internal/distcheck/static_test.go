@@ -105,6 +105,27 @@ func TestBuildAllStatic(t *testing.T) {
 	}
 }
 
+// TestBuildCgoNotGlibc は、cgo の拡張機能が glibc ではなく musl を静的にリンクしていることを確かめる。
+// glibc を静的にリンクすると LGPL の再リンクの義務を伴うので、Makefile は musl-gcc でリンクする。
+// glibc の crt1.o は ELF に .note.ABI-tag（file コマンドの "for GNU/Linux 3.2.0"）を入れ、musl の crt1.o は入れない。
+// これを手がかりに、CC の指定が外れて glibc に戻ったことを見つける。
+func TestBuildCgoNotGlibc(t *testing.T) {
+	dir := buildDir(t)
+	for _, name := range cgoBinaries {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, name)
+			f, err := elf.Open(path)
+			if err != nil {
+				t.Fatalf("%s を ELF として開けない: %v", path, err)
+			}
+			defer func() { _ = f.Close() }()
+			if f.Section(".note.ABI-tag") != nil {
+				t.Errorf("%s に .note.ABI-tag がある（glibc をリンクしている）", path)
+			}
+		})
+	}
+}
+
 // TestBuildPureGo は、cgo の拡張機能以外が CGO_ENABLED=0 でビルドされていることを確かめる。
 // cgo を使うのは tree-sitter の拡張機能だけに限る（Makefile）。
 func TestBuildPureGo(t *testing.T) {

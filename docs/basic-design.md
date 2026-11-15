@@ -1009,8 +1009,10 @@ CI は `make check` の後に、次のターゲットを実行する。
 | `make dist-check` | `make dist` の配布物で、宣言ファイルの `command` が同じディレクトリの静的な実行ファイルを指す | NFR-01、NFR-06 |
 | `make dist-smoke` | C コンパイラと Go の無いコンテナ（glibc の版の違うもの、musl、busybox）に配布物を置き、全ての実行ファイルが起動する | NFR-01、NFR-06 |
 
-cgo を使う tree-sitter の拡張機能も、C の標準ライブラリごと静的にリンクする。
+cgo を使う tree-sitter の拡張機能も、musl を C の標準ライブラリとして静的にリンクする。
 動的にリンクすると、ビルドしたマシンより古い glibc や musl の環境で起動しない。
+glibc を静的にリンクすると LGPL の再リンクの義務を伴うので、MIT の musl を使う。
+配布物には、静的にリンクするサードパーティのライセンスの文面を `licenses/` に同梱する。
 理由と、2026-11-16 の結果は [measurements/nfr-dist.md](measurements/nfr-dist.md) に書く。
 
 NFR-05 は目標値が未定なので、検証のテストを置かず、注釈も付けない。
