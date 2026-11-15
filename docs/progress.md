@@ -10,10 +10,10 @@
 
 | 状態 | 件数 | 意味 |
 |---|---|---|
-| 実装とテスト | 3 | 実装とテストの両方に注釈がある |
+| 実装とテスト | 9 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 32 | 注釈が無い |
+| 未着手 | 26 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -30,13 +30,13 @@
 | FR-08 | 未着手 | - | - | Ex コマンドは `:w`、`:q`、`:s`、`:g` などの部分集合を持つ。対象の一覧は実装の段階で定める |
 | FR-09 | 未着手 | - | - | 正規表現は Go の標準ライブラリ（`regexp`）の文法に従う |
 | FR-10 | 未着手 | - | - | 拡張機能は、コンパイルする拡張機能と、スクリプトの拡張機能の 2 種類を用意する。どちらも Go で書く |
-| FR-11 | 未着手 | - | - | 拡張機能は、モーション、オペレーター、テキストオブジェクト、コマンドを追加できる |
-| FR-12 | 未着手 | - | - | 拡張機能が追加した操作は、拡張機能の側に特別な処理を書かなくても、ドットリピートとマクロで繰り返せる。本体は、拡張機能の ID、コマンドの ID、引数を記録し、再実行のときに同じ拡張機能へ問い合わせ直す |
-| FR-13 | 未着手 | - | - | 拡張機能は、追加する操作の一覧と起動の契機を、実行せずに読める宣言ファイルに書く |
-| FR-14 | 未着手 | - | - | 拡張機能は、宣言した契機（対応するファイルを開いたとき、コマンドを呼んだとき、など）で初めて起動する。例: 言語サーバーの無いテキストファイルを開いている間は、LSP の拡張機能を起動しない |
-| FR-15 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239) | [internal/buffer/buffer_test.go:53](../internal/buffer/buffer_test.go#L53)<br>[internal/buffer/buffer_test.go:239](../internal/buffer/buffer_test.go#L239) | バッファの内容を変更できるのは本体だけとする。拡張機能は、編集の内容と、元にしたバッファのバージョン番号を本体へ送り、本体はバージョン番号が現在と一致した編集だけを適用する |
-| FR-16 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239)<br>[internal/buffer/buffer.go:347](../internal/buffer/buffer.go#L347)<br>[internal/buffer/buffer.go:365](../internal/buffer/buffer.go#L365)<br>[internal/buffer/edit.go:64](../internal/buffer/edit.go#L64) | [internal/buffer/buffer_test.go:382](../internal/buffer/buffer_test.go#L382) | 本体は拡張機能へ、最初にバッファの全文を送り、以後は差分を送る |
-| FR-17 | 未着手 | - | - | キー入力ごとに結果が要る操作（拡張機能のモーションなど）は、期限付きで応答を待ち、期限を超えたら操作を失敗させる。期限を超えた応答は、後から届いても適用しない |
+| FR-11 | 実装とテスト | [ext/manifest.go:59](../ext/manifest.go#L59)<br>[ext/message.go:102](../ext/message.go#L102)<br>[ext/message.go:127](../ext/message.go#L127)<br>[ext/message.go:152](../ext/message.go#L152) | [ext/message_test.go:44](../ext/message_test.go#L44) | 拡張機能は、モーション、オペレーター、テキストオブジェクト、コマンドを追加できる |
+| FR-12 | 実装とテスト | [ext/message.go:102](../ext/message.go#L102)<br>[ext/message.go:127](../ext/message.go#L127)<br>[ext/message.go:152](../ext/message.go#L152) | [ext/message_test.go:44](../ext/message_test.go#L44) | 拡張機能が追加した操作は、拡張機能の側に特別な処理を書かなくても、ドットリピートとマクロで繰り返せる。本体は、拡張機能の ID、コマンドの ID、引数を記録し、再実行のときに同じ拡張機能へ問い合わせ直す |
+| FR-13 | 実装とテスト | [ext/manifest.go:16](../ext/manifest.go#L16)<br>[ext/manifest.go:91](../ext/manifest.go#L91)<br>[ext/manifest.go:159](../ext/manifest.go#L159) | [ext/manifest_test.go:26](../ext/manifest_test.go#L26)<br>[ext/manifest_test.go:56](../ext/manifest_test.go#L56)<br>[ext/manifest_test.go:162](../ext/manifest_test.go#L162) | 拡張機能は、追加する操作の一覧と起動の契機を、実行せずに読める宣言ファイルに書く |
+| FR-14 | 実装とテスト | [ext/manifest.go:47](../ext/manifest.go#L47)<br>[ext/manifest.go:91](../ext/manifest.go#L91) | [ext/manifest_test.go:26](../ext/manifest_test.go#L26)<br>[ext/manifest_test.go:56](../ext/manifest_test.go#L56) | 拡張機能は、宣言した契機（対応するファイルを開いたとき、コマンドを呼んだとき、など）で初めて起動する。例: 言語サーバーの無いテキストファイルを開いている間は、LSP の拡張機能を起動しない |
+| FR-15 | 実装とテスト | [ext/message.go:167](../ext/message.go#L167)<br>[ext/message.go:194](../ext/message.go#L194)<br>[ext/message.go:202](../ext/message.go#L202)<br>[ext/protocol.go:46](../ext/protocol.go#L46)<br>[internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239) | [ext/message_test.go:33](../ext/message_test.go#L33)<br>[ext/message_test.go:44](../ext/message_test.go#L44)<br>[internal/buffer/buffer_test.go:53](../internal/buffer/buffer_test.go#L53)<br>[internal/buffer/buffer_test.go:239](../internal/buffer/buffer_test.go#L239) | バッファの内容を変更できるのは本体だけとする。拡張機能は、編集の内容と、元にしたバッファのバージョン番号を本体へ送り、本体はバージョン番号が現在と一致した編集だけを適用する |
+| FR-16 | 実装とテスト | [ext/message.go:66](../ext/message.go#L66)<br>[ext/message.go:83](../ext/message.go#L83)<br>[internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239)<br>[internal/buffer/buffer.go:347](../internal/buffer/buffer.go#L347)<br>[internal/buffer/buffer.go:365](../internal/buffer/buffer.go#L365)<br>[internal/buffer/edit.go:64](../internal/buffer/edit.go#L64) | [ext/message_test.go:44](../ext/message_test.go#L44)<br>[internal/buffer/buffer_test.go:382](../internal/buffer/buffer_test.go#L382) | 本体は拡張機能へ、最初にバッファの全文を送り、以後は差分を送る |
+| FR-17 | 実装とテスト | [ext/message.go:184](../ext/message.go#L184) | [ext/message_test.go:44](../ext/message_test.go#L44) | キー入力ごとに結果が要る操作（拡張機能のモーションなど）は、期限付きで応答を待ち、期限を超えたら操作を失敗させる。期限を超えた応答は、後から届いても適用しない |
 | FR-18 | 未着手 | - | - | FR-17 の期限は設定で指定できる。0 を指定した場合は、待たずに次のキー入力を受け付け、結果が届いた時点でバッファのバージョン番号とカーソル位置が問い合わせたときと同じ場合だけ適用する。違う場合は破棄する |
 | FR-19 | 未着手 | - | - | マクロとドットリピートの再生中は、FR-18 の設定に関わらず、前の操作の完了を待ってから次の操作へ進む。拡張機能が応答しなければ、その位置で再生を止める |
 | FR-20 | 未着手 | - | - | 拡張機能ごとのメモリの上限を、設定で指定できる |
@@ -45,7 +45,7 @@
 | FR-32 | 未着手 | - | - | MCP のサーバーを持つ。開いているバッファ、カーソル位置、選択範囲、診断などの取得と、編集の操作を、ツールとして提供する |
 | FR-33 | 未着手 | - | - | MCP のクライアントからの接続は、中継コマンドで受ける。クライアントが中継コマンドを標準入出力の MCP サーバーとして起動し、中継コマンドが起動中のエディタへ Unix ドメインソケットで接続する |
 | FR-34 | 未着手 | - | - | ACP のクライアントを持つ。コーディングエージェントを子プロセスとして起動する |
-| FR-35 | 未着手 | - | - | tree-sitter による構文解析を持つ。構文ハイライトは、tree-sitter の拡張機能が色を付ける範囲の一覧を本体へ送り、本体は受け取り済みの一覧で描画する |
+| FR-35 | 実装とテスト | [ext/message.go:222](../ext/message.go#L222) | [ext/message_test.go:44](../ext/message_test.go#L44) | tree-sitter による構文解析を持つ。構文ハイライトは、tree-sitter の拡張機能が色を付ける範囲の一覧を本体へ送り、本体は受け取り済みの一覧で描画する |
 | FR-36 | 未着手 | - | - | スクリプトの拡張機能を実行する。yaegi は本体には入れず、スクリプトを実行する別の実行ファイルに入れる |
 | FR-40 | 未着手 | - | - | 設定ファイルの形式は JSONC とする |
 | FR-41 | 未着手 | - | - | 設定ファイルは本体が直接読む。キーマップなどの設定は、拡張機能の起動を待たずに反映する |
