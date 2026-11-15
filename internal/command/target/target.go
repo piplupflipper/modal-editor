@@ -76,29 +76,66 @@ type Find struct {
 	Till     bool // t と T のとき true
 }
 
+// Columns は、望みの列（Vim の curswant）の数え方である。
+//
+// 望みの列は本来、表示の列（タブや全角文字の幅を数えた列）で数える。
+// 表示幅の計算は internal/ui の担当で、internal/ui は internal/command と同じ層なので、このパッケージからは import できない（基本設計 2 章）。
+// このため、数え方を呼び出し側から差し込めるようにする。
+// Request.Columns が nil なら、仮の数え方として CharColumns を使う。
+type Columns interface {
+	// Column は、行 line の byteOff の位置の文字の列を返す。
+	Column(line string, byteOff int) int
+	// ByteAt は、行 line で列 col にある文字の位置を返す。
+	// col が行の幅を超えるときは、最後の文字の位置を返す。空の行では 0 を返す。
+	ByteAt(line string, col int) int
+}
+
+// CharColumns は、行頭からの文字数を列とする、仮の数え方である。
+type CharColumns struct{}
+
+// Column は、行の先頭から byteOff までの文字数を返す。
+func (CharColumns) Column(line string, byteOff int) int {
+	return charColumn(line, byteOff)
+}
+
+// ByteAt は、行の先頭から col 文字目の位置を返す。行の文字数を超える col は最後の文字にする。
+func (CharColumns) ByteAt(line string, col int) int {
+	return byteOfColumn(line, col)
+}
+
 // Request は、モーションとテキストオブジェクトへの入力である。
+//
+// Count と CountGiven は、internal/input の Command の同じ名前の欄をそのまま渡せる形にしてある。
 type Request struct {
 	// Cursor は、現在のカーソルの位置である。バッファの中の文字の境界を指す必要がある。
 	Cursor buffer.Position
-	// Count は、入力された回数である。0 は回数の省略を表し、多くのコマンドで 1 として扱う。
-	// gg、G、% は、回数の有無で意味が変わる。
+	// Count は回数である。省略した場合は 1 を渡す。0 も 1 として扱う。
 	Count int
+	// CountGiven は、回数を明示したかどうかである。gg、G、% は、回数の省略と 1 で意味が変わる。
+	CountGiven bool
 	// Char は、f、F、t、T で検索する文字である。
 	Char rune
-	// Want は、j と k で使う望みの列（Vim の curswant）である。
-	//
-	// 仮の実装として、表示の列ではなく、行頭からの文字数で数える。
-	// 表示幅（タブ、全角文字）の計算は internal/ui の担当なので、それができた時点で表示の列に替える。
+	// Want は、j と k で使う望みの列（Vim の curswant）である。Columns で数える。
 	Want int
+	// Columns は、望みの列の数え方である。nil なら CharColumns を使う。
+	Columns Columns
 	// Last は、; と , が繰り返す直前の検索である。
 	Last Find
 	// Operator は、このモーションの前に入力されたオペレーターである。テキストオブジェクトは見ない。
 	Operator Operator
 }
 
-// count1 は、回数の省略を 1 として返す。
+// count1 は、回数を 1 以上にして返す。
 func (r Request) count1() int {
 	return max(r.Count, 1)
+}
+
+// columns は、望みの列の数え方を返す。
+func (r Request) columns() Columns {
+	if r.Columns == nil {
+		return CharColumns{}
+	}
+	return r.Columns
 }
 
 // Result は、モーションの結果である。
@@ -111,6 +148,8 @@ type Result struct {
 	// j と k は Request.Want をそのまま返し、$ は WantEOL を返す。
 	Want int
 	// Find は、f、F、t、T のときに、; と , のために記録する検索である。それ以外のモーションではゼロ値である。
+	// f、F、t、T は、文字が見つからずに ErrNoTarget を返すときも Find を返す。
+	// Vim と同じく、呼び出し側は失敗した検索も記録する。
 	Find Find
 }
 
@@ -147,6 +186,7 @@ func (s Span) Range(b *buffer.Buffer) buffer.Range {
 
 // MotionFunc は、モーション 1 つを解決する関数である。
 // 該当が無い場合（f で文字が無い、% で括弧が無い、など）は ErrNoTarget を返す。
+// ErrNoTarget を返すときの Result は、Find の欄だけが意味を持つ。
 type MotionFunc func(b *buffer.Buffer, req Request) (Result, error)
 
 // TextObjectFunc は、テキストオブジェクト 1 つを解決する関数である。
@@ -159,71 +199,63 @@ var ErrNoTarget = errors.New("target: no target")
 // ErrInvalidRequest は、Request の Cursor がバッファの中の文字の境界を指していないか、Count が負であることを表す。
 var ErrInvalidRequest = errors.New("target: invalid request")
 
-// motions は、モーションの名前（入力するキーの列）と、それを解決する関数の表である。
+// motions は、モーションの ID と、それを解決する関数の表である。
+// ID は internal/input の本体の操作の表（builtin.go）の ID と同じで、Command.Target.Ref.ID でそのまま引ける。
 // 1 つのモーションを 1 つの関数にし、対象の増減はこの表の行の増減で行う。
 //
 // req: FR-03
 var motions = map[string]MotionFunc{
-	"h":  left,
-	"l":  right,
-	"j":  down,
-	"k":  up,
-	"w":  wordForward(false),
-	"W":  wordForward(true),
-	"b":  wordBackward(false),
-	"B":  wordBackward(true),
-	"e":  wordEnd(false),
-	"E":  wordEnd(true),
-	"0":  lineStart,
-	"^":  firstNonBlank,
-	"$":  lineEnd,
-	"gg": gotoLine(false),
-	"G":  gotoLine(true),
-	"f":  findChar(false, false),
-	"F":  findChar(true, false),
-	"t":  findChar(false, true),
-	"T":  findChar(true, true),
-	";":  repeatFind(false),
-	",":  repeatFind(true),
-	"%":  percent,
-	"{":  paragraph(false),
-	"}":  paragraph(true),
+	"left":                left,                   // h
+	"right":               right,                  // l
+	"down":                down,                   // j
+	"up":                  up,                     // k
+	"word-next":           wordForward(false),     // w
+	"bigword-next":        wordForward(true),      // W
+	"word-prev":           wordBackward(false),    // b
+	"bigword-prev":        wordBackward(true),     // B
+	"word-end":            wordEnd(false),         // e
+	"bigword-end":         wordEnd(true),          // E
+	"line-start":          lineStart,              // 0
+	"line-first-nonblank": firstNonBlank,          // ^
+	"line-end":            lineEnd,                // $
+	"file-start":          gotoLine(false),        // gg
+	"file-end":            gotoLine(true),         // G
+	"find-forward":        findChar(false, false), // f
+	"find-backward":       findChar(true, false),  // F
+	"till-forward":        findChar(false, true),  // t
+	"till-backward":       findChar(true, true),   // T
+	"find-repeat":         repeatFind(false),      // ;
+	"find-repeat-reverse": repeatFind(true),       // ,
+	"match-pair":          percent,                // %
+	"paragraph-prev":      paragraph(false),       // {
+	"paragraph-next":      paragraph(true),        // }
 }
 
-// textObjects は、テキストオブジェクトの名前と、それを解決する関数の表である。
-// b と B は、Vim と同じく ( と { の別名にする。閉じ括弧の名前（i) など）も Vim と同じく別名として持つ。
+// textObjects は、テキストオブジェクトの ID と、それを解決する関数の表である。
+// ID は motions と同じく internal/input の表の ID である。
+// Vim の別名（ib、ab、iB、aB、i)、a] など）は、キーの側（internal/input の表）で同じ ID に割り当てる。
 //
 // req: FR-03
 var textObjects = map[string]TextObjectFunc{
-	"iw": word(false, false),
-	"aw": word(true, false),
-	"iW": word(false, true),
-	"aW": word(true, true),
-	`i"`: quote(false, '"'),
-	`a"`: quote(true, '"'),
-	"i'": quote(false, '\''),
-	"a'": quote(true, '\''),
-	"i(": block(false, '(', ')'),
-	"a(": block(true, '(', ')'),
-	"i)": block(false, '(', ')'),
-	"a)": block(true, '(', ')'),
-	"ib": block(false, '(', ')'),
-	"ab": block(true, '(', ')'),
-	"i[": block(false, '[', ']'),
-	"a[": block(true, '[', ']'),
-	"i]": block(false, '[', ']'),
-	"a]": block(true, '[', ']'),
-	"i{": block(false, '{', '}'),
-	"a{": block(true, '{', '}'),
-	"i}": block(false, '{', '}'),
-	"a}": block(true, '{', '}'),
-	"iB": block(false, '{', '}'),
-	"aB": block(true, '{', '}'),
-	"ip": paragraphObject(false),
-	"ap": paragraphObject(true),
+	"inner-word":         word(false, false),     // iw
+	"a-word":             word(true, false),      // aw
+	"inner-bigword":      word(false, true),      // iW
+	"a-bigword":          word(true, true),       // aW
+	"inner-double-quote": quote(false, '"'),      // i"
+	"a-double-quote":     quote(true, '"'),       // a"
+	"inner-single-quote": quote(false, '\''),     // i'
+	"a-single-quote":     quote(true, '\''),      // a'
+	"inner-paren":        block(false, '(', ')'), // i( i) ib
+	"a-paren":            block(true, '(', ')'),  // a( a) ab
+	"inner-bracket":      block(false, '[', ']'), // i[ i]
+	"a-bracket":          block(true, '[', ']'),  // a[ a]
+	"inner-brace":        block(false, '{', '}'), // i{ i} iB
+	"a-brace":            block(true, '{', '}'),  // a{ a} aB
+	"inner-paragraph":    paragraphObject(false), // ip
+	"a-paragraph":        paragraphObject(true),  // ap
 }
 
-// LookupMotion は、名前が name のモーションを返す。
+// LookupMotion は、ID が name のモーションを返す。
 // 返す関数は、Request を確かめてから解決し、正しくなければ ErrInvalidRequest を返す。
 func LookupMotion(name string) (MotionFunc, bool) {
 	f, ok := motions[name]
@@ -238,7 +270,7 @@ func LookupMotion(name string) (MotionFunc, bool) {
 	}, true
 }
 
-// LookupTextObject は、名前が name のテキストオブジェクトを返す。
+// LookupTextObject は、ID が name のテキストオブジェクトを返す。
 // 返す関数は、Request を確かめてから解決し、正しくなければ ErrInvalidRequest を返す。
 func LookupTextObject(name string) (TextObjectFunc, bool) {
 	f, ok := textObjects[name]
@@ -253,12 +285,12 @@ func LookupTextObject(name string) (TextObjectFunc, bool) {
 	}, true
 }
 
-// MotionNames は、表にあるモーションの名前を並べ替えて返す。
+// MotionNames は、表にあるモーションの ID を並べ替えて返す。
 func MotionNames() []string {
 	return sortedKeys(motions)
 }
 
-// TextObjectNames は、表にあるテキストオブジェクトの名前を並べ替えて返す。
+// TextObjectNames は、表にあるテキストオブジェクトの ID を並べ替えて返す。
 func TextObjectNames() []string {
 	return sortedKeys(textObjects)
 }

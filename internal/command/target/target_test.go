@@ -2,7 +2,12 @@ package target
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -30,38 +35,127 @@ func mark(b *buffer.Buffer, p buffer.Position) string {
 	return strings.Join(lines, "\n")
 }
 
-func TestLookupNames(t *testing.T) {
-	// issue #19 の対象。#9 の裁定で増減しうる。
-	wantMotions := strings.Fields("h j k l w b e W B E 0 ^ $ gg G f F t T ; , % { }")
-	wantObjects := strings.Fields(`iw aw iW aW i" a" i' a' i( a( i[ a[ i{ a{ ip ap ib ab iB aB`)
-	for _, name := range wantMotions {
-		if _, ok := LookupMotion(name); !ok {
-			t.Errorf("LookupMotion(%q) not found", name)
+// inputTable は、internal/input/builtin.go の本体の操作の表 name（builtinMotions など）から、キーの列と ID の対応を読む。
+//
+// internal/input は internal/command と同じ層なので、テストでも import しない（基本設計 2 章）。
+// 代わりにソースを構文解析して、表の keys と id の欄を取り出す。
+func inputTable(t *testing.T, name string) map[string]string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), filepath.Join("..", "..", "input", "builtin.go"), nil, 0)
+	if err != nil {
+		t.Fatalf("parse internal/input/builtin.go: %v", err)
+	}
+	table := map[string]string{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok || len(vs.Names) != 1 || vs.Names[0].Name != name || len(vs.Values) != 1 {
+			return true
+		}
+		lit, ok := vs.Values[0].(*ast.CompositeLit)
+		if !ok {
+			t.Fatalf("%s is not a composite literal", name)
+		}
+		for _, elt := range lit.Elts {
+			fields := map[string]string{}
+			row, ok := elt.(*ast.CompositeLit)
+			if !ok {
+				t.Fatalf("%s has a row that is not a composite literal", name)
+			}
+			for _, f := range row.Elts {
+				kv, ok := f.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok1 := kv.Key.(*ast.Ident)
+				val, ok2 := kv.Value.(*ast.BasicLit)
+				if ok1 && ok2 && val.Kind == token.STRING {
+					fields[key.Name], _ = strconv.Unquote(val.Value)
+				}
+			}
+			table[fields["keys"]] = fields["id"]
+		}
+		return false
+	})
+	if len(table) == 0 {
+		t.Fatalf("table %s not found in internal/input/builtin.go", name)
+	}
+	return table
+}
+
+// motionID は、モーションのキーの列を、internal/input の表で ID に直す。
+func motionID(t *testing.T, keys string) string {
+	t.Helper()
+	id, ok := inputTable(t, "builtinMotions")[keys]
+	if !ok {
+		t.Fatalf("motion %q is not in internal/input", keys)
+	}
+	return id
+}
+
+// textObjectAliases は、Vim の別名のキーを、internal/input の表にあるキーへ直す。
+// 別名をキーに割り当てるのは internal/input の担当で、この表はテストの読みやすさのためだけにある。
+var textObjectAliases = map[string]string{"i)": "i(", "a)": "a(", "ib": "i(", "ab": "a(", "i]": "i[", "a]": "a[", "i}": "i{", "a}": "a{", "iB": "i{", "aB": "a{"}
+
+// textObjectID は、テキストオブジェクトのキーの列を、internal/input の表で ID に直す。
+func textObjectID(t *testing.T, keys string) string {
+	t.Helper()
+	if k, ok := textObjectAliases[keys]; ok {
+		keys = k
+	}
+	id, ok := inputTable(t, "builtinTextObjects")[keys]
+	if !ok {
+		t.Fatalf("text object %q is not in internal/input", keys)
+	}
+	return id
+}
+
+// count は、テストの表の回数（0 は省略）を、Request の Count と CountGiven にする。
+func count(n int) (int, bool) {
+	return max(n, 1), n > 0
+}
+
+// TestLookupInputIDs は、internal/input の表の全ての ID（Command.Target.Ref.ID に入る値）で、このパッケージの表を引けることと、
+// このパッケージの表に internal/input に無い ID が無いことを確かめる。
+//
+// req: FR-03
+func TestLookupInputIDs(t *testing.T) {
+	tests := []struct {
+		table  string
+		lookup func(string) bool
+		names  []string
+	}{
+		{"builtinMotions", func(id string) bool { _, ok := LookupMotion(id); return ok }, MotionNames()},
+		{"builtinTextObjects", func(id string) bool { _, ok := LookupTextObject(id); return ok }, TextObjectNames()},
+	}
+	for _, tt := range tests {
+		ids := map[string]bool{}
+		for keys, id := range inputTable(t, tt.table) {
+			ids[id] = true
+			if !tt.lookup(id) {
+				t.Errorf("%s: %q (%s) cannot be looked up", tt.table, id, keys)
+			}
+		}
+		if !slices.IsSorted(tt.names) {
+			t.Errorf("names %q are not sorted", tt.names)
+		}
+		for _, name := range tt.names {
+			if !ids[name] {
+				t.Errorf("%q is not in internal/input %s", name, tt.table)
+			}
 		}
 	}
-	for _, name := range wantObjects {
-		if _, ok := LookupTextObject(name); !ok {
-			t.Errorf("LookupTextObject(%q) not found", name)
-		}
+	if _, ok := LookupMotion("w"); ok {
+		t.Error(`LookupMotion("w") found; the table must use IDs, not keys`)
 	}
-	if _, ok := LookupMotion("x"); ok {
-		t.Error(`LookupMotion("x") found`)
-	}
-	if _, ok := LookupTextObject("iz"); ok {
-		t.Error(`LookupTextObject("iz") found`)
-	}
-	if got := MotionNames(); len(got) != len(wantMotions) || !slices.IsSorted(got) {
-		t.Errorf("MotionNames() = %q", got)
-	}
-	if got := TextObjectNames(); !slices.IsSorted(got) {
-		t.Errorf("TextObjectNames() = %q is not sorted", got)
+	if _, ok := LookupTextObject("inner-zzz"); ok {
+		t.Error(`LookupTextObject("inner-zzz") found`)
 	}
 }
 
 func TestInvalidRequest(t *testing.T) {
 	b := buffer.New("あい\nb")
-	w, _ := LookupMotion("w")
-	iw, _ := LookupTextObject("iw")
+	w, _ := LookupMotion("word-next")
+	iw, _ := LookupTextObject("inner-word")
 	tests := []Request{
 		{Cursor: buffer.Position{Line: 2}},
 		{Cursor: buffer.Position{Line: -1}},
@@ -181,8 +275,8 @@ func TestOperatorSpan(t *testing.T) {
 	}
 	for _, tt := range tests {
 		b, cur := parse(t, tt.text)
-		f, _ := LookupMotion(tt.motion)
-		res, err := f(b, Request{Cursor: cur, Operator: tt.op})
+		f, _ := LookupMotion(motionID(t, tt.motion))
+		res, err := f(b, Request{Cursor: cur, Count: 1, Operator: tt.op})
 		if err != nil {
 			t.Errorf("%s: %s error = %v", tt.name, tt.motion, err)
 			continue

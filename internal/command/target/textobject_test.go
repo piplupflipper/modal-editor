@@ -75,6 +75,20 @@ var textObjectTests = []textObjectCase{
 	{obj: "i(", text: "（(あ|い)）", want: "あい", kind: Inclusive},
 	{obj: "i(", text: "(a\n|b)", want: "a\nb", kind: Inclusive},
 	{obj: "i(", text: "((a|))", count: 3, fail: true},
+	// 囲む対が無ければ、後ろの最初の対（Vim 9.1）
+	{obj: "i(", text: "|f(a, (b, c), d)", want: "a, (b, c), d", kind: Inclusive},
+	{obj: "i[", text: "|x [a] y", want: "a", kind: Inclusive},
+	{obj: "a{", text: "|x {a} y", want: "{a}", kind: Inclusive},
+	{obj: "i(", text: "(a) |x (b)", want: "b", kind: Inclusive},
+	{obj: "i(", text: "|x\n(a)", want: "a", kind: Inclusive},
+	{obj: "i(", text: "|x (\na\n) y", want: "a\n", kind: Exclusive},
+	{obj: "i(", text: "|x (a (b))", count: 2, want: "b", kind: Inclusive},
+	{obj: "i(", text: "|x (a) y", count: 2, fail: true},
+	{obj: "i(", text: "(a) |x", fail: true},
+	// エスケープした括弧は数えない
+	{obj: "i(", text: "f(a \\) |b)", want: "a \\) b", kind: Inclusive},
+	{obj: "i[", text: "[a \\]| b]", want: "a \\] b", kind: Inclusive},
+	{obj: "i(", text: "f(a \\\\) |b)", fail: true}, // バックスラッシュが 2 つならエスケープではない
 	{obj: "i(", text: "a|b", fail: true},
 	{obj: "i(", text: "(a|b", fail: true},
 	{obj: "i(", text: "|", fail: true},
@@ -109,11 +123,12 @@ var textObjectTests = []textObjectCase{
 func TestTextObjects(t *testing.T) {
 	for _, tt := range textObjectTests {
 		b, cur := parse(t, tt.text)
-		f, ok := LookupTextObject(tt.obj)
+		f, ok := LookupTextObject(textObjectID(t, tt.obj))
 		if !ok {
 			t.Fatalf("text object %q not found", tt.obj)
 		}
-		span, err := f(b, Request{Cursor: cur, Count: tt.count})
+		n, given := count(tt.count)
+		span, err := f(b, Request{Cursor: cur, Count: n, CountGiven: given})
 		if tt.fail {
 			if !errors.Is(err, ErrNoTarget) {
 				t.Errorf("%d%s on %q: got %+v, %v, want ErrNoTarget", tt.count, tt.obj, tt.text, span, err)
@@ -135,7 +150,7 @@ func TestTextObjects(t *testing.T) {
 func TestTextObjectAdjust(t *testing.T) {
 	// i{ の範囲をオペレーターに渡すと、括弧の行を残して中の行だけを行単位で扱う。
 	b, cur := parse(t, "f {\n  a|b\n  c\n}")
-	f, _ := LookupTextObject("i{")
+	f, _ := LookupTextObject("inner-brace")
 	span, err := f(b, Request{Cursor: cur})
 	if err != nil {
 		t.Fatal(err)

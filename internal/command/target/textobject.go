@@ -211,14 +211,18 @@ func findPrevQuote(line string, col int, q byte) int {
 // カーソルを囲む、入れ子になっていない open と closing の対を探す。行をまたいでよい。
 // カーソルが open か closing の上にあれば、その括弧の対を選ぶ。{ では、カーソルが字下げの中にあれば、字下げの後から探す。
 // 回数があれば、回数番目に外側の対を選ぶ。
+// カーソルを囲む対が無ければ、カーソルより後ろにある最初の open から始まる対を選ぶ。行をまたいで探す（Vim 9.1 と同じ）。
+// このとき回数があれば、その open から後ろへ回数番目の open を選ぶ。
+// バックスラッシュでエスケープされた括弧（\( など）は数えない（Vim の 'cpoptions' に M が無い既定の動作）。
 //
 // a は括弧を含む。i は括弧の内側で、閉じ括弧の前が字下げだけなら、その字下げも含めない。
 // 閉じ括弧が行の先頭か字下げの後にあるときは、閉じ括弧の行の先頭までの Exclusive な範囲を返す。
 // この範囲は AdjustExclusive で行単位になるので、di{ は中の行を消し、括弧の行を残す。
 // 括弧の間が空なら、空の範囲を返す。
 //
-// Vim と違い、引用符の中の括弧を区別しない（Vim も i( などでは区別しない）。
-// 囲む対が無いときは失敗する。
+// 引用符の中の括弧も、区別せずに数える。
+// Vim は開き括弧を探すときは区別しないが、閉じ括弧を探すときは区別するので、閉じ括弧の候補が引用符の中にあると Vim と結果が違う。
+// 囲む対も後ろの対も無いとき、回数の分の対が無いときは失敗する。
 func block(include bool, open, closing rune) TextObjectFunc {
 	return func(b *buffer.Buffer, req Request) (Span, error) {
 		c := cursor{b: b, Position: req.Cursor}
@@ -232,13 +236,16 @@ func block(include bool, open, closing rune) TextObjectFunc {
 		if c.char() == open {
 			c.Byte++ // 開き括弧の後から探して、その括弧を見つけるため
 		}
+		// 囲む対があれば後ろ向きに、無ければ前向きに、回数の数だけ開き括弧を探す。
+		probe := c
+		forward := !findPair(&probe, open, closing, false, false)
 		for range req.count1() {
-			if !findUnmatched(&c, open, closing, false) {
+			if !findPair(&c, open, closing, forward, false) {
 				return Span{}, ErrNoTarget
 			}
 		}
 		start := c.Position
-		if !findUnmatched(&c, open, closing, true) {
+		if !findPair(&c, closing, open, true, false) {
 			return Span{}, ErrNoTarget
 		}
 

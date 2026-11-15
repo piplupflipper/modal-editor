@@ -10,9 +10,9 @@ import (
 // この file の関数は、表 motions に登録するモーションである。
 // 各関数は Request が正しいこと（validate を通ったこと）を前提にする。
 
-// at は、p へ移動した結果を、p の文字の列を望みの列にして返す。
-func at(b *buffer.Buffer, p buffer.Position, kind Kind) Result {
-	return Result{Pos: p, Kind: kind, Want: charColumn(b.Line(p.Line), p.Byte)}
+// at は、p へ移動した結果を、p の文字の列（req.Columns で数える）を望みの列にして返す。
+func at(b *buffer.Buffer, req Request, p buffer.Position, kind Kind) Result {
+	return Result{Pos: p, Kind: kind, Want: req.columns().Column(b.Line(p.Line), p.Byte)}
 }
 
 // left は h である。回数の文字だけ左へ移る。行の先頭を越えない。行の先頭にいれば失敗する。
@@ -29,7 +29,7 @@ func left(b *buffer.Buffer, req Request) (Result, error) {
 		_, size := utf8.DecodeLastRuneInString(line[:p.Byte])
 		p.Byte -= size
 	}
-	return at(b, p, Exclusive), nil
+	return at(b, req, p, Exclusive), nil
 }
 
 // right は l である。回数の文字だけ右へ移る。
@@ -52,7 +52,7 @@ func right(b *buffer.Buffer, req Request) (Result, error) {
 		_, size := utf8.DecodeRuneInString(line[p.Byte:])
 		p.Byte += size
 	}
-	return at(b, p, Exclusive), nil
+	return at(b, req, p, Exclusive), nil
 }
 
 // down は j である。回数の行だけ下へ、行単位で移る。
@@ -75,9 +75,9 @@ func up(b *buffer.Buffer, req Request) (Result, error) {
 }
 
 // vertical は、line 行の、望みの列に当たる文字へ移った結果を返す。望みの列は変えない。
-// 行の文字数が望みの列に届かなければ、最後の文字へ移る。
+// 行の幅が望みの列に届かなければ、最後の文字へ移る。
 func vertical(b *buffer.Buffer, req Request, line int) Result {
-	p := buffer.Position{Line: line, Byte: byteOfColumn(b.Line(line), req.Want)}
+	p := buffer.Position{Line: line, Byte: req.columns().ByteAt(b.Line(line), req.Want)}
 	return Result{Pos: p, Kind: Linewise, Want: req.Want}
 }
 
@@ -108,7 +108,7 @@ func wordForward(big bool) MotionFunc {
 		if !ok && req.Operator == NoOperator && c.Position == req.Cursor {
 			return Result{}, ErrNoTarget
 		}
-		return at(b, c.Position, kind), nil
+		return at(b, req, c.Position, kind), nil
 	}
 }
 
@@ -125,7 +125,7 @@ func wordEnd(big bool) MotionFunc {
 		if !ok && req.Operator == NoOperator && c.Position == req.Cursor {
 			return Result{}, ErrNoTarget
 		}
-		return at(b, c.Position, Inclusive), nil
+		return at(b, req, c.Position, Inclusive), nil
 	}
 }
 
@@ -137,7 +137,7 @@ func wordBackward(big bool) MotionFunc {
 		if !bckWord(&c, req.count1(), big) {
 			return Result{}, ErrNoTarget
 		}
-		return at(b, c.Position, Exclusive), nil
+		return at(b, req, c.Position, Exclusive), nil
 	}
 }
 
@@ -267,14 +267,14 @@ func bckWord(c *cursor, count int, big bool) bool {
 
 // lineStart は 0 である。行の先頭へ移る。Exclusive である。
 func lineStart(b *buffer.Buffer, req Request) (Result, error) {
-	return at(b, buffer.Position{Line: req.Cursor.Line}, Exclusive), nil
+	return at(b, req, buffer.Position{Line: req.Cursor.Line}, Exclusive), nil
 }
 
 // firstNonBlank は ^ である。行の最初の空白でない文字へ移る。回数は使わない。Exclusive である。
 // 空白だけの行では最後の文字へ移る。
 func firstNonBlank(b *buffer.Buffer, req Request) (Result, error) {
 	line := req.Cursor.Line
-	return at(b, buffer.Position{Line: line, Byte: firstNonBlankByte(b.Line(line))}, Exclusive), nil
+	return at(b, req, buffer.Position{Line: line, Byte: firstNonBlankByte(b.Line(line))}, Exclusive), nil
 }
 
 // lineEnd は $ である。回数から 1 を引いた行だけ下の行の、最後の文字へ移る。Inclusive で、望みの列を WantEOL にする。
@@ -291,24 +291,24 @@ func lineEnd(b *buffer.Buffer, req Request) (Result, error) {
 }
 
 // gotoLine は、gg（last が true なら G）を返す。
-// 回数があればその行（1 から数える。行数を超えれば最後の行）、無ければ最初の行（G は最後の行）の、
+// 回数を明示すればその行（1 から数える。行数を超えれば最後の行）、省略すれば最初の行（G は最後の行）の、
 // 最初の空白でない文字へ、行単位で移る。失敗しない。
 func gotoLine(last bool) MotionFunc {
 	return func(b *buffer.Buffer, req Request) (Result, error) {
 		line := 0
 		switch {
-		case req.Count > 0:
-			line = min(req.Count, b.LineCount()) - 1
+		case req.CountGiven:
+			line = min(req.count1(), b.LineCount()) - 1
 		case last:
 			line = b.LineCount() - 1
 		}
-		return lineFirstNonBlank(b, line), nil
+		return lineFirstNonBlank(b, req, line), nil
 	}
 }
 
 // lineFirstNonBlank は、line 行の最初の空白でない文字へ、行単位で移った結果を返す。
-func lineFirstNonBlank(b *buffer.Buffer, line int) Result {
-	return at(b, buffer.Position{Line: line, Byte: firstNonBlankByte(b.Line(line))}, Linewise)
+func lineFirstNonBlank(b *buffer.Buffer, req Request, line int) Result {
+	return at(b, req, buffer.Position{Line: line, Byte: firstNonBlankByte(b.Line(line))}, Linewise)
 }
 
 // findChar は、f、F、t、T を返す。backward は F と T、till は t と T である。
@@ -316,19 +316,16 @@ func lineFirstNonBlank(b *buffer.Buffer, line int) Result {
 // 今の行の中で、Request.Char の回数番目の出現を探す。
 // f は出現の位置へ、t はその 1 文字手前へ移る。F と T は逆向きである。
 // 前向きは Inclusive、後ろ向きは Exclusive である。
-// 見つからなければ失敗する。Vim は失敗しても検索を ; のために記録するが、ここでは成功したときだけ Result.Find を返す。
+// 見つからなければ失敗する。Vim と同じく、失敗したときも ; のための検索を Result.Find に入れて返す。
 func findChar(backward, till bool) MotionFunc {
 	return func(b *buffer.Buffer, req Request) (Result, error) {
 		f := Find{Char: req.Char, Backward: backward, Till: till}
 		if f.Char == 0 {
 			return Result{}, ErrNoTarget
 		}
-		res, err := searchChar(b, req.Cursor, f, req.count1(), true)
-		if err != nil {
-			return Result{}, err
-		}
+		res, err := searchChar(b, req, f, req.count1(), true)
 		res.Find = f
-		return res, nil
+		return res, err
 	}
 }
 
@@ -346,12 +343,13 @@ func repeatFind(reverse bool) MotionFunc {
 		}
 		f.Backward = f.Backward != reverse
 		n := req.count1()
-		return searchChar(b, req.Cursor, f, n, n != 1 || !f.Till)
+		return searchChar(b, req, f, n, n != 1 || !f.Till)
 	}
 }
 
 // searchChar は、Vim の searchc() である。stop が false なら、最初に調べる 1 文字を飛ばす。
-func searchChar(b *buffer.Buffer, from buffer.Position, f Find, count int, stop bool) (Result, error) {
+func searchChar(b *buffer.Buffer, req Request, f Find, count int, stop bool) (Result, error) {
+	from := req.Cursor
 	line := b.Line(from.Line)
 	col := from.Byte
 	for range count {
@@ -389,7 +387,7 @@ func searchChar(b *buffer.Buffer, from buffer.Position, f Find, count int, stop 
 	if f.Backward {
 		kind = Exclusive
 	}
-	return at(b, buffer.Position{Line: from.Line, Byte: col}, kind), nil
+	return at(b, req, buffer.Position{Line: from.Line, Byte: col}, kind), nil
 }
 
 // brackets は、% が対応を探す括弧である。
@@ -397,19 +395,21 @@ const brackets = "()[]{}"
 
 // percent は % である。
 //
-// 回数が無ければ、カーソルの位置かそれより後で今の行にある最初の括弧（brackets）を探し、それに対応する括弧へ移る。Inclusive である。
+// 回数を省略すれば、カーソルの位置かそれより後で今の行にある最初の括弧（brackets）を探し、それに対応する括弧へ移る。Inclusive である。
 // 括弧が無いか、対応する括弧が無ければ失敗する。
-// 回数があれば、バッファの回数パーセントの行の最初の空白でない文字へ、行単位で移る。回数が 100 を超えれば失敗する。
+// バックスラッシュが奇数個続いた後の括弧（\( など）は、始めの括弧と同じくエスケープされた括弧とだけ対にする（Vim の 'cpoptions' に M が無い既定の動作）。
+// 回数を明示すれば、バッファの回数パーセントの行の最初の空白でない文字へ、行単位で移る。回数が 100 を超えれば失敗する。
 //
 // Vim と違い、引用符の中の括弧を区別しない。C のコメント（/* */）と #if の対応も探さない。
 func percent(b *buffer.Buffer, req Request) (Result, error) {
-	if req.Count > 0 {
-		if req.Count > 100 {
+	if req.CountGiven {
+		count := req.count1()
+		if count > 100 {
 			return Result{}, ErrNoTarget
 		}
 		n := b.LineCount()
-		line := (req.Count*n + 99) / 100
-		return lineFirstNonBlank(b, min(max(line, 1), n)-1), nil
+		line := (count*n + 99) / 100
+		return lineFirstNonBlank(b, req, min(max(line, 1), n)-1), nil
 	}
 	line := b.Line(req.Cursor.Line)
 	i := strings.IndexAny(line[req.Cursor.Byte:], brackets)
@@ -419,37 +419,55 @@ func percent(b *buffer.Buffer, req Request) (Result, error) {
 	c := cursor{b: b, Position: buffer.Position{Line: req.Cursor.Line, Byte: req.Cursor.Byte + i}}
 	k := strings.IndexRune(brackets, c.char())
 	open, closing := rune(brackets[k&^1]), rune(brackets[k|1])
-	if !findUnmatched(&c, open, closing, k&1 == 0) {
+	escaped := isEscaped(line, c.Byte)
+	found := false
+	if k&1 == 0 {
+		found = findPair(&c, closing, open, true, escaped)
+	} else {
+		found = findPair(&c, open, closing, false, escaped)
+	}
+	if !found {
 		return Result{}, ErrNoTarget
 	}
-	return at(b, c.Position, Inclusive), nil
+	return at(b, req, c.Position, Inclusive), nil
 }
 
-// findUnmatched は、c の位置の次（backward なら前）から探して、入れ子になっていない closing（後ろ向きなら open）へ移る。
-// 前向きに探すときは open を、後ろ向きに探すときは closing を入れ子の始まりとして数える。
+// findPair は、c の位置の次（forward が false なら前）から探して、入れ子になっていない want へ移る（Vim の findmatchlimit()）。
+// nest に出会うたびに入れ子を 1 段深くし、want に出会うたびに 1 段浅くする。
+// escaped が true ならバックスラッシュでエスケープされた括弧だけを、false ならエスケープされていない括弧だけを数える（Vim の 'cpoptions' に M が無い既定の動作）。
 // 見つからなければ c を元に戻して false を返す。
-func findUnmatched(c *cursor, open, closing rune, forward bool) bool {
+func findPair(c *cursor, want, nest rune, forward, escaped bool) bool {
 	save := c.Position
-	want, nest := closing, open
 	step := c.inc
 	if !forward {
-		want, nest = open, closing
 		step = c.dec
 	}
 	depth := 0
 	for step() != stuck {
-		switch c.char() {
-		case nest:
-			depth++
-		case want:
-			if depth == 0 {
-				return true
-			}
-			depth--
+		ch := c.char()
+		if ch != want && ch != nest || isEscaped(c.line(), c.Byte) != escaped {
+			continue
 		}
+		if ch == nest {
+			depth++
+			continue
+		}
+		if depth == 0 {
+			return true
+		}
+		depth--
 	}
 	c.Position = save
 	return false
+}
+
+// isEscaped は、行の i の位置の直前に、バックスラッシュが奇数個続くかどうかを返す。
+func isEscaped(line string, i int) bool {
+	n := 0
+	for i-n > 0 && line[i-n-1] == '\\' {
+		n++
+	}
+	return n%2 == 1
 }
 
 // paragraph は、}（forward が false なら {）を返す。
@@ -489,8 +507,8 @@ func paragraph(forward bool) MotionFunc {
 		p := buffer.Position{Line: curr}
 		if forward && curr == n-1 && b.Line(curr) != "" {
 			p.Byte = lastCharByte(b.Line(curr))
-			return at(b, p, Inclusive), nil
+			return at(b, req, p, Inclusive), nil
 		}
-		return at(b, p, Exclusive), nil
+		return at(b, req, p, Exclusive), nil
 	}
 }

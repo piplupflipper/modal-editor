@@ -152,6 +152,8 @@ var motionTests = []motionCase{
 	{motion: "%", text: "x|y[a]", want: "xy[a|]", kind: Inclusive}, // 後ろの括弧を探す
 	{motion: "%", text: "|{\n  x\n}", want: "{\n  x\n|}", kind: Inclusive},
 	{motion: "%", text: "あ|い(う)", want: "あい(う|)", kind: Inclusive},
+	{motion: "%", text: "(a \\(| b)", want: "|(a \\( b)", kind: Inclusive},         // エスケープした括弧は数えない
+	{motion: "%", text: "|\\(a (b) c\\)", want: "\\(a (b) c\\|)", kind: Inclusive}, // エスケープした括弧どうしを対にする
 	{motion: "%", text: "|abc"},
 	{motion: "%", text: "|(abc"},
 	{motion: "%", text: "(|a"},
@@ -178,11 +180,12 @@ var motionTests = []motionCase{
 func TestMotions(t *testing.T) {
 	for _, tt := range motionTests {
 		b, cur := parse(t, tt.text)
-		f, ok := LookupMotion(tt.motion)
+		f, ok := LookupMotion(motionID(t, tt.motion))
 		if !ok {
 			t.Fatalf("motion %q not found", tt.motion)
 		}
-		req := Request{Cursor: cur, Count: tt.count, Operator: tt.op, Char: tt.char, Last: tt.last, Want: tt.wantCo}
+		n, given := count(tt.count)
+		req := Request{Cursor: cur, Count: n, CountGiven: given, Operator: tt.op, Char: tt.char, Last: tt.last, Want: tt.wantCo}
 		res, err := f(b, req)
 		if tt.want == "" {
 			if !errors.Is(err, ErrNoTarget) {
@@ -221,7 +224,7 @@ func TestMotionWantAndFind(t *testing.T) {
 	}
 	for _, tt := range tests {
 		b, cur := parse(t, tt.text)
-		f, _ := LookupMotion(tt.motion)
+		f, _ := LookupMotion(motionID(t, tt.motion))
 		tt.req.Cursor = cur
 		res, err := f(b, tt.req)
 		if err != nil {
@@ -231,5 +234,99 @@ func TestMotionWantAndFind(t *testing.T) {
 		if res.Want != tt.wantWant || res.Find != tt.wantFind {
 			t.Errorf("%s on %q: Want = %d, Find = %+v, want %d, %+v", tt.motion, tt.text, res.Want, res.Find, tt.wantWant, tt.wantFind)
 		}
+	}
+}
+
+// req: FR-03
+func TestFailedFindIsRecorded(t *testing.T) {
+	// Vim と同じく、見つからなかった f も ; のために記録する。
+	b, cur := parse(t, "|abc")
+	f, _ := LookupMotion("find-forward")
+	res, err := f(b, Request{Cursor: cur, Count: 1, Char: 'z'})
+	if !errors.Is(err, ErrNoTarget) || res.Find != (Find{Char: 'z'}) {
+		t.Errorf("fz = %+v, %v, want Find{z} and ErrNoTarget", res, err)
+	}
+}
+
+// req: FR-03
+func TestCountGiven(t *testing.T) {
+	// internal/input の Command は回数の省略を Count 1、CountGiven false で表す。G はこれを最後の行への移動として扱う。
+	b, cur := parse(t, "a\nb\n|c")
+	tests := []struct {
+		id    string
+		req   Request
+		want  string
+		fails bool
+	}{
+		{id: "file-end", req: Request{Count: 1}, want: "a\nb\n|c"},
+		{id: "file-end", req: Request{Count: 1, CountGiven: true}, want: "|a\nb\nc"},
+		{id: "file-start", req: Request{Count: 2, CountGiven: true}, want: "a\n|b\nc"},
+		{id: "match-pair", req: Request{Count: 1}, fails: true}, // 回数の省略は括弧の対応（括弧が無い）
+		{id: "match-pair", req: Request{Count: 1, CountGiven: true}, want: "|a\nb\nc"},
+		{id: "down", req: Request{Count: 0}, fails: true}, // 0 も 1 として扱う。最後の行なので失敗する
+	}
+	for _, tt := range tests {
+		f, _ := LookupMotion(tt.id)
+		tt.req.Cursor = cur
+		res, err := f(b, tt.req)
+		if tt.fails {
+			if !errors.Is(err, ErrNoTarget) {
+				t.Errorf("%s %+v: error = %v, want ErrNoTarget", tt.id, tt.req, err)
+			}
+			continue
+		}
+		if err != nil || mark(b, res.Pos) != tt.want {
+			t.Errorf("%s %+v = %q, %v, want %q", tt.id, tt.req, mark(b, res.Pos), err, tt.want)
+		}
+	}
+}
+
+// wideColumns は、ASCII 以外の文字の幅を 2 として数える、テスト用の表示の列の数え方である。
+type wideColumns struct{}
+
+func (wideColumns) Column(line string, byteOff int) int {
+	col := 0
+	for _, r := range line[:byteOff] {
+		col += width(r)
+	}
+	return col
+}
+
+func (wideColumns) ByteAt(line string, col int) int {
+	c := 0
+	for off, r := range line {
+		if c+width(r) > col {
+			return off
+		}
+		c += width(r)
+	}
+	return lastCharByte(line)
+}
+
+func width(r rune) int {
+	if r < 0x80 {
+		return 1
+	}
+	return 2
+}
+
+// req: FR-03
+func TestColumns(t *testing.T) {
+	// 望みの列の数え方を差し込むと、j と k はその列で移り、他のモーションはその列を返す。
+	b, cur := parse(t, "abc|d\nあいう")
+	j, _ := LookupMotion("down")
+	res, err := j(b, Request{Cursor: cur, Count: 1, Want: 3, Columns: wideColumns{}})
+	if err != nil || mark(b, res.Pos) != "abcd\nあ|いう" || res.Want != 3 {
+		t.Errorf("j = %q, Want %d, %v", mark(b, res.Pos), res.Want, err)
+	}
+	b, cur = parse(t, "|あいう")
+	l, _ := LookupMotion("right")
+	res, err = l(b, Request{Cursor: cur, Count: 2, Columns: wideColumns{}})
+	if err != nil || res.Want != 4 {
+		t.Errorf("2l Want = %d, %v, want 4", res.Want, err)
+	}
+	res, err = l(b, Request{Cursor: cur, Count: 2})
+	if err != nil || res.Want != 2 {
+		t.Errorf("2l with default columns Want = %d, %v, want 2", res.Want, err)
 	}
 }
