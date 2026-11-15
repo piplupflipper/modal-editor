@@ -835,6 +835,16 @@ func TestMarkNoLines(t *testing.T) {
 	if !b.NoLines() {
 		t.Error("入力を戻した後に NoLines() = false（Vim は行の無いバッファに戻る）")
 	}
+	v = b.Version()
+	b.MarkHasLines()
+	if b.NoLines() || b.Version() != v {
+		t.Errorf("MarkHasLines の後: NoLines() = %v, Version() = %d", b.NoLines(), b.Version())
+	}
+	e := New("")
+	e.MarkHasLines()
+	if e.NoLines() {
+		t.Error(`New("") に MarkHasLines の後も NoLines() = true`)
+	}
 	if !New("").NoLines() || New("\n").NoLines() {
 		t.Error(`New("") は行の無いバッファで、New("\n") は空の行 1 つのバッファである`)
 	}

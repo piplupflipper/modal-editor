@@ -258,7 +258,7 @@ func (b *Buffer) FixEndOfLine() bool {
 // FinalNewline は、書き出すときに最後の行の後に改行を付けるかどうかを返す。
 // 読み込んだテキストが末尾の改行を持っていたか、末尾の改行を補う設定が有効なら true である。
 // 行の無いバッファ（NoLines）では、true を返しても WriteTo は何も書かない。
-// 拡張機能へ送る ext.BufferOpenParams の FinalNewline には、この値を渡す。
+// 拡張機能へ送る ext.BufferOpenParams の FinalNewline は、行の無いバッファ（NoLines）では false、それ以外ではこの値にする。
 func (b *Buffer) FinalNewline() bool {
 	return b.eol || b.fixEOL
 }
@@ -278,6 +278,13 @@ func (b *Buffer) MarkNoLines() {
 		b.noLinesAt = map[uint64]bool{}
 	}
 	b.noLinesAt[b.stateID()] = true
+}
+
+// MarkHasLines は、現在の内容に付いた行の無いバッファの記録（MarkNoLines、空のテキストから作ったこと）を外す。
+// 読み直したファイルが空の行 1 つ（"\n"）だった場合のように、テキストを変えずに行の無いバッファでなくする（Vim の :e）ときに呼ぶ。
+// MarkHasLines はバージョン番号、アンドゥの履歴、保存済みの記録を変えない。
+func (b *Buffer) MarkHasLines() {
+	delete(b.noLinesAt, b.stateID())
 }
 
 // NoLines は、Vim の「行の無いバッファ」に当たるかどうかを返す。

@@ -570,6 +570,18 @@ func TestFinalNewlineToExtension(t *testing.T) {
 	h.keys(`\e`)
 	h.eventually("a.txt の finalNewline", func() bool { return h.e.message.Text == "b1 finalNewline=true" })
 
+	// 行の無いバッファは空のファイルとして書き出すので false で送り、行の無いバッファでなくなれば true で送り直す。
+	for _, step := range []struct {
+		keys string
+		want bool
+	}{{"ggdG", false}, {"u", true}, {"<C-r>", false}, {"ix<Esc>", true}} {
+		h.keys(step.keys + `\e`)
+		want := fmt.Sprintf("b1 finalNewline=%v", step.want)
+		h.eventually(step.keys+" の後の finalNewline", func() bool { return h.e.message.Text == want })
+	}
+	h.keys("uu") // ix と、やり直した ggdG を戻して "abc" にする
+	h.settle()
+
 	// 末尾の改行を補う設定を無効にしたバッファ（設定ファイルの項目は #9 の後）は、false で送る。
 	h.e.do(func() {
 		b := buffer.New("x")
@@ -614,6 +626,8 @@ func TestWriteNoLines(t *testing.T) {
 		{"0d$ は行を残す", "abc", "0d$", "\n"},
 		{"空のファイルを編集しない", "", "", ""},
 		{"空のファイルに入力して消す", "", "ix<Esc>x", "\n"},
+		// 行の無いバッファの :d は、dd と同じくレジスターを変えない。yy した x が p で入る。
+		{"行の無いバッファの :d", "", "ix<Esc>yyu:d<CR>p", "\nx\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -625,6 +639,21 @@ func TestWriteNoLines(t *testing.T) {
 				t.Errorf("file = %q, want %q", b, tt.want)
 			}
 		})
+	}
+	// 行の無いバッファを開いた後、外部で "\n"（空の行 1 つ）に書き換えて :e! すると、行の無いバッファではなくなる。
+	for _, keys := range []string{"", "ggdG"} {
+		dir := writeFiles(t, map[string]string{"a.txt": ""})
+		h := start(t, Config{WorkDir: dir}, "a.txt")
+		h.keys(keys)
+		h.settle()
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h.keys(":e!<CR>:w!<CR>")
+		h.settle()
+		if b, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(b) != "\n" {
+			t.Errorf("%q の後に :e! :w!: file = %q, want %q", keys, b, "\n")
+		}
 	}
 	// 無いファイルを開いて、編集せずに書き出す。
 	dir := writeFiles(t, nil)

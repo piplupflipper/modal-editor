@@ -26,7 +26,7 @@ type BufferSnapshot struct {
 	// Text は、バッファの全文である。internal/buffer の Buffer.Text が返すもの（末尾の改行を含まない）を渡す。
 	Text string
 	// NoFinalNewline は、ファイルへ書き出したときに最後の行の後に改行が付かないことを表す。
-	// internal/buffer の Buffer.FinalNewline が false を返すバッファで true にする。
+	// internal/buffer の Buffer.FinalNewline が false を返すバッファと、行の無いバッファ（Buffer.NoLines）で true にする。
 	// ゼロ値（false）は改行が付くことを表し、拡張機能へは ext.BufferOpenParams の FinalNewline を true にして送る。
 	NoFinalNewline bool
 }
@@ -177,7 +177,7 @@ func (h *Host) UpdateBuffer(id ext.BufferID, path, fileType string) error {
 
 // SetFinalNewline は、開いているバッファを書き出したときに最後の行の後に改行が付くかどうかが変わったことを知らせる
 // （末尾の改行を補う設定を利用者が切り替えた場合など）。
-// finalNewline には internal/buffer の Buffer.FinalNewline が返す値を渡す。
+// finalNewline は、BufferSnapshot の NoFinalNewline の逆で、行の無いバッファになったとき、そうでなくなったときにも変わる。
 // 値が変わったなら、稼働中の拡張機能へ buffer/open を送り直す（拡張機能は持っている内容を置き換える。[ext.BufferOpenParams]）。
 // 変わらなければ何もしない。開いていないバッファなら [ErrBufferState] を包んだ誤りを返す。
 func (h *Host) SetFinalNewline(id ext.BufferID, finalNewline bool) error {

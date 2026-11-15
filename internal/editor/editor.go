@@ -422,9 +422,25 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Interrupted = e.interrupt.Load
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
 		ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text(),
-		NoFinalNewline: !b.FinalNewline(),
+		NoFinalNewline: !finalNewline(b),
 	}); err != nil {
 		e.log.Error("buffer/open を送れない", "err", err)
+	}
+}
+
+// finalNewline は、拡張機能へ送る buffer/open の finalNewline（書き出したときに最後の行の後に改行が付くか）を返す。
+// 行の無いバッファは空のファイルとして書き出すので false にする（基本設計 4.1）。
+func finalNewline(b *buffer.Buffer) bool {
+	return b.FinalNewline() && !b.NoLines()
+}
+
+// syncFinalNewline は、bs の finalNewline が拡張機能へ送った値と変わっていれば、buffer/open で送り直させる（exthost.Host.SetFinalNewline）。
+// 行の無いバッファになったとき（全ての行の削除）と、そうでなくなったとき（入力、アンドゥ、:e）に変わる。
+// 変更（buffer/change）を送った後に呼ぶ。1 つの Result に複数の変更があるときは、各変更の後に最後の状態の値で呼ぶので、
+// 途中の値は送らないことがあるが、最後に送る値は現在のバッファと一致する。
+func (e *Editor) syncFinalNewline(bs *bufferState) {
+	if err := e.host.SetFinalNewline(bs.id, finalNewline(bs.buf)); err != nil {
+		e.log.Error("finalNewline を送り直せない", "buffer", bs.id, "err", err)
 	}
 }
 

@@ -51,6 +51,7 @@ func (e *Editor) commitChange(bs *bufferState, ch buffer.Change) {
 		e.log.Error("buffer/change を送れない", "buffer", bs.id, "err", err)
 	}
 	bs.sent = ch.After
+	e.syncFinalNewline(bs)
 	for id, ds := range bs.diagnostics {
 		bs.diagnostics[id] = shiftDiagnostics(ds, ch.Edits)
 	}

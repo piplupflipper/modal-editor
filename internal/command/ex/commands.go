@@ -247,6 +247,10 @@ func runDelete(c *execCtx, inv *invocation) error {
 		return errAt(s.pos(), codeTrailing, "余分な文字があります: %s", s.rest())
 	}
 
+	if c.b.NoLines() {
+		// Vim 9.1 と同じく、行の無いバッファの :d は、レジスターを変えずに何もせず終える（dd と同じ。command の opDelete）。
+		return nil
+	}
 	l1, l2 := inv.line1, inv.line2
 	all := l1 == 0 && l2 == c.b.LineCount()-1
 	lines := make([]string, 0, l2-l1+1)

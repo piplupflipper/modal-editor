@@ -169,10 +169,14 @@ func (e *Editor) reload(bs *bufferState, b *buffer.Buffer) {
 			}
 			e.commitChange(bs, ch)
 		}
+		// 読み直したファイルが空なら、Vim と同じく行の無いバッファにする（書き出すと空のファイルになる）。
+		// 空の行 1 つ（"\n"）なら、テキストが同じでも行の無いバッファの記録を外す。
 		if b.NoLines() {
-			// 読み直したファイルが空なら、Vim と同じく行の無いバッファにする（書き出すと空のファイルになる）。
 			cur.MarkNoLines()
+		} else {
+			cur.MarkHasLines()
 		}
+		e.syncFinalNewline(bs)
 		cur.MarkSaved()
 		bs.state.SetCursor(cursor)
 		return
