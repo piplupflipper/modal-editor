@@ -22,7 +22,9 @@ description: modal-editor の実装サイクル（issue 起票 → worktree で�
 
 - リポジトリは `/home/endo84/ghq/github.com/piplupflipper/modal-editor`（GitHub の `piplupflipper/modal-editor`）。main の作業ツリーは触らない
 - 最初に読むもの: この skill、`README.md`、`docs/requirements.md`、`docs/basic-design.md`、担当 issue（`gh issue view <番号>`）
-- worktree を作る: リポジトリで `git fetch origin` の後、`gwq add -b <ブランチ名>` を実行し、`gwq get <ブランチ名>` で得たパスへ `cd` する
+- worktree を作る: リポジトリで `git fetch origin` の後、`gwq add -b <ブランチ名>` を実行し、`gwq get <ブランチ名>` で得たパスへ `cd` する。パスはリポジトリの外の `~/worktrees/github.com/piplupflipper/modal-editor/<ブランチ名の / を - にしたもの>` になる
+- `gwq add -b` は、主リポジトリの作業ツリーの HEAD を基点にする。2 つ目の引数は基点ではなく worktree のパスとして扱われる（2026-11-16 に `gwq add -b <branch> origin/main` と打ち、リポジトリの中に `origin/main` という worktree ができた）。基点を新しくしたいときは、主リポジトリで `git pull --ff-only` してから打つ
+- `make hooks` は worktree では打たない。検査は `make check` を手で打つ
 - ブランチ名は `<verb>/<issue番号>-<slug>`（例: `feat/10-buffer`）
 
 ### 2.2 実装の規約
@@ -31,19 +33,26 @@ description: modal-editor の実装サイクル（issue 起票 → worktree で�
 - 編集の状態は、イベントループの goroutine 1 つだけが触る（基本設計 2.1）。土台のパッケージは並行に呼ばれる前提を置かない。ただし `internal/rpc` は内部で goroutine を使うので `-race` で検証する
 - コメントと doc コメントは日本語、エラーメッセージとログは英語でも日本語でもよいが、パッケージ内で揃える（既存の `cmd/modal-editor/main.go` は日本語）
 - doc コメントは詳細設計を兼ねる（README）。公開する型と関数には、何を表すか・何を保証するかを書く
-- 要件を実装・検証した箇所には `req: FR-xx` の注釈を付ける（基本設計 9 章）。注釈を変えたら `make progress` で `docs/progress.md` を生成し直してコミットに含める
+- `req: FR-xx` の注釈（基本設計 9 章）は、その要件の**振る舞い**を実装した箇所と、その振る舞いを検証したテストにだけ付ける。型や定数を置いただけ、JSON の往復を試しただけの箇所には付けない（2026-11-16 に ext の型だけで 8 件の FR が「実装とテスト」に見えた）
+- 注釈を変えたら `make progress` で `docs/progress.md` を生成し直してコミットに含める。`make check` は progress の不一致で落ちるので、`make progress` を先に打つ
+- `internal/rpc` のハンドラーを読み取りの goroutine から同期で呼び、その中で書き込みを待つと、双方向の通信で互いに詰まる（2026-11-16 の #11 で発生）。接続の上で処理を書くときは、読み取りを止めない形にする
 - 外部ライブラリを足すのは、issue か裁定で決まったものだけにする。cgo は本体で使わない（NFR-02）
-- 設計と食い違う実装が必要になったら、実装を止めずに PR 説明の「設計との差分」節に書く。基本設計の改訂は別 issue にする
+- 設計に書かれていない点（フィールド名、境界の扱い、仮の数値）は、実装者が決めて PR 説明の「設計との差分」節に書く。止めて聞かない
+- issue の指示と基本設計が食い違うときも、実装を止めずに一方を選び、「設計との差分」に理由を書く。基本設計の改訂が要るなら、その旨を書く（オーケストレータが別 issue にする）
+- オーナーの裁定が要る項目（外部ライブラリの選定、要件の解釈を変えるもの）だけは決めない。PR 説明の「未確認事項」に「裁定要」と書き、裁定に依存しない形で実装する
+- エラーメッセージは英語の小文字始まり（Go の慣習。`errors.New("invalid position")`）。利用者に表示する文言と doc コメントとコメントは日本語
 
 ### 2.3 検査
 
 - `make check`（整形、型チェック、リント、テスト、`go mod tidy`、progress の一致）を worktree で通す
 - 整形で落ちたら `make fmt` を打つ
+- リンターの `exhaustive` は非公開の enum の switch も検査する。`default` を書いても列挙しきらないと落ちる
+- テストが出力なしで止まったら、`go test -timeout 30s -run <名前> ./<パッケージ>` で止まったテストを特定する（タイムアウト時に goroutine のダンプが出る）
 - 初回の `make lint` は golangci-lint のビルドで数分かかる。フォアグラウンドで待つ
 
 ### 2.4 コミットと PR
 
-- コミットメッセージは日本語、件名は `<type>: <要約> (#<issue番号>)`
+- コミットメッセージは日本語、件名は `<type>: <要約> (#<issue番号>)`。本文はファイルに書いて `git commit -F <ファイル>` で渡す
 - コミット末尾にはオーケストレータが指示した attribution の行を付ける
 - `git push -u origin <ブランチ名>` の後、`gh pr create --base main --head <ブランチ名> -t "<件名>" -F <説明ファイル> -a piplupflipper` で PR を作る
 - PR 説明は日本語で、「変更内容」「設計との差分」「検査結果」「未確認事項」の節を置き、`Closes #<issue番号>` を 1 行で含める。末尾にオーケストレータが指示した 2 行を付ける
@@ -53,24 +62,30 @@ description: modal-editor の実装サイクル（issue 起票 → worktree で�
 
 - Agent ツールで他のエージェントに委譲しない
 - 本文はファイルに書いて渡す。heredoc で書くなら `<<'EOF'` にする
-- scratchpad に作るファイル名は `<issue番号>-` を接頭辞にする
+- コミットメッセージ、PR 説明、レビュー本文の一時ファイルは、オーケストレータのセッションの scratchpad（指示に無ければ `/tmp` ではなく worktree の外の任意の場所）に置き、ファイル名は `<issue番号>-` を接頭辞にする。worktree の中に置かない（`git add` で混入する）
 - `git checkout -- .`、`git restore .`、引数なしの `git stash`、`git reset --hard` を打たない
-- 最終報告は、PR の URL、変更ファイル数、`make check` の結果、未確認事項を 5 行以内で書く
+- 最終報告は日本語で、PR の URL、変更ファイル数、`make check` の結果、未確認事項を 5 行以内で書く
+- レビューの差し戻しは同じ worktree で直し、新しい worktree は作らない。main が進んでいたら `git rebase origin/main` し、`docs/progress.md` の衝突は `make progress` で生成し直して解消し、`git push --force-with-lease` する
 
 ## 3. レビューワーカーの手順
 
 - 入力は PR 番号だけにする。オーケストレータの見立ては渡さない（結論に引きずられないため）
 - `gh pr diff <番号>` と、関係する設計の節を読む。必要なら PR のブランチを worktree に取り出してテストを動かす（`gwq add <ブランチ名>` は既存ブランチの取り出し）
-- 観点: 基本設計と要件定義との食い違い、層の違反、テストが要件を実際に検証しているか、境界値（空のバッファ、最終行、多バイト文字）、並行処理の競合、エラーの握りつぶし
+- 観点: 基本設計と要件定義との食い違い、層の違反、テストが要件を実際に検証しているか、`req:` 注釈がその要件の振る舞いの箇所に付いているか、境界値（空のバッファ、最終行、多バイト文字、不正な UTF-8）、並行処理の競合、エラーの握りつぶし、Vim の挙動との対応
+- **後段の利用者の目で読む。** オーケストレータは、この PR の上に何が載るか（どのパッケージがどう使うか）を指示に書く。2026-11-16 の Wave 1 では、必須の指摘の多くがこの観点から出た（アンドゥのまとめ、保存位置、取り消しの通知名、Close 後のハンドラー）
+- 指摘は手元で実際に入力を流して確かめる。PR のパッケージを scratchpad に写して試すか、PR のブランチを `git worktree add <scratchpad のパス> origin/<ブランチ名>` で取り出す（`gwq add` はブランチを作るので使わない）。並行処理は `go test -race -count=50` で揺さぶる
 - 指摘は「必須（マージ前に直す）」「推奨（別 issue でよい）」に分け、`path:line` と、失敗する具体的な入力を付ける
 - 結果は `gh pr review <番号> --comment -F <ファイル>` で PR に残し、最終報告に必須の指摘の件数と要旨を書く
 
 ## 4. オーケストレータの手順
 
 1. 基本設計の未実装部分から issue を切る。同じファイルを触る issue は並列にしない（`docs/progress.md` は例外。後述）
+   - 受入条件に「`req:` 注釈を FR-xx に付ける」と FR を列挙しない。列挙するとワーカーは型だけの箇所にも付ける。「振る舞いを実装・検証した箇所にだけ付ける」と書く
+   - 並列に作る土台どうしの契約（編集の座標の数え方、行の数え方、失敗の表し方）は、両方の issue に同じ文で書く。2026-11-16 は buffer と ext で編集の座標の基準が食い違い、レビューで直した
+   - issue 本文に「この上に何が載るか」を書く。実装ワーカーとレビューワーカーの両方が後段の要求を考えられる
 2. 裁定が要る項目は `裁定要` のラベルを付けた issue にまとめ、依存しない issue を先に進める
 3. 実装ワーカーを並列で起動する。指示には issue 番号、ブランチ名、attribution の行だけを書き、手順はこの skill を読ませる
-4. 報告が来たら、`git diff --stat origin/main...origin/<branch>` で範囲を確かめ、worktree に未コミットの変更が無いか `git -C <worktree> status --short` で見る
+4. 報告が来たら（ワーカーの報告の調子は自信の有無を表さないので）、`git diff --stat origin/main...origin/<branch>` で範囲を確かめ、worktree に未コミットの変更が無いか `git -C <worktree> status --short` で見る
 5. レビューワーカーを起動する。必須の指摘は実装ワーカーへ `SendMessage` で差し戻す
 6. CI（`gh pr checks <番号>`）が緑で、必須の指摘が無ければ `gh pr merge <番号> --merge --delete-branch` でマージする。マージ後に `git log origin/main` で入ったことを確かめる
 7. 後続の PR は main へ rebase し、`make progress` を打ち直す（`docs/progress.md` はほぼ全 PR が触るので、毎回ここで衝突する）
@@ -83,4 +98,10 @@ description: modal-editor の実装サイクル（issue 起票 → worktree で�
 
 ### 2026-11-16（セッション 1）
 
-- 初版を作成した。この時点では実績が無く、1〜4 章は opus-delegation スキル（個人用）の段取りを、このリポジトリ（GitHub、`gh`、Go）に合わせて写したものである
+- 初版を作成した。1〜4 章は opus-delegation スキル（個人用）の段取りを、このリポジトリ（GitHub、`gh`、Go）に合わせて写したものである
+- Wave 1 として、buffer（#10）、rpc（#11）、input の解釈（#12）、ext の型（#14）を 4 本並列で実装した。実装は 1 本あたり 3〜9 分、約 9 万〜11 万トークンだった
+- 独立レビューは 4 本すべてで必須の指摘を出した（1〜3 件）。実装ワーカーの「`make check` が通った」は 4 本とも事実だったが、後段から使うと困る API の欠け（アンドゥのまとめ、保存位置、Close 後のハンドラー、`gg` をゆっくり打つと取り消される `Flush`）は、テストが通っていても残っていた。レビューを省かない
+- ワーカーの質問で 3 回以上重なったもの（`make hooks` を打つか、設計に無い点を決めてよいか、一時ファイルの置き場）に答えを 2 章へ書いた
+- 型だけの箇所への `req:` 注釈は、issue の受入条件で FR を列挙したオーケストレータの書き方が原因だった。4 章 1 に織り込んだ
+- buffer と ext の編集の座標の基準の食い違いは、並列に作る土台の契約を issue に書かなかったことが原因だった。4 章 1 に織り込んだ
+- ワーカーの最終報告が英語になったものが 1 本、ギャル口調になったものが 2 本あった。報告は日本語と 2.5 に書いた。口調は会話文の範囲なので問わない。PR 本文は通常の文体だった
