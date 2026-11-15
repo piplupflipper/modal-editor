@@ -111,7 +111,7 @@ func receiveConn(t *testing.T, ch <-chan net.Conn) net.Conn {
 }
 
 // 標準入力からソケットへ、ソケットから標準出力へ、内容を変えずに転送する。
-// 標準入力が閉じたら、ソケットを閉じて終わる。
+// 標準入力が閉じたら、ソケットの書き込み側を閉じ、エディタがソケットを閉じたら終わる。
 //
 // req: FR-33
 func TestBridgeBothDirections(t *testing.T) {
@@ -120,10 +120,11 @@ func TestBridgeBothDirections(t *testing.T) {
 	stdin, stdout, done := startBridge(t, []string{"--socket", path}, noEnv)
 	conn := receiveConn(t, conns)
 
-	// エディタ役は、受けたバイト列をそのまま送り返す。
+	// エディタ役は、受けたバイト列をそのまま送り返し、読み取りが EOF になったら接続を閉じる。
 	echoed := make(chan error, 1)
 	go func() {
 		_, err := io.Copy(conn, conn)
+		_ = conn.Close()
 		echoed <- err
 	}()
 
@@ -150,7 +151,7 @@ func TestBridgeBothDirections(t *testing.T) {
 		t.Fatal("送り返された内容が送った内容と違う")
 	}
 
-	// 標準入力を閉じると、中継はソケットを閉じて終わる。
+	// 標準入力を閉じると、エディタ役の読み取りが EOF になり、エディタ役が閉じると中継が終わる。
 	_ = stdin.Close()
 	if err := waitDone(t, done); err != nil {
 		t.Fatalf("run() error = %v, want nil", err)
@@ -161,7 +162,50 @@ func TestBridgeBothDirections(t *testing.T) {
 			t.Errorf("エディタ役の送り返しが誤りで終わった: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("エディタ役から見て、ソケットが閉じていない")
+		t.Fatal("エディタ役から見て、ソケットの書き込み側が閉じていない")
+	}
+}
+
+// 最後のリクエストを書いて標準入力を閉じても、その応答は標準出力に届く。
+// エディタ役は、読み取りが EOF になってから応答を書くので、標準入力の EOF でソケット全体を閉じると応答が失われる。
+//
+// req: FR-33
+func TestBridgeDeliversResponseAfterStdinEOF(t *testing.T) {
+	ln, path := listenUnix(t)
+	conns := accept(t, ln)
+	stdin, stdout, done := startBridge(t, []string{"--socket", path}, noEnv)
+	conn := receiveConn(t, conns)
+
+	const (
+		request  = `{"jsonrpc":"2.0","id":7,"method":"tools/call"}` + "\n"
+		response = `{"jsonrpc":"2.0","id":7,"result":{}}` + "\n"
+	)
+	received := make(chan string, 1)
+	go func() {
+		got, _ := io.ReadAll(conn)
+		received <- string(got)
+		// 中継の読み取り側が閉じていないので、EOF の後でも応答を書ける。
+		_, _ = io.WriteString(conn, response)
+		_ = conn.Close()
+	}()
+
+	if _, err := io.WriteString(stdin, request); err != nil {
+		t.Fatalf("標準入力への書き込みに失敗: %v", err)
+	}
+	_ = stdin.Close()
+
+	got, err := io.ReadAll(stdout)
+	if err != nil {
+		t.Fatalf("標準出力の読み出しに失敗: %v", err)
+	}
+	if string(got) != response {
+		t.Errorf("stdout = %q, want %q", got, response)
+	}
+	if req := <-received; req != request {
+		t.Errorf("エディタ役が受けた内容 = %q, want %q", req, request)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("run() error = %v, want nil", err)
 	}
 }
 
@@ -246,8 +290,9 @@ func TestRunSocketSelection(t *testing.T) {
 				}
 				return
 			}
-			receiveConn(t, conns)
+			conn := receiveConn(t, conns)
 			_ = stdin.Close()
+			_ = conn.Close()
 			if err := waitDone(t, done); err != nil {
 				t.Fatalf("run() error = %v, want nil", err)
 			}

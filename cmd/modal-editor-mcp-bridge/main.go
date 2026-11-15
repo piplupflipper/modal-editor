@@ -71,7 +71,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		return fmt.Errorf("接続先のソケットが指定されていない（--socket か環境変数 %s で指定する）", socketEnv)
 	}
 
-	conn, err := net.Dial("unix", path)
+	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		return fmt.Errorf("エディタのソケットへの接続に失敗: %w", err)
 	}
@@ -80,33 +80,54 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 }
 
 // bridge は、stdin から conn へ、conn から stdout へ、バイト列をそのまま転送する。
-// どちらかの向きが終わったら（読み出し側の EOF か誤り）conn を閉じて戻る。
-// conn を閉じると、conn から読んでいる向きは終わる。
-// stdin から読んでいる向きは、stdin が閉じるまで終わらないので、待たずに戻る
-// （実行ファイルでは、戻った後にプロセスが終わる）。
 //
-// 戻り値は、最初に終わった向きの誤りである。EOF と、conn を閉じたことによる誤りは nil として扱う。
+// 終わり方は、どちらの向きが先に終わるかで分ける。
+//
+//   - stdin が EOF になったら、conn の書き込み側だけを閉じ（CloseWrite）、
+//     conn からの読み取りが EOF になるまで stdout への転送を続けてから戻る。
+//     エディタがまだ返していない応答（最後のリクエストへの応答）を失わないためである。
+//     エディタは、読み取りが EOF になったら応答を書き終えてから接続を閉じる前提である
+//   - conn からの読み取りが先に終わったら（エディタが閉じた、または誤り）、conn を閉じてすぐ戻る。
+//     stdin を読んでいる向きは、stdin が閉じるまで終わらないので、待たない
+//     （実行ファイルでは、戻った後にプロセスが終わる）
+//   - stdin の読み取りや conn への書き込みが誤りで終わったら、conn を閉じて誤りを返す
+//
+// EOF と、conn を閉じたことによる誤りは、正常な終わりとして nil を返す。
 //
 // req: FR-33
-func bridge(conn net.Conn, stdin io.Reader, stdout io.Writer) error {
-	done := make(chan error, 2)
+func bridge(conn *net.UnixConn, stdin io.Reader, stdout io.Writer) error {
+	upDone := make(chan error, 1)
+	downDone := make(chan error, 1)
 
 	go func() {
 		_, err := io.Copy(conn, stdin)
 		if err != nil {
-			err = fmt.Errorf("標準入力からソケットへの転送に失敗: %w", err)
+			upDone <- fmt.Errorf("標準入力からソケットへの転送に失敗: %w", err)
+			return
 		}
-		done <- err
+		if err := conn.CloseWrite(); err != nil {
+			upDone <- fmt.Errorf("ソケットの書き込み側を閉じるのに失敗: %w", err)
+			return
+		}
+		upDone <- nil
 	}()
 	go func() {
 		_, err := io.Copy(stdout, conn)
 		if err != nil {
 			err = fmt.Errorf("ソケットから標準出力への転送に失敗: %w", err)
 		}
-		done <- err
+		downDone <- err
 	}()
 
-	err := <-done
+	var err error
+	select {
+	case err = <-downDone:
+	case err = <-upDone:
+		if err == nil {
+			// 標準入力は EOF になった。エディタが接続を閉じるまで応答の転送を続ける。
+			err = <-downDone
+		}
+	}
 	if cerr := conn.Close(); cerr != nil && err == nil {
 		err = fmt.Errorf("ソケットを閉じるのに失敗: %w", cerr)
 	}
