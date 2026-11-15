@@ -421,7 +421,8 @@ func actUndo(redo bool) actionFunc {
 // そうでなければ、変わった行の範囲の最初の行へ移る。ただし、その行が記録したカーソルの次の行なら、記録したカーソルの行へ移る
 // （o の取り消しで、o を打った行へ戻る）。
 // 移った行が記録したカーソルの行なら記録した列へ、そうでなければ最初の空白でない文字へ移る。
-// 移った行がバッファの外なら、最後の行の先頭へ移る。
+// 移った行がバッファの外なら、最後の行の最初の空白でない文字へ移る（最後の行を消す変更のリドゥ。記録した列は使わない。
+// Vim 9.1 で `:3d` と `dd` のリドゥを確かめた。#86）。
 //
 // 記録したカーソルは、変更を始めたときのカーソルである。Vim と同じく、オペレーターでは範囲の始まり、
 // dd や cc では最初の空白でない文字へ動かした後の位置を記録する（markUndoCursor）。
@@ -436,7 +437,7 @@ func (s *State) undoCursor(u buffer.UndoInfo) buffer.Position {
 		cur.Line--
 	}
 	if cur.Line > s.lastLine() {
-		return pos(s.lastLine(), 0)
+		return s.firstNonBlankPos(s.lastLine())
 	}
 	if u.HasCursor && u.Cursor.Line == cur.Line {
 		return s.clampPos(pos(cur.Line, u.Cursor.Byte))

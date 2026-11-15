@@ -354,6 +354,10 @@ func mapCase(str string, f func(rune) rune) string { return strings.Map(f, str) 
 // opCase は、g~、gu、gU（ビジュアルモードの ~、u、U）である。カーソルは範囲の始まりへ移る。
 func opCase(f func(rune) rune) operatorFunc {
 	return func(s *State, _ editcmd.Command, rg region, _ opOptions) error {
+		if rg.empty {
+			// Vim 9.1 の op_tilde() は空の範囲を断らず、範囲の始まりの文字を 1 つ変える（行頭の g~h と g~0。#86）。
+			rg.r.End.Byte = nextChar(s.line(rg.r.Start.Line), rg.r.Start.Byte)
+		}
 		text, err := s.buf.Slice(rg.r)
 		if err != nil {
 			return err

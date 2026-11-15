@@ -15,10 +15,13 @@ func at(b *buffer.Buffer, req Request, p buffer.Position, kind Kind) Result {
 	return Result{Pos: p, Kind: kind, Want: req.columns().Column(b.Line(p.Line), p.Byte)}
 }
 
-// left は h である。回数の文字だけ左へ移る。行の先頭を越えない。行の先頭にいれば失敗する。
+// left は h である。回数の文字だけ左へ移る。行の先頭を越えない。
+// オペレーターが無く、行の先頭にいれば失敗する。
+// オペレーターの後では失敗せず、行の先頭では空の範囲になる（Vim 9.1 の nv_left()。空の行や行頭の yh は空のテキストをレジスターに書き、
+// ch はそのままインサートモードへ移る。先行入力も捨てない。#86）。
 func left(b *buffer.Buffer, req Request) (Result, error) {
 	p := req.Cursor
-	if p.Byte == 0 {
+	if p.Byte == 0 && req.Operator == NoOperator {
 		return Result{}, ErrNoTarget
 	}
 	line := b.Line(p.Line)
