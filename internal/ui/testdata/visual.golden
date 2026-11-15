@@ -1,0 +1,55 @@
+## 文字単位。行をまたぐと行末の 1 セルも選ぶ。カーソルの文字は反転しない
+size 12x7 cursor 2,0 block
+   |abc         |
+fx | vvv        |
+   |            |
+fx |v           |
+   |def         |
+   |あいう      |
+   |~           |
+fg |n...........|
+   | V 3,1  All |
+fx |SSSSSSSSSSSS|
+   |            |
+
+## 文字単位で後ろから選ぶ
+size 12x7 cursor 0,1 block
+   |abc         |
+fx |  vv        |
+   |            |
+fx |v           |
+   |def         |
+fx |vv          |
+   |あいう      |
+   |~           |
+fg |n...........|
+   | V 1,2  All |
+fx |SSSSSSSSSSSS|
+   |            |
+
+## 行単位
+size 12x7 cursor 3,2 block
+   |abc         |
+   |            |
+   |def         |
+fx |vvvv        |
+   |あいう      |
+fx |vv  vvv     |
+   |~           |
+fg |n...........|
+   | 4,4-3  All |
+fx |SSSSSSSSSSSS|
+   |            |
+
+## 全角文字の選択は 2 セル
+size 12x7 cursor 3,4 block
+   |abc         |
+   |            |
+   |def         |
+   |あいう      |
+fx |vvvv        |
+   |~           |
+fg |n...........|
+   | 4,7-5  All |
+fx |SSSSSSSSSSSS|
+   |            |

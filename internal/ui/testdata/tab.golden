@@ -1,0 +1,43 @@
+## ノーマルモードではタブの最後の列
+size 20x6 cursor 0,7 block
+   |        x           |
+   |a       b           |
+   |abcdefgh        z   |
+   |~                   |
+fg |n...................|
+   | NORMAL  1,1-8  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
+
+## インサートモードではタブの最初の列
+size 20x6 cursor 1,1 bar
+   |        x           |
+   |a       b           |
+   |abcdefgh        z   |
+   |~                   |
+fg |n...................|
+   | INSERT  [ 2,2  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
+
+## 8 列ちょうどの後のタブ
+size 20x6 cursor 2,15 block
+   |        x           |
+   |a       b           |
+   |abcdefgh        z   |
+   |~                   |
+fg |n...................|
+   | NORMAL 3,9-16  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
+
+## タブ幅 4
+size 20x6 cursor 1,3 block
+   |    x               |
+   |a   b               |
+   |abcdefgh    z       |
+   |~                   |
+fg |n...................|
+   | NORMAL  2,2-4  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
