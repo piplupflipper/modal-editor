@@ -83,10 +83,32 @@ func (h *Host) ApplyOperator(ctx context.Context, id string, p ext.OperatorApply
 // ExecuteCommand は、command/execute を問い合わせて応答を待つ。誤りの扱いと使い方の注意は [Host.Call] と同じである。
 // 返ったトランザクション（あれば）は、BaseVersion が現在のバージョン番号と一致した場合だけ適用する（FR-15）。
 // コマンドの呼び出しを起動の契機にする拡張機能は、[Host.Activate] を呼ばなくても、この呼び出しで起動する。
+//
+// 結果の Open があり、[ext.EditorOpenParams.Validate] を通らなければ、結果と一緒に誤りを返す。呼び出し側は操作の失敗として扱う。
+// [Host.Send] で command/execute を送った場合は、イベントループが [ValidateCommandResult] で同じ検査をする。
 func (h *Host) ExecuteCommand(ctx context.Context, id string, p ext.CommandExecuteParams, timeout time.Duration) (ext.CommandExecuteResult, error) {
 	var res ext.CommandExecuteResult
-	err := h.Call(ctx, id, ext.MethodCommandExecute, p, timeout, &res)
-	return res, err
+	if err := h.Call(ctx, id, ext.MethodCommandExecute, p, timeout, &res); err != nil {
+		return res, err
+	}
+	if err := ValidateCommandResult(&res); err != nil {
+		return res, fmt.Errorf("exthost: call %s on %q: %w", ext.MethodCommandExecute, id, err)
+	}
+	return res, nil
+}
+
+// ValidateCommandResult は、command/execute の結果の Open が [ext.EditorOpenParams.Validate] を通るかを検査する。
+// Open が無ければ nil を返す。
+// editor/open のリクエストは Host が検査してからイベントにするが、command/execute の結果の Open は Host の外で読まれうるので、
+// イベントループは結果の Open を使う前にこれを呼ぶ。
+func ValidateCommandResult(res *ext.CommandExecuteResult) error {
+	if res.Open == nil {
+		return nil
+	}
+	if err := res.Open.Validate(); err != nil {
+		return fmt.Errorf("invalid open in command result: %w", err)
+	}
+	return nil
 }
 
 // SendOptions は、[Host.Send] の設定である。
@@ -122,14 +144,20 @@ func (q *Query) Cancel() {
 //
 // req: FR-18
 func (h *Host) Send(id, method string, params any, opts SendOptions) (*Query, error) {
+	return h.send(id, method, params, opts, h.cfg.SendTimeout, h.ensureStartedLocked)
+}
+
+// send は、Send の本体である。opts.Timeout が 0 以下なら defaultTimeout を使う。
+// check は、送る前に Host.mu を持ったまま呼び、誤りを返したら送らない。
+func (h *Host) send(id, method string, params any, opts SendOptions, defaultTimeout time.Duration, check func(*extension) error) (*Query, error) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		timeout = h.cfg.SendTimeout
+		timeout = defaultTimeout
 	}
 	h.mu.Lock()
 	e, err := h.lookupLocked(id)
 	if err == nil {
-		err = h.ensureStartedLocked(e)
+		err = check(e)
 	}
 	if err != nil {
 		h.mu.Unlock()

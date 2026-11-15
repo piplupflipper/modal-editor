@@ -252,3 +252,21 @@ func TestValidateManifests(t *testing.T) {
 		t.Errorf("ValidateManifests(nil) = %v, %v, want nil, nil", ws, err)
 	}
 }
+
+// TestManifestStdExtFields は、標準の拡張機能のために足した項目（基本設計 6.7）を読めることを確かめる。
+func TestManifestStdExtFields(t *testing.T) {
+	const doc = `{"id":"lsp","command":"./lsp","args":["--stdio","x"],"saveHook":true,` +
+		`"activation":[{"on":"filetype","pattern":"go"}]}`
+	var got Manifest
+	if err := json.Unmarshal([]byte(doc), &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !got.SaveHook || !reflect.DeepEqual(got.Args, []string{"--stdio", "x"}) {
+		t.Errorf("SaveHook, Args = %v, %q", got.SaveHook, got.Args)
+	}
+	if _, err := got.Validate(); err != nil {
+		t.Errorf("Validate = %v", err)
+	}
+	// 省いた項目は、既定値（引数なし、saveHook は false）として読み、書き出しでも省く。
+	roundTrip(t, Manifest{ID: "a", Command: "./a"}, `{"id":"a","command":"./a","activation":null,"contributes":{}}`)
+}

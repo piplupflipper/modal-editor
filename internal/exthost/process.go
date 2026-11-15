@@ -124,7 +124,7 @@ func (h *Host) restartDelay(failures int) time.Duration {
 // 戻る前に、プロセスグループごと強制終了し、接続を閉じる。返す値は異常の理由である。
 func (h *Host) runOnce(e *extension, r *run) error {
 	id := e.spec.Manifest.ID
-	p, err := startProcess(e.spec.command())
+	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args)
 	if err != nil {
 		return err
 	}
@@ -264,18 +264,14 @@ func (h *Host) ping(r *run, p *process) error {
 func (h *Host) handler(e *extension, r *run) rpc.Handler {
 	id := e.spec.Manifest.ID
 	return rpc.HandlerFuncs{
-		Request: func(_ context.Context, req *rpc.Request, reply rpc.Replier) {
-			if req.Method != ext.MethodBufferEdit {
-				_ = reply(nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: "method not found: " + req.Method})
-				return
-			}
-			var p ext.BufferEditParams
-			if err := json.Unmarshal(req.Params, &p); err != nil {
-				_ = reply(nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: err.Error()})
+		Request: func(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
+			ev, rerr := requestEvent(ctx, id, req, reply)
+			if rerr != nil {
+				_ = reply(nil, rerr)
 				return
 			}
 			h.mu.Lock()
-			err := h.pushLocked(&EditRequest{Extension: id, Params: p, reply: reply}, r)
+			err := h.pushLocked(ev, r)
 			h.mu.Unlock()
 			if err != nil {
 				r.fail(err)
@@ -297,6 +293,30 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 					return
 				}
 				ev = &MessageShow{Extension: id, Params: p}
+			case ext.MethodDiagnosticSet:
+				var p ext.DiagnosticSetParams
+				if !h.decode(id, n, &p) {
+					return
+				}
+				ev = &DiagnosticSet{Extension: id, Params: p}
+			case ext.MethodSignSet:
+				var p ext.SignSetParams
+				if !h.decode(id, n, &p) {
+					return
+				}
+				ev = &SignSet{Extension: id, Params: p}
+			case ext.MethodPopupShow:
+				var p ext.PopupShowParams
+				if !h.decode(id, n, &p) {
+					return
+				}
+				ev = &PopupShow{Extension: id, Params: p}
+			case ext.MethodOutputAppend:
+				var p ext.OutputAppendParams
+				if !h.decode(id, n, &p) {
+					return
+				}
+				ev = &OutputAppend{Extension: id, Params: p}
 			case ext.MethodBufferResync:
 				var p ext.BufferResyncParams
 				if !h.decode(id, n, &p) {
@@ -316,6 +336,66 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 			}
 		},
 	}
+}
+
+// requestEvent は、拡張機能 id から届いたリクエストを、イベントループへ渡すイベントにする。
+// ctx は、rpc のハンドラーに渡された ctx で、取り消しと接続の終了と応答で終わる。イベントの Done にする。
+// 知らないメソッドか、読めない params なら、応答に使う誤りを返す。
+func requestEvent(ctx context.Context, id string, req *rpc.Request, reply rpc.Replier) (Event, *rpc.Error) {
+	ro := replyOnce{reply: reply, done: ctx.Done()}
+	switch req.Method {
+	case ext.MethodBufferEdit:
+		var p ext.BufferEditParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		return &EditRequest{Extension: id, Params: p, reply: reply, done: ctx.Done()}, nil
+	case ext.MethodEditorState:
+		var p ext.EditorStateParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		return &EditorStateRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodEditorOpen:
+		var p ext.EditorOpenParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		if err := p.Validate(); err != nil {
+			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
+		}
+		return &EditorOpenRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodBufferSave:
+		var p ext.BufferSaveParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		return &BufferSaveRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodDiagnosticList:
+		var p ext.DiagnosticListParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		return &DiagnosticListRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodChoiceAsk:
+		var p ext.ChoiceAskParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		return &ChoiceAskRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	}
+	return nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: "method not found: " + req.Method}
+}
+
+// decodeRequest は、リクエストの params を v へ読み込む。params が無ければ v を変えない。
+func decodeRequest(req *rpc.Request, v any) *rpc.Error {
+	if len(req.Params) == 0 || string(req.Params) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(req.Params, v); err != nil {
+		return &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
+	}
+	return nil
 }
 
 // decode は、通知の params を v へ読み込む。読めなければ記録して false を返す。
@@ -355,9 +435,9 @@ type process struct {
 	waitErr error
 }
 
-// startProcess は、path の実行ファイルを、新しいプロセスグループの子プロセスとして起動する。
+// startProcess は、path の実行ファイルを、引数 args で、新しいプロセスグループの子プロセスとして起動する。
 // 標準入出力は os.Pipe でつなぎ、子の側の端は起動後に閉じる。
-func startProcess(path string) (p *process, err error) {
+func startProcess(path string, args []string) (p *process, err error) {
 	var opened []*os.File
 	defer func() {
 		if err != nil {
@@ -386,7 +466,7 @@ func startProcess(path string) (p *process, err error) {
 		return nil, err
 	}
 
-	cmd := exec.Command(path)
+	cmd := exec.Command(path, args...) //nolint:gosec // 宣言ファイルに書かれた実行ファイルと引数を起動するのが、このパッケージの役目である。
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW

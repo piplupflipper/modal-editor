@@ -29,6 +29,8 @@ const (
 	modeNoInit = "noinit"
 	// modeExit は、起動してすぐに終了する。
 	modeExit = "exit"
+	// modeServer は、ext/server で書いた拡張機能として動く（serverext_test.go）。
+	modeServer = "server"
 )
 
 // テストから拡張機能へ送る、テスト専用のリクエスト。
@@ -88,6 +90,9 @@ func runFakeExt(mode string) int {
 	fmt.Fprintf(os.Stderr, "fake extension started mode=%s\n", mode)
 	if mode == modeExit {
 		return 2
+	}
+	if mode == modeServer {
+		return runServerExt()
 	}
 	f := &fakeExt{mode: mode, docs: map[ext.BufferID]*fakeDoc{}, ready: make(chan struct{})}
 	f.conn = rpc.NewConn(os.Stdin, os.Stdout, rpc.HandlerFuncs{Request: f.request, Notification: f.notification})

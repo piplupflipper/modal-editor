@@ -34,6 +34,13 @@ type host struct {
 // start は、s を io.Pipe の上で動かし、本体の役の rpc.Conn をつなぐ。
 func start(t *testing.T, s *server.Server) *host {
 	t.Helper()
+	return startWith(t, s, nil)
+}
+
+// startWith は、start と同じだが、buffer/edit 以外のリクエストを handle に渡す。
+// handle が nil か false を返したら、CodeMethodNotFound で応答する。
+func startWith(t *testing.T, s *server.Server, handle func(req *rpc.Request, reply rpc.Replier) bool) *host {
+	t.Helper()
 	hostR, extW := io.Pipe()
 	extR, hostW := io.Pipe()
 	h := &host{
@@ -46,6 +53,9 @@ func start(t *testing.T, s *server.Server) *host {
 	h.conn = rpc.NewConn(hostR, hostW, rpc.HandlerFuncs{
 		Request: func(_ context.Context, req *rpc.Request, reply rpc.Replier) {
 			if req.Method != ext.MethodBufferEdit {
+				if handle != nil && handle(req, reply) {
+					return
+				}
 				_ = reply(nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: req.Method})
 				return
 			}
