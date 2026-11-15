@@ -326,7 +326,13 @@ func vimReg(r Register) string {
 //
 // req: FR-01, FR-02, FR-04, FR-05, FR-06, FR-07
 func TestVim(t *testing.T) {
-	for _, tc := range vimCases {
+	runVimCases(t, vimCases)
+}
+
+// runVimCases は、vimCase の表を順に実行し、Vim 9.1 の結果と比べる。
+func runVimCases(t *testing.T, cases []vimCase) {
+	t.Helper()
+	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%q/%s", tc.text, tc.keys), func(t *testing.T) {
 			s := setup(t, tc.text)
 			s.registers.unnamed = Register{Text: "U"}

@@ -1,0 +1,118 @@
+package command
+
+import "testing"
+
+// shorthandCases は、省略形のコマンド（D、C、S、s、Y）の、Vim 9.1 と突き合わせたケースである。
+//
+// 期待値の形と入力の前のレジスターは vimCase と同じである。ただし Vim は Ex モードでない起動
+// （`vim -Nu NONE -n --not-a-term -c 'source <script>'`）で動かし、keys を feedkeys(keys, "xt") で入力した。
+// 途中で失敗した操作があっても、後のキーは続けて入力される（Vim の feedkeys と同じ）。
+//
+// 省略形と同じ働きの cl、dl、cc の境界（空の行、行の無いバッファ）も含める。
+//
+// Vim と違うために表から外したケースがある。
+//   - 空の行の C（c$）は、Vim では無名のレジスターと - に空の文字単位のテキストを書くが、
+//     Register は「空のテキストが入っている」と「空である」を区別しないので、レジスターを変えない
+//   - 行をまたぐ変更のアンドゥの後のカーソル（a|bc、de での 2Du は、Vim では 0:1）と、字下げのある行の SX<Esc>u のカーソルは、
+//     actUndo の規則（変更の内容から決める）に従うので、Vim と列が違う
+var shorthandCases = []vimCase{
+	{"abc d|ef", "D", "abc d", "0:4", "v:ef", "v:U", ":", "v:ef", "v:A"},
+	{"abc d|ef", "\"aD", "abc d", "0:4", "v:ef", "v:U", ":", ":", "v:ef"},
+	{"abc d|ef", "\"AD", "abc d", "0:4", "v:Aef", "v:U", ":", ":", "v:Aef"},
+	{"abc d|ef", "\"_D", "abc d", "0:4", "v:U", "v:U", ":", ":", "v:A"},
+	{"abc d|ef", "\"-D", "abc d", "0:4", "v:ef", "v:U", ":", "v:ef", "v:A"},
+	{"abc d|ef\nghi\njkl", "2D", "abc d\njkl", "0:4", "v:ef\nghi", "v:U", "v:ef\nghi", ":", "v:A"},
+	{"a|bc\nghi\njkl", "3D", "a", "0:0", "v:bc\nghi\njkl", "v:U", "v:bc\nghi\njkl", ":", "v:A"},
+	{"a|bc\nghi\njkl", "5D", "a", "0:0", "v:bc\nghi\njkl", "v:U", "v:bc\nghi\njkl", ":", "v:A"},
+	{"a\nb|c", "2D", "a\nbc", "1:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"|abc", "D", "", "0:0", "v:abc", "v:U", ":", "v:abc", "v:A"},
+	{"ab|c", "D", "ab", "0:1", "v:c", "v:U", ":", "v:c", "v:A"},
+	{"|", "D", "", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a\n|\nb", "D", "a\n\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a\n|\nb", "2D", "a", "0:0", "V:\nb\n", "v:U", "V:\nb\n", ":", "v:A"},
+	{"日|本語", "D", "日", "0:0", "v:本語", "v:U", ":", "v:本語", "v:A"},
+	{"  |ab\ncd", "2D", "", "0:0", "V:  ab\ncd\n", "v:U", "V:  ab\ncd\n", ":", "v:A"},
+	{"  |ab\ncd  ", "2D", "", "0:0", "V:  ab\ncd  \n", "v:U", "V:  ab\ncd  \n", ":", "v:A"},
+	{"|ab\ncd", "2D", "", "0:0", "V:ab\ncd\n", "v:U", "V:ab\ncd\n", ":", "v:A"},
+	{"a|bc\nabc", "Dj.", "a\n", "1:0", "v:abc", "v:U", ":", "v:abc", "v:A"},
+	{"a|bc\nabc\nabc\nabc", "2Dj.", "a", "0:0", "V:abc\nabc\n", "v:U", "V:abc\nabc\n", ":", "v:A"},
+	{"a|b\nc\nd\ne\nf\ng", "Dj2.", "a\ne\nf\ng", "1:0", "V:c\nd\n", "v:U", "V:c\nd\n", "v:b", "v:A"},
+	{"a|b\nc\nd\ne\nf\ng", "2Dj.", "a\nf\ng", "1:0", "V:d\ne\n", "v:U", "V:d\ne\n", ":", "v:A"},
+	{"a|b\nab", "\"aDj.", "a\n", "1:0", "v:ab", "v:U", ":", ":", "v:ab"},
+	{"a|bc", "Du", "abc", "0:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
+	{"|c d", "ddD", "", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
+	{"|c d", "ddDp", "\nc d", "1:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
+	{"a|bc\nd", "2\"aD", "a", "0:0", "v:bc\nd", "v:U", "v:bc\nd", ":", "v:bc\nd"},
+	{"a|bc\nd", "\"a2D", "a", "0:0", "v:bc\nd", "v:U", "v:bc\nd", ":", "v:bc\nd"},
+	{"abc d|ef", "CX<Esc>", "abc dX", "0:5", "v:ef", "v:U", ":", "v:ef", "v:A"},
+	{"abc d|ef", "\"aCX<Esc>", "abc dX", "0:5", "v:ef", "v:U", ":", ":", "v:ef"},
+	{"abc d|ef\nghi\njkl", "2CX<Esc>", "abc dX\njkl", "0:5", "v:ef\nghi", "v:U", "v:ef\nghi", ":", "v:A"},
+	{"a\nb|c", "2C", "a\nbc", "1:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"|abc", "CX<Esc>", "X", "0:0", "v:abc", "v:U", ":", "v:abc", "v:A"},
+	{"ab|c", "CX<Esc>", "abX", "0:2", "v:c", "v:U", ":", "v:c", "v:A"},
+	{"a\n|\nb", "2CX<Esc>", "a\nX", "1:0", "v:\nb", "v:U", "v:\nb", ":", "v:A"},
+	{"  |ab\ncd", "2CX<Esc>", "  X", "0:2", "v:ab\ncd", "v:U", "v:ab\ncd", ":", "v:A"},
+	{"a|bc\nabc", "CX<Esc>j.", "aX\naX", "1:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
+	{"a|bc\nabc\nabc", "CX<Esc>j2.", "aX\naX", "1:1", "v:bc\nabc", "v:U", "v:bc\nabc", "v:bc", "v:A"},
+	{"a|bc", "CX<Esc>u", "abc", "0:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
+	{"a|bc", "C<Esc>", "a", "0:0", "v:bc", "v:U", ":", "v:bc", "v:A"},
+	{"|c d", "ddCX<Esc>", "X", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
+	{"a|bc", "\"_CX<Esc>", "aX", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"a\n  b|c\nd", "SX<Esc>", "a\nX\nd", "1:0", "V:  bc\n", "v:U", "V:  bc\n", ":", "v:A"},
+	{"a\n  b|c\nd", "2SX<Esc>", "a\nX", "1:0", "V:  bc\nd\n", "v:U", "V:  bc\nd\n", ":", "v:A"},
+	{"a\n  b|c\nd", "\"aSX<Esc>", "a\nX\nd", "1:0", "V:  bc\n", "v:U", "V:  bc\n", ":", "V:  bc\n"},
+	{"a\nb|c\nd", "5SX<Esc>", "a\nX", "1:0", "V:bc\nd\n", "v:U", "V:bc\nd\n", ":", "v:A"},
+	{"a\nb|c", "2S", "a\nbc", "1:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"|", "SX<Esc>", "X", "0:0", "V:\n", "v:U", "V:\n", ":", "v:A"},
+	{"  a|b", "SX<Esc>", "X", "0:0", "V:  ab\n", "v:U", "V:  ab\n", ":", "v:A"},
+	{"a|b\ncd", "SX<Esc>j.", "X\nX", "1:0", "V:cd\n", "v:U", "V:cd\n", ":", "v:A"},
+	{"a|b\ncd\nef\ngh", "2SX<Esc>jj.", "X\nef\ngh", "2:0", "V:ab\ncd\n", "v:U", "V:ab\ncd\n", ":", "v:A"},
+	{"a\nb|c\nd", "SX<Esc>u", "a\nbc\nd", "1:0", "V:bc\n", "v:U", "V:bc\n", ":", "v:A"},
+	{"a\n  b|c\nd", "S<Esc>", "a\n\nd", "1:0", "V:  bc\n", "v:U", "V:  bc\n", ":", "v:A"},
+	{"|c d", "ddSX<Esc>", "X", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
+	{"a|bc", "\"_SX<Esc>", "X", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a|bc", "sX<Esc>", "aXc", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
+	{"a|bc", "2sX<Esc>", "aX", "0:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
+	{"a|bc", "5sX<Esc>", "aX", "0:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
+	{"ab|c", "sX<Esc>", "abX", "0:2", "v:c", "v:U", ":", "v:c", "v:A"},
+	{"|", "sX<Esc>", "X", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a\n|\nb", "sX<Esc>", "a\nX\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a\n|\nb", "3sX<Esc>", "a\nX\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a|bc", "\"asX<Esc>", "aXc", "0:1", "v:b", "v:U", ":", ":", "v:b"},
+	{"a|bc", "\"_sX<Esc>", "aXc", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"a|bc", "s<Esc>", "ac", "0:0", "v:b", "v:U", ":", "v:b", "v:A"},
+	{"|abcdef", "sX<Esc>l.", "XXcdef", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
+	{"|abcdefgh", "2sX<Esc>l3.", "XXfgh", "0:1", "v:cde", "v:U", ":", "v:cde", "v:A"},
+	{"|", "clX<Esc>", "X", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a\n|\nb", "clX<Esc>", "a\nX\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a\n|\nb", "dl", "a\n\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"|c d", "ddccX<Esc>", "X", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
+	{"a|bc", "sX<Esc>u", "abc", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
+	{"日|本語", "sX<Esc>", "日X語", "0:3", "v:本", "v:U", ":", "v:本", "v:A"},
+	{"日|本語", "2sX<Esc>", "日X", "0:3", "v:本語", "v:U", ":", "v:本語", "v:A"},
+	{"|c d", "ddsX<Esc>", "X", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
+	{"a\nb|c\nd", "Y", "a\nbc\nd", "1:1", "V:bc\n", "V:bc\n", ":", ":", "v:A"},
+	{"a\nb|c\nd", "2Y", "a\nbc\nd", "1:1", "V:bc\nd\n", "V:bc\nd\n", ":", ":", "v:A"},
+	{"a\nb|c\nd", "5Y", "a\nbc\nd", "1:1", "V:bc\nd\n", "V:bc\nd\n", ":", ":", "v:A"},
+	{"a\nb|c", "2Y", "a\nbc", "1:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"a\nb|c\nd", "\"aY", "a\nbc\nd", "1:1", "V:bc\n", "v:U", ":", ":", "V:bc\n"},
+	{"a\nb|c\nd", "\"AY", "a\nbc\nd", "1:1", "V:A\nbc\n", "v:U", ":", ":", "V:A\nbc\n"},
+	{"a\nb|c\nd", "\"_Y", "a\nbc\nd", "1:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"|", "Y", "", "0:0", "V:\n", "V:\n", ":", ":", "v:A"},
+	{"|c d", "ddY", "", "0:0", "V:\n", "V:\n", "V:c d\n", ":", "v:A"},
+	{"a\nb|c\nd", "Yp", "a\nbc\nbc\nd", "2:0", "V:bc\n", "V:bc\n", ":", ":", "v:A"},
+	{"a\n  b|c\nd", "Y", "a\n  bc\nd", "1:3", "V:  bc\n", "V:  bc\n", ":", ":", "v:A"},
+	{"|ab cd", "xY.", " cd", "0:0", "v:b", "V:b cd\n", ":", "v:b", "v:A"},
+	{"|ab\ncd\nef", "qaDjq@a", "\n\nef", "2:0", "v:cd", "v:U", ":", "v:cd", "v:Dj"},
+	{"|ab\ncd\nef", "qaSX<Esc>jq2@a", "X\nX\nX", "2:0", "V:ef\n", "v:U", "V:ef\n", ":", "v:SX\u001bj"},
+	{"|ab\ncd\nef", "qasX<Esc>jq@a", "Xb\nXd\nef", "2:0", "v:c", "v:U", ":", "v:c", "v:sX\u001bj"},
+	{"a\nb|c\nd", "2\"aY", "a\nbc\nd", "1:1", "V:bc\nd\n", "v:U", ":", ":", "V:bc\nd\n"},
+}
+
+// 省略形のコマンドの、回数、レジスター、ドットリピート、アンドゥ、マクロと、行末、最終行、空の行、行の無いバッファの境界が、
+// Vim 9.1 と一致する。
+//
+// req: FR-02, FR-04, FR-05, FR-06, FR-07
+func TestVimShorthand(t *testing.T) {
+	runVimCases(t, shorthandCases)
+}

@@ -242,10 +242,12 @@ func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if err != nil {
 		return err
 	}
+	// 行の無いバッファの cc（S）は、Vim と同じくレジスターを変えずにインサートモードへ移る（opDelete の dd と同じ扱い）。
+	noLines := rg.linewise && s.noLines()
 	if err := s.apply(buffer.Edit{Range: rg.r}); err != nil {
 		return err
 	}
-	if rg.linewise || text != "" {
+	if (rg.linewise || text != "") && !noLines {
 		s.registers.delete(cmd.Register, Register{Text: text, Linewise: rg.linewise}, smallDelete(rg), false)
 	}
 	s.cursor = rg.r.Start
