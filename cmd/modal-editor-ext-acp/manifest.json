@@ -1,0 +1,14 @@
+{
+  "id": "acp",
+  "command": "./modal-editor-ext-acp",
+  "activation": [
+    { "on": "command", "id": "acp.prompt" },
+    { "on": "command", "id": "acp.cancel" }
+  ],
+  "contributes": {
+    "commands": [
+      { "id": "acp.prompt" },
+      { "id": "acp.cancel" }
+    ]
+  }
+}

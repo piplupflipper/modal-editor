@@ -45,9 +45,9 @@ func TestDistLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 宣言ファイルを持つ標準の拡張機能は line、dap、lsp、treesitter の 4 つである。
-	if len(manifests) != 4 {
-		t.Errorf("宣言ファイルの数 = %d, want 4: %v", len(manifests), manifests)
+	// 宣言ファイルを持つ標準の拡張機能は line、dap、lsp、acp、treesitter の 5 つである。
+	if len(manifests) != 5 {
+		t.Errorf("宣言ファイルの数 = %d, want 5: %v", len(manifests), manifests)
 	}
 	for _, m := range manifests {
 		t.Run(filepath.Base(filepath.Dir(m)), func(t *testing.T) {
