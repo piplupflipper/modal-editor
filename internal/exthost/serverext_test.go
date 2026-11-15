@@ -46,6 +46,11 @@ const (
 	cmdSpawn = "srv.spawn"
 	// argSlow を引数に渡すと、buffer/willSave に応答せず、取り消されたら記録してから遅れて応答する。
 	argSlow = "slow"
+	// argSlowShutdown を引数に渡すと、OnShutdown で、別の goroutine から buffer/edit を送って結果を書き出し、
+	// 1 秒待ってから子プロセスを片付ける（言語サーバーの shutdown と exit に時間がかかる場合の代役）。
+	argSlowShutdown = "slowshutdown"
+	// shutdownEdit は、argSlowShutdown のときに buffer/edit の結果を書き出す欄の接頭辞である。
+	shutdownEdit = "srv.shutdownEdit"
 )
 
 var serverCommands = []string{cmdState, cmdOpen, cmdSave, cmdDiag, cmdChoice, cmdNotify, cmdSync, cmdArgs, cmdChoiceCancel, cmdSpawn}
@@ -160,7 +165,19 @@ func runServerExt() int {
 		out("%s %d %d", cmdSpawn, cmd.Process.Pid, os.Getpid())
 		return ext.CommandExecuteResult{OK: true}, nil
 	})
+	slowShutdown := slices.Contains(os.Args[1:], argSlowShutdown)
 	s.OnShutdown(func(context.Context, *server.ShutdownEvent) {
+		if slowShutdown {
+			done := make(chan struct{})
+			// フックの ctx はループの上の印を持ち、Edit に渡すと ErrEditInHandler になるので使わない。
+			go func() { //nolint:gosec // 上の理由で、フックの ctx を引き継がない。
+				defer close(done)
+				res, err := s.Edit(context.Background(), ext.BufferEditParams{Buffer: 1, Transaction: ext.Transaction{BaseVersion: 1}})
+				outJSON(shutdownEdit, res, err)
+			}()
+			<-done
+			time.Sleep(time.Second)
+		}
 		for _, c := range children {
 			_ = c.Process.Signal(syscall.SIGTERM)
 			_ = c.Wait()

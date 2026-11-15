@@ -187,6 +187,10 @@ const (
 	StateStarting
 	// StateRunning は、initialize の応答が届き、問い合わせに応答できる状態である。
 	StateRunning
+	// StateStopping は、[Host.Disable] で shutdown を送り、プロセスが終わるのを待っている状態である（基本設計 5.2）。
+	// 問い合わせと buffer/willSave は送らずに [ErrUnavailable] で失敗させ、buffer/change などの通知も送らない。
+	// プロセスが終わると StateDisabled へ移る。
+	StateStopping
 	// StateRestartWait は、異常で子プロセスを終わらせ、再起動の待ち時間が過ぎるのを待っている状態である。
 	StateRestartWait
 	// StateDisabled は、連続の失敗が上限に達したか、[Host.Disable] で止めたので、自動では起動しない状態である。
@@ -204,6 +208,8 @@ func (s State) String() string {
 		return "starting"
 	case StateRunning:
 		return "running"
+	case StateStopping:
+		return "stopping"
 	case StateRestartWait:
 		return "restart-wait"
 	case StateDisabled:
@@ -241,6 +247,8 @@ type Host struct {
 	pumpDone chan struct{}
 	// wake は、queue に積んだことを、イベントを渡す goroutine へ知らせる。
 	wake chan struct{}
+	// force は、[Host.CloseContext] の ctx が終わると閉じる。正常な終了の期限を待たずに SIGKILL へ進める。
+	force chan struct{}
 
 	// mu は、ここから下のフィールドと、各 extension と run の可変のフィールドを守る。
 	mu      sync.Mutex
@@ -281,6 +289,7 @@ func New(specs []Spec, cfg Config) (*Host, error) {
 		events:   make(chan Event),
 		pumpDone: make(chan struct{}),
 		wake:     make(chan struct{}, 1),
+		force:    make(chan struct{}),
 		exts:     make(map[string]*extension),
 		docs:     make(map[ext.BufferID]*document),
 	}
@@ -378,6 +387,7 @@ func (h *Host) Start(id string) error {
 
 // Restart は、無効になった拡張機能の連続の失敗の数を 0 に戻し、起動し直す（図 4 の「利用者が再起動を指示」）。
 // 未起動の拡張機能なら起動する。それ以外の状態では何もしない。起動は非同期である。
+// 停止中（[StateStopping]）でも何もしないので、無効へ移った後に呼び直す。
 func (h *Host) Restart(id string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -389,19 +399,20 @@ func (h *Host) Restart(id string) error {
 	case StateDisabled, StateNotStarted:
 		e.failures = 0
 		h.startLocked(e)
-	case StateStarting, StateRunning, StateRestartWait:
+	case StateStarting, StateRunning, StateStopping, StateRestartWait:
 	}
 	return nil
 }
 
 // Disable は、拡張機能を正常に止め、無効にする（利用者の指示による無効化）。止めるのは非同期で、待たずに戻る。
 //
-// 起動中か稼働中なら、Close と同じ手順（shutdown、期限後に SIGTERM、さらに期限後に SIGKILL）でプロセスを終わらせ、
-// 終わった後に [StateDisabled] へ移る。終わるまでは、状態は起動中か稼働中のままである。
-// 再起動待ちなら、待つのをやめて無効にする。未起動なら、そのまま無効にする。無効なら何もしない。
+// 起動中か稼働中なら、すぐに [StateStopping] へ移し、Close と同じ手順（shutdown、期限後に SIGTERM、さらに期限後に SIGKILL）で
+// プロセスを終わらせ、終わった後に [StateDisabled] へ移る。
+// 再起動待ちなら、待つのをやめて無効にする。未起動なら、そのまま無効にする。停止中か無効なら何もしない。
 // 止めたことは連続の失敗に数えない。[Host.Restart] で起動し直せる。
 //
-// 止めている間に拡張機能から届いたイベントは捨てずに渡す（異常による終了と違い、拡張機能は正常に動いているため）。
+// shutdown を送った後に拡張機能から届いたリクエスト（buffer/edit など）は、イベントループへ渡さずに失敗を応答する。
+// 通知は渡すが、無効へ移った時点でイベントループへ渡していないイベントは、リクエストも通知も捨てる。
 func (h *Host) Disable(id string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -412,14 +423,22 @@ func (h *Host) Disable(id string) error {
 	switch e.state {
 	case StateNotStarted:
 		h.setStateLocked(e, StateDisabled, nil)
-	case StateStarting, StateRunning, StateRestartWait:
-		if !e.stopping {
-			e.stopping = true
-			close(e.stop)
-		}
-	case StateDisabled:
+	case StateStarting, StateRunning:
+		h.requestStopLocked(e)
+		h.setStateLocked(e, StateStopping, nil)
+	case StateRestartWait:
+		h.requestStopLocked(e)
+	case StateStopping, StateDisabled:
 	}
 	return nil
+}
+
+// requestStopLocked は、拡張機能の監視の goroutine へ、止めるよう知らせる。
+func (h *Host) requestStopLocked(e *extension) {
+	if !e.stopping {
+		e.stopping = true
+		close(e.stop)
+	}
 }
 
 // Close は、すべての拡張機能のプロセスを正常に止め、管理の goroutine が終わるのを待つ（基本設計 5.2）。
@@ -431,7 +450,20 @@ func (h *Host) Disable(id string) error {
 // プロセスが終わった後も、同じプロセスグループに残ったプロセスには SIGKILL を送る。
 // shutdown を送った後に拡張機能から届いたイベントは、[Host.Events] へ渡さない。
 // Close の後の問い合わせは [ErrClosed] を包んだ誤りを返す。2 回目以降の呼び出しは何もしない。
+//
+// Close は、拡張機能が応答しないと最大で ShutdownTimeout と TerminateTimeout の和だけ戻らない。
+// 待つ上限を呼び出し側で決めるときは [Host.CloseContext] を使う。
+// イベントループ（internal/editor）は、端末の後始末（画面の復元）を先に済ませてから呼ぶ。
+// 利用者に、エディタが終わらずに止まって見えないようにするためである。
 func (h *Host) Close() error {
+	return h.CloseContext(context.Background())
+}
+
+// CloseContext は、Close と同じく拡張機能を正常に止めるが、ctx が終わったら期限を待たずに、
+// 残っている拡張機能のプロセスグループへ SIGKILL を送って終わらせる。
+// ctx が終わったために SIGKILL へ切り替えたときは、ctx.Err() を返す。それ以外は nil を返す。
+// 2 回目以降の呼び出しは、1 回目の Close が終わるのを待つだけで、nil を返す。
+func (h *Host) CloseContext(ctx context.Context) error {
 	h.mu.Lock()
 	if h.closing {
 		h.mu.Unlock()
@@ -441,9 +473,21 @@ func (h *Host) Close() error {
 	h.closing = true
 	h.mu.Unlock()
 	h.cancel()
-	h.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		h.wg.Wait()
+		close(done)
+	}()
+	var err error
+	select {
+	case <-done:
+	case <-ctx.Done():
+		err = ctx.Err()
+		close(h.force)
+		<-done
+	}
 	<-h.pumpDone
-	return nil
+	return err
 }
 
 func (h *Host) lookupLocked(id string) (*extension, error) {

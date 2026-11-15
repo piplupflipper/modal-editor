@@ -43,6 +43,8 @@ type run struct {
 	runningSince time.Time
 	// queued は、このプロセスから届き、まだイベントループへ渡していないイベントの数である。
 	queued int
+	// shuttingDown は、shutdown を送ったかどうかである。true の後に届いたリクエストは、イベントループへ渡さずに失敗を応答する。
+	shuttingDown bool
 
 	failOnce sync.Once
 	failErr  error
@@ -76,8 +78,11 @@ func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 		}
 
 		h.mu.Lock()
-		if errors.Is(err, errStopped) {
+		// Disable の後なら、プロセスがどの理由で終わっても、無効へ移す（再起動しない）。
+		if errors.Is(err, errStopped) || e.stopping {
 			e.run = nil
+			// 止めている間に届き、まだ渡していないイベントは捨てる（Close と同じ扱い）。
+			h.purgeLocked(r)
 			h.setStateLocked(e, StateDisabled, nil)
 			h.mu.Unlock()
 			return
@@ -162,7 +167,7 @@ func (h *Host) runOnce(e *extension, r *run, stop <-chan struct{}) (err error) {
 
 	defer func() {
 		if errors.Is(err, ErrClosed) || errors.Is(err, errStopped) {
-			h.terminate(id, conn, p)
+			h.terminate(id, r, p)
 		}
 		p.kill()
 		_ = conn.Close()
@@ -186,16 +191,25 @@ func (h *Host) runOnce(e *extension, r *run, stop <-chan struct{}) (err error) {
 // terminate は、拡張機能のプロセスを正常に止める（基本設計 5.2）。
 // shutdown を送り、[Config.ShutdownTimeout] までに終わらなければプロセスグループへ SIGTERM を送り、
 // さらに [Config.TerminateTimeout] まで待つ。それでも終わらなければ、呼び出し側が SIGKILL を送る。
+// [Host.CloseContext] の ctx が終わったら（h.force）、期限を待たずに戻り、呼び出し側が SIGKILL を送る。
 // プロセスが既に終わっていれば何もしない。
-func (h *Host) terminate(id string, conn *rpc.Conn, p *process) {
-	wait := func(d time.Duration) bool {
+func (h *Host) terminate(id string, r *run, p *process) {
+	// wait は、プロセスが d の間に終わったら 0、期限を過ぎたら 1、h.force が閉じたら 2 を返す。
+	const (
+		exited = iota
+		timedOut
+		forced
+	)
+	wait := func(d time.Duration) int {
 		t := time.NewTimer(d)
 		defer t.Stop()
 		select {
 		case <-p.exited:
-			return true
+			return exited
 		case <-t.C:
-			return false
+			return timedOut
+		case <-h.force:
+			return forced
 		}
 	}
 	select {
@@ -203,15 +217,28 @@ func (h *Host) terminate(id string, conn *rpc.Conn, p *process) {
 		return
 	default:
 	}
+	h.mu.Lock()
+	r.shuttingDown = true
+	conn := r.conn
+	h.mu.Unlock()
 	if err := conn.Notify(ext.MethodShutdown, ext.ShutdownParams{}); err != nil {
 		h.log.Warn("extension shutdown not sent", "extension", id, "error", err)
-	} else if wait(h.cfg.ShutdownTimeout) {
-		return
 	} else {
+		switch wait(h.cfg.ShutdownTimeout) {
+		case exited:
+			return
+		case forced:
+			h.log.Warn("host close cancelled; sending SIGKILL", "extension", id)
+			return
+		}
 		h.log.Warn("extension did not exit after shutdown; sending SIGTERM", "extension", id, "timeout", h.cfg.ShutdownTimeout)
 	}
 	p.signal(syscall.SIGTERM)
-	if !wait(h.cfg.TerminateTimeout) {
+	switch wait(h.cfg.TerminateTimeout) {
+	case exited:
+	case forced:
+		h.log.Warn("host close cancelled; sending SIGKILL", "extension", id)
+	default:
 		h.log.Warn("extension did not exit after SIGTERM; sending SIGKILL", "extension", id, "timeout", h.cfg.TerminateTimeout)
 	}
 }
@@ -258,6 +285,10 @@ func (h *Host) initialize(e *extension, r *run, p *process, stop <-chan struct{}
 	defer h.mu.Unlock()
 	if h.closing {
 		return ErrClosed
+	}
+	if e.stopping {
+		// 初期化の応答を待つ間に Disable された。停止中から稼働中へ戻さない。
+		return errStopped
 	}
 	r.runningSince = time.Now()
 	h.setStateLocked(e, StateRunning, nil)
@@ -334,6 +365,11 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 				return
 			}
 			h.mu.Lock()
+			if r.shuttingDown {
+				h.mu.Unlock()
+				_ = reply(nil, &rpc.Error{Code: rpc.CodeInternalError, Message: req.Method + ": extension is shutting down"})
+				return
+			}
 			err := h.pushLocked(ev, r)
 			h.mu.Unlock()
 			if err != nil {

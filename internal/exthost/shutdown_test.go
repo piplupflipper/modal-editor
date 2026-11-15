@@ -1,6 +1,7 @@
 package exthost
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -148,18 +149,58 @@ func TestAbnormalExitSkipsShutdown(t *testing.T) {
 	}
 }
 
-// Disable は、Close と同じ手順で拡張機能を止めて無効にする。止めたことは連続の失敗に数えず、Restart で起動し直せる。
+// Disable は、すぐに停止中へ移し、Close と同じ手順で拡張機能を止めて無効にする。
+// 停止中は問い合わせと willSave を送らずに失敗させ、shutdown の後に届いたリクエストには失敗を応答する。
+// 止めたことは連続の失敗に数えず、無効へ移った後に Restart で起動し直せる。
 func TestDisableShutsDown(t *testing.T) {
-	hs := newHarness(t, []Spec{serverSpec(t, "srv", nil)}, func(c *Config) { c.ShutdownTimeout = 5 * time.Second }, true)
+	hs := newHarness(t, []Spec{serverSpec(t, "srv", []string{argSlowShutdown})}, func(c *Config) { c.ShutdownTimeout = 5 * time.Second }, true)
 	child, extPID := spawnChild(t, hs)
 
 	if err := hs.h.Disable("srv"); err != nil {
 		t.Fatal(err)
 	}
+	if st := hs.state("srv"); st != StateStopping {
+		t.Fatalf("state right after Disable = %s, want stopping", st)
+	}
+	hs.waitState("srv", StateStopping)
+
+	// 停止中: 問い合わせは送らずにすぐ失敗し、willSave の対象にも入らない。Restart と Disable は何もしない。
+	start := time.Now()
+	if _, err := hs.h.ExecuteCommand(ctx, "srv", ext.CommandExecuteParams{Buffer: 1, Version: 1, ID: cmdState}, callTimeout); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("command while stopping: %v, want ErrUnavailable", err)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Errorf("command while stopping took %s; it waited for the extension", d)
+	}
+	if ids := hs.h.SaveHookExtensions(); len(ids) != 0 {
+		t.Errorf("SaveHookExtensions while stopping = %v, want none", ids)
+	}
+	if err := hs.h.Restart("srv"); err != nil {
+		t.Errorf("Restart while stopping: %v", err)
+	}
+	if err := hs.h.Disable("srv"); err != nil {
+		t.Errorf("Disable while stopping: %v", err)
+	}
+	if st := hs.state("srv"); st != StateStopping {
+		t.Errorf("state after Restart while stopping = %s, want stopping", st)
+	}
+
+	// shutdown の後に拡張機能が送った buffer/edit は、イベントループへ渡らずに失敗する。
+	if out := hs.waitOutput(shutdownEdit); !strings.HasPrefix(out, "error ") || !strings.Contains(out, "shutting down") {
+		t.Errorf("buffer/edit after shutdown = %q, want an error", out)
+	}
+
 	sc := hs.waitState("srv", StateDisabled)
 	if sc.Err != nil {
 		t.Errorf("disable reason = %v, want nil", sc.Err)
 	}
+	hs.mu.Lock()
+	for _, ev := range hs.events {
+		if _, ok := ev.(*EditRequest); ok {
+			t.Errorf("buffer/edit after shutdown reached the event loop")
+		}
+	}
+	hs.mu.Unlock()
 	if !processGone(child) {
 		t.Errorf("child %d is still alive; the shutdown hook did not run", child)
 	}
@@ -172,14 +213,36 @@ func TestDisableShutsDown(t *testing.T) {
 	if _, err := hs.h.ExecuteCommand(ctx, "srv", ext.CommandExecuteParams{Buffer: 1, Version: 1, ID: cmdState}, callTimeout); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("command to disabled extension: %v, want ErrUnavailable", err)
 	}
-	if err := hs.h.Disable("srv"); err != nil {
-		t.Errorf("second Disable: %v", err)
-	}
 
 	if err := hs.h.Restart("srv"); err != nil {
 		t.Fatal(err)
 	}
 	hs.waitState("srv", StateRunning)
+}
+
+// CloseContext は、ctx が終わったら期限を待たずに SIGKILL で終わらせ、ctx.Err() を返す。
+func TestCloseContextCancels(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeStubborn, "")}, func(c *Config) {
+		c.ShutdownTimeout = 10 * time.Second
+		c.TerminateTimeout = 10 * time.Second
+	}, false)
+	pid := hs.fakeState().PID
+
+	cctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := hs.h.CloseContext(cctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("CloseContext = %v, want DeadlineExceeded", err)
+	}
+	if d := time.Since(start); d >= 5*time.Second {
+		t.Errorf("CloseContext took %s; it waited for the shutdown timeout", d)
+	}
+	if !processGone(pid) {
+		t.Errorf("process %d is still alive after CloseContext", pid)
+	}
+	if err := hs.h.Close(); err != nil {
+		t.Errorf("second Close = %v", err)
+	}
 }
 
 // 未起動と再起動待ちの拡張機能の Disable は、プロセスを待たずに無効にする。
