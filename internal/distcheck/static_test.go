@@ -76,23 +76,6 @@ func TestBuildMainStatic(t *testing.T) {
 	assertStaticELF(t, path)
 }
 
-// pureGoBinaries は、cgo を使わずに作る実行ファイルである（Makefile の BINARY、MCP_BRIDGE、EXTENSIONS）。
-var pureGoBinaries = []string{
-	"modal-editor",
-	"modal-editor-mcp-bridge",
-	"modal-editor-ext-line",
-	"modal-editor-ext-script",
-	"modal-editor-ext-dap",
-	"modal-editor-ext-lsp",
-	"modal-editor-ext-acp",
-	"modal-editor-ext-mcp",
-}
-
-// cgoBinaries は、cgo を使う実行ファイルである（Makefile の CGO_EXTENSIONS）。
-var cgoBinaries = []string{
-	"modal-editor-ext-treesitter",
-}
-
 // TestBuildAllStatic は、`make build` の全ての実行ファイルが静的にリンクされていることを確かめる。
 // 動的リンカーと共有ライブラリを要求しないので、glibc の版や musl かどうかによらず、ファイルを置くだけで起動する。
 // cgo の拡張機能も、C の標準ライブラリごと静的にリンクする。
@@ -100,7 +83,7 @@ var cgoBinaries = []string{
 // req: NFR-01
 func TestBuildAllStatic(t *testing.T) {
 	dir := buildDir(t)
-	for _, name := range append(append([]string{}, pureGoBinaries...), cgoBinaries...) {
+	for _, name := range append(pureGoBinaries(t), cgoBinaries(t)...) {
 		t.Run(name, func(t *testing.T) {
 			assertStaticELF(t, filepath.Join(dir, name))
 		})
@@ -113,7 +96,7 @@ func TestBuildAllStatic(t *testing.T) {
 // これを手がかりに、CC の指定が外れて glibc に戻ったことを見つける。
 func TestBuildCgoNotGlibc(t *testing.T) {
 	dir := buildDir(t)
-	for _, name := range cgoBinaries {
+	for _, name := range cgoBinaries(t) {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(dir, name)
 			f, err := elf.Open(path)
@@ -132,7 +115,7 @@ func TestBuildCgoNotGlibc(t *testing.T) {
 // cgo を使うのは tree-sitter の拡張機能だけに限る（Makefile）。
 func TestBuildPureGo(t *testing.T) {
 	dir := buildDir(t)
-	for _, name := range pureGoBinaries {
+	for _, name := range pureGoBinaries(t) {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(dir, name)
 			if cgo, ok := buildSetting(t, path, "CGO_ENABLED"); !ok || cgo != "0" {
