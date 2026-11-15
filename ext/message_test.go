@@ -30,7 +30,6 @@ var (
 	testRJSON = `{"start":{"line":1,"byte":2},"end":{"line":3,"byte":4}}`
 )
 
-// req: FR-15
 func TestTransactionJSON(t *testing.T) {
 	roundTrip(t, Transaction{
 		BaseVersion: 7,
@@ -41,7 +40,6 @@ func TestTransactionJSON(t *testing.T) {
 	}, `{"baseVersion":7,"edits":[{"range":`+testRJSON+`,"text":"あ"},{"range":{"start":{"line":0,"byte":0},"end":{"line":0,"byte":0}},"text":""}]}`)
 }
 
-// req: FR-11, FR-12, FR-15, FR-16, FR-17, FR-35
 func TestMessageJSON(t *testing.T) {
 	tx := Transaction{BaseVersion: 3, Edits: []Edit{{Range: testRange, Text: "x"}}}
 	txJSON := `{"baseVersion":3,"edits":[{"range":` + testRJSON + `,"text":"x"}]}`
@@ -67,19 +65,24 @@ func TestMessageJSON(t *testing.T) {
 	t.Run("motion/resolve", func(t *testing.T) {
 		roundTrip(t, MotionResolveParams{Buffer: 1, Version: 2, ID: "m", Cursor: Position{Line: 5, Byte: 6}, Count: 3},
 			`{"buffer":1,"version":2,"id":"m","cursor":{"line":5,"byte":6},"count":3}`)
-		roundTrip(t, MotionResolveResult{Version: 2, Position: Position{Line: 7, Byte: 8}},
-			`{"version":2,"position":{"line":7,"byte":8}}`)
+		// 回数の省略は 0、引数は JSON のまま運ぶ。
+		roundTrip(t, MotionResolveParams{Buffer: 1, Version: 2, ID: "m", Args: json.RawMessage(`{"char":"x"}`)},
+			`{"buffer":1,"version":2,"id":"m","cursor":{"line":0,"byte":0},"count":0,"args":{"char":"x"}}`)
+		roundTrip(t, MotionResolveResult{OK: true, Version: 2, Position: Position{Line: 7, Byte: 8}},
+			`{"ok":true,"version":2,"position":{"line":7,"byte":8}}`)
+		roundTrip(t, MotionResolveResult{OK: true, Version: 2, Linewise: true, Inclusive: true},
+			`{"ok":true,"version":2,"position":{"line":0,"byte":0},"linewise":true,"inclusive":true}`)
 	})
 	t.Run("textObject/resolve", func(t *testing.T) {
 		roundTrip(t, TextObjectResolveParams{Buffer: 1, Version: 2, ID: "o", Cursor: Position{Line: 5, Byte: 6}, Count: 1},
 			`{"buffer":1,"version":2,"id":"o","cursor":{"line":5,"byte":6},"count":1}`)
-		roundTrip(t, TextObjectResolveResult{Version: 2, Range: testRange},
-			`{"version":2,"range":`+testRJSON+`}`)
+		roundTrip(t, TextObjectResolveResult{OK: true, Version: 2, Range: testRange, Linewise: true},
+			`{"ok":true,"version":2,"range":`+testRJSON+`,"linewise":true}`)
 	})
 	t.Run("operator/apply", func(t *testing.T) {
-		roundTrip(t, OperatorApplyParams{Buffer: 1, Version: 3, ID: "op", Range: testRange, Count: 1},
-			`{"buffer":1,"version":3,"id":"op","range":`+testRJSON+`,"count":1}`)
-		roundTrip(t, OperatorApplyResult{Transaction: tx}, `{"transaction":`+txJSON+`}`)
+		roundTrip(t, OperatorApplyParams{Buffer: 1, Version: 3, ID: "op", Range: testRange, Count: 1, Args: json.RawMessage(`"\""`)},
+			`{"buffer":1,"version":3,"id":"op","range":`+testRJSON+`,"count":1,"args":"\""}`)
+		roundTrip(t, OperatorApplyResult{OK: true, Transaction: tx}, `{"ok":true,"transaction":`+txJSON+`}`)
 	})
 	t.Run("ping", func(t *testing.T) {
 		roundTrip(t, PingParams{}, `{}`)
@@ -100,19 +103,45 @@ func TestMessageJSON(t *testing.T) {
 	t.Run("message/show", func(t *testing.T) {
 		roundTrip(t, MessageShowParams{Level: MessageWarning, Text: "注意"}, `{"level":"warning","text":"注意"}`)
 	})
+	t.Run("buffer/resync", func(t *testing.T) {
+		roundTrip(t, BufferResyncParams{Buffer: 1, Version: 4}, `{"buffer":1,"version":4}`)
+	})
 }
 
-// TestMethodNames は、メソッドの名前が基本設計 5.3 の表と一致することを確かめる。
+// TestResultFailureByDefault は、ok の項目が無い result が成功と読まれないことを確かめる。
+// 古い形の応答や、ok を書き忘れた応答を、本体が操作の失敗として扱えるようにするためである。
+func TestResultFailureByDefault(t *testing.T) {
+	const data = `{"version":2}`
+	var m MotionResolveResult
+	var o TextObjectResolveResult
+	var a OperatorApplyResult
+	for _, v := range []any{&m, &o, &a} {
+		if err := json.Unmarshal([]byte(data), v); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+	}
+	if m.OK || o.OK || a.OK {
+		t.Errorf("OK = %v, %v, %v, want all false", m.OK, o.OK, a.OK)
+	}
+	// 文字単位で exclusive が既定である。
+	if m.Linewise || m.Inclusive || o.Linewise {
+		t.Errorf("Linewise/Inclusive の既定値が false でない: %+v %+v", m, o)
+	}
+}
+
+// TestMethodNames は、メソッドの名前が基本設計 5.3 の表（と本文の送り直しの要求）と一致することを確かめる。
 func TestMethodNames(t *testing.T) {
 	got := []string{
 		MethodInitialize, MethodBufferOpen, MethodBufferChange, MethodBufferClose,
 		MethodMotionResolve, MethodTextObjectResolve, MethodOperatorApply,
 		MethodPing, MethodCancel, MethodBufferEdit, MethodDecorationSet, MethodMessageShow,
+		MethodBufferResync,
 	}
 	want := []string{
 		"initialize", "buffer/open", "buffer/change", "buffer/close",
 		"motion/resolve", "textObject/resolve", "operator/apply",
 		"ping", "$/cancel", "buffer/edit", "decoration/set", "message/show",
+		"buffer/resync",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("method names = %q, want %q", got, want)

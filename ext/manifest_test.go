@@ -23,7 +23,7 @@ func validManifest() Manifest {
 	}
 }
 
-// req: FR-13, FR-14
+// req: FR-13
 func TestManifestJSON(t *testing.T) {
 	// 基本設計 5.1 の例からコメントを除いたもの。
 	const doc = `{
@@ -45,21 +45,23 @@ func TestManifestJSON(t *testing.T) {
 	if want := validManifest(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Unmarshal = %#v, want %#v", got, want)
 	}
-	if err := got.Validate(); err != nil {
-		t.Errorf("Validate = %v, want nil", err)
+	if ws, err := got.Validate(); err != nil || ws != nil {
+		t.Errorf("Validate = %v, %v, want nil, nil", ws, err)
 	}
 	roundTrip(t, got, `{"id":"surround","command":"./modal-editor-ext-surround",`+
 		`"activation":[{"on":"operator","id":"surround.add"},{"on":"filetype","pattern":"markdown"}],`+
 		`"contributes":{"operators":[{"id":"surround.add","keys":"ys"}],"textObjects":[{"id":"surround.inner","keys":"is"}]}}`)
 }
 
-// req: FR-13, FR-14
+// req: FR-13
 func TestManifestValidate(t *testing.T) {
 	tests := []struct {
 		name   string
 		modify func(m *Manifest)
 		// want は、誤りのメッセージに含まれるべき文字列の一覧である。空なら誤りが無いことを期待する。
 		want []string
+		// warn は、警告に含まれるべき文字列の一覧である。空なら警告が無いことを期待する。
+		warn []string
 	}{
 		{name: "正しい", modify: func(*Manifest) {}},
 		{
@@ -80,9 +82,25 @@ func TestManifestValidate(t *testing.T) {
 		{name: "command が空", modify: func(m *Manifest) { m.Command = "" }, want: []string{"command が空"}},
 		{name: "activation が空", modify: func(m *Manifest) { m.Activation = nil }, want: []string{"activation が空"}},
 		{
-			name:   "未知の契機",
-			modify: func(m *Manifest) { m.Activation = []Activation{{On: "startup"}} },
-			want:   []string{`activation[0].on "startup" は未知の契機`},
+			name:   "未知の契機は警告にして誤りにしない",
+			modify: func(m *Manifest) { m.Activation = append(m.Activation, Activation{On: "startup"}) },
+			warn:   []string{`activation[2].on "startup" は未知の契機なので無視する`},
+		},
+		{
+			name: "契機がすべて未知でも誤りにしない",
+			modify: func(m *Manifest) {
+				m.Activation = []Activation{{On: "startup"}, {On: "lsp", ID: "x"}}
+			},
+			warn: []string{`activation[0].on "startup"`, `activation[1].on "lsp"`},
+		},
+		{
+			name: "未知の契機と誤りが両方ある",
+			modify: func(m *Manifest) {
+				m.Command = ""
+				m.Activation = append(m.Activation, Activation{On: "startup"})
+			},
+			want: []string{"command が空"},
+			warn: []string{`activation[2].on "startup"`},
 		},
 		{
 			name:   "契機の id が空",
@@ -137,7 +155,16 @@ func TestManifestValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := validManifest()
 			tt.modify(&m)
-			err := m.Validate()
+			ws, err := m.Validate()
+			if len(ws) != len(tt.warn) {
+				t.Errorf("Validate の警告 = %q, want %d 件 %q", ws, len(tt.warn), tt.warn)
+			} else {
+				for i, w := range tt.warn {
+					if !strings.Contains(ws[i].Error(), w) {
+						t.Errorf("Validate の警告[%d] = %q, want containing %q", i, ws[i], w)
+					}
+				}
+			}
 			if len(tt.want) == 0 {
 				if err != nil {
 					t.Fatalf("Validate = %v, want nil", err)
@@ -160,28 +187,68 @@ func TestManifestValidate(t *testing.T) {
 }
 
 // req: FR-13
+func TestKnownActivation(t *testing.T) {
+	m := validManifest()
+	m.Activation = []Activation{
+		{On: "startup"},
+		{On: ActivationOperator, ID: "surround.add"},
+		{On: "lsp"},
+		{On: ActivationFileType, Pattern: "markdown"},
+	}
+	want := []Activation{
+		{On: ActivationOperator, ID: "surround.add"},
+		{On: ActivationFileType, Pattern: "markdown"},
+	}
+	if got := m.KnownActivation(); !reflect.DeepEqual(got, want) {
+		t.Errorf("KnownActivation = %#v, want %#v", got, want)
+	}
+
+	for _, k := range []ActivationKind{ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType} {
+		if !k.Known() {
+			t.Errorf("%q.Known() = false, want true", k)
+		}
+	}
+	for _, k := range []ActivationKind{"", "startup", "Operator"} {
+		if k.Known() {
+			t.Errorf("%q.Known() = true, want false", k)
+		}
+	}
+}
+
+// req: FR-13
 func TestValidateManifests(t *testing.T) {
 	a := validManifest()
 	b := validManifest()
 	b.ID = "other"
-	if err := ValidateManifests([]Manifest{a, b}); err != nil {
-		t.Errorf("ValidateManifests = %v, want nil", err)
+	if ws, err := ValidateManifests([]Manifest{a, b}); err != nil || ws != nil {
+		t.Errorf("ValidateManifests = %v, %v, want nil, nil", ws, err)
 	}
 
 	dup := validManifest()
-	err := ValidateManifests([]Manifest{a, b, dup})
+	_, err := ValidateManifests([]Manifest{a, b, dup})
 	if err == nil || !strings.Contains(err.Error(), `宣言ファイル[2] の id "surround" が宣言ファイル[0] と重複する`) {
 		t.Errorf("ValidateManifests = %v, want duplicate id error", err)
 	}
 
 	bad := validManifest()
 	bad.Command = ""
-	err = ValidateManifests([]Manifest{bad})
+	_, err = ValidateManifests([]Manifest{bad})
 	if err == nil || !strings.Contains(err.Error(), `宣言ファイル[0]（id "surround"）: command が空`) {
 		t.Errorf("ValidateManifests = %v, want command error", err)
 	}
 
-	if err := ValidateManifests(nil); err != nil {
-		t.Errorf("ValidateManifests(nil) = %v, want nil", err)
+	future := validManifest()
+	future.ID = "future"
+	future.Activation = append(future.Activation, Activation{On: "startup"})
+	ws, err := ValidateManifests([]Manifest{a, future})
+	if err != nil {
+		t.Errorf("ValidateManifests = %v, want nil", err)
+	}
+	if len(ws) != 1 || !strings.Contains(ws[0].Error(), `宣言ファイル[1]（id "future"）: activation[2].on "startup"`) {
+		t.Errorf("ValidateManifests の警告 = %q, want 1 件", ws)
+	}
+
+	if ws, err := ValidateManifests(nil); err != nil || ws != nil {
+		t.Errorf("ValidateManifests(nil) = %v, %v, want nil, nil", ws, err)
 	}
 }

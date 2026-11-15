@@ -42,9 +42,16 @@ const (
 	ActivationFileType   ActivationKind = "filetype"
 )
 
+// Known は、k がこの版の API の知っている契機の種類かどうかを返す。
+func (k ActivationKind) Known() bool {
+	switch k {
+	case ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType:
+		return true
+	}
+	return false
+}
+
 // Activation は、1 つの起動の契機である。
-//
-// req: FR-14
 type Activation struct {
 	// On は、契機の種類である。
 	On ActivationKind `json:"on"`
@@ -55,8 +62,6 @@ type Activation struct {
 }
 
 // Contributes は、拡張機能が追加する操作の一覧である。
-//
-// req: FR-11
 type Contributes struct {
 	Operators   []Contribution `json:"operators,omitempty"`
 	Motions     []Contribution `json:"motions,omitempty"`
@@ -74,22 +79,39 @@ type Contribution struct {
 	Keys string `json:"keys,omitempty"`
 }
 
+// KnownActivation は、Activation のうち種類が既知の契機だけを返す。
+// 本体は、未知の契機を無視し、この一覧だけで起動を判断する。
+func (m *Manifest) KnownActivation() []Activation {
+	var known []Activation
+	for _, a := range m.Activation {
+		if a.On.Known() {
+			known = append(known, a)
+		}
+	}
+	return known
+}
+
 // Validate は、宣言ファイルを読み込んだ後の値を検査する。
-// 見つけた誤りをすべて errors.Join でまとめて返し、誤りが無ければ nil を返す。
+// 見つけた誤りをすべて errors.Join でまとめて err に返し、誤りが無ければ err は nil である。
+// err が nil でない宣言ファイルは、拡張機能として使わない。
 //
 // 検査するのは次の項目である。
 //
 //   - ID と Command が空でないこと。ID が空白を含まないこと
 //   - Activation が 1 つ以上あること
-//   - 各契機の種類が既知であること
 //   - 操作の契機は、同じ種類の操作として Contributes にある ID を指すこと
 //   - ファイルの種類の契機は、Pattern が空でないこと
 //   - Contributes の各操作の ID が空でなく、種類をまたいで重複しないこと
 //
+// 未知の種類の契機は誤りにせず、warnings に 1 件ずつ返す。
+// API の後の版で契機の種類を足しても、古い本体が新しい拡張機能の宣言ファイルを丸ごと拒まないようにするためである。
+// 本体は未知の契機だけを無視する（KnownActivation）。
+// 契機がすべて未知なら、その拡張機能は起動しないが、誤りにはしない。
+//
 // Command のファイルが存在するかどうかは検査しない。
 //
-// req: FR-13, FR-14
-func (m *Manifest) Validate() error {
+// req: FR-13
+func (m *Manifest) Validate() (warnings []error, err error) {
 	var errs []error
 	if m.ID == "" {
 		errs = append(errs, errors.New("id が空である"))
@@ -146,24 +168,29 @@ func (m *Manifest) Validate() error {
 				errs = append(errs, fmt.Errorf("%s.pattern が空である", path))
 			}
 		default:
-			errs = append(errs, fmt.Errorf("%s.on %q は未知の契機である", path, a.On))
+			warnings = append(warnings, fmt.Errorf("%s.on %q は未知の契機なので無視する", path, a.On))
 		}
 	}
-	return errors.Join(errs...)
+	return warnings, errors.Join(errs...)
 }
 
 // ValidateManifests は、複数の宣言ファイルを検査する。
 // 各宣言ファイルの Validate に加えて、拡張機能の ID が重複しないことを検査する。
-// 見つけた誤りをすべて errors.Join でまとめて返し、誤りが無ければ nil を返す。
+// 誤りと警告には、どの宣言ファイルのものかを前に付ける。
+// 誤りはすべて errors.Join でまとめて err に返し、誤りが無ければ err は nil である。
 //
 // req: FR-13
-func ValidateManifests(ms []Manifest) error {
+func ValidateManifests(ms []Manifest) (warnings []error, err error) {
 	var errs []error
 	seen := map[string]int{}
 	for i := range ms {
 		m := &ms[i]
-		if err := m.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("宣言ファイル[%d]（id %q）: %w", i, m.ID, err))
+		ws, verr := m.Validate()
+		for _, w := range ws {
+			warnings = append(warnings, fmt.Errorf("宣言ファイル[%d]（id %q）: %w", i, m.ID, w))
+		}
+		if verr != nil {
+			errs = append(errs, fmt.Errorf("宣言ファイル[%d]（id %q）: %w", i, m.ID, verr))
 		}
 		if m.ID == "" {
 			continue
@@ -174,7 +201,7 @@ func ValidateManifests(ms []Manifest) error {
 		}
 		seen[m.ID] = i
 	}
-	return errors.Join(errs...)
+	return warnings, errors.Join(errs...)
 }
 
 func isSpace(r rune) bool {
