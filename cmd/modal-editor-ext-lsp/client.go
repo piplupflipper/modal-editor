@@ -112,7 +112,7 @@ func (c *client) open(b *server.Buffer, reopen bool) {
 		d.reset(b)
 		if p := c.readyProc(); p != nil && p.sync.Change != syncNone {
 			c.notify(p, lspDidChange, didChangeParams{
-				TextDocument:   versionedTextDocumentIdentifier{URI: d.uri, Version: int64(b.Version())},
+				TextDocument:   versionedTextDocumentIdentifier{URI: d.uri, Version: lspVersion(b.Version())},
 				ContentChanges: []contentChange{{Text: d.lspText()}},
 			})
 		}
@@ -140,7 +140,7 @@ func (c *client) didOpen(p *proc, d *document) {
 	}
 	cur := d.current()
 	c.notify(p, lspDidOpen, didOpenParams{TextDocument: textDocumentItem{
-		URI: d.uri, LanguageID: d.languageID, Version: int64(cur.version), Text: d.lspText(),
+		URI: d.uri, LanguageID: d.languageID, Version: lspVersion(cur.version), Text: d.lspText(),
 	}})
 }
 
@@ -174,7 +174,7 @@ func (c *client) change(e *server.BufferChangeEvent) {
 		changes = []contentChange{{Text: d.lspText()}}
 	}
 	c.notify(p, lspDidChange, didChangeParams{
-		TextDocument:   versionedTextDocumentIdentifier{URI: d.uri, Version: int64(e.ToVersion)},
+		TextDocument:   versionedTextDocumentIdentifier{URI: d.uri, Version: lspVersion(e.ToVersion)},
 		ContentChanges: changes,
 	})
 }
@@ -212,6 +212,12 @@ func (c *client) didSave(e *server.BufferDidSaveEvent) {
 		}
 	}
 	c.notify(p, lspDidSave, params)
+}
+
+// lspVersion は、本体のバージョン番号を LSP の文書の版の番号にする。
+// 本体のバージョン番号は 1 ずつ増えるので、int64 の範囲を超えることは無い前提である。
+func lspVersion(v ext.Version) int64 {
+	return int64(v) //nolint:gosec // 本体のバージョン番号は編集ごとに 1 ずつ増えるだけなので、int64 の範囲を超えない
 }
 
 // notify は、言語サーバーへ通知を送る。送れなければログに書く（接続が終わっていれば、監視の goroutine が後始末をする）。
@@ -514,6 +520,9 @@ func (c *client) publishDiagnostics(p *proc, params *publishDiagnosticsParams) {
 	}
 	v := d.current().version
 	if params.Version != nil {
+		if *params.Version < 0 {
+			return
+		}
 		v = ext.Version(*params.Version)
 	}
 	ls, err := d.at(v)

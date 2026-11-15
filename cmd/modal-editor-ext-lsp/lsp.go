@@ -125,9 +125,9 @@ func (c *serverCapabilities) syncOptions() (opts textDocumentSyncOptions, save, 
 	if err := json.Unmarshal(raw, &opts); err != nil {
 		return textDocumentSyncOptions{}, false, false
 	}
-	switch s := strings.TrimSpace(string(opts.Save)); {
-	case s == "" || s == "null" || s == "false":
-	case s == "true":
+	switch s := strings.TrimSpace(string(opts.Save)); s {
+	case "", "null", "false":
+	case "true":
 		save = true
 	default:
 		var so struct {
