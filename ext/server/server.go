@@ -19,28 +19,12 @@ import (
 // ErrNotRunning は、Serve の前か後に、本体へメッセージを送ろうとしたことを表す。
 var ErrNotRunning = errors.New("server: not serving")
 
+// ErrEditInHandler は、Server が呼んだハンドラーかフックの中から、その ctx で Edit を呼んだことを表す。
+// 待つと詰まるので、Edit は buffer/edit を送らずにこの誤りを返す（Edit の doc を参照）。
+var ErrEditInHandler = errors.New("server: Edit called from a handler or hook; it would block the message loop")
+
 // codeRequestCancelled は、取り消されたリクエストへの応答のエラーコードである（LSP の RequestCancelled と同じ値）。
 const codeRequestCancelled = -32800
-
-// MotionHandler は、motion/resolve に答えるハンドラーである。
-// b は p.Buffer の複製で、そのバージョン番号は p.Version と一致する。
-// 返した result の Version は、Server が p.Version で上書きする。
-type MotionHandler func(ctx context.Context, b *Buffer, p *ext.MotionResolveParams) (ext.MotionResolveResult, error)
-
-// TextObjectHandler は、textObject/resolve に答えるハンドラーである。
-// b は p.Buffer の複製で、そのバージョン番号は p.Version と一致する。
-// 返した result の Version は、Server が p.Version で上書きする。
-type TextObjectHandler func(ctx context.Context, b *Buffer, p *ext.TextObjectResolveParams) (ext.TextObjectResolveResult, error)
-
-// OperatorHandler は、operator/apply に答えるハンドラーである。
-// b は p.Buffer の複製で、そのバージョン番号は p.Version と一致する。
-// 返した result の Transaction.BaseVersion は、Server が p.Version で上書きする。
-type OperatorHandler func(ctx context.Context, b *Buffer, p *ext.OperatorApplyParams) (ext.OperatorApplyResult, error)
-
-// CommandHandler は、command/execute に答えるハンドラーである。
-// b は p.Buffer の複製で、そのバージョン番号は p.Version と一致する。
-// 返した result に Transaction があれば、その BaseVersion は、Server が p.Version で上書きする。
-type CommandHandler func(ctx context.Context, b *Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error)
 
 // Server は、拡張機能の側のメッセージループである。
 // 本体との JSON-RPC の接続、バッファの複製の管理、登録したハンドラーの呼び出しを行う。
@@ -50,18 +34,23 @@ type CommandHandler func(ctx context.Context, b *Buffer, p *ext.CommandExecutePa
 //
 // # 処理の順序
 //
-// 本体から届いたリクエストと通知は、届いた順に、Server の持つ 1 つの goroutine が 1 件ずつ処理する。
-// ハンドラーとフック（OnInitialize、OnBufferChange、OnBufferClose）は、すべてこの goroutine から呼ばれる。
+// 本体から届いたリクエストと通知は、届いた順に、Server の持つ 1 つの goroutine（以下、ループ）が 1 件ずつ処理する。
+// ハンドラーとフック（OnInitialize、OnBufferOpen、OnBufferChange、OnBufferClose）は、すべてループから呼ばれる。
 // このため、ハンドラーが読む複製は、本体がそのリクエストより前に送った buffer/change をすべて適用した内容になる。
-// ハンドラーが戻るまで次のメッセージを処理しないので、ハンドラーは速やかに戻る。
-// 時間のかかる処理は、Buffer.Clone した複製を別の goroutine に渡して行い、結果は SetDecorations などで送る。
+// ハンドラーとフックが戻るまで次のメッセージを処理しないので、どちらも速やかに戻る。
+//
+// 時間のかかる問い合わせ（言語サーバーの応答を待つ定義へのジャンプなど）は、MotionAsync などで登録する。
+// 非同期のハンドラーは、ループの上で呼ばれて速やかに戻り、結果は後で別の goroutine から reply で返す。
+// その間もループは buffer/change と ping を処理し続ける。
+// 時間のかかる解析（構文の解析など）は、Buffer.Clone した複製を別の goroutine に渡して行い、結果は SetDecorations などで送る。
 //
 // 受信そのものは別の goroutine が続けるので、ハンドラーの実行中に届いた $/cancel で、ハンドラーの ctx が取り消される。
 //
 // # 補助が処理するメッセージ
 //
 //   - initialize: ext.APIVersion を応答する。OnInitialize を登録していれば、応答の前に呼ぶ
-//   - ping: 空の結果を応答する。メッセージを処理する goroutine が応答するので、ハンドラーが止まっていれば ping も応答しない
+//   - ping: 空の結果を応答する。ループが応答するので、同期のハンドラーかフックが止まっていれば ping も応答しない。
+//     本体はこれで拡張機能の無限ループやデッドロックを検出する（基本設計 5.2）
 //   - $/cancel: 対象のリクエストのハンドラーの ctx を取り消す。まだ処理していないリクエストなら、ハンドラーを呼ばずに失敗を応答する
 //   - buffer/open、buffer/change、buffer/close: 複製を作る、更新する、捨てる
 //
@@ -87,18 +76,19 @@ type Server struct {
 	// ErrorLog は、panic と内部の誤りを書くロガーである。nil なら標準エラー出力へ書く。
 	ErrorLog *log.Logger
 
-	motions     map[string]MotionHandler
-	textObjects map[string]TextObjectHandler
-	operators   map[string]OperatorHandler
-	commands    map[string]CommandHandler
-	onInit      func(ctx context.Context, settings json.RawMessage) error
-	onChange    func(b *Buffer)
-	onClose     func(id ext.BufferID)
+	motions     map[string]entry[ext.MotionResolveParams, ext.MotionResolveResult]
+	textObjects map[string]entry[ext.TextObjectResolveParams, ext.TextObjectResolveResult]
+	operators   map[string]entry[ext.OperatorApplyParams, ext.OperatorApplyResult]
+	commands    map[string]entry[ext.CommandExecuteParams, ext.CommandExecuteResult]
+	onInit      func(ctx context.Context, e *InitializeEvent) error
+	onOpen      func(ctx context.Context, e *BufferOpenEvent)
+	onChange    func(ctx context.Context, e *BufferChangeEvent)
+	onClose     func(ctx context.Context, e *BufferCloseEvent)
 
 	started atomic.Bool
 	conn    atomic.Pointer[rpc.Conn]
 
-	// 以下は、メッセージを処理する goroutine だけが触る。
+	// 以下は、ループだけが触る。
 	buffers map[ext.BufferID]*Buffer
 	// stale は、buffer/resync を送り、buffer/open を待っているバッファである。
 	stale map[ext.BufferID]bool
@@ -107,71 +97,13 @@ type Server struct {
 // New は、ハンドラーを登録していない Server を作る。
 func New() *Server {
 	return &Server{
-		motions:     make(map[string]MotionHandler),
-		textObjects: make(map[string]TextObjectHandler),
-		operators:   make(map[string]OperatorHandler),
-		commands:    make(map[string]CommandHandler),
+		motions:     make(map[string]entry[ext.MotionResolveParams, ext.MotionResolveResult]),
+		textObjects: make(map[string]entry[ext.TextObjectResolveParams, ext.TextObjectResolveResult]),
+		operators:   make(map[string]entry[ext.OperatorApplyParams, ext.OperatorApplyResult]),
+		commands:    make(map[string]entry[ext.CommandExecuteParams, ext.CommandExecuteResult]),
 		buffers:     make(map[ext.BufferID]*Buffer),
 		stale:       make(map[ext.BufferID]bool),
 	}
-}
-
-// Motion は、宣言ファイルの contributes.motions に書いた id のモーションのハンドラーを登録する。
-// 同じ id を 2 回登録するか、Serve の後に呼ぶと panic する。
-//
-// req: FR-11
-func (s *Server) Motion(id string, h MotionHandler) { register(s, s.motions, "motion", id, h) }
-
-// TextObject は、宣言ファイルの contributes.textObjects に書いた id のテキストオブジェクトのハンドラーを登録する。
-// 同じ id を 2 回登録するか、Serve の後に呼ぶと panic する。
-//
-// req: FR-11
-func (s *Server) TextObject(id string, h TextObjectHandler) {
-	register(s, s.textObjects, "text object", id, h)
-}
-
-// Operator は、宣言ファイルの contributes.operators に書いた id のオペレーターのハンドラーを登録する。
-// 同じ id を 2 回登録するか、Serve の後に呼ぶと panic する。
-//
-// req: FR-11
-func (s *Server) Operator(id string, h OperatorHandler) { register(s, s.operators, "operator", id, h) }
-
-// Command は、宣言ファイルの contributes.commands に書いた id のコマンドのハンドラーを登録する。
-// 同じ id を 2 回登録するか、Serve の後に呼ぶと panic する。
-//
-// req: FR-11
-func (s *Server) Command(id string, h CommandHandler) { register(s, s.commands, "command", id, h) }
-
-// OnInitialize は、initialize を受け取ったときに呼ぶ関数を登録する。
-// settings は、利用者の設定ファイルのうち、この拡張機能に向けた部分である（無ければ nil）。
-// f が誤りを返すと、initialize に失敗を応答する。本体はそれを起動の失敗として扱う。
-// Serve の後に呼ぶと panic する。
-func (s *Server) OnInitialize(f func(ctx context.Context, settings json.RawMessage) error) {
-	s.mustNotStarted()
-	s.onInit = f
-}
-
-// OnBufferChange は、複製を作ったとき（buffer/open）と、差分を適用したとき（buffer/change）に呼ぶ関数を登録する。
-// b は更新した後の複製である。構文の解析のように、変更のたびに計算し直す拡張機能が使う。
-// f の panic は回復して ErrorLog に書く。Serve の後に呼ぶと panic する。
-func (s *Server) OnBufferChange(f func(b *Buffer)) {
-	s.mustNotStarted()
-	s.onChange = f
-}
-
-// OnBufferClose は、buffer/close を受け取って複製を捨てたときに呼ぶ関数を登録する。
-// f の panic は回復して ErrorLog に書く。Serve の後に呼ぶと panic する。
-func (s *Server) OnBufferClose(f func(id ext.BufferID)) {
-	s.mustNotStarted()
-	s.onClose = f
-}
-
-func register[H any](s *Server, m map[string]H, kind, id string, h H) {
-	s.mustNotStarted()
-	if _, dup := m[id]; dup {
-		panic(fmt.Sprintf("server: %s %q registered twice", kind, id))
-	}
-	m[id] = h
 }
 
 func (s *Server) mustNotStarted() {
@@ -192,6 +124,11 @@ func (s *Server) Run(ctx context.Context) error {
 // 本体が接続を閉じたとき（r が EOF になったとき）と、ctx が終わったときは nil を返す。
 // JSON-RPC として解釈できないメッセージを受け取ったときなど、それ以外の理由で終わったときは、その誤りを返す。
 // 1 つの Server で Serve を呼べるのは 1 回だけで、2 回目は誤りを返す。
+//
+// ループは Serve を呼んだ goroutine で動く。
+// 接続が終わると、実行中のハンドラーとフックの ctx は取り消されるが、Serve はそれらが戻るまで戻らない。
+// ctx を見ずに止まっているハンドラーがあると、ctx を取り消しても Serve は戻らない。
+// 非同期のハンドラーが後で呼ぶ reply は待たない（接続が終わった後の reply は何も送らない）。
 func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	if !s.started.CompareAndSwap(false, true) {
 		return errors.New("server: Serve called twice")
@@ -237,13 +174,19 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 
 // Edit は、本体へ buffer/edit を送り、応答を待つ。
 // 補完の確定や整形のように、拡張機能の側から始める編集に使う。
-// 適用されると、本体は buffer/change を送り、複製はそれを処理した時点で更新される（Edit が戻った時点ではまだ古いことがある）。
+// 適用されると、本体は buffer/change を送り、複製はループがそれを処理した時点で更新される（Edit が戻った時点ではまだ古いことがある）。
 //
-// ハンドラーの中で Edit の応答を待ってはならない。
-// 本体はハンドラーの応答を待つ間、buffer/edit を処理できないので、本体の期限まで応答が来ない。
-// ハンドラーの編集は、OperatorApplyResult と CommandExecuteResult の Transaction で返す。
+// ループの上（同期のハンドラー、非同期のハンドラーの同期の部分、フック）で Edit の応答を待ってはならない。
+// 本体はループの応答を待つ間 buffer/edit を処理できず、ループは Edit の応答を待つので、本体の期限まで詰まる。
+// Server が渡した ctx（またはそれから作った ctx）で、ループの上から呼ぶと、送らずに ErrEditInHandler を返す。
+// 問い合わせの編集は OperatorApplyResult と CommandExecuteResult の Transaction で返し、
+// フックから編集したいときは、go で別の goroutine を起こしてその中で呼ぶ。
+// 非同期のハンドラーの reply の前に、その結果を待つ本体へ Edit するのも同じ理由で詰まる。
 func (s *Server) Edit(ctx context.Context, p ext.BufferEditParams) (ext.BufferEditResult, error) {
 	var res ext.BufferEditResult
+	if onLoop(ctx, s) {
+		return res, ErrEditInHandler
+	}
 	conn := s.conn.Load()
 	if conn == nil {
 		return res, ErrNotRunning
@@ -252,12 +195,12 @@ func (s *Server) Edit(ctx context.Context, p ext.BufferEditParams) (ext.BufferEd
 	return res, err
 }
 
-// SetDecorations は、本体へ decoration/set を送る。応答は待たない。
+// SetDecorations は、本体へ decoration/set を送る。応答は待たない。どこから呼んでもよい。
 func (s *Server) SetDecorations(p ext.DecorationSetParams) error {
 	return s.notify(ext.MethodDecorationSet, p)
 }
 
-// ShowMessage は、本体へ message/show を送り、利用者へメッセージを表示させる。応答は待たない。
+// ShowMessage は、本体へ message/show を送り、利用者へメッセージを表示させる。応答は待たない。どこから呼んでもよい。
 func (s *Server) ShowMessage(level ext.MessageLevel, text string) error {
 	return s.notify(ext.MethodMessageShow, ext.MessageShowParams{Level: level, Text: text})
 }
@@ -270,43 +213,72 @@ func (s *Server) notify(method string, params any) error {
 	return conn.Notify(method, params)
 }
 
+// loopKey は、ループの上で呼んでいることの印を ctx に付けるキーである。
+type loopKey struct{}
+
+// loopMark は、ループの上の呼び出しの印である。呼び出しが戻ると active を false にする。
+// 非同期のハンドラーが ctx を別の goroutine へ持ち出しても、戻った後は印が効かない。
+type loopMark struct {
+	s      *Server
+	active atomic.Bool
+}
+
+// onLoop は、ctx に s のループの上で有効な印が付いているかどうかを返す。
+func onLoop(ctx context.Context, s *Server) bool {
+	m, ok := ctx.Value(loopKey{}).(*loopMark)
+	return ok && m.s == s && m.active.Load()
+}
+
+// enter は、ctx にループの上の印を付ける。返した関数で印を外す。
+func (s *Server) enter(ctx context.Context) (context.Context, func()) {
+	m := &loopMark{s: s}
+	m.active.Store(true)
+	return context.WithValue(ctx, loopKey{}, m), func() { m.active.Store(false) }
+}
+
 // dispatch は、1 件のメッセージを処理する。
 func (s *Server) dispatch(m inbound) {
+	ctx, leave := s.enter(m.ctx)
+	defer leave()
 	if m.note != nil {
-		s.handleNotification(m.note)
+		s.handleNotification(ctx, m.note)
 		return
 	}
-	if m.ctx.Err() != nil {
+	if ctx.Err() != nil {
 		// 処理する前に取り消されたか、接続が終わった。
-		_ = m.reply(nil, &rpc.Error{Code: codeRequestCancelled, Message: "request cancelled: " + m.req.Method})
+		s.reply(m.req.Method, m.reply, nil, &rpc.Error{Code: codeRequestCancelled, Message: "request cancelled: " + m.req.Method})
 		return
 	}
-	result, err := s.handleRequest(m.ctx, m.req)
-	if rerr := m.reply(result, err); rerr != nil {
-		s.logf("reply to %s: %v", m.req.Method, rerr)
+	s.handleRequest(ctx, m.req, m.reply)
+}
+
+func (s *Server) reply(method string, reply rpc.Replier, result any, err error) {
+	if rerr := reply(result, err); rerr != nil {
+		s.logf("reply to %s: %v", method, rerr)
 	}
 }
 
-func (s *Server) handleRequest(ctx context.Context, req *rpc.Request) (any, error) {
+func (s *Server) handleRequest(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 	switch req.Method {
 	case ext.MethodInitialize:
-		return s.initialize(ctx, req)
+		res, err := s.initialize(ctx, req)
+		s.reply(req.Method, reply, res, err)
 	case ext.MethodPing:
-		return ext.PingResult{}, nil
+		s.reply(req.Method, reply, ext.PingResult{}, nil)
 	case ext.MethodMotionResolve:
-		return query(ctx, s, req, s.motions, func(p *ext.MotionResolveParams) (ext.BufferID, ext.Version, string) {
+		query(ctx, s, req, reply, s.motions, func(p *ext.MotionResolveParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
 		}, func(r *ext.MotionResolveResult, v ext.Version) { r.Version = v })
 	case ext.MethodTextObjectResolve:
-		return query(ctx, s, req, s.textObjects, func(p *ext.TextObjectResolveParams) (ext.BufferID, ext.Version, string) {
+		query(ctx, s, req, reply, s.textObjects, func(p *ext.TextObjectResolveParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
 		}, func(r *ext.TextObjectResolveResult, v ext.Version) { r.Version = v })
 	case ext.MethodOperatorApply:
-		return query(ctx, s, req, s.operators, func(p *ext.OperatorApplyParams) (ext.BufferID, ext.Version, string) {
+		query(ctx, s, req, reply, s.operators, func(p *ext.OperatorApplyParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
 		}, func(r *ext.OperatorApplyResult, v ext.Version) { r.Transaction.BaseVersion = v })
 	case ext.MethodCommandExecute:
-		return query(ctx, s, req, s.commands, func(p *ext.CommandExecuteParams) (ext.BufferID, ext.Version, string) {
+		query(ctx, s, req, reply, s.commands, func(p *ext.CommandExecuteParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
 		}, func(r *ext.CommandExecuteResult, v ext.Version) {
 			if r.Transaction != nil {
@@ -314,7 +286,7 @@ func (s *Server) handleRequest(ctx context.Context, req *rpc.Request) (any, erro
 			}
 		})
 	default:
-		return nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: "method not found: " + req.Method}
+		s.reply(req.Method, reply, nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: "method not found: " + req.Method})
 	}
 }
 
@@ -324,45 +296,12 @@ func (s *Server) initialize(ctx context.Context, req *rpc.Request) (any, error) 
 		return nil, err
 	}
 	if s.onInit != nil {
-		if err := s.protect(req.Method, func() error { return s.onInit(ctx, p.Settings) }); err != nil {
+		e := &InitializeEvent{APIVersion: p.APIVersion, Settings: p.Settings}
+		if err := s.protect(req.Method, func() error { return s.onInit(ctx, e) }); err != nil {
 			return nil, err
 		}
 	}
 	return ext.InitializeResult{APIVersion: ext.APIVersion}, nil
-}
-
-// query は、キー入力ごとの問い合わせ（とコマンド）を、id のハンドラーへ渡す。
-// バッファの複製が params の Version と一致する場合だけハンドラーを呼び、結果のバージョン番号を stamp で埋める。
-func query[P, R any, H ~func(context.Context, *Buffer, *P) (R, error)](
-	ctx context.Context, s *Server, req *rpc.Request,
-	handlers map[string]H,
-	meta func(*P) (ext.BufferID, ext.Version, string),
-	stamp func(*R, ext.Version),
-) (any, error) {
-	var p P
-	if err := decodeParams(req, &p); err != nil {
-		return nil, err
-	}
-	bufID, version, id := meta(&p)
-	h, ok := handlers[id]
-	if !ok {
-		return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: fmt.Sprintf("%s: unknown id %q", req.Method, id)}
-	}
-	b, err := s.bufferAt(bufID, version)
-	if err != nil {
-		return nil, err
-	}
-	var res R
-	err = s.protect(req.Method+" "+id, func() error {
-		var herr error
-		res, herr = h(ctx, b, &p)
-		return herr
-	})
-	if err != nil {
-		return nil, err
-	}
-	stamp(&res, version)
-	return res, nil
 }
 
 // bufferAt は、id のバッファの複製が version の時点にあれば返す。
@@ -382,7 +321,7 @@ func (s *Server) bufferAt(id ext.BufferID, version ext.Version) (*Buffer, error)
 	return b, nil
 }
 
-func (s *Server) handleNotification(n *rpc.Notification) {
+func (s *Server) handleNotification(ctx context.Context, n *rpc.Notification) {
 	switch n.Method {
 	case ext.MethodBufferOpen:
 		var p ext.BufferOpenParams
@@ -390,17 +329,21 @@ func (s *Server) handleNotification(n *rpc.Notification) {
 			s.logf("%v", err)
 			return
 		}
+		_, held := s.buffers[p.Buffer]
 		b := newBuffer(&p)
 		s.buffers[p.Buffer] = b
 		delete(s.stale, p.Buffer)
-		s.changed(b)
+		if s.onOpen != nil {
+			e := &BufferOpenEvent{Buffer: b, Reopen: held}
+			s.hook("buffer open hook", func() { s.onOpen(ctx, e) })
+		}
 	case ext.MethodBufferChange:
 		var p ext.BufferChangeParams
 		if err := decodeParams(n, &p); err != nil {
 			s.logf("%v", err)
 			return
 		}
-		s.bufferChange(&p)
+		s.bufferChange(ctx, &p)
 	case ext.MethodBufferClose:
 		var p ext.BufferCloseParams
 		if err := decodeParams(n, &p); err != nil {
@@ -411,7 +354,8 @@ func (s *Server) handleNotification(n *rpc.Notification) {
 		delete(s.buffers, p.Buffer)
 		delete(s.stale, p.Buffer)
 		if open && s.onClose != nil {
-			_ = s.protect("buffer close hook", func() error { s.onClose(p.Buffer); return nil })
+			e := &BufferCloseEvent{Buffer: p.Buffer}
+			s.hook("buffer close hook", func() { s.onClose(ctx, e) })
 		}
 	default:
 		// 知らない通知は捨てる（JSON-RPC 2.0 では通知に応答しない）。
@@ -422,7 +366,7 @@ func (s *Server) handleNotification(n *rpc.Notification) {
 // 差分が欠けたと判断したら buffer/resync を送り、buffer/open が届くまで以後の差分を捨てる。
 //
 // req: FR-16
-func (s *Server) bufferChange(p *ext.BufferChangeParams) {
+func (s *Server) bufferChange(ctx context.Context, p *ext.BufferChangeParams) {
 	if s.stale[p.Buffer] {
 		return
 	}
@@ -437,7 +381,10 @@ func (s *Server) bufferChange(p *ext.BufferChangeParams) {
 		cause = b.applyChange(p)
 	}
 	if cause == nil {
-		s.changed(b)
+		if s.onChange != nil {
+			e := &BufferChangeEvent{Buffer: b, FromVersion: p.FromVersion, ToVersion: p.ToVersion, Edits: p.Edits}
+			s.hook("buffer change hook", func() { s.onChange(ctx, e) })
+		}
 		return
 	}
 	s.logf("buffer %d: %v; requesting resync", p.Buffer, cause)
@@ -451,10 +398,9 @@ func (s *Server) bufferChange(p *ext.BufferChangeParams) {
 	}
 }
 
-func (s *Server) changed(b *Buffer) {
-	if s.onChange != nil {
-		_ = s.protect("buffer change hook", func() error { s.onChange(b); return nil })
-	}
+// hook は、フックを呼び、panic を回復して ErrorLog に書く。
+func (s *Server) hook(name string, f func()) {
+	_ = s.protect(name, func() error { f(); return nil })
 }
 
 // protect は f を呼び、f の panic を回復して誤りに変える。
@@ -504,7 +450,7 @@ type inbound struct {
 	note  *rpc.Notification
 }
 
-// queue は、接続の読み取りの goroutine から、メッセージを処理する goroutine へメッセージを渡す、上限の無い列である。
+// queue は、接続の読み取りの goroutine から、ループへメッセージを渡す、上限の無い列である。
 // 読み取りの goroutine を止めない（$/cancel と応答を読み続ける）ために、積む側は待たない。
 type queue struct {
 	mu    sync.Mutex

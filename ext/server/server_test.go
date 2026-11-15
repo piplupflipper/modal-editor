@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"strings"
@@ -149,8 +150,8 @@ func newExample() *server.Server {
 func TestInitialize(t *testing.T) {
 	s := server.New()
 	var got json.RawMessage
-	s.OnInitialize(func(_ context.Context, settings json.RawMessage) error {
-		got = settings
+	s.OnInitialize(func(_ context.Context, e *server.InitializeEvent) error {
+		got = e.Settings
 		return nil
 	})
 	h := start(t, s)
@@ -170,7 +171,7 @@ func TestInitialize(t *testing.T) {
 
 func TestInitializeHookError(t *testing.T) {
 	s := server.New()
-	s.OnInitialize(func(context.Context, json.RawMessage) error { return errors.New("bad settings") })
+	s.OnInitialize(func(context.Context, *server.InitializeEvent) error { return errors.New("bad settings") })
 	h := start(t, s)
 	err := h.call(t, ext.MethodInitialize, ext.InitializeParams{APIVersion: ext.APIVersion}, nil)
 	var rerr *rpc.Error
@@ -185,7 +186,15 @@ func TestInitializeHookError(t *testing.T) {
 func TestFullTextAndDiff(t *testing.T) {
 	s := newExample()
 	var seen []string
-	s.OnBufferChange(func(b *server.Buffer) { seen = append(seen, b.Text()) })
+	s.OnBufferOpen(func(_ context.Context, e *server.BufferOpenEvent) {
+		seen = append(seen, fmt.Sprintf("open(reopen=%t) %q", e.Reopen, e.Buffer.Text()))
+	})
+	s.OnBufferChange(func(_ context.Context, e *server.BufferChangeEvent) {
+		seen = append(seen, fmt.Sprintf("change %d->%d edits=%d %q", e.FromVersion, e.ToVersion, len(e.Edits), e.Buffer.Text()))
+	})
+	s.OnBufferClose(func(_ context.Context, e *server.BufferCloseEvent) {
+		seen = append(seen, fmt.Sprintf("close %d", e.Buffer))
+	})
 	h := start(t, s)
 
 	h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 7, Text: "first\n  second"})
@@ -207,10 +216,20 @@ func TestFullTextAndDiff(t *testing.T) {
 	if res != want {
 		t.Errorf("result = %+v, want %+v", res, want)
 	}
-	if got := strings.Join(seen, "|"); got != "first\n  second|  second 行" {
-		t.Errorf("OnBufferChange saw %q", got)
-	}
+	// 同じバッファの全文を受け取り直したら Reopen になる。開いていないバッファの close ではフックを呼ばない。
+	h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 9, Text: "z"})
+	h.notify(t, ext.MethodBufferClose, ext.BufferCloseParams{Buffer: 1})
+	h.notify(t, ext.MethodBufferClose, ext.BufferCloseParams{Buffer: 2})
 	h.noNote(t)
+	want2 := []string{
+		`open(reopen=false) "first\n  second"`,
+		`change 7->8 edits=2 "  second 行"`,
+		`open(reopen=true) "z"`,
+		`close 1`,
+	}
+	if strings.Join(seen, "|") != strings.Join(want2, "|") {
+		t.Errorf("hooks saw\n%s\nwant\n%s", strings.Join(seen, "\n"), strings.Join(want2, "\n"))
+	}
 }
 
 // buffer/change の FromVersion が合わなければ buffer/resync を 1 回だけ送り、buffer/open まで問い合わせに失敗を応答する。
@@ -311,7 +330,7 @@ func TestHandlerPanic(t *testing.T) {
 	s.Motion("boom", func(context.Context, *server.Buffer, *ext.MotionResolveParams) (ext.MotionResolveResult, error) {
 		panic("boom")
 	})
-	s.OnBufferChange(func(*server.Buffer) { panic("hook boom") })
+	s.OnBufferOpen(func(context.Context, *server.BufferOpenEvent) { panic("hook boom") })
 	h := start(t, s)
 	h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Text: "x"})
 	err := h.call(t, ext.MethodMotionResolve, ext.MotionResolveParams{Buffer: 1, ID: "boom"}, nil)
@@ -321,7 +340,7 @@ func TestHandlerPanic(t *testing.T) {
 	}
 	h.ping(t)
 	out := h.log.String()
-	if !strings.Contains(out, "panic in buffer change hook: hook boom") || !strings.Contains(out, "panic in motion/resolve boom: boom") {
+	if !strings.Contains(out, "panic in buffer open hook: hook boom") || !strings.Contains(out, "panic in motion/resolve boom: boom") {
 		t.Errorf("ErrorLog = %q", out)
 	}
 }
@@ -493,4 +512,130 @@ func TestRegisterPanics(t *testing.T) {
 	s := server.New()
 	s.TextObject("a", innerLine)
 	mustPanic("duplicate id", func() { s.TextObject("a", innerLine) })
+}
+
+// モーションの結果の Version には、問い合わせのバージョン番号が入る。
+//
+// req: FR-11
+func TestMotion(t *testing.T) {
+	s := server.New()
+	// 行末へ移動する。回数の省略（0）は 1 として扱う。
+	s.Motion("eol", func(_ context.Context, b *server.Buffer, p *ext.MotionResolveParams) (ext.MotionResolveResult, error) {
+		l := p.Cursor.Line + max(p.Count, 1) - 1
+		if l >= b.LineCount() {
+			return ext.MotionResolveResult{OK: false}, nil
+		}
+		return ext.MotionResolveResult{OK: true, Position: ext.Position{Line: l, Byte: len(b.Line(l))}, Inclusive: true}, nil
+	})
+	h := start(t, s)
+	h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 6, Text: "ab\ncde"})
+
+	var res ext.MotionResolveResult
+	if err := h.call(t, ext.MethodMotionResolve, ext.MotionResolveParams{Buffer: 1, Version: 6, ID: "eol", Count: 2}, &res); err != nil {
+		t.Fatal(err)
+	}
+	want := ext.MotionResolveResult{OK: true, Version: 6, Position: ext.Position{Line: 1, Byte: 3}, Inclusive: true}
+	if res != want {
+		t.Errorf("motion/resolve = %+v, want %+v", res, want)
+	}
+	res = ext.MotionResolveResult{}
+	if err := h.call(t, ext.MethodMotionResolve, ext.MotionResolveParams{Buffer: 1, Version: 6, ID: "eol", Count: 3}, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.OK {
+		t.Errorf("motion/resolve past the last line = %+v, want OK false", res)
+	}
+}
+
+// 非同期のハンドラーが答えるまでの間も、ループは buffer/change と ping を処理し、結果には問い合わせの番号が入る。
+func TestAsyncHandler(t *testing.T) {
+	s := server.New()
+	type pending struct {
+		snapshot *server.Buffer
+		reply    func(ext.TextObjectResolveResult, error)
+	}
+	got := make(chan pending, 1)
+	s.TextObjectAsync("slow", func(_ context.Context, b *server.Buffer, _ *ext.TextObjectResolveParams, reply func(ext.TextObjectResolveResult, error)) {
+		got <- pending{snapshot: b.Clone(), reply: reply}
+	})
+	h := start(t, s)
+	h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, Text: "abc"})
+
+	f, err := h.conn.Go(ext.MethodTextObjectResolve, ext.TextObjectResolveParams{Buffer: 1, Version: 1, ID: "slow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := <-got
+	// 応答の前でも、差分の適用と ping は進む。
+	h.notify(t, ext.MethodBufferChange, ext.BufferChangeParams{
+		Buffer: 1, FromVersion: 1, ToVersion: 2,
+		Edits: []ext.Edit{{Text: "x"}},
+	})
+	h.ping(t)
+	select {
+	case <-f.Ready():
+		t.Fatal("answered before reply")
+	default:
+	}
+
+	r := ext.Range{End: ext.Position{Byte: len(p.snapshot.Line(0))}}
+	p.reply(ext.TextObjectResolveResult{OK: true, Range: r}, nil)
+	p.reply(ext.TextObjectResolveResult{}, errors.New("second"))
+	var res ext.TextObjectResolveResult
+	if err := f.Result(&res); err != nil {
+		t.Fatal(err)
+	}
+	if want := (ext.TextObjectResolveResult{OK: true, Version: 1, Range: r}); res != want {
+		t.Errorf("result = %+v, want %+v", res, want)
+	}
+	if p.snapshot.Text() != "abc" {
+		t.Errorf("snapshot = %q", p.snapshot.Text())
+	}
+	h.ping(t)
+	if !strings.Contains(h.log.String(), "reply called more than once") {
+		t.Errorf("ErrorLog = %q", h.log.String())
+	}
+}
+
+// フックの中から、渡された ctx で Edit を呼ぶと、待たずに ErrEditInHandler を返し、後続の問い合わせは詰まらない。
+// フックが起こした goroutine からは、同じ ctx でも Edit が送られる。
+func TestEditInHook(t *testing.T) {
+	s := server.New()
+	s.Motion("m", func(context.Context, *server.Buffer, *ext.MotionResolveParams) (ext.MotionResolveResult, error) {
+		return ext.MotionResolveResult{OK: true}, nil
+	})
+	inHook := make(chan error, 1)
+	background := make(chan error, 1)
+	s.OnBufferChange(func(ctx context.Context, e *server.BufferChangeEvent) {
+		p := ext.BufferEditParams{Buffer: e.Buffer.ID(), Transaction: ext.Transaction{BaseVersion: e.ToVersion}}
+		_, err := s.Edit(ctx, p)
+		inHook <- err
+		go func() {
+			bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+			defer cancel()
+			_, err := s.Edit(bctx, p)
+			background <- err
+		}()
+	})
+	h := start(t, s)
+	h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, Text: "a"})
+	h.notify(t, ext.MethodBufferChange, ext.BufferChangeParams{
+		Buffer: 1, FromVersion: 1, ToVersion: 2,
+		Edits: []ext.Edit{{Text: "b"}},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := h.conn.Call(ctx, ext.MethodMotionResolve, ext.MotionResolveParams{Buffer: 1, Version: 2, ID: "m"}, nil); err != nil {
+		t.Errorf("motion/resolve after Edit in hook: %v", err)
+	}
+	if err := <-inHook; !errors.Is(err, server.ErrEditInHandler) {
+		t.Errorf("Edit in hook = %v, want ErrEditInHandler", err)
+	}
+	if err := <-background; err != nil {
+		t.Errorf("Edit from a goroutine = %v", err)
+	}
+	if p := <-h.edits; p.Transaction.BaseVersion != 2 {
+		t.Errorf("host received %+v", p)
+	}
 }
