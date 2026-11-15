@@ -663,9 +663,17 @@ func TestShutdown(t *testing.T) {
 				calls = append(calls, name)
 				mu.Unlock()
 			}
+			// sent は、shutdown の後の buffer/open を本体の側で書き出し終えたら閉じる。
+			sent := make(chan struct{})
 			if withHook {
 				s.OnShutdown(func(ctx context.Context, _ *server.ShutdownEvent) {
 					record("shutdown")
+					// buffer/open が拡張機能へ届くまで接続を開けておく。
+					select {
+					case <-sent:
+					case <-time.After(timeout):
+						t.Error("buffer/open was not sent while the shutdown hook was running")
+					}
 					if _, err := s.Edit(ctx, ext.BufferEditParams{}); !errors.Is(err, server.ErrEditInHandler) {
 						t.Errorf("Edit in shutdown hook = %v, want ErrEditInHandler", err)
 					}
@@ -677,7 +685,20 @@ func TestShutdown(t *testing.T) {
 			s.OnBufferOpen(func(context.Context, *server.BufferOpenEvent) { record("open") })
 			h := start(t, s)
 			h.notify(t, ext.MethodShutdown, ext.ShutdownParams{})
-			h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, Text: "a"})
+			// shutdown より後のメッセージは処理しない、を確かめるために buffer/open を送る。
+			// Serve は shutdown を処理すると接続を閉じるので、フックが無いと、この送信を書き出すより先に閉じ終えることがある（#82）。
+			// その場合は送信が ErrClosed で失敗するが、届かなかったので処理されないことに変わりはない。
+			// フックがある場合は、フックが書き出しの終わりを待つので、届いた上で処理されないことを確かめられる。
+			err := h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, Text: "a"})
+			if err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+				err = h.conn.Flush(ctx)
+				cancel()
+			}
+			close(sent)
+			if err != nil && (withHook || !errors.Is(err, rpc.ErrClosed)) {
+				t.Fatalf("send buffer/open: %v", err)
+			}
 
 			select {
 			case err := <-h.served:
