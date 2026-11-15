@@ -27,6 +27,7 @@ type visualExtent struct {
 
 // Selection は、ビジュアルモードの選択の始まりと終わり（どちらも含む）と、行単位かどうかを返す。
 // ビジュアルモードでなければ ok が false である。
+// 端は行末の後（Byte が行の長さ）にあることがあり、そのときはその行の改行を選んでいることを表す（visualCursor）。
 func (s *State) Selection() (start, end buffer.Position, linewise, ok bool) {
 	if !s.mode.visual() {
 		return buffer.Position{}, buffer.Position{}, false, false
@@ -95,7 +96,27 @@ func (s *State) visualMotion(cmd editcmd.Command) error {
 	if cmd.Target.Kind == editcmd.TargetTextObject {
 		return s.visualTextObject(cmd)
 	}
+	if cmd.Target.Kind == editcmd.TargetMotion && cmd.Target.Ref.Builtin() && cmd.Target.Ref.ID == "right" {
+		return s.visualRight(cmd)
+	}
 	return s.moveMotion(cmd)
+}
+
+// visualRight は、ビジュアルモードの l である。Vim と同じく、最後の文字から行末の後（NUL の位置）まで進める
+// （Vim の nv_right() は、'selection' が old でないビジュアルモードで行末の後へ移る）。
+// 行末の後（空の行の先頭を含む）にいれば失敗する。ab|c と d の vld は、c と改行を消して abd にする。
+func (s *State) visualRight(cmd editcmd.Command) error {
+	if s.cursor.Byte >= len(s.line(s.cursor.Line)) {
+		return failf("%v", target.ErrNoTarget)
+	}
+	// オペレーターの後の l と同じく、行末の位置まで進める。
+	res, err := s.resolveMotion(cmd.Target, cmd, target.AnyOperator)
+	if err != nil {
+		return err
+	}
+	s.cursor = s.clampPos(res.Pos)
+	s.want = res.Want
+	return nil
 }
 
 // visualTextObject は、ビジュアルモードのテキストオブジェクトである。
@@ -148,9 +169,10 @@ func (s *State) visualRegion() region {
 	if linewise {
 		// Vim は、行単位の選択の端（VIsual）が始まりなら列を 0 にし、カーソルが始まりならカーソルの列を残す（do_pending_operator）。
 		// y の後のカーソルと、アンドゥの後のカーソルがこの位置になる。
+		// カーソルが行末の後（NUL の位置）にあれば、その列を残す（vkC のアンドゥの後のカーソル。#86）。
 		at := pos(start.Line, 0)
 		if s.cursor.Less(s.visual.anchor) {
-			at = s.visualCursor()
+			at = s.cursor
 		}
 		return region{
 			start:    at,
@@ -158,17 +180,17 @@ func (s *State) visualRegion() region {
 			linewise: true,
 		}
 	}
-	eol := s.line(end.Line) == "" || (end == s.cursor && s.want == target.WantEOL)
+	// 終わりが行末の後（空の行の先頭を含む）なら、その行の改行まで選ぶ。始まりが行末の後なら、その行の改行から選ぶ。
+	eol := end.Byte >= len(s.line(end.Line))
 	return s.charRegion(start, end, eol)
 }
 
-// visualCursor は、ビジュアルモードのカーソルの位置を、Vim が置く位置で返す。
+// visualCursor は、モーションで移った後のビジュアルモードのカーソルを、Vim が置く位置で返す。
 // Vim は、'selection' が inclusive のビジュアルモードで、望みの列が行の幅に届かない行（j や k で移った短い行、$ の後）では、
-// カーソルを最後の文字ではなく行末の後（NUL の位置）へ置く（coladvance()）。この実装のカーソルは最後の文字に留めるので、
-// 望みの列から Vim の位置を求め直す。
-//
-// 使うのは、行単位の選択の始まりの列（アンドゥの単位に記録する位置。vkC のアンドゥの後のカーソル）だけである。
-// 選択の範囲と表示（Selection）は、PR #38 の「ビジュアルモードで扱わないもの」のとおり、最後の文字までのままにしている（#86）。
+// カーソルを最後の文字ではなく行末の後（NUL の位置）へ置く（coladvance()）。ここでも同じ位置へ置き、
+// 選択の端（Selection）とオペレーターの範囲を Vim に合わせる（#89。a と bcd|e の vkd は a を残す）。
+// 行末の後から h で戻る列（vkh）も、この位置から数えるので Vim と同じになる。
+// l で行末の後へ移るのは visualRight が扱う。ビジュアルモードを抜けると、カーソルは最後の文字へ戻る（exitVisual）。
 func (s *State) visualCursor() buffer.Position {
 	line := s.line(s.cursor.Line)
 	if line != "" && s.cursor.Byte == lastCharStart(line) &&

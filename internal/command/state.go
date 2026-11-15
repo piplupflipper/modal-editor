@@ -17,7 +17,8 @@
 // 'shiftwidth' と 'tabstop' は 8、'expandtab' と 'autoindent' はオフ、'joinspaces' はオン、'selection' は inclusive である。
 // ただし 'backspace' は、Vim の既定の空ではなく、多くの利用者が設定する "indent,eol,start" に当たる動きにする
 // （インサートモードの <BS> で、挿入を始めた位置より前の文字や行の区切りも消せる）。
-// Vim と違う点は、各関数の doc コメントに書く。
+// Vim と違う点は、各関数の doc コメントに書く。1 つの関数に収まらない違いと未実装の機能（:normal など）は、
+// docs/vim-differences.md の一覧に書く。
 package command
 
 import (
@@ -173,7 +174,8 @@ func New(b *buffer.Buffer, p KeyParser) *State {
 func (s *State) Buffer() *buffer.Buffer { return s.buf }
 
 // Cursor は、カーソルの位置を返す。
-// ノーマルモードとビジュアルモードでは、空の行を除いて行末の位置を指さない。インサートモードでは行末の位置を指しうる。
+// ノーマルモードでは、空の行を除いて行末の位置を指さない。インサートモードでは行末の位置を指しうる。
+// ビジュアルモードでは、Vim と同じく、j、k、$ で移った短い行や l で進んだ行で行末の位置を指しうる（visualCursor）。
 func (s *State) Cursor() buffer.Position { return s.cursor }
 
 // SetCursor は、カーソルを pos へ移す。バッファの外の位置は最も近い位置に丸める。

@@ -74,6 +74,9 @@ func (s *State) moveMotion(cmd editcmd.Command) error {
 	}
 	s.cursor = s.clampNormal(s.clampPos(res.Pos))
 	s.want = res.Want
+	if s.mode.visual() {
+		s.cursor = s.visualCursor()
+	}
 	return nil
 }
 
