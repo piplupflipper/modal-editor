@@ -399,6 +399,8 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 		if err != nil {
 			return buffer.Transaction{}, errExtension(ref, err)
 		}
+		// State を通さずに適用するので、State.applyTx の代わりに、問い合わせたときのカーソルをアンドゥの単位に記録する。
+		b.SetUndoCursor(q.Cursor)
 		x.e.syncChanges(x.bs, x.bs.state.PendingChanges())
 		x.e.commitChange(x.bs, ch)
 	}

@@ -10,7 +10,7 @@ import "testing"
 //
 // 挿入（i、a、A、I、o、O、<CR>、<BS> で前の行とつなぐ入力）、削除（x、X、D、dw、dj、dk、dd、dG、d}）、
 // 置き換え（S、cc、C、cw、cj、ck、r、r<CR>、~、gU、>、<）、行の結合（J）、p と P、ドットリピート、ビジュアルモードのオペレーター、
-// 回数つきの u と <C-r>、マクロの再生の取り消しを含む。
+// 回数つきの u と <C-r>、マクロの再生の取り消し、Ex の :s と :g/…/s の取り消しを含む。
 var undoCursorCases = []vimCase{
 	{"a|bc", "ixy<Esc>u", "abc", "0:1", "v:U", "v:U", ":", ":", "v:A"},
 	{"a|bc", "axy<Esc>u", "abc", "0:2", "v:U", "v:U", ":", ":", "v:A"},
@@ -199,6 +199,17 @@ var undoCursorCases = []vimCase{
 	{"  ab|cd\n  efgh\n  ijkl", "jVkcX<Esc>u", "  abcd\n  efgh\n  ijkl", "1:4", "V:  abcd\n  efgh\n", "v:U", "V:  abcd\n  efgh\n", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "Vd.u", "  efgh\n  ijkl", "0:2", "V:  efgh\n", "v:U", "V:  efgh\n", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "Vjdj.u", "  ijkl", "0:2", "V:  ijkl\n", "v:U", "V:  ijkl\n", ":", "v:A"},
+	// Ex の :s（:g の中を含む）は、置き換えた最初の行の列 0 へ戻る（字下げのある行でも、最初の空白でない文字ではない）。
+	{"  a|bc\n  dbf\nghi", ":s/b/X/<CR>u", "  abc\n  dbf\nghi", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"  a|bc\n  dbf\nghi", ":s/b/X/<CR>u<C-r>", "  aXc\n  dbf\nghi", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"  abc\n  dbf\ng|hi", ":2s/b/X/<CR>u", "  abc\n  dbf\nghi", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"  abc\n  dbf\ng|hi", ":%s/b/X/<CR>u", "  abc\n  dbf\nghi", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"|xyz\nxyz\n  abc\n  dbf\nghi", ":%s/b/X/<CR>u<C-r>", "xyz\nxyz\n  aXc\n  dXf\nghi", "2:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"|xyz\nxyz\n  abc\n  dbf\nghi", ":g/b/s/b/X/<CR>u", "xyz\nxyz\n  abc\n  dbf\nghi", "2:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"|abc\ndef\nghi\nbbb", ":3,4s/^/  /<CR>u<C-r>", "abc\ndef\n  ghi\n  bbb", "2:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"  abc\n  dbf\ng|hi", ":%s/b/X/<CR>u<C-r>", "  aXc\n  dXf\nghi", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"|xyz\nxyz\n  abc\n  dbf\nghi", ":g/b/s/b/X/<CR>u<C-r>", "xyz\nxyz\n  aXc\n  dXf\nghi", "2:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"  a|bc\n  dbf\nghi", ":2,3s/b/X/<CR>u", "  abc\n  dbf\nghi", "1:0", "v:U", "v:U", ":", ":", "v:A"},
 }
 
 // アンドゥとリドゥの後のカーソルが、挿入、削除、置き換え、行の結合、行単位の削除、ドットリピートのそれぞれで Vim 9.1 と一致する。

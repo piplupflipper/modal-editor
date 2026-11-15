@@ -131,10 +131,15 @@ func (e *Editor) editRequest(ev *exthost.EditRequest) {
 
 // applyExternal は、利用者の操作でない編集（buffer/edit、buffer/willSave）を、アンドゥの 1 単位として適用する。
 // カーソルは、診断と同じ規則で編集に合わせてずらす。
+// アンドゥの単位には、適用する前のカーソルを記録する（Vim で setline() の変更を u で取り消したときと同じ位置へ戻る）。
 func (e *Editor) applyExternal(bs *bufferState, tx buffer.Transaction) (buffer.Change, error) {
+	before := bs.state.Cursor()
 	ch, err := bs.buf.Apply(tx)
 	if err != nil {
 		return ch, err
+	}
+	if len(tx.Edits) > 0 {
+		bs.buf.SetUndoCursor(before)
 	}
 	e.commitChange(bs, ch)
 	bs.state.SetCursor(shiftAll(bs.state.Cursor(), ch.Edits))

@@ -327,17 +327,23 @@ func TestWriteNoName(t *testing.T) {
 }
 
 // 拡張機能の buffer/edit は、元にしたバージョン番号が現在と一致すれば適用する。
+// u で取り消すと、カーソルは適用する前の位置へ戻る（Vim 9.1 で、1 行目の 2 文字目から setline(1, "abc!") の後に u を打つと 1 行目の 2 文字目）。
 //
-// req: FR-15
+// req: FR-07, FR-15
 func TestExtensionEdit(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
 	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
-	h.keys(`\l`)
+	h.keys(`l\l`)
 	h.eventually("buffer/edit", func() bool { return h.e.cur.buf.Text() == "abc!" })
 	h.keys("u")
 	h.settle()
 	if got := h.text(); got != "abc" {
 		t.Errorf("u: text = %q", got)
+	}
+	var cur buffer.Position
+	h.e.do(func() { cur = h.e.cur.state.Cursor() })
+	if cur != (buffer.Position{Line: 0, Byte: 1}) {
+		t.Errorf("u: cursor = %v, want 0:1", cur)
 	}
 }
 
