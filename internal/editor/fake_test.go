@@ -110,6 +110,12 @@ func runFakeExt(mode string) int {
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("b%d finalNewline=%v", b.ID(), b.FinalNewline()))
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.env は、本体から受け取った環境変数 ext.EnvMCPSocket の値を表示する。
+		s.Command("fake.env", func(context.Context, *server.Buffer, *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			v, ok := os.LookupEnv(ext.EnvMCPSocket)
+			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("mcp=%q set=%v", v, ok))
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.Command("fake.ask", func(_ context.Context, _ *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			go func() {
 				r, err := s.AskChoice(hostCtx, ext.ChoiceAskParams{Title: "どれ?", Choices: []ext.Choice{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
@@ -213,6 +219,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.upper", `\u`), contrib("fake.jump", `\j`), contrib("fake.later", `\l`),
 					contrib("fake.dump", `\d`), contrib("fake.ask", `\a`), contrib("fake.state", `\s`),
 					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
+					contrib("fake.env", `\v`),
 				},
 			},
 		},

@@ -150,7 +150,7 @@ func (h *Host) restartDelay(failures int) time.Duration {
 // 異常な拡張機能は shutdown を処理できないことが多く、待つと再起動が遅れるためである。
 func (h *Host) runOnce(e *extension, r *run, stop <-chan struct{}) (err error) {
 	id := e.spec.Manifest.ID
-	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args, e.spec.Dir)
+	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args, e.spec.Dir, h.cfg.Env)
 	if err != nil {
 		return err
 	}
@@ -561,7 +561,8 @@ type process struct {
 // startProcess は、path の実行ファイルを、引数 args で、新しいプロセスグループの子プロセスとして起動する。
 // 標準入出力は os.Pipe でつなぎ、子の側の端は起動後に閉じる。
 // dir（宣言ファイルのディレクトリ。空でもよい）は、絶対パスにして環境変数 ext.EnvExtensionDir で渡す。
-func startProcess(path string, args []string, dir string) (p *process, err error) {
+// env（"名前=値" の列。[Config.Env]）は、本体の環境の後、ext.EnvExtensionDir の前に足す。
+func startProcess(path string, args []string, dir string, env []string) (p *process, err error) {
 	var opened []*os.File
 	defer func() {
 		if err != nil {
@@ -598,7 +599,7 @@ func startProcess(path string, args []string, dir string) (p *process, err error
 			dir = abs
 		}
 	}
-	cmd.Env = append(os.Environ(), ext.EnvExtensionDir+"="+dir)
+	cmd.Env = append(append(os.Environ(), env...), ext.EnvExtensionDir+"="+dir)
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW

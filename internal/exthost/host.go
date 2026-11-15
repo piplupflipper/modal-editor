@@ -108,6 +108,10 @@ type Config struct {
 	TerminateTimeout time.Duration
 	// Logger は、拡張機能の標準エラー出力と、状態の変化を記録する先である。nil なら slog.Default() を使う。
 	Logger *slog.Logger
+	// Env は、すべての拡張機能の子プロセスに足す環境変数の列である。各要素は "名前=値" の形にする。
+	// 子プロセスの環境は、本体の環境、Env、ext.EnvExtensionDir の順に並べ、同じ名前は後のものが勝つ（os/exec の決まり）。
+	// MCP のソケットのパス（ext.EnvMCPSocket。[NewMCPSocket]）を渡すのに使う（基本設計 6.2）。
+	Env []string
 }
 
 func (c Config) withDefaults() Config {
