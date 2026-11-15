@@ -1,0 +1,14 @@
+{
+  "id": "line",
+  "command": "./modal-editor-ext-line",
+  "activation": [
+    { "on": "textObject", "id": "line.inner" },
+    { "on": "textObject", "id": "line.around" }
+  ],
+  "contributes": {
+    "textObjects": [
+      { "id": "line.inner", "keys": "il" },
+      { "id": "line.around", "keys": "al" }
+    ]
+  }
+}

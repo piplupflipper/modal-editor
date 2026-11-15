@@ -12,6 +12,8 @@ BIN_DIR := bin
 BINARY  := $(BIN_DIR)/modal-editor
 # MCP の中継コマンド。MCP のクライアントが標準入出力のサーバーとして起動する（FR-33）。
 MCP_BRIDGE := $(BIN_DIR)/modal-editor-mcp-bridge
+# 標準の拡張機能。本体とは別の実行ファイルとして作る（NFR-01）。
+EXTENSIONS := modal-editor-ext-line
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/piplupflipper/modal-editor/internal/version.version=$(VERSION)
 
@@ -62,9 +64,10 @@ progress-check: ## docs/progress.md が最新でなければ失敗する
 check: fmt-check typecheck lint test tidy-check progress-check ## コミット前の検査を全て実行する（CI と同じ内容）
 
 .PHONY: build
-build: ## 実行ファイルを bin/ に作る
+build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行ファイルを bin/ に作る
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/modal-editor
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(MCP_BRIDGE) ./cmd/modal-editor-mcp-bridge
+	for e in $(EXTENSIONS); do CGO_ENABLED=0 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
 
 .PHONY: run
 run: ## ビルドせずに実行する
