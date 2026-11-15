@@ -1,0 +1,38 @@
+# golangci-lint v2 の設定。
+# 各リンターの説明は https://golangci-lint.run/docs/linters/ を参照する。
+version: "2"
+
+linters:
+  # standard は errcheck、govet、ineffassign、staticcheck、unused の 5 つ。
+  default: standard
+  enable:
+    - bodyclose # HTTP レスポンスの Body の閉じ忘れ
+    - copyloopvar # 不要になったループ変数のコピー
+    - errorlint # errors.Is と errors.As を使わないエラーの比較
+    - errname # エラー型とエラー変数の命名
+    - exhaustive # switch での enum の分岐もれ
+    - gocritic # バグになりやすい書き方と冗長な書き方
+    - gosec # セキュリティ上の問題になりやすい書き方
+    - misspell # 英単語のつづりの誤り
+    - nilerr # err が nil でないのに nil を返す誤り
+    - nolintlint # 理由の無い nolint コメント
+    - revive # 命名とコメントの規約
+    - unconvert # 不要な型変換
+    - unparam # 使われていない引数と戻り値
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # 構造体のフィールド順の最適化は読みやすさを優先して行わない
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+formatters:
+  enable:
+    - gofumpt # gofmt より厳格な整形
+    - goimports # import の並べ替えとグループ分け
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/piplupflipper/modal-editor
