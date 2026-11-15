@@ -1,0 +1,235 @@
+package target
+
+import (
+	"errors"
+	"testing"
+)
+
+// motionCase は、モーション 1 回の入力と期待する結果である。
+// text と want は、"|" でカーソルの位置を示す。want が空なら ErrNoTarget を期待する。
+type motionCase struct {
+	motion string
+	text   string
+	count  int
+	want   string
+	kind   Kind
+	op     Operator
+	char   rune // f F t T の文字
+	last   Find // ; , の直前の検索
+	wantCo int  // j k の望みの列
+}
+
+// motionTests は、TestMotions の表である。
+var motionTests = []motionCase{
+	// h
+	{motion: "h", text: "ab|c", want: "a|bc", kind: Exclusive},
+	{motion: "h", text: "a|bc", count: 5, want: "|abc", kind: Exclusive},
+	{motion: "h", text: "あい|う", want: "あ|いう", kind: Exclusive},
+	{motion: "h", text: "|abc"},
+	{motion: "h", text: "ab\n|cd"}, // 前の行へは移らない
+	{motion: "h", text: "|"},
+
+	// l
+	{motion: "l", text: "|abc", want: "a|bc", kind: Exclusive},
+	{motion: "l", text: "|abc", count: 5, want: "ab|c", kind: Exclusive},
+	{motion: "l", text: "|abc", count: 5, op: AnyOperator, want: "abc|", kind: Exclusive},
+	{motion: "l", text: "|あいう", want: "あ|いう", kind: Exclusive},
+	{motion: "l", text: "ab|c"},
+	{motion: "l", text: "ab|c\nd"}, // 次の行へは移らない
+	{motion: "l", text: "|"},
+	{motion: "l", text: "|", op: AnyOperator},
+
+	// j k
+	{motion: "j", text: "|abc\nde", want: "abc\n|de", kind: Linewise},
+	{motion: "j", text: "|abc\nde", wantCo: 2, want: "abc\nd|e", kind: Linewise},
+	{motion: "j", text: "|あいう\nかきく", wantCo: 2, want: "あいう\nかき|く", kind: Linewise},
+	{motion: "j", text: "|abc\nde", wantCo: WantEOL, want: "abc\nd|e", kind: Linewise},
+	{motion: "j", text: "|abc\n\nx", wantCo: 2, want: "abc\n|\nx", kind: Linewise},
+	{motion: "j", text: "|a\nb\nc", count: 5, want: "a\nb\n|c", kind: Linewise},
+	{motion: "j", text: "a\n|b"},
+	{motion: "j", text: "|"},
+	{motion: "k", text: "ab\nc|d", wantCo: 1, want: "a|b\ncd", kind: Linewise},
+	{motion: "k", text: "a\nb\n|c", count: 5, want: "|a\nb\nc", kind: Linewise},
+	{motion: "k", text: "|ab\ncd"},
+
+	// w W
+	{motion: "w", text: "|foo bar", want: "foo |bar", kind: Exclusive},
+	{motion: "w", text: "|foo.bar", want: "foo|.bar", kind: Exclusive},
+	{motion: "w", text: "|a b c d", count: 3, want: "a b c |d", kind: Exclusive},
+	{motion: "w", text: "|foo\n  bar", want: "foo\n  |bar", kind: Exclusive},
+	{motion: "w", text: "|foo\n\nbar", want: "foo\n|\nbar", kind: Exclusive}, // 空の行に止まる
+	{motion: "w", text: "foo\n|\nbar", want: "foo\n\n|bar", kind: Exclusive},
+	{motion: "w", text: "|日本語 abc", want: "日本語 |abc", kind: Exclusive},
+	{motion: "w", text: "|あ.い", want: "あ|.い", kind: Exclusive},
+	{motion: "w", text: "foo |bar", want: "foo ba|r", kind: Inclusive}, // 最後の単語からは最後の文字へ
+	{motion: "w", text: "foo ba|r"},
+	{motion: "e", text: "a |b\nc", count: 3, want: "a b\n|c", kind: Inclusive}, // 回数の途中で末尾に着いても、動けば成功
+	{motion: "w", text: "|"},
+	{motion: "w", text: "|a b\nc d", count: 2, op: AnyOperator, want: "a |b\nc d", kind: Inclusive}, // d2w は行末を越えない
+	{motion: "W", text: "|foo.bar baz", want: "foo.bar |baz", kind: Exclusive},
+	{motion: "w", text: "a |b\n  c", want: "a b\n  |c", kind: Exclusive},
+	{motion: "w", text: "a |b\n  c", count: 2, want: "a b\n  |c", kind: Inclusive}, // 回数の途中で末尾に着いても、動けば成功
+	{motion: "w", text: "|a\n\n\nb", count: 2, want: "a\n\n|\nb", kind: Exclusive},
+	{motion: "w", text: "|a\tb", want: "a\t|b", kind: Exclusive},
+	{motion: "W", text: "|a.b c.d e", count: 2, want: "a.b c.d |e", kind: Exclusive},
+
+	// b B
+	{motion: "b", text: "foo |bar", want: "|foo bar", kind: Exclusive},
+	{motion: "b", text: "foo.b|ar", want: "foo.|bar", kind: Exclusive},
+	{motion: "b", text: "foo\n|bar", want: "|foo\nbar", kind: Exclusive},
+	{motion: "b", text: "foo\n\n|bar", want: "foo\n|\nbar", kind: Exclusive},
+	{motion: "b", text: "a b c |d", count: 2, want: "a |b c d", kind: Exclusive},
+	{motion: "b", text: "a b |c", count: 9, want: "|a b c", kind: Exclusive},
+	{motion: "b", text: "日本 語|x", want: "日本 |語x", kind: Exclusive},
+	{motion: "b", text: "|foo"},
+	{motion: "b", text: "|"},
+	{motion: "B", text: "foo.b|ar", want: "|foo.bar", kind: Exclusive},
+
+	// e E
+	{motion: "e", text: "|foo bar", want: "fo|o bar", kind: Inclusive},
+	{motion: "e", text: "fo|o bar", want: "foo ba|r", kind: Inclusive},
+	{motion: "e", text: "fo|o\n\nbar", want: "foo\n\nba|r", kind: Inclusive}, // 空の行には止まらない
+	{motion: "e", text: "|a b c", count: 2, want: "a b |c", kind: Inclusive}, // a は既に単語の終わり
+	{motion: "e", text: "|日本語 x", want: "日本|語 x", kind: Inclusive},
+	{motion: "e", text: "foo ba|r"},
+	{motion: "e", text: "|"},
+	{motion: "E", text: "|foo.bar baz", want: "foo.ba|r baz", kind: Inclusive},
+
+	// 0 ^ $
+	{motion: "0", text: "ab|c", want: "|abc", kind: Exclusive},
+	{motion: "0", text: "|", want: "|", kind: Exclusive},
+	{motion: "^", text: "  a|bc", want: "  |abc", kind: Exclusive},
+	{motion: "^", text: "|   ", want: "  | ", kind: Exclusive}, // 空白だけの行は最後の文字
+	{motion: "^", text: "|", want: "|", kind: Exclusive},
+	{motion: "$", text: "|abc", want: "ab|c", kind: Inclusive},
+	{motion: "$", text: "|あい", want: "あ|い", kind: Inclusive},
+	{motion: "$", text: "|ab\ncd", count: 2, want: "ab\nc|d", kind: Inclusive},
+	{motion: "$", text: "|", want: "|", kind: Inclusive},
+	{motion: "$", text: "|ab\ncd", count: 3, want: "ab\nc|d", kind: Inclusive}, // 最後の行で止める
+	{motion: "$", text: "ab\n|cd", count: 2},
+
+	// gg G
+	{motion: "gg", text: "  ab\nc|d", want: "  |ab\ncd", kind: Linewise},
+	{motion: "gg", text: "|ab\n  cd\nef", count: 2, want: "ab\n  |cd\nef", kind: Linewise},
+	{motion: "gg", text: "|ab\ncd", count: 9, want: "ab\n|cd", kind: Linewise},
+	{motion: "gg", text: "|", want: "|", kind: Linewise},
+	{motion: "G", text: "|ab\n  cd", want: "ab\n  |cd", kind: Linewise},
+	{motion: "G", text: "ab\n|cd", count: 1, want: "|ab\ncd", kind: Linewise},
+
+	// f F t T
+	{motion: "f", char: 'b', text: "|abcb", want: "a|bcb", kind: Inclusive},
+	{motion: "f", char: 'b', text: "|abcb", count: 2, want: "abc|b", kind: Inclusive},
+	{motion: "f", char: 'a', text: "|aa", want: "a|a", kind: Inclusive}, // カーソルの位置の文字は数えない
+	{motion: "f", char: 'う', text: "|あいう", want: "あい|う", kind: Inclusive},
+	{motion: "f", char: 'x', text: "|abc"},
+	{motion: "f", char: 'b', text: "|abc", count: 2},
+	{motion: "f", char: 'c', text: "ab|c"},
+	{motion: "f", char: 'b', text: "|a\nb"}, // 次の行は探さない
+	{motion: "f", char: 'a', text: "|"},
+	{motion: "F", char: 'b', text: "abc|b", want: "a|bcb", kind: Exclusive},
+	{motion: "F", char: 'あ', text: "あい|う", want: "|あいう", kind: Exclusive},
+	{motion: "F", char: 'x', text: "ab|c"},
+	{motion: "t", char: 'c', text: "|abcb", want: "a|bcb", kind: Inclusive},
+	{motion: "t", char: 'b', text: "|ab", want: "|ab", kind: Inclusive}, // すぐ隣なら動かない
+	{motion: "t", char: 'う', text: "|あいう", want: "あ|いう", kind: Inclusive},
+	{motion: "T", char: 'a', text: "abc|d", want: "a|bcd", kind: Exclusive},
+	{motion: "T", char: 'あ', text: "あい|う", want: "あ|いう", kind: Exclusive},
+
+	// ; ,
+	{motion: ";", last: Find{Char: 'b'}, text: "a|bcb", want: "abc|b", kind: Inclusive},
+	{motion: ";", last: Find{Char: '.', Till: true}, text: "|a.b.c", want: "a.|b.c", kind: Inclusive}, // t の後の ; は隣を飛ばす
+	{motion: ";", last: Find{Char: '.', Till: true}, text: "|a.b.c", count: 2, want: "a.|b.c", kind: Inclusive},
+	{motion: ";", last: Find{Char: 'b', Backward: true}, text: "abc|b", want: "a|bcb", kind: Exclusive},
+	{motion: ",", last: Find{Char: 'b'}, text: "abc|b", want: "a|bcb", kind: Exclusive},
+	{motion: ",", last: Find{Char: 'b', Backward: true}, text: "a|bcb", want: "abc|b", kind: Inclusive},
+	{motion: ";", text: "|abc"}, // 直前の検索が無い
+	{motion: ";", last: Find{Char: 'x'}, text: "|abc"},
+
+	// %
+	{motion: "%", text: "|(a(b)c)", want: "(a(b)c|)", kind: Inclusive},
+	{motion: "%", text: "(a(b)c|)", want: "|(a(b)c)", kind: Inclusive},
+	{motion: "%", text: "(a|(b)c)", want: "(a(b|)c)", kind: Inclusive},
+	{motion: "%", text: "x|y[a]", want: "xy[a|]", kind: Inclusive}, // 後ろの括弧を探す
+	{motion: "%", text: "|{\n  x\n}", want: "{\n  x\n|}", kind: Inclusive},
+	{motion: "%", text: "あ|い(う)", want: "あい(う|)", kind: Inclusive},
+	{motion: "%", text: "|abc"},
+	{motion: "%", text: "|(abc"},
+	{motion: "%", text: "(|a"},
+	{motion: "%", text: "|"},
+	{motion: "%", text: "|a\nb\n  c\nd", count: 50, want: "a\n|b\n  c\nd", kind: Linewise},
+	{motion: "%", text: "|a\nb\n  c\nd", count: 75, want: "a\nb\n  |c\nd", kind: Linewise},
+	{motion: "%", text: "|a\nb", count: 101},
+
+	// { }
+	{motion: "}", text: "|a\nb\n\nc", want: "a\nb\n|\nc", kind: Exclusive},
+	{motion: "}", text: "|a\nb\n\nc", count: 2, want: "a\nb\n\n|c", kind: Inclusive}, // 最後の行は最後の文字
+	{motion: "}", text: "|a\nb\n\nc", count: 3},
+	{motion: "}", text: "|a\n  \nb", want: "a\n  \n|b", kind: Inclusive}, // 空白だけの行は境界にしない
+	{motion: "}", text: "|", want: "|", kind: Exclusive},
+	{motion: "}", text: "a\n|bc", want: "a\nb|c", kind: Inclusive},
+	{motion: "{", text: "a\n\n|b", want: "a\n|\nb", kind: Exclusive},
+	{motion: "{", text: "a\n\nb\n\n|c", count: 2, want: "a\n|\nb\n\nc", kind: Exclusive},
+	{motion: "{", text: "a\n|b", want: "|a\nb", kind: Exclusive},
+	{motion: "{", text: "|a", want: "|a", kind: Exclusive},
+	{motion: "{", text: "a\n\n|b", count: 3},
+}
+
+// req: FR-03
+func TestMotions(t *testing.T) {
+	for _, tt := range motionTests {
+		b, cur := parse(t, tt.text)
+		f, ok := LookupMotion(tt.motion)
+		if !ok {
+			t.Fatalf("motion %q not found", tt.motion)
+		}
+		req := Request{Cursor: cur, Count: tt.count, Operator: tt.op, Char: tt.char, Last: tt.last, Want: tt.wantCo}
+		res, err := f(b, req)
+		if tt.want == "" {
+			if !errors.Is(err, ErrNoTarget) {
+				t.Errorf("%d%s on %q: got %q, %v, want ErrNoTarget", tt.count, tt.motion, tt.text, mark(b, res.Pos), err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%d%s on %q: error = %v", tt.count, tt.motion, tt.text, err)
+			continue
+		}
+		if got := mark(b, res.Pos); got != tt.want || res.Kind != tt.kind {
+			t.Errorf("%d%s on %q (op %d) = %q (%v), want %q (%v)", tt.count, tt.motion, tt.text, tt.op, got, res.Kind, tt.want, tt.kind)
+		}
+	}
+}
+
+// req: FR-03
+func TestMotionWantAndFind(t *testing.T) {
+	tests := []struct {
+		motion   string
+		text     string
+		req      Request
+		wantWant int
+		wantFind Find
+	}{
+		{motion: "l", text: "あ|いう", wantWant: 2},
+		{motion: "$", text: "|abc", wantWant: WantEOL},
+		{motion: "j", text: "|abc\nd", req: Request{Want: 7}, wantWant: 7}, // j と k は望みの列を変えない
+		{motion: "k", text: "abc\n|d", req: Request{Want: WantEOL}, wantWant: WantEOL},
+		{motion: "w", text: "|ab cd", wantWant: 3},
+		{motion: "G", text: "|a\n  b", wantWant: 2},
+		{motion: "f", text: "|abc", req: Request{Char: 'c'}, wantWant: 2, wantFind: Find{Char: 'c'}},
+		{motion: "T", text: "ab|c", req: Request{Char: 'a'}, wantWant: 1, wantFind: Find{Char: 'a', Backward: true, Till: true}},
+		{motion: ";", text: "|abc", req: Request{Last: Find{Char: 'c'}}, wantWant: 2}, // ; は記録を変えない
+	}
+	for _, tt := range tests {
+		b, cur := parse(t, tt.text)
+		f, _ := LookupMotion(tt.motion)
+		tt.req.Cursor = cur
+		res, err := f(b, tt.req)
+		if err != nil {
+			t.Errorf("%s on %q: error = %v", tt.motion, tt.text, err)
+			continue
+		}
+		if res.Want != tt.wantWant || res.Find != tt.wantFind {
+			t.Errorf("%s on %q: Want = %d, Find = %+v, want %d, %+v", tt.motion, tt.text, res.Want, res.Find, tt.wantWant, tt.wantFind)
+		}
+	}
+}
