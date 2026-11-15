@@ -19,6 +19,9 @@ const (
 	// defaultRequestTimeout は、コマンド（定義へ移動、ホバー、整形）が言語サーバーの応答を待つ時間の上限である。
 	// 本体が応答を待たないとき（sync が false）の上限で、sync が true のときは本体の期限に従う。
 	defaultRequestTimeout = 10 * time.Second
+	// defaultResetAfter は、言語サーバーがこの時間より長く稼働した後に異常終了したら、再起動の回数を数え直すという時間である。
+	// internal/exthost の DefaultResetAfter と同じ考え方である。
+	defaultResetAfter = time.Minute
 	// defaultRestartDelay は、異常終了から再起動までの待ち時間の 1 回目である。n 回目は n 倍にする。
 	defaultRestartDelay = 500 * time.Millisecond
 )

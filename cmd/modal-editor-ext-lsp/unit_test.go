@@ -107,6 +107,12 @@ func TestFormattingTransaction(t *testing.T) {
 		{"insert an empty line after the final newline", "a", []textEdit{te(1, 0, 1, 0, "\n")}, "a\n"},
 		{"delete trailing empty lines", "a\n\n", []textEdit{te(0, 1, 3, 0, "\n")}, "a"},
 		{"no-op edit is dropped", "a", []textEdit{te(0, 0, 0, 0, "")}, "a"},
+		{"empty insert after the final newline is dropped", "a", []textEdit{te(1, 0, 1, 0, "")}, "a"},
+		// 以下の 3 つは、実際の gopls（v0.24.0）が末尾の空の行を消すときに返した編集の形である（全文の末尾に "\n" を足して送ったもの）。
+		{"gopls: trailing empty lines after package", "package a\n\n", []textEdit{te(1, 0, 3, 0, "")}, "package a"},
+		{"gopls: trailing empty lines after func", "package a\n\nfunc f() {}\n\n\n", []textEdit{te(3, 0, 6, 0, "")}, "package a\n\nfunc f() {}"},
+		{"gopls: trailing empty lines after a block", "package a\n\nfunc f() {\n}\n\n", []textEdit{te(4, 0, 6, 0, "")}, "package a\n\nfunc f() {\n}"},
+		{"delete to the end with a non-newline text keeps the final newline", "a\nb", []textEdit{te(1, 0, 2, 0, "c")}, "a\nc"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

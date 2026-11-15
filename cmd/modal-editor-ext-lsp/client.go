@@ -32,11 +32,13 @@ type proc struct {
 	ready bool
 	// stopping は、拡張機能が自分から止めようとしていることを表す。終了しても再起動しない。
 	stopping bool
-	enc      encoding
-	caps     serverCapabilities
-	sync     textDocumentSyncOptions
-	save     bool
-	saveText bool
+	// readySince は、ready になった時刻である。
+	readySince time.Time
+	enc        encoding
+	caps       serverCapabilities
+	sync       textDocumentSyncOptions
+	save       bool
+	saveText   bool
 }
 
 // client は、1 つのファイルの種類について、言語サーバーのプロセスを起動し、文書を同期し、診断を本体へ送る。
@@ -61,6 +63,8 @@ type client struct {
 	restartDelay time.Duration
 	// initTimeout は、initialize の応答を待つ時間の上限である。
 	initTimeout time.Duration
+	// resetAfter は、稼働中になってからこの時間より長く動いた後の異常終了では、再起動の回数を数え直すという時間である。
+	resetAfter time.Duration
 
 	mu   sync.Mutex
 	docs map[ext.BufferID]*document
@@ -69,7 +73,7 @@ type client struct {
 	root string
 	// starting は、起動の goroutine が動いているか、再起動を待っていることを表す。
 	starting bool
-	// restarts は、異常終了から再起動した回数である。
+	// restarts は、異常終了から再起動した回数である。resetAfter より長く動いた後の異常終了では 0 から数え直す。
 	restarts int
 	// failed は、再起動の回数が上限に達したか、実行ファイルを起動できなかったので、もう起動しないことを表す。
 	failed bool
@@ -85,6 +89,7 @@ func newClient(x *extension, fileType string, cfg *serverConfig, maxRestarts int
 		maxRestarts:  maxRestarts,
 		restartDelay: defaultRestartDelay,
 		initTimeout:  defaultInitTimeout,
+		resetAfter:   defaultResetAfter,
 		docs:         make(map[ext.BufferID]*document),
 	}
 }
@@ -291,6 +296,7 @@ func (c *client) start() {
 	p.enc = parseEncoding(res.Capabilities.PositionEncoding)
 	p.sync, p.save, p.saveText = res.Capabilities.syncOptions()
 	p.ready = true
+	p.readySince = time.Now()
 	c.notify(p, lspInitialized, struct{}{})
 	for _, d := range c.docs {
 		c.didOpen(p, d)
@@ -344,6 +350,7 @@ func (c *client) spawn(root string) (*proc, error) {
 
 // watch は、言語サーバーのプロセスが終了するまで待ち、終了したら接続を閉じる。
 // 拡張機能が止めたのでなければ異常終了として扱い、回数の上限までは待ってから再起動する。
+// 回数は、短い間に失敗を繰り返す言語サーバーだけを止めるためのもので、resetAfter より長く稼働した後の異常終了では数え直す。
 // 異常終了した言語サーバーの診断は古くなるので、開いている文書の診断を消す。
 //
 // req: FR-30
@@ -365,6 +372,9 @@ func (c *client) watch(p *proc) {
 	for _, d := range c.docs {
 		c.x.setDiagnostics(ext.DiagnosticSetParams{Buffer: d.buffer, Version: d.current().version, Diagnostics: []ext.Diagnostic{}})
 	}
+	if !p.readySince.IsZero() && time.Since(p.readySince) >= c.resetAfter {
+		c.restarts = 0
+	}
 	c.restarts++
 	n := c.restarts
 	if n > c.maxRestarts {
@@ -381,7 +391,8 @@ func (c *client) watch(p *proc) {
 	time.AfterFunc(c.restartDelay*time.Duration(n), c.start)
 }
 
-// stop は、言語サーバーへ shutdown と exit を送って止める。ctx の期限までに終わらなければ強制終了する。
+// stop は、稼働中の言語サーバーへ shutdown と exit を送って止める。ctx の期限までに終わらなければ強制終了する。
+// 起動中（initialize の応答の前）の言語サーバーは、すぐに強制終了する。
 // これより後は起動しない。拡張機能が終わるときに呼ぶ。
 func (c *client) stop(ctx context.Context) {
 	c.mu.Lock()
@@ -401,6 +412,9 @@ func (c *client) stop(ctx context.Context) {
 			_ = p.conn.Notify(lspExit, nil)
 			_ = p.conn.Flush(ctx)
 		}
+	} else {
+		// initialize の前の言語サーバーは shutdown を受け付けないので、待たずに止める。
+		_ = p.cmd.Process.Kill()
 	}
 	select {
 	case <-p.exited:

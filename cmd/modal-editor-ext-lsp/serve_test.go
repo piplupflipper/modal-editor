@@ -73,6 +73,8 @@ type hostOptions struct {
 	// maxRestarts は、settings の maxRestarts である。負なら省く。
 	maxRestarts int
 	choose      string
+	// resetAfter は、正なら client の resetAfter を置き換える。
+	resetAfter time.Duration
 }
 
 // startHost は、拡張機能を io.Pipe の上で動かし、fakels を go の言語サーバーにする設定で initialize する。
@@ -114,7 +116,12 @@ func startHost(t *testing.T, o hostOptions) *host {
 	h.x = x
 	x.log.SetOutput(io.Discard)
 	x.requestTimeout = testTimeout
-	x.tune = func(c *client) { c.restartDelay = 10 * time.Millisecond }
+	x.tune = func(c *client) {
+		c.restartDelay = 10 * time.Millisecond
+		if o.resetAfter > 0 {
+			c.resetAfter = o.resetAfter
+		}
+	}
 	served := make(chan error, 1)
 	go func() { served <- x.srv.Serve(ctx, extR, extW) }()
 	h.conn = rpc.NewConn(hostR, hostW, rpc.HandlerFuncs{
@@ -757,4 +764,90 @@ func TestStopShutsDown(t *testing.T) {
 	h.x.stop()
 	h.waitLog("exit", func(e logEntry) bool { return e.Kind == lspExit })
 	h.waitLog("shutdown", func(e logEntry) bool { return e.Kind == lspShutdown })
+}
+
+// ping は、本体の役から ping を送り、期限までに応答が届くことを確かめる。
+func (h *host) ping(within time.Duration) {
+	h.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), within)
+	defer cancel()
+	start := time.Now()
+	if err := h.conn.Call(ctx, ext.MethodPing, nil, nil); err != nil {
+		h.t.Fatalf("ping: %v (after %s)", err, time.Since(start))
+	}
+}
+
+// TestPingWhileWaiting は、言語サーバーの応答を待つ間（sync が false と true の lsp.format、buffer/willSave）も、
+// 拡張機能が ping に答え、buffer/change を言語サーバーへ送り続けることを確かめる（issue の契約）。
+//
+// req: FR-30
+func TestPingWhileWaiting(t *testing.T) {
+	h := startHost(t, hostOptions{args: []string{"-fmt-delay", "1m"}, maxRestarts: -1})
+	h.open(1, "a.go", "fmtme")
+	h.diagnosticsAt(1, 1)
+	if res := h.command(1, cmdFormat, pos(0, 0), false); !res.OK {
+		t.Fatal("format: ok = false")
+	}
+	// 応答を待ったままにする問い合わせ。取り消しは Cleanup で接続を閉じるときに起きる。
+	for _, req := range []struct {
+		method string
+		params any
+	}{
+		{ext.MethodCommandExecute, ext.CommandExecuteParams{Buffer: 1, Version: 1, ID: cmdFormat, Sync: true}},
+		{ext.MethodBufferWillSave, ext.BufferWillSaveParams{Buffer: 1, Version: 1}},
+	} {
+		f, err := h.conn.Go(req.method, req.params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Cancel() })
+	}
+	for range 5 {
+		h.ping(time.Second)
+	}
+	h.change(1, edit(0, 0, 0, 0, "x "))
+	if got := h.waitText(2); got != "x fmtme\n" {
+		t.Errorf("text after change = %q", got)
+	}
+	h.ping(time.Second)
+}
+
+// TestRestartCountResets は、resetAfter より長く稼働した後の異常終了では再起動の回数を数え直し、上限で止めないことを確かめる。
+//
+// req: FR-30
+func TestRestartCountResets(t *testing.T) {
+	h := startHost(t, hostOptions{maxRestarts: 1, resetAfter: 100 * time.Millisecond})
+	h.open(1, "a.go", "a")
+	h.diagnosticsAt(1, 1)
+	for n := 1; n <= 3; n++ {
+		time.Sleep(200 * time.Millisecond)
+		h.change(1, edit(0, 0, 0, 0, "CRASH "))
+		v := h.vers[1]
+		h.diagnosticsAt(1, v) // 消した診断
+		if m := receive(t, h.msgs, "message/show"); m.Level != ext.MessageWarning || !strings.Contains(m.Text, "1/1") {
+			t.Fatalf("crash %d: message = %+v, want a restart", n, m)
+		}
+		h.diagnosticsAt(1, v) // 再起動した言語サーバーの診断
+	}
+}
+
+// TestWillSaveBeforeReady は、言語サーバーの起動中の保存では、整形せずに編集無しを答え、そのことを message/show で知らせることを確かめる。
+//
+// req: FR-30
+func TestWillSaveBeforeReady(t *testing.T) {
+	h := startHost(t, hostOptions{args: []string{"-init-delay", "1m"}, maxRestarts: -1})
+	h.open(1, "a.go", "fmtme")
+	h.waitLog("initialize", func(e logEntry) bool { return e.Kind == lspInitialize })
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	var ws ext.BufferWillSaveResult
+	if err := h.conn.Call(ctx, ext.MethodBufferWillSave, ext.BufferWillSaveParams{Buffer: 1, Version: 1}, &ws); err != nil {
+		t.Fatal(err)
+	}
+	if ws.Transaction != nil {
+		t.Errorf("willSave before ready = %+v, want no edits", ws)
+	}
+	if m := receive(t, h.msgs, "message/show"); m.Level != ext.MessageWarning || !strings.Contains(m.Text, "保存の前の整形") {
+		t.Errorf("message = %+v", m)
+	}
 }

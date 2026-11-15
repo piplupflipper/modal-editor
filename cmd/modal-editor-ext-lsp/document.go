@@ -125,14 +125,17 @@ func (d *document) apply(edits []ext.Edit, to ext.Version, enc encoding, want bo
 // トランザクションは逐次の数え方なので、範囲の開始の位置の降順に並べ、開始の位置が同じものは配列の添字の降順に並べる（基本設計 6.3）。
 // 後ろの編集から適用すれば、前の編集の位置はずれない。
 //
-// 仮想の行（言語サーバーに送った全文の末尾の改行の後ろ）に触れる編集は、本体の位置で表せるように次のとおり書き換える。
+// 仮想の行（言語サーバーに送った全文の末尾の改行の後ろ）に触れる編集は、本体の位置で表せるように書き換える。
+// 本体の全文を H とすると、言語サーバーの全文は H + "\n" で、仮想の行の先頭はその末尾である。
+// 終わりが仮想の行にある編集 [s, 末尾) を T で置き換えた結果は H[:s] + T なので、これが H' + "\n" の形になる H' を作る。
 //
-//   - 終わりが仮想の行にある編集（末尾の改行を消す編集）は、終わりを最後の行の行末にし、
-//     新しいテキストが "\n" で終われば、その "\n" を末尾の改行の代わりとして除く
-//   - 始まりも仮想の行にある編集（末尾の改行の後ろへの挿入）は、最後の行の行末への "\n" と新しいテキストの挿入にし、
-//     新しいテキストが "\n" で終われば、その "\n" を除く
+//   - 始まりも仮想の行にある編集（末尾の改行の後ろへの挿入）は、最後の行の行末への "\n" と、T から末尾の "\n" を 1 つ除いたものの挿入にする。
+//     T が空なら何もしない
+//   - T が "\n" で終われば、終わりを最後の行の行末にし、T の末尾の "\n" を末尾の改行の代わりとして除く
+//   - T が空で、s が 2 行目以降の行の先頭なら（H[:s] は "\n" で終わる）、始まりを前の行の行末に、終わりを最後の行の行末にした削除にする。
+//     gopls（v0.24.0）は、末尾の空の行を消す整形をこの形（行の先頭から仮想の行の先頭までの削除）で返す
+//   - それ以外は、整形の結果が末尾の改行を持たない場合で、本体の位置では表せない。終わりを最後の行の行末にし、末尾の改行は残す
 //
-// 新しいテキストが "\n" で終わらない場合は、末尾の改行を消す整形にあたるが、本体の位置では表せないので、末尾の改行は残る。
 // 編集が無ければ nil を返す。
 //
 // req: FR-30
@@ -154,11 +157,16 @@ func formattingTransaction(ls lines, v ext.Version, edits []textEdit, enc encodi
 		}
 		text := te.NewText
 		if ev {
-			if t, ok := strings.CutSuffix(text, "\n"); ok {
-				text = t
-			}
-			if sv {
-				text = "\n" + text
+			switch {
+			case sv:
+				if text == "" {
+					continue
+				}
+				text = "\n" + strings.TrimSuffix(text, "\n")
+			case strings.HasSuffix(text, "\n"):
+				text = strings.TrimSuffix(text, "\n")
+			case text == "" && s.Byte == 0 && s.Line > 0:
+				s = ext.Position{Line: s.Line - 1, Byte: len(ls[s.Line-1])}
 			}
 		}
 		items = append(items, item{index: i, start: te.Range.Start, edit: ext.Edit{Range: ext.Range{Start: s, End: e}, Text: text}})

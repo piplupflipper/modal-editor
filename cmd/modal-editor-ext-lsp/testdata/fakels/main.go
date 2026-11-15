@@ -11,6 +11,7 @@
 //   - didChange の後の文書が "CRASH" を含めば、終了コード 3 で終わる
 //
 // 受け取ったメッセージと、各時点の文書の全文は、-log のファイルへ JSON の行で書き足す。
+// 起動したときに、自分と親（拡張機能）のプロセス ID を "start" の行で書く。
 package main
 
 import (
@@ -37,6 +38,7 @@ var (
 	links        = flag.Bool("links", false, "定義を LocationLink の配列で返す")
 	fmtWhole     = flag.Bool("fmt-whole", false, "整形を全体の置き換えで返す")
 	fmtDelay     = flag.Duration("fmt-delay", 0, "整形の応答を遅らせる時間")
+	initDelay    = flag.Duration("init-delay", 0, "initialize の応答を遅らせる時間")
 )
 
 type pos struct {
@@ -150,6 +152,7 @@ func main() {
 		}
 		logFile = f
 	}
+	logEntry("start", map[string]int{"pid": os.Getpid(), "ppid": os.Getppid()})
 	conn = rpc.NewConn(os.Stdin, os.Stdout, rpc.HandlerFuncs{
 		Request:      request,
 		Notification: notification,
@@ -172,7 +175,10 @@ func request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 		if *encodingFlag != "none" {
 			caps["positionEncoding"] = *encodingFlag
 		}
-		_ = reply(map[string]any{"capabilities": caps}, nil)
+		go func() {
+			time.Sleep(*initDelay)
+			_ = reply(map[string]any{"capabilities": caps}, nil)
+		}()
 	case "shutdown":
 		_ = reply(nil, nil)
 	case "textDocument/definition":

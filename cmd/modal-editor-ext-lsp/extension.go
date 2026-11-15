@@ -463,6 +463,7 @@ func (x *extension) format(ctx context.Context, _ *server.Buffer, p *ext.Command
 
 // willSave は、保存の直前の buffer/willSave に、textDocument/formatting の結果のトランザクションを答える（基本設計 6.3、6.7）。
 // 保存の前の整形を設定で止めているか、言語サーバーが稼働していないか、整形に対応しなければ、編集無しを答える。
+// 稼働していない（起動中か再起動を待っている）ときは、整形しなかったことを message/show で知らせる。
 // 本体が期限を超えて $/cancel を送ったら、言語サーバーへ $/cancelRequest を送り、取り消しを応答する。
 //
 // req: FR-30
@@ -474,6 +475,9 @@ func (x *extension) willSave(ctx context.Context, _ *server.Buffer, p *ext.Buffe
 	}
 	r, err := c.send(p.Buffer, p.Version, lspFormatting, hasFormatting, formattingParams(c.cfg))
 	if err != nil {
+		if errors.Is(err, errNotReady) {
+			x.showMessage(ext.MessageWarning, fmt.Sprintf("言語サーバー %s が稼働していないので、保存の前の整形をしなかった", c.name()))
+		}
 		reply(ext.BufferWillSaveResult{}, nil)
 		return
 	}
