@@ -104,3 +104,31 @@ func TestSelection(t *testing.T) {
 		t.Errorf("Selection = %v %v %v, cursor %v", start, end, linewise, s.Cursor())
 	}
 }
+
+// 逆順の範囲の :3,1d は確認を求め（Result.Confirm）、y の答えで続きを実行する。n なら何もしない。
+//
+// req: FR-08
+func TestCommandLineConfirm(t *testing.T) {
+	s := setup(t, "|a\nb\nc\nd")
+	r := s.ExecuteCommandLine("3,1d")
+	if r.Confirm == nil || r.Confirm.Prompt == "" {
+		t.Fatalf("3,1d: Confirm = %+v, err = %v", r.Confirm, r.Err)
+	}
+	if got := s.buf.Text(); got != "a\nb\nc\nd" {
+		t.Fatalf("確認の前に消した: %q", got)
+	}
+	if r := s.Confirm(r.Confirm, false); r.Err != nil || len(r.Changes) != 0 {
+		t.Errorf("n: %+v", r)
+	}
+	r = s.ExecuteCommandLine("3,1d")
+	r = s.Confirm(r.Confirm, true)
+	if r.Err != nil || len(r.Changes) != 1 {
+		t.Fatalf("y: %+v", r)
+	}
+	if got := s.buf.Text(); got != "d" {
+		t.Errorf("text = %q", got)
+	}
+	if reg, _ := s.registers.Get('"'); reg.Text != "a\nb\nc" {
+		t.Errorf("\" = %+v", reg)
+	}
+}

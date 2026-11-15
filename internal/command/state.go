@@ -72,6 +72,12 @@ func (m Mode) visual() bool { return m == ModeVisual || m == ModeVisualLine }
 // 失敗した操作はバッファを変えない。
 var ErrFailed = errors.New("command: operation failed")
 
+// ErrInterrupted は、State.Interrupted が true を返したので、マクロの再生を途中で止めたことを表す。
+var ErrInterrupted = errors.New("command: interrupted")
+
+// interrupted は、利用者が中断を求めたかを返す。
+func (s *State) interrupted() bool { return s.Interrupted != nil && s.Interrupted() }
+
 // failf は、ErrFailed を包んだエラーを返す。
 func failf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrFailed, fmt.Sprintf(format, args...))
@@ -89,6 +95,9 @@ type Result struct {
 	// Err は、操作の失敗である。マクロの再生は、失敗した時点で止める。
 	// 失敗までに適用した変更は Changes に残る。
 	Err error
+	// Confirm は、Ex コマンドが続きを実行する前に利用者の確認を求めたときに nil でない（逆順の範囲の :4,2d など）。
+	// このとき Err は E493 の *ex.Error である。呼び出し側は Confirm.Prompt を示して y か n を受け、State.Confirm に渡す。
+	Confirm *ex.Confirm
 }
 
 // State は、1 つのバッファを編集する状態である。
@@ -101,6 +110,10 @@ type State struct {
 	Extensions Extensions
 	// Ex は、Ex コマンドの呼び出しをまたいで保つ状態である。Mark は New が '< と '> を返す関数にする。
 	Ex ex.State
+	// Interrupted は、利用者が中断を求めたか（端末の <C-c> など）を返す関数である。nil なら中断しない。
+	// マクロの再生（999999999@: など）は、キーやコマンドラインを 1 つ実行するたびにこれを呼び、true なら ErrInterrupted で止める。
+	// 再生は Feed の中で同期に進むので、呼び出し側は別の goroutine で立てた印（atomic.Bool など）を読む関数を渡す。
+	Interrupted func() bool
 
 	buf    *buffer.Buffer
 	cursor buffer.Position

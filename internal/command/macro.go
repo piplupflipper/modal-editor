@@ -73,6 +73,10 @@ func (s *State) play(cmd editcmd.Command) error {
 		}
 		s.lastPlayed = name
 		for range n {
+			if s.interrupted() {
+				s.fail(ErrInterrupted)
+				break
+			}
 			s.runCommandLine(s.lastCmd)
 			if s.res.Err != nil {
 				break
@@ -92,7 +96,18 @@ func (s *State) play(cmd editcmd.Command) error {
 	s.playDepth++
 	defer func() { s.playDepth-- }()
 	for range n {
+		if s.interrupted() {
+			s.fail(ErrInterrupted)
+			return nil
+		}
+		if len(keys) == 0 {
+			break
+		}
 		for _, k := range keys {
+			if s.interrupted() {
+				s.fail(ErrInterrupted)
+				return nil
+			}
 			s.feed(k)
 			if s.res.Err != nil {
 				return nil

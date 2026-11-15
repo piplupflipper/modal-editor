@@ -139,3 +139,28 @@ func TestMacroEndsInInsert(t *testing.T) {
 		}
 	}
 }
+
+// Interrupted が true を返すと、大きな回数のマクロの再生は ErrInterrupted で止まる。
+//
+// req: FR-05
+func TestMacroInterrupted(t *testing.T) {
+	s := setup(t, "|a")
+	calls := 0
+	s.Interrupted = func() bool { calls++; return calls > 3 }
+	feedKeys(s, ":s/a/aa/<CR>")
+	if err := errOf(feedKeys(s, "999999999@:")); !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("@: err = %v", err)
+	}
+	if got := s.buf.Text(); got != "aaaaa" {
+		t.Errorf("@: text = %q", got)
+	}
+	calls = 0
+	s.registers.Set('b', Register{Text: "Ax<Esc>"})
+	if err := errOf(feedKeys(s, "999999999@b")); !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("@b err = %v", err)
+	}
+	// 4 回目の問い合わせ（<Esc> の前）で止まるので、x を入れたインサートモードのまま残る（Vim の <C-c> と同じく途中で止める）。
+	if got := s.buf.Text(); got != "aaaaax" {
+		t.Errorf("@b: text = %q", got)
+	}
+}
