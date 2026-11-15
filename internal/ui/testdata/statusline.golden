@@ -1,0 +1,63 @@
+## 名前なし
+size 24x4 cursor 0,4
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | NORMAL  [No N 1,5  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |                        |
+
+## 変更ありと記録中
+size 24x4 cursor 0,5
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | recording @q  1,6  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |                        |
+
+## 幅が足りなければ左の部分を切る
+size 24x4 cursor 0,0
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | VISUAL LINE   1,1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |                        |
+
+## コマンドライン
+size 24x4 cursor 3,8
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | COMMAND  [No  1,1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |:s/a/b/g                |
+
+## 長いコマンドラインは末尾を見せる
+size 24x4 cursor 3,23
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | COMMAND  [No  1,1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |ghijklmnop/qrstuvwxyz/g |
+
+## エラーのメッセージ
+size 24x4 cursor 0,0
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | NORMAL  [No N 1,1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |E37: 変更が保存されてい |
+fg |EEEEEEEEEEEEEEEEEEEEEEE.|
+
+## 空の行のルーラー
+size 24x4 cursor 0,0
+   |                        |
+   |~                       |
+fg |n.......................|
+   | NORMAL  [No 1,0-1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |                        |

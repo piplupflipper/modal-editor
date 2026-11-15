@@ -1,0 +1,29 @@
+## 構文の色と診断
+size 20x6 cursor 3,0
+   |func f() {          |
+fg |kkkk................|
+fx |  ~~~~~             |
+   |        // note     |
+fg |........ccccccc.....|
+fx |           ____     |
+   |        return "s"  |
+fg |........kkkkkk.sss..|
+fx |_________         _ |
+   |}                   |
+   | NORMAL  [ 4,1  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
+
+## 選択を重ねる
+size 20x6 cursor 0,9
+   |func f() {          |
+fg |kkkk................|
+fx |  vvvvvvv           |
+   |        // note     |
+fg |........ccccccc.....|
+   |        return "s"  |
+fg |........kkkkkk.sss..|
+   |}                   |
+   | VISUAL   1,10  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |

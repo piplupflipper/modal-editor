@@ -1,0 +1,57 @@
+## 先頭
+size 16x7 cursor 0,0
+   |line 1          |
+   |line 2          |
+   |line 3          |
+   |line 4          |
+   |line 5          |
+   | NORMA 1,1  Top |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## 1 行下へはみ出す
+size 16x7 cursor 4,0
+   |line 2          |
+   |line 3          |
+   |line 4          |
+   |line 5          |
+   |line 6          |
+   | NORMAL 6,1  6% |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## 最終行へ飛ぶと最終行を下の端に置く
+size 16x7 cursor 4,0
+   |line 16         |
+   |line 17         |
+   |line 18         |
+   |line 19         |
+   |line 20         |
+   | NORM 20,1  Bot |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## 最終行の付近で上へ
+size 16x7 cursor 0,3
+   |line 16         |
+   |line 17         |
+   |line 18         |
+   |line 19         |
+   |line 20         |
+   | NORM 16,4  Bot |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## 短いバッファは ~ の行
+size 16x7 cursor 1,0
+   |one             |
+   |two             |
+   |~               |
+fg |n...............|
+   |~               |
+fg |n...............|
+   |~               |
+fg |n...............|
+   | NORMA 2,1  All |
+fx |SSSSSSSSSSSSSSSS|
+   |                |

@@ -1,0 +1,12 @@
+## 制御文字と不正な UTF-8 と結合文字
+size 20x6 cursor 2,6
+   |a^Ab^?c             |
+fg |.xx.xx..............|
+   |<e3><81>d<85>e      |
+fg |xxxxxxxx.xxxx.......|
+   |<200b>café!         |
+fg |xxxxxx..............|
+   | ́x                  |
+   | NORMAL  3,4-7  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |

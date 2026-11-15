@@ -1,0 +1,39 @@
+## 右の端まで
+size 20x4 cursor 0,19
+   |abcdefghijklmnopqrst|
+   |short               |
+   | NORMAL   1,20  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
+
+## 1 列はみ出すと、カーソルを幅の半分に置く
+size 20x4 cursor 0,10
+   |klmnopqrstuvwxyzabcd|
+   |                    |
+   | NORMAL   1,21  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
+
+## 画面の中の移動ではスクロールしない
+size 20x4 cursor 0,2
+   |klmnopqrstuvwxyzabcd|
+   |                    |
+   | NORMAL   1,13  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
+
+## 行末
+size 20x4 cursor 0,10
+   |xyzabcdefgh         |
+   |                    |
+   | NORMAL   1,60  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
+
+## 短い行へ移ると左へ戻る
+size 20x4 cursor 1,4
+   |abcdefghijklmnopqrst|
+   |short               |
+   | NORMAL  [ 2,5  All |
+fx |SSSSSSSSSSSSSSSSSSSS|
+   |                    |
