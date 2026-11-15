@@ -24,6 +24,10 @@ const (
 )
 
 // stopTimeout は、拡張機能が終わるときに、言語サーバーの shutdown と exit を待つ時間の上限である。
+// 超えたら言語サーバーを強制終了する。
+//
+// 本体は shutdown を送ってから期限（仮に 3 秒。基本設計 5.2）を過ぎると、この拡張機能のプロセスグループへ SIGTERM を送る。
+// その期限の中で言語サーバーを止め終えるように、それより短くする。値は仮。
 const stopTimeout = 2 * time.Second
 
 // extension は、LSP の拡張機能の全体である。
@@ -78,10 +82,19 @@ func newExtension(ctx context.Context) *extension {
 	x.srv.CommandAsync(cmdHover, x.hover)
 	x.srv.CommandAsync(cmdFormat, x.format)
 	x.srv.BufferWillSaveAsync(x.willSave)
+	x.srv.OnShutdown(func(context.Context, *server.ShutdownEvent) { x.stop() })
 	return x
 }
 
-// stop は、すべての言語サーバーを止める。Serve が戻った後に呼ぶ。
+// stop は、すべての言語サーバーへ shutdown と exit を送って止め、終わるまで待つ。
+// 待つのは stopTimeout までで、それを過ぎた言語サーバーは強制終了する。
+//
+// 本体から shutdown を受け取ったとき（OnShutdown のフック。基本設計 5.2 の正常な終了）と、Serve が戻った後（run）に呼ぶ。
+// 2 回目からは、止まっていない言語サーバーだけを待つ。
+// フックの中では Server のループが止まるが、本体は shutdown の後に問い合わせと ping を送らないので、待ってよい。
+// 言語サーバーからの診断は、止めている間も本体へ送る。
+//
+// req: FR-30
 func (x *extension) stop() {
 	x.mu.Lock()
 	cs := make([]*client, 0, len(x.clients))

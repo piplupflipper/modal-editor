@@ -70,6 +70,12 @@ type session struct {
 	lastThread atomic.Int64
 	// ended は、後始末が終わると閉じる。
 	ended chan struct{}
+	// eventCtx は、event の処理（stopped）が本体とデバッグアダプターへ送る request の ctx の親である。
+	// stop の始めと後始末の終わりに cancelEvents で取り消す。止める間に event の処理が本体の応答を待ち続けると、
+	// その後ろに並んだ terminated の event を処理できず、stop が期限まで待つからである。
+	// 本体から shutdown を受け取った後は、Server のループが止まるので、WaitBuffer などは応答しない。
+	eventCtx     context.Context
+	cancelEvents context.CancelFunc
 }
 
 // linesStartAt1 は、initialize で送る linesStartAt1 と columnsStartAt1 である。
@@ -164,6 +170,7 @@ func spawn(d *debugger, cfg adapterConfig) (*session, error) {
 	if err := startAdapter(cmd); err != nil {
 		return fail(err)
 	}
+	s.eventCtx, s.cancelEvents = context.WithCancel(context.Background())
 	closeAll(childEnds)
 	go func() {
 		_ = cmd.Wait()
@@ -270,6 +277,7 @@ func (s *session) run(launch map[string]any) {
 	<-handled
 	abnormal := err == nil && !s.stopping.Load() && !s.terminated.Load()
 	s.d.sessionEnded(s, abnormal, err != nil)
+	s.cancelEvents()
 	close(s.ended)
 }
 
@@ -393,28 +401,39 @@ func (s *session) resume(ctx context.Context, command string) error {
 }
 
 // stop は、disconnect を送ってデバッグ対象とデバッグアダプターを終わらせる。
-// 期限までに子プロセスが終わらなければ強制終了する。後始末が終わるまで待つ。
+// 期限までに子プロセスが終わらなければ強制終了する（kill）。後始末が終わるまで待つ。
 //
 // デバッグアダプターが supportsTerminateRequest を持てば、先に terminate を送り、デバッグ対象を穏やかに終わらせる
 // （DAP の仕様の Overview の Debug Session End）。期限までに子プロセスが終わらなければ disconnect を送る。
-func (s *session) stop() {
+//
+// 手順ごとの期限は timeouts.stop である。ctx が終わると、残りの手順を打ち切って強制終了する。
+// grace は、強制終了で SIGTERM を送ってから SIGKILL を送るまでの猶予である。
+// ctx が終わった後に stop が戻るまでは、最長で grace に少し足した時間である。
+// ctx が終わって強制終了したときは、run の後始末（sessionEnded）を待たずに戻る。
+func (s *session) stop(ctx context.Context, grace time.Duration) {
 	s.stopping.Store(true)
-	s.terminate()
-	s.disconnect()
+	s.cancelEvents()
+	s.terminate(ctx)
+	s.disconnect(ctx, grace)
+	wait := time.NewTimer(2 * s.d.timeouts.stop)
+	defer wait.Stop()
 	select {
 	case <-s.ended:
-	case <-time.After(2 * s.d.timeouts.stop):
-		s.kill()
+	case <-wait.C:
+		s.killWithin(grace)
+	case <-ctx.Done():
+		s.killWithin(grace)
 	}
 }
 
-// terminate は、デバッグアダプターが対応していれば terminate を送り、terminated の event か子プロセスの終了を期限まで待つ。
-func (s *session) terminate() {
+// terminate は、デバッグアダプターが対応していれば terminate を送り、terminated の event か子プロセスの終了を、
+// timeouts.stop と ctx の早い方まで待つ。
+func (s *session) terminate(ctx context.Context) {
 	c := s.getConn()
 	if caps := s.caps.Load(); c == nil || caps == nil || !caps.SupportsTerminateRequest {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.d.timeouts.stop)
+	ctx, cancel := context.WithTimeout(ctx, s.d.timeouts.stop)
 	defer cancel()
 	if err := c.call(ctx, "terminate", nil, nil); err != nil {
 		s.d.logf("terminate: %v", err)
@@ -427,20 +446,25 @@ func (s *session) terminate() {
 	}
 }
 
-// disconnect は、disconnect を送り、子プロセスが終わるのを期限まで待ち、終わらなければ強制終了する。
-func (s *session) disconnect() {
+// disconnect は、disconnect を送り、子プロセスが終わるのを timeouts.stop と ctx の早い方まで待ち、
+// 終わらなければ猶予 grace で強制終了する。
+func (s *session) disconnect(ctx context.Context, grace time.Duration) {
 	if c := s.getConn(); c != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), s.d.timeouts.stop)
-		err := c.call(ctx, "disconnect", disconnectArguments{TerminateDebuggee: true}, nil)
+		cctx, cancel := context.WithTimeout(ctx, s.d.timeouts.stop)
+		err := c.call(cctx, "disconnect", disconnectArguments{TerminateDebuggee: true}, nil)
 		cancel()
 		if err != nil && !errors.Is(err, errDAPClosed) && !s.exited() {
 			s.d.logf("disconnect: %v", err)
 		}
 	}
+	wait := time.NewTimer(s.d.timeouts.stop)
+	defer wait.Stop()
 	select {
 	case <-s.procDone:
-	case <-time.After(s.d.timeouts.stop):
-		s.kill()
+	case <-wait.C:
+		s.killWithin(grace)
+	case <-ctx.Done():
+		s.killWithin(grace)
 	}
 }
 
@@ -454,20 +478,25 @@ func (s *session) exited() bool {
 	}
 }
 
-// kill は、子プロセスに SIGTERM を送り、killGrace までに終わらなければ SIGKILL を送り、接続を閉じる。終わっていれば何もしない。
+// kill は、猶予を killGrace にして killWithin を呼ぶ。
+func (s *session) kill() { s.killWithin(killGrace) }
+
+// killWithin は、子プロセスに SIGTERM を送り、grace までに終わらなければ SIGKILL を送り、接続を閉じる。終わっていれば何もしない。
 // 先に SIGTERM を送るのは、dlv が SIGTERM でデバッグ対象を終わらせ、ビルドした実行ファイルを消すからである（startAdapter の doc）。
 // SIGKILL だと、別のプロセスグループのデバッグ対象が孤児で残る。
-func (s *session) kill() {
+func (s *session) killWithin(grace time.Duration) {
 	select {
 	case <-s.procDone:
 	default:
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Signal(syscall.SIGTERM)
+			t := time.NewTimer(grace)
 			select {
 			case <-s.procDone:
-			case <-time.After(killGrace):
+			case <-t.C:
 				_ = s.cmd.Process.Kill()
 			}
+			t.Stop()
 		}
 	}
 	if c := s.getConn(); c != nil {
@@ -516,7 +545,7 @@ func (s *session) handleEvent(e dapEvent) {
 		// デバッグアダプターがセッションを終えた。disconnect を送ってデバッグアダプターを終わらせる。
 		// dap.stop で終わらせている最中なら、stop が disconnect を送るので、ここでは送らない（二重に送ると、閉じた接続への書き込みになる）。
 		if !s.stopping.Load() {
-			go s.disconnect()
+			go s.disconnect(context.Background(), killGrace)
 		}
 	case "output":
 		var body outputEvent
@@ -536,7 +565,7 @@ func (s *session) handleEvent(e dapEvent) {
 
 // stopped は、stopped の event を処理する。止まったスレッドの先頭のフレームの位置へカーソルを移し、実行位置の印を付ける。
 func (s *session) stopped(body *stoppedEvent) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.d.timeouts.request)
+	ctx, cancel := context.WithTimeout(s.eventCtx, s.d.timeouts.request)
 	defer cancel()
 	tid := 0
 	if body.ThreadID != nil {

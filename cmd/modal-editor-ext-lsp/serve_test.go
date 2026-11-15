@@ -766,6 +766,92 @@ func TestStopShutsDown(t *testing.T) {
 	h.waitLog("shutdown", func(e logEntry) bool { return e.Kind == lspShutdown })
 }
 
+// hostShutdownTimeout は、本体が shutdown を送ってから、拡張機能のプロセスグループへ SIGTERM を送るまでの期限である
+// （internal/exthost の DefaultShutdownTimeout。基本設計 5.2。値は仮）。
+const hostShutdownTimeout = 3 * time.Second
+
+// shutdown は、本体の役から shutdown を送り、拡張機能が接続を閉じる（Serve が戻る）までの時間を返す。
+func (h *host) shutdown() time.Duration {
+	h.t.Helper()
+	start := time.Now()
+	if err := h.conn.Notify(ext.MethodShutdown, ext.ShutdownParams{}); err != nil {
+		h.t.Fatalf("shutdown: %v", err)
+	}
+	select {
+	case <-h.conn.Done():
+	case <-time.After(testTimeout):
+		h.t.Fatal("the extension did not close the connection after shutdown")
+	}
+	return time.Since(start)
+}
+
+// serverProc は、ファイルの種類 go の言語サーバーのプロセスを返す。
+func (h *host) serverProc() *proc {
+	h.t.Helper()
+	h.x.mu.Lock()
+	c := h.x.clients["go"]
+	h.x.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.proc == nil {
+		h.t.Fatal("the language server is not running")
+	}
+	return c.proc
+}
+
+// TestShutdownStopsServers は、本体から shutdown を受け取ると、言語サーバーへ shutdown と exit を送り、
+// 言語サーバーが終わってから接続を閉じること、それが本体の期限の中で終わることを確かめる（基本設計 5.2 の正常な終了）。
+//
+// req: FR-30
+func TestShutdownStopsServers(t *testing.T) {
+	h := startHost(t, hostOptions{maxRestarts: -1})
+	h.open(1, "a.go", "a")
+	h.diagnosticsAt(1, 1)
+	p := h.serverProc()
+	if d := h.shutdown(); d >= hostShutdownTimeout {
+		t.Errorf("shutdown took %s, want < %s", d, hostShutdownTimeout)
+	}
+	// 接続を閉じた時点で、言語サーバーは終わっている。待たずに確かめる。
+	var kinds []string
+	for _, e := range h.readLog() {
+		kinds = append(kinds, e.Kind)
+	}
+	if !slices.Contains(kinds, lspShutdown) || !slices.Contains(kinds, lspExit) {
+		t.Errorf("fakels log = %v, want shutdown and exit", kinds)
+	}
+	select {
+	case <-p.exited:
+	default:
+		t.Fatal("the language server remains after the connection is closed")
+	}
+	if !p.cmd.ProcessState.Success() {
+		t.Errorf("language server exit = %v, want success (exited by exit, not killed)", p.cmd.ProcessState)
+	}
+}
+
+// TestShutdownHungServer は、言語サーバーが shutdown に応答しないとき、stopTimeout で打ち切って強制終了し、
+// 本体の期限（SIGTERM を送るまで）の中で接続を閉じることを確かめる。
+//
+// req: FR-30
+func TestShutdownHungServer(t *testing.T) {
+	h := startHost(t, hostOptions{args: []string{"-hang-on-shutdown"}, maxRestarts: -1})
+	h.open(1, "a.go", "a")
+	h.diagnosticsAt(1, 1)
+	p := h.serverProc()
+	d := h.shutdown()
+	if d < stopTimeout || d >= hostShutdownTimeout {
+		t.Errorf("shutdown took %s, want in [%s, %s)", d, stopTimeout, hostShutdownTimeout)
+	}
+	select {
+	case <-p.exited:
+	default:
+		t.Fatal("the language server remains after the connection is closed")
+	}
+	if p.cmd.ProcessState.Success() {
+		t.Errorf("language server exit = %v, want killed", p.cmd.ProcessState)
+	}
+}
+
 // ping は、本体の役から ping を送り、期限までに応答が届くことを確かめる。
 func (h *host) ping(within time.Duration) {
 	h.t.Helper()

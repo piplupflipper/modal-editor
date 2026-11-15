@@ -84,6 +84,16 @@ type timeouts struct {
 	request time.Duration
 }
 
+// shutdownTimeout は、拡張機能が終わるときに、デバッグアダプターとデバッグ対象を正しい手順（terminate と disconnect）で
+// 終わらせるのを待つ時間の上限である。超えたら、猶予 shutdownKillGrace でデバッグアダプターを強制終了する（session.killWithin）。
+//
+// 本体は shutdown を送ってから期限（仮に 3 秒。基本設計 5.2）を過ぎると、この拡張機能のプロセスグループへ SIGTERM を送る。
+// 2 つの和がその期限より短くなるようにする。値は仮。
+const (
+	shutdownTimeout   = 1500 * time.Millisecond
+	shutdownKillGrace = time.Second
+)
+
 func defaultTimeouts() timeouts {
 	return timeouts{initialize: 10 * time.Second, launch: 120 * time.Second, stop: 5 * time.Second, request: 10 * time.Second}
 }
@@ -143,6 +153,8 @@ type debugger struct {
 	paths map[ext.BufferID]string
 	exec  *execPoint
 	sess  *session
+	// shutdownOnce は、shutdown の後始末を 1 回だけ行うためのものである。
+	shutdownOnce sync.Once
 	// configured は、sess の初期化で setBreakpoints を送る対象を決め終えたことを表す。
 	// これより後に変わったブレークポイントは、その都度送る。
 	configured bool
@@ -177,21 +189,33 @@ func (d *debugger) newServer() *server.Server {
 	for _, id := range []string{cmdContinue, cmdNext, cmdStepIn, cmdStepOut} {
 		s.Command(id, d.resume)
 	}
+	s.OnShutdown(func(context.Context, *server.ShutdownEvent) { d.shutdown() })
 	return s
 }
 
-// shutdown は、拡張機能が終わるときに、デバッグ中ならデバッグアダプターを終わらせる。
+// shutdown は、拡張機能が終わるときに、デバッグ中ならデバッグ対象とデバッグアダプターを終わらせ、終わるまで待つ。
+// 正しい手順を待つのは shutdownTimeout までで、それを過ぎたら猶予 shutdownKillGrace で強制終了する。
+// 2 回目からは何もしない（1 回目が戻るまで待つ）。
 //
-// 本体が標準入力を閉じたときと、シグナル（SIGINT、SIGTERM）を受け取ったときにだけ走る。
-// 本体の Close と生存確認の期限切れは、拡張機能のプロセスグループへすぐに SIGKILL を送る（internal/exthost の process.kill）ので、
-// その下では走らない。その場合は、デバッグアダプターが Pdeathsig の SIGTERM で自分で後始末する（startAdapter の doc）。
+// 本体から shutdown を受け取ったとき（OnShutdown のフック。基本設計 5.2 の正常な終了）と、
+// 本体が標準入力を閉じたとき、シグナル（SIGINT、SIGTERM）を受け取ったときに走る。
+// フックの中では Server のループが止まるが、本体は shutdown の後に問い合わせと ping を送らないので、待ってよい。
+// 本体の異常のときの強制終了（拡張機能のプロセスグループへの SIGKILL）では走らない。
+// その場合は、デバッグアダプターが Pdeathsig の SIGTERM で自分で後始末する（startAdapter の doc）。
+//
+// req: FR-31
 func (d *debugger) shutdown() {
-	d.mu.Lock()
-	s := d.sess
-	d.mu.Unlock()
-	if s != nil {
-		s.stop()
-	}
+	d.shutdownOnce.Do(func() {
+		d.mu.Lock()
+		s := d.sess
+		d.mu.Unlock()
+		if s == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		s.stop(ctx, shutdownKillGrace)
+	})
 }
 
 func (d *debugger) logf(format string, args ...any) { d.logger.Printf(format, args...) }
@@ -396,7 +420,7 @@ func (d *debugger) stop(_ context.Context, _ *server.Buffer, _ *ext.CommandExecu
 		return d.fail("デバッグを始めていない")
 	}
 	s.stopping.Store(true)
-	go s.stop()
+	go s.stop(context.Background(), killGrace) //nolint:gosec // ハンドラーが戻った後も止め終えるまで続けるので、ハンドラーの ctx は使わない
 	return ext.CommandExecuteResult{OK: true}, nil
 }
 
