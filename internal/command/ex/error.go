@@ -25,6 +25,7 @@ func (e *Error) Error() string {
 // Vim のエラー番号。
 const (
 	codeNoWrite          = "E37"  // 未保存の変更がある
+	codeMarkNotSet       = "E20"  // マークが設定されていない
 	codeNoPrevRegexp     = "E35"  // 直前のパターンが無い
 	codeInvalidRange     = "E16"  // 範囲がバッファの外にある
 	codeNoNestedGlobal   = "E147" // :g の入れ子

@@ -20,20 +20,28 @@
 //	:[range]d[elete] [x] [count]
 //	:[range]             範囲の最後の行へ移る（:3 など）
 //
+// コマンドは "|" で区切って続けられる（:w|q、:e foo|q）。
+// ファイル名や回数を取るコマンドでは、"\" の付かない最初の "|" で引数が終わり、"\|" は "|" そのものになる。
+// :s は、パターンと置換の文字列の中の "|" を区切りとせず、フラグと回数の後の "|" で終わる。
+// :g と :v は、Vim と同じく "|" を含めて行末までを cmd として受け取り、cmd の中の "|" は印の付いた行ごとに区切る。
+//
 // # 範囲
 //
 // アドレスは、行番号、"."（現在の行）、"$"（最後の行）、"/pat/"（次の行から前方へ探す）、"?pat?"（前の行から後方へ探す）と、
 // その後に続く "+n"、"-n" で書く。"%" は "1,$" と同じである。
 // アドレスは "," か ";" で区切り、";" は次のアドレスを読む前に現在の行を前のアドレスへ移す。
 // 検索は Vim の既定（wrapscan）と同じく、バッファの端で反対の端へ折り返す。
-// マーク（"'<,'>" など）は未対応で、E319 を返す。
+// マーク（"'a"、"'<,'>" など）は State.Mark で行に解決する。
 //
 // # 正規表現
 //
 // パターンは Go の regexp（RE2）の文法で解釈する（FR-09）。Vim の正規表現の文法（\v、\< など）には変換しない。
+// 利用者は Vim の書き方ではなく RE2 の書き方で書く。
+// 例えば "\+" は Vim の「1 回以上」ではなくリテラルの "+"、"\(" はグループではなくリテラルの "("、"\|" は選択ではなくリテラルの "|" である。
+// 1 回以上は "+"、グループは "(...)"、選択は "|"、単語の境界は "\b" と書く。
 // パターンの中の "\" と区切り文字の組は、区切り文字そのものとして扱う。
 // 照合は行ごとに行い、パターンが行をまたいで一致することは無い。
-// パターンを空にすると、同じ Execute の呼び出しの中で直前に使ったパターンを使う（:g/pat/s//rep/ など）。
+// パターンを空にすると、State.LastPattern（直前に使ったパターン）を使う（:g/pat/s//rep/ など）。
 //
 // # 誤り
 //
@@ -65,7 +73,7 @@ const (
 type Action struct {
 	Kind ActionKind
 	// File は、コマンドの引数に書かれたファイル名である。空なら編集中のファイルを指す。
-	// 先頭と末尾の空白を除き、"\ " を空白に戻す以外の展開（%、~、ワイルドカード）はしない。
+	// 先頭と末尾の空白を除き、"\ " を空白に、"\|" を "|" に戻す以外の展開（%、~、ワイルドカード）はしない。
 	File string
 	// Force は、コマンドに "!" が付いていたかどうかである。
 	// ActionWrite では既存のファイルや読み取り専用のファイルへの上書き、ActionQuit と ActionEdit では未保存の変更の破棄を表す。
@@ -76,18 +84,61 @@ type Action struct {
 // レジスターは internal/command が持つので、呼び出し側がこの記録をレジスターへ入れる。
 type Deletion struct {
 	// Register は、:d の引数に書かれたレジスターの名前である。省略したときは 0 である。
+	// 書き込めるレジスターの名前（英字、"、-、_、*、+）であることは、このパッケージが検査する。
 	Register rune
 	// Lines は、消した行を改行を含まずに並べたものである。行単位のテキストとして扱う。
 	Lines []string
 }
 
+// CursorMove は、実行した後にカーソルをどう置くかを表す。
+type CursorMove int
+
+// カーソルの置き方。列は buffer の行の内容から呼び出し側が決める。
+const (
+	// CursorUnchanged は、カーソルを動かさないことを表す（:w、:q、一致の無い :s/x/y/e など）。
+	CursorUnchanged CursorMove = iota
+	// CursorFirstNonBlank は、Result.Cursor の行の、最初の空白でない文字へ置くことを表す（:s、:d、:<行番号>）。
+	CursorFirstNonBlank
+	// CursorLineStart は、Result.Cursor の行の先頭（0 バイト目）へ置くことを表す。
+	// :g が最後の印の行へ移り、cmd がカーソルを動かさなかったとき（:g/pat/s/x/y/ で x が無い）に当たる。
+	CursorLineStart
+)
+
+// State は、Execute の呼び出しをまたいで保つ状態である。呼び出し側（internal/editor）が 1 つ持ち、毎回同じものを渡す。
+// Execute は、この中身を Vim と同じ時機に更新する。
+type State struct {
+	// LastPattern は、直前に使った検索のパターン（Go の regexp の文法）である。
+	// :s、:g、"/pat/" のアドレスで使ったものを記録し、空のパターン（:s//x/）はこれを使う。
+	// ノーマルモードの / と n と共有する前提で、呼び出し側が書き換えてもよい。
+	// コンパイルに失敗したパターンは記録しない。
+	LastPattern string
+	// LastSubstitute は、直前の :s のパターン、置換の文字列、フラグである。:s を一度も実行していなければ nil である。
+	// 置換の文字列の ~ はこの Replacement に置き換わる。& と :&& は未実装だが、この値を使う想定である。
+	LastSubstitute *Substitution
+	// Mark は、マークの名前（'a の a、'< の <）を行（0 始まり）に解決する。
+	// nil か、ok が false を返したときは、そのマークのアドレスを E20 にする。
+	Mark func(name rune) (line int, ok bool)
+}
+
+// Substitution は、:s の 1 回分のパターン、置換の文字列、フラグである。
+type Substitution struct {
+	Pattern string
+	// Replacement は、~ を直前の置換の文字列に展開した後の、Vim の書き方の置換の文字列である。
+	Replacement string
+	Global      bool // g フラグ
+	IgnoreCase  bool // i フラグ（I で打ち消す）
+}
+
 // Result は、Execute の結果である。
 // Execute が誤りを返した場合も、誤りまでに行った変更と動作を保持する。
 type Result struct {
-	// Cursor は、実行した後のカーソルの行（0 始まり）である。
-	// 列は返さない。Vim と同じく、行を移すコマンドの後は呼び出し側が行の最初の空白でない文字へ置く。
+	// Cursor は、実行した後のカーソルの行（0 始まり）である。Move が CursorUnchanged なら、渡した行（丸めたもの）のままである。
 	Cursor int
-	// Actions は、呼び出し側が順に行う動作である。
+	// Move は、カーソルを動かしたかと、列の置き方である。Vim 9.1 の既定（'startofline' がオン）に合わせる。
+	Move CursorMove
+	// Actions は、呼び出し側が先頭から順に行う動作である。
+	// 動作が失敗したら（:wq の ActionWrite の書き出しの失敗など）、残りの動作は行わずに捨て、誤りを利用者に示す。
+	// 例えば :wq で書き出しに失敗したら終了しない。
 	Actions []Action
 	// Changes は、バッファに適用した変更を適用した順に並べたものである。
 	// 拡張機能へ差分を送る（FR-16）ときに使う。
@@ -98,31 +149,38 @@ type Result struct {
 
 // Execute は、コマンドラインの文字列 cmdline を Ex コマンドとして解析し、バッファ b に対して実行する。
 // cursor は実行する前のカーソルの行（0 始まり）で、バッファの外を指していれば最も近い行に丸める。
-// cmdline の先頭の ":" と空白は読み飛ばす。
+// cmdline の先頭の ":" と空白は読み飛ばし、"|" で区切った複数のコマンドを順に実行する（:w|q）。
+// st は呼び出しをまたいで保つ状態で、Execute が更新する。nil なら、この呼び出しの中だけの状態を使う。
 //
 // 1 回の Execute で行った編集は、アンドゥの 1 単位にまとめる（:g で多数の行を消しても u 1 回で戻る）。
 // 誤りは *Error で返す。誤りを返した場合も、それまでに行った編集はバッファに残り、Result に記録される。
+// "|" で区切ったコマンドの途中で誤りがあれば、残りのコマンドは実行しない。
 //
 // req: FR-08
-func Execute(b *buffer.Buffer, cursor int, cmdline string) (Result, error) {
-	c := &execCtx{b: b, cursor: clampLine(b, cursor)}
+func Execute(b *buffer.Buffer, st *State, cursor int, cmdline string) (Result, error) {
+	if st == nil {
+		st = &State{}
+	}
+	c := &execCtx{b: b, st: st, cursor: clampLine(b, cursor)}
 	b.BeginUndoGroup()
 	defer b.EndUndoGroup()
-	err := c.run(cmdline, 0)
+	err := c.runLine(cmdline, 0)
 	return c.res(), err
 }
 
 // execCtx は、1 回の Execute の間の状態である。
 type execCtx struct {
 	b      *buffer.Buffer
+	st     *State
 	cursor int // 0 始まりの行
+	move   CursorMove
 	// inGlobal は、:g の中で実行しているかどうかである。:g の入れ子を禁じるのに使う。
-	inGlobal bool
-	// lastPattern は、直前に使った正規表現のパターン（変換前の文字列）である。空のパターンはこれを使う。
-	lastPattern string
-	actions     []Action
-	changes     []buffer.Change
-	deletions   []Deletion
+	inGlobal  bool
+	actions   []Action
+	changes   []buffer.Change
+	deletions []Deletion
+	// wroteVersion は、編集中のファイルへの ActionWrite を返した時点の版である。返していなければ nil である。
+	wroteVersion *uint64
 	// replaced は、行の置き換えの記録である。:g が、印を付けた行の番号を編集に合わせて動かすのに使う。
 	replaced []lineReplace
 }
@@ -133,7 +191,13 @@ type lineReplace struct {
 }
 
 func (c *execCtx) res() Result {
-	return Result{Cursor: c.cursor, Actions: c.actions, Changes: c.changes, Deletions: c.deletions}
+	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions}
+}
+
+// setCursor は、カーソルを line 行目（0 始まり）へ移し、列の置き方を記録する。
+func (c *execCtx) setCursor(line int, mv CursorMove) {
+	c.cursor = line
+	c.move = mv
 }
 
 // apply は、edits を 1 つのトランザクションとして現在の版に適用し、変更を記録する。
@@ -146,42 +210,60 @@ func (c *execCtx) apply(edits ...buffer.Edit) error {
 	return nil
 }
 
-// run は、1 つの Ex コマンド src を解析して実行する。base は、src の先頭がコマンドラインの何バイト目かである（誤りの位置に使う）。
+// runLine は、"|" で区切った Ex コマンドの列 src を順に実行する。base は、src の先頭がコマンドラインの何バイト目かである（誤りの位置に使う）。
 //
 // req: FR-08
-func (c *execCtx) run(src string, base int) error {
+func (c *execCtx) runLine(src string, base int) error {
+	for {
+		next, nextPos, more, err := c.runOne(src, base)
+		if err != nil || !more {
+			return err
+		}
+		src, base = next, nextPos
+	}
+}
+
+// runOne は、src の先頭の Ex コマンドを 1 つ解析して実行する。
+// "|" の後に続くコマンドがあれば、その文字列と位置を next、nextPos に入れ、more を true にして返す。
+//
+// req: FR-08
+func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more bool, err error) {
 	s := &scanner{src: src, base: base}
 	s.skipBlanksAndColons()
 	r, err := c.parseRange(s)
 	if err != nil {
-		return err
+		return "", 0, false, err
 	}
 	s.skipBlanks()
-	if s.eof() || s.peek() == '"' {
+	if s.eof() || s.peek() == '"' || s.peek() == '|' {
 		// コマンド名が無ければ、範囲の最後の行へ移る（:3、:/pat/）。
 		if r.count > 0 {
-			c.cursor = max(r.line2, 1) - 1
+			c.setCursor(max(r.line2, 1)-1, CursorFirstNonBlank)
 		}
-		return nil
+		if s.peek() == '|' {
+			s.next()
+			return s.rest(), s.pos(), true, nil
+		}
+		return "", 0, false, nil
 	}
 
 	namePos := s.pos()
 	name := s.letters()
 	if name == "" {
-		return errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
+		return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
 	}
 	cmd := lookup(name)
 	if cmd == nil {
-		return errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
+		return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
 	}
 	if c.inGlobal && !cmd.inGlobal {
-		return errAt(namePos, codeNotAvailable, ":global の中では使えません: %s", cmd.name)
+		return "", 0, false, errAt(namePos, codeNotAvailable, ":global の中では使えません: %s", cmd.name)
 	}
 
 	inv := invocation{name: name, namePos: namePos}
 	if s.peek() == '!' {
 		if !cmd.bang {
-			return errAt(s.pos(), codeNoBang, "! は使えません")
+			return "", 0, false, errAt(s.pos(), codeNoBang, "! は使えません")
 		}
 		inv.bang = true
 		s.next()
@@ -190,7 +272,7 @@ func (c *execCtx) run(src string, base int) error {
 	switch cmd.rng {
 	case rangeNone:
 		if r.count > 0 {
-			return errAt(r.pos, codeNoRange, "範囲は使えません")
+			return "", 0, false, errAt(r.pos, codeNoRange, "範囲は使えません")
 		}
 	case rangeCurrent, rangeWhole:
 		if r.count == 0 {
@@ -210,7 +292,36 @@ func (c *execCtx) run(src string, base int) error {
 
 	s.skipBlanks()
 	inv.arg, inv.argPos = s.rest(), s.pos()
-	return cmd.run(c, &inv)
+	if cmd.bar == barSplit {
+		var n int
+		inv.arg, n, more = splitBar(inv.arg)
+		if more {
+			inv.next, inv.nextPos, inv.hasNext = s.rest()[n:], s.pos()+n, true
+		}
+	}
+	if err := cmd.run(c, &inv); err != nil {
+		return "", 0, false, err
+	}
+	return inv.next, inv.nextPos, inv.hasNext, nil
+}
+
+// splitBar は、引数 arg を、"\" の付かない最初の "|" の手前までと、その後に分ける。
+// 手前の部分の "\|" は "|" に戻す（ファイル名に "|" を書くとき）。
+// n は、"|" を含めて読んだバイト数である。"|" が無ければ more は false である。
+func splitBar(arg string) (part string, n int, more bool) {
+	var sb strings.Builder
+	for i := 0; i < len(arg); i++ {
+		switch {
+		case arg[i] == '\\' && i+1 < len(arg) && arg[i+1] == '|':
+			sb.WriteByte('|')
+			i++
+		case arg[i] == '|':
+			return sb.String(), i + 1, true
+		default:
+			sb.WriteByte(arg[i])
+		}
+	}
+	return sb.String(), len(arg), false
 }
 
 // clampLine は、line（0 始まり）をバッファの中の行に丸める。

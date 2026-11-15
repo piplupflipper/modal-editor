@@ -151,7 +151,12 @@ func (c *execCtx) parseAddress(s *scanner, cur int) (lnum int, has bool, err err
 		}
 		has = true
 	case ch == '\'':
-		return 0, false, errAt(start, codeNotAvailable, "マークのアドレスは使えません")
+		s.next()
+		lnum, err = c.markLine(s, start)
+		if err != nil {
+			return 0, false, err
+		}
+		has = true
 	case ch == '\\':
 		return 0, false, errAt(start, codeNotAvailable, "\\/、\\?、\\& のアドレスは使えません")
 	}
@@ -198,30 +203,47 @@ func (c *execCtx) search(pat string, from int, forward bool, pos int) (int, erro
 			return l + 1, nil
 		}
 	}
-	return 0, errAt(pos, codeNotFound, "パターンが見つかりません: %s", c.lastPattern)
+	return 0, errAt(pos, codeNotFound, "パターンが見つかりません: %s", c.st.LastPattern)
+}
+
+// markLine は、"'" の後のマークの名前を読み、State.Mark で行（1 始まり）に解決する。
+func (c *execCtx) markLine(s *scanner, pos int) (int, error) {
+	if s.eof() {
+		return 0, errAt(pos, codeMarkNotSet, "マークの名前がありません")
+	}
+	name := rune(s.peek())
+	s.next()
+	if c.st.Mark == nil {
+		return 0, errAt(pos, codeMarkNotSet, "マークは設定されていません: %c", name)
+	}
+	line, ok := c.st.Mark(name)
+	if !ok {
+		return 0, errAt(pos, codeMarkNotSet, "マークは設定されていません: %c", name)
+	}
+	return line + 1, nil
 }
 
 // compile は、パターンを Go の regexp（RE2）の文法でコンパイルする（FR-09）。
-// pat が空なら直前のパターンを使う。ignoreCase なら大文字と小文字を区別しない。
-// 使ったパターンを直前のパターンとして記録する。
+// pat が空なら直前のパターン（State.LastPattern）を使う。ignoreCase なら大文字と小文字を区別しない。
+// コンパイルに成功したら、使ったパターンを直前のパターンとして記録する。失敗したパターンは記録しない（Vim と同じ）。
 //
 // req: FR-09
 func (c *execCtx) compile(pat string, ignoreCase bool, pos int) (*regexp.Regexp, error) {
 	if pat == "" {
-		if c.lastPattern == "" {
+		if c.st.LastPattern == "" {
 			return nil, errAt(pos, codeNoPrevRegexp, "直前の正規表現がありません")
 		}
-		pat = c.lastPattern
+		pat = c.st.LastPattern
 	}
-	c.lastPattern = pat
 	src := pat
 	if ignoreCase {
 		src = "(?i)" + src
 	}
 	re, err := regexp.Compile(src)
 	if err != nil {
-		return nil, errAt(pos, codeInvalidPattern, "正規表現が正しくありません: %s: %v", pat, err)
+		return nil, errAt(pos, codeInvalidPattern, "正規表現が正しくありません（Go の regexp の文法で書きます）: %s: %v", pat, err)
 	}
+	c.st.LastPattern = pat
 	return re, nil
 }
 

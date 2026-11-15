@@ -13,7 +13,10 @@ import (
 // 閉じる区切り文字を省いてもよく、置換の文字列を省くと一致した部分を消す。
 //
 // 置換は行ごとに行い、範囲の全ての行の置き換えを 1 つのトランザクションにする。
-// カーソルは、最後に置き換えた行（置換の文字列が改行を含めば、その最後の行）へ移る。
+// カーソルは、最後に置き換えた行（置換の文字列が改行を含めば、その最後の行）の最初の空白でない文字へ移る。
+// 一致が無ければ動かない（Vim 9.1 と同じ）。
+// フラグと回数の後の "|" で、次のコマンドへ続ける。
+// 置換の文字列の "~" は直前の置換の文字列に展開し、パターン、展開した置換の文字列、フラグを State.LastSubstitute に記録する。
 //
 // req: FR-08, FR-09
 func runSubstitute(c *execCtx, inv *invocation) error {
@@ -57,7 +60,12 @@ func runSubstitute(c *execCtx, inv *invocation) error {
 		}
 	}
 	s.skipBlanks()
-	if !s.eof() {
+	switch {
+	case s.peek() == '|':
+		s.next()
+		inv.next, inv.nextPos, inv.hasNext = s.rest(), s.pos(), true
+	case s.eof() || s.peek() == '"':
+	default:
 		return errAt(s.pos(), codeTrailing, "余分な文字があります: %s", s.rest())
 	}
 
@@ -65,10 +73,16 @@ func runSubstitute(c *execCtx, inv *invocation) error {
 	if err != nil {
 		return err
 	}
+	var prevRep string
+	if c.st.LastSubstitute != nil {
+		prevRep = c.st.LastSubstitute.Replacement
+	}
+	rep = expandTilde(rep, prevRep)
 	tmpl, err := convertReplacement(rep, repPos)
 	if err != nil {
 		return err
 	}
+	c.st.LastSubstitute = &Substitution{Pattern: c.st.LastPattern, Replacement: rep, Global: all, IgnoreCase: ignoreCase}
 
 	limit := 1
 	if all {
@@ -107,15 +121,38 @@ func runSubstitute(c *execCtx, inv *invocation) error {
 		if noErr || c.inGlobal {
 			return nil
 		}
-		return errAt(patPos, codeNotFound, "パターンが見つかりません: %s", c.lastPattern)
+		return errAt(patPos, codeNotFound, "パターンが見つかりません: %s", c.st.LastPattern)
 	}
 	if len(edits) > 0 {
 		if err = c.apply(edits...); err != nil {
 			return err
 		}
 	}
-	c.cursor = lastLine
+	c.setCursor(lastLine, CursorFirstNonBlank)
 	return nil
+}
+
+// expandTilde は、置換の文字列 rep の中の "~" を、直前の置換の文字列 prev に置き換える（Vim の magic の ~）。
+// "\~" は "~" そのものとして残す。それ以外の "\" の組は、後で convertReplacement が解釈するので変えない。
+//
+// req: FR-08
+func expandTilde(rep, prev string) string {
+	if !strings.Contains(rep, "~") {
+		return rep
+	}
+	var sb strings.Builder
+	for i := 0; i < len(rep); i++ {
+		switch {
+		case rep[i] == '\\' && i+1 < len(rep):
+			sb.WriteString(rep[i : i+2])
+			i++
+		case rep[i] == '~':
+			sb.WriteString(prev)
+		default:
+			sb.WriteByte(rep[i])
+		}
+	}
+	return sb.String()
 }
 
 // convertReplacement は、Vim の置換の文字列を、Go の Regexp.Expand のテンプレートに変換する（FR-09）。
@@ -126,11 +163,11 @@ func runSubstitute(c *execCtx, inv *invocation) error {
 //	\r、\n       改行（行を分ける）
 //	\t           タブ
 //	\\           \ そのもの
-//	\ と他の文字 その文字そのもの（区切り文字の \/ など）
+//	\ と他の文字 その文字そのもの（区切り文字の \/、\~ など）
 //	$            $ そのもの（Go の $1 の記法としては解釈しない）
 //
 // 大文字と小文字の変換（\u、\U、\l、\L、\e、\E）は未対応で、E319 を返す。
-// ~（直前の置換の文字列）は解釈せず、~ そのものとして扱う。
+// ~（直前の置換の文字列）は、変換の前に expandTilde で展開しておく。
 //
 // req: FR-09
 func convertReplacement(rep string, pos int) (string, error) {
@@ -173,7 +210,9 @@ func convertReplacement(rep string, pos int) (string, error) {
 // Vim と同じく、先に範囲の中でパターンに一致する（:v と :g! では一致しない）行に印を付け、
 // 次に印の付いた行を順に現在の行にして cmd を実行する。
 // cmd が行を消したり増やしたりしたら、残りの印をそれに合わせて動かし、消えた行の印は捨てる。
-// cmd を省くと、最後に印を付けた行へ移るだけである（Vim は行を表示する）。
+// cmd を省くと、最後に印を付けた行の最初の空白でない文字へ移るだけである（Vim は行を表示する）。
+// cmd の中の "|" は、印の付いた行ごとにコマンドを区切る（:g/pat/s/a/b/|d）。
+// カーソルは、cmd が動かさなければ最後の印の行の先頭へ移る（Vim 9.1 と同じ）。
 // :g の中で :g は実行できない。
 //
 // req: FR-08, FR-09
@@ -203,9 +242,9 @@ func runGlobal(c *execCtx, inv *invocation) error {
 	}
 	if len(marks) == 0 {
 		if invert {
-			return &Error{Pos: patPos, Msg: "全ての行でパターンが見つかりました: " + c.lastPattern}
+			return &Error{Pos: patPos, Msg: "全ての行でパターンが見つかりました: " + c.st.LastPattern}
 		}
-		return errAt(patPos, codeNotFound, "パターンが見つかりません: %s", c.lastPattern)
+		return errAt(patPos, codeNotFound, "パターンが見つかりません: %s", c.st.LastPattern)
 	}
 
 	c.inGlobal = true
@@ -214,9 +253,13 @@ func runGlobal(c *execCtx, inv *invocation) error {
 		if m < 0 {
 			continue
 		}
-		c.cursor = m
+		// Vim と同じく、印の行の先頭へ移ってから cmd を実行する。cmd を省いたときは、Vim の行の表示に合わせて最初の空白でない文字へ置く。
+		c.setCursor(m, CursorLineStart)
+		if strings.TrimSpace(sub) == "" {
+			c.move = CursorFirstNonBlank
+		}
 		done := len(c.replaced)
-		if err := c.run(sub, subPos); err != nil {
+		if err := c.runLine(sub, subPos); err != nil {
 			return err
 		}
 		for _, r := range c.replaced[done:] {

@@ -65,11 +65,18 @@ func TestParseRange(t *testing.T) {
 		{name: "負の行", text: lines10, cursor: 0, cmdline: "1,.-2d", wantCode: "E16", wantPos: 2, checkPos: true},
 		{name: "検索の該当なし", text: lines10, cmdline: "/zz/", wantCode: "E486"},
 		{name: "検索の不正な正規表現", text: lines10, cmdline: "/a(/", wantCode: "E383", wantPos: 0, checkPos: true},
-		{name: "マークは未対応", text: lines10, cmdline: "'<,'>d", wantCode: "E319"},
+		{name: "マーク", text: lines10, cmdline: "'<,'>d", line1: 3, line2: 5, count: 2, wantRest: "d"},
+		{name: "マークと相対", text: lines10, cmdline: "'a+1", line1: 8, line2: 8, count: 1},
+		{name: "設定されていないマーク", text: lines10, cmdline: "'b", wantCode: "E20"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &execCtx{b: buffer.New(tt.text), cursor: tt.cursor}
+			marks := map[rune]int{'<': 2, '>': 4, 'a': 6}
+			st := &State{Mark: func(name rune) (int, bool) {
+				l, ok := marks[name]
+				return l, ok
+			}}
+			c := &execCtx{b: buffer.New(tt.text), st: st, cursor: tt.cursor}
 			s := &scanner{src: tt.cmdline}
 			r, err := c.parseRange(s)
 			if code := errCode(t, err); code != tt.wantCode {
@@ -93,8 +100,8 @@ func TestParseRange(t *testing.T) {
 			if s.rest() != tt.wantRest {
 				t.Errorf("rest = %q, want %q", s.rest(), tt.wantRest)
 			}
-			if tt.wantSaved != "" && c.lastPattern != tt.wantSaved {
-				t.Errorf("lastPattern = %q, want %q", c.lastPattern, tt.wantSaved)
+			if tt.wantSaved != "" && c.st.LastPattern != tt.wantSaved {
+				t.Errorf("LastPattern = %q, want %q", c.st.LastPattern, tt.wantSaved)
 			}
 		})
 	}
@@ -162,6 +169,16 @@ func TestExecuteEdit(t *testing.T) {
 		{name: ":d の回数は最後の行で止まる", text: "a\nb\nc\n", cmdline: "2d 9", want: "a"},
 		{name: ":d の逆順の範囲", text: lines10, cmdline: "4,2d", want: "l1\nl5\nl6\nl7\nl8\nl9\nl10", wantCursor: 1},
 		{name: ":d の余分な文字", text: "a\n", cmdline: "d a b", want: "a", wantCode: "E488"},
+		{name: ":d ! は書き込めないレジスター", text: "a\nb\n", cmdline: "d !", want: "a\nb", wantCode: "E488"},
+
+		// | による連結
+		{name: ":d|d", text: "a\nb\nc\n", cmdline: "d|d", want: "c"},
+		{name: ":2|d", text: "a\nb\nc\n", cmdline: "2|d", want: "a\nc", wantCursor: 1},
+		{name: ":s の後の |", text: "a\nb\n", cmdline: "s/a/x/ | 2d", want: "x", wantCursor: 0},
+		{name: ":s のパターンの中の | は区切りではない", text: "a|b\n", cmdline: "s/a|b/x/g", want: "x|x"},
+		{name: ":s の回数の後の |", text: "a\na\na\n", cmdline: "s/a/x/ 2|3d", want: "x\nx", wantCursor: 1},
+		{name: ":g の cmd の中の |", text: "a1\nb\na2\n", cmdline: "g/a/s/a/x/|s/x/y/", want: "y1\nb\ny2", wantCursor: 2},
+		{name: "| の後の誤り", text: "a\nb\n", cmdline: "d|foo", want: "b", wantCode: "E492"},
 
 		// 移動
 		{name: ":3", text: lines10, cmdline: ":3", want: strings.TrimSuffix(lines10, "\n"), wantCursor: 2},
@@ -179,7 +196,7 @@ func TestExecuteEdit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := buffer.New(tt.text)
-			res, err := Execute(b, tt.cursor, tt.cmdline)
+			res, err := Execute(b, nil, tt.cursor, tt.cmdline)
 			if code := errCode(t, err); code != tt.wantCode || (err != nil) != (tt.wantCode != "" || tt.wantErr) {
 				t.Fatalf("code = %q, want %q (err = %v)", code, tt.wantCode, err)
 			}
@@ -197,7 +214,7 @@ func TestExecuteEdit(t *testing.T) {
 //
 // req: FR-08
 func TestGlobalInvertAllMatch(t *testing.T) {
-	_, err := Execute(buffer.New("a\n"), 0, "v/a/d")
+	_, err := Execute(buffer.New("a\n"), nil, 0, "v/a/d")
 	var e *Error
 	if !errors.As(err, &e) || e.Code != "" || !strings.Contains(e.Msg, "全ての行") {
 		t.Fatalf("err = %v, want notice without code", err)
@@ -210,7 +227,7 @@ func TestGlobalInvertAllMatch(t *testing.T) {
 func TestGlobalUndoOnce(t *testing.T) {
 	text := "a\nb\na\nb\na\n"
 	b := buffer.New(text)
-	res, err := Execute(b, 0, "g/a/d")
+	res, err := Execute(b, nil, 0, "g/a/d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +254,7 @@ func TestGlobalUndoOnce(t *testing.T) {
 func TestChangesReplay(t *testing.T) {
 	text := "a,b\nc\na,d\n"
 	b := buffer.New(text)
-	res, err := Execute(b, 0, `g/,/s/,/\r/`)
+	res, err := Execute(b, nil, 0, `g/,/s/,/\r/`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +272,7 @@ func TestChangesReplay(t *testing.T) {
 // req: FR-08
 func TestDeleteRegister(t *testing.T) {
 	b := buffer.New("a\nb\nc\n")
-	res, err := Execute(b, 0, "2,3d x")
+	res, err := Execute(b, nil, 0, "2,3d x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +309,15 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":e!", modified: true, cmdline: "e!", want: []Action{{Kind: ActionEdit, Force: true}}},
 		{name: "省略しすぎ", cmdline: "wr", want: []Action{{Kind: ActionWrite}}},
 		{name: "長すぎる名前", cmdline: "writex", wantCode: "E492"},
+		{name: ":w|q で未保存の変更", modified: true, cmdline: "w|q", want: []Action{{Kind: ActionWrite}, {Kind: ActionQuit}}},
+		{name: ":w other|q で未保存の変更", modified: true, cmdline: "w other|q", wantCode: "E37"},
+		{name: ":w|s|q は書いた後の変更で E37", modified: true, cmdline: "w|s/x/y/|q", wantCode: "E37"},
+		{name: ":w|x は書き出しを重ねない", modified: true, cmdline: "w|x", want: []Action{{Kind: ActionWrite}, {Kind: ActionQuit}}},
+		{name: ":w|q", cmdline: "w|q", want: []Action{{Kind: ActionWrite}, {Kind: ActionQuit}}},
+		{name: ":w | q", modified: true, cmdline: "w foo | q!", want: []Action{{Kind: ActionWrite, File: "foo"}, {Kind: ActionQuit, Force: true}}},
+		{name: ":e foo|q", cmdline: "e foo|q", want: []Action{{Kind: ActionEdit, File: "foo"}, {Kind: ActionQuit}}},
+		{name: "ファイル名の \\|", cmdline: `w a\|b`, want: []Action{{Kind: ActionWrite, File: "a|b"}}},
+		{name: ":q|q の余分な文字", cmdline: "q x|q", wantCode: "E488"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -301,7 +327,7 @@ func TestExecuteActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			res, err := Execute(b, 0, tt.cmdline)
+			res, err := Execute(b, nil, 0, tt.cmdline)
 			if code := errCode(t, err); code != tt.wantCode {
 				t.Fatalf("code = %q, want %q (err = %v)", code, tt.wantCode, err)
 			}
@@ -329,7 +355,7 @@ func TestErrorPosition(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.cmdline, func(t *testing.T) {
-			_, err := Execute(buffer.New("a\n"), 0, tt.cmdline)
+			_, err := Execute(buffer.New("a\n"), nil, 0, tt.cmdline)
 			var e *Error
 			if !errors.As(err, &e) {
 				t.Fatalf("err = %v", err)
@@ -360,5 +386,101 @@ func TestConvertReplacement(t *testing.T) {
 		if err != nil || got != tt.want {
 			t.Errorf("convertReplacement(%q) = %q, %v, want %q", tt.in, got, err, tt.want)
 		}
+	}
+}
+
+// カーソルの行と置き方は、Vim 9.1（vim -Nu NONE -es で col(".") を見た結果）に合わせる。
+// 行は "  " か "    " で始め、最初の空白でない文字と行の先頭を見分けられるようにした。
+//
+// req: FR-08
+func TestCursorMove(t *testing.T) {
+	const three = "  aaa\n  bbb\n    ccc\n"
+	tests := []struct {
+		text     string
+		cursor   int
+		cmdline  string
+		wantLine int
+		wantMove CursorMove
+	}{
+		{text: three, cmdline: "s/a/x/", wantLine: 0, wantMove: CursorFirstNonBlank},
+		{text: three, cmdline: "s/zz/x/e", wantLine: 0, wantMove: CursorUnchanged},
+		{text: three, cmdline: "3s/zz/x/e", wantLine: 0, wantMove: CursorUnchanged},
+		{text: "  a,b\n  c\n", cmdline: `s/,/\r   /`, wantLine: 1, wantMove: CursorFirstNonBlank},
+		{text: "  ax\n  bx\n  cx\n", cmdline: `%s/x/\ry/`, wantLine: 5, wantMove: CursorFirstNonBlank},
+		{text: three, cmdline: "2d", wantLine: 1, wantMove: CursorFirstNonBlank},
+		{text: three, cmdline: "3d", wantLine: 1, wantMove: CursorFirstNonBlank},
+		{text: three, cmdline: "3", wantLine: 2, wantMove: CursorFirstNonBlank},
+		{text: three, cmdline: "/c/", wantLine: 2, wantMove: CursorFirstNonBlank},
+		{text: three, cmdline: "w! /dev/null", wantLine: 0, wantMove: CursorUnchanged},
+		{text: "  a\n    bx\n  c\n", cmdline: "g/b/s/zz/y/", wantLine: 1, wantMove: CursorLineStart},
+		{text: "  a\n    bx\n  c\n", cmdline: "g/b/s/x/y/", wantLine: 1, wantMove: CursorFirstNonBlank},
+		{text: "  a\n    bx\n  c\n", cmdline: "g/b/", wantLine: 1, wantMove: CursorFirstNonBlank},
+		{text: "  a\n    bx\n    c\n", cmdline: "g/b/d", wantLine: 1, wantMove: CursorFirstNonBlank},
+		{text: "  ax\n  bx\n  cx\n", cmdline: "v/b/s/x/y/", wantLine: 2, wantMove: CursorFirstNonBlank},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmdline, func(t *testing.T) {
+			res, err := Execute(buffer.New(tt.text), nil, tt.cursor, tt.cmdline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Cursor != tt.wantLine || res.Move != tt.wantMove {
+				t.Errorf("cursor = %d, %v, want %d, %v", res.Cursor, res.Move, tt.wantLine, tt.wantMove)
+			}
+		})
+	}
+}
+
+// State は呼び出しをまたいで受け渡され、Vim と同じ時機に更新される。
+//
+// req: FR-08, FR-09
+func TestStateAcrossCalls(t *testing.T) {
+	b := buffer.New("foo bar\nfoo baz\n")
+	st := &State{LastPattern: "foo"} // ノーマルモードの / で foo を探した後
+
+	// 空のパターンは、呼び出し側が渡した直前のパターンを使う。
+	if _, err := Execute(b, st, 0, "s//X/"); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Line(0); got != "X bar" {
+		t.Errorf("line 0 = %q", got)
+	}
+	want := &Substitution{Pattern: "foo", Replacement: "X"}
+	if !reflect.DeepEqual(st.LastSubstitute, want) {
+		t.Errorf("LastSubstitute = %+v, want %+v", st.LastSubstitute, want)
+	}
+
+	// コンパイルに失敗したパターンは記録しない。
+	if _, err := Execute(b, st, 0, "s/a(/x/"); errCode(t, err) != "E383" {
+		t.Fatalf("err = %v", err)
+	}
+	if st.LastPattern != "foo" {
+		t.Errorf("LastPattern = %q after invalid pattern", st.LastPattern)
+	}
+
+	// ~ は直前の置換の文字列、\~ は ~ そのもの。
+	if _, err := Execute(b, st, 1, `s/b(a)z/~~\~/gi`); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Line(1); got != "foo XX~" {
+		t.Errorf("line 1 = %q", got)
+	}
+	want = &Substitution{Pattern: "b(a)z", Replacement: `XX\~`, Global: true, IgnoreCase: true}
+	if !reflect.DeepEqual(st.LastSubstitute, want) {
+		t.Errorf("LastSubstitute = %+v, want %+v", st.LastSubstitute, want)
+	}
+
+	// :g と "/pat/" のアドレスのパターンも記録する（その後の n が使う）。
+	if _, err := Execute(b, st, 0, "g/bar/"); err != nil {
+		t.Fatal(err)
+	}
+	if st.LastPattern != "bar" {
+		t.Errorf("LastPattern = %q after :g", st.LastPattern)
+	}
+	if _, err := Execute(b, st, 0, "/XX/"); err != nil {
+		t.Fatal(err)
+	}
+	if st.LastPattern != "XX" {
+		t.Errorf("LastPattern = %q after address", st.LastPattern)
 	}
 }

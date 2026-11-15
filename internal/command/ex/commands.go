@@ -15,6 +15,18 @@ const (
 	rangeWhole                    // 範囲を取り、省略するとバッファ全体
 )
 
+// barKind は、コマンドが "|" をどう扱うかを表す。
+type barKind int
+
+const (
+	// barSplit は、"\" の付かない最初の "|" で引数を終え、続きを次のコマンドにする（:w、:q、:e、:d）。
+	barSplit barKind = iota
+	// barSelf は、コマンド自身が引数を読み、"|" を見つけたら invocation.next に入れる（:s。パターンの中の "|" を区切りにしない）。
+	barSelf
+	// barNone は、"|" を含めて行末までを引数にする（:g、:v）。
+	barNone
+)
+
 // command は、Ex コマンドの表の 1 行である。
 type command struct {
 	name     string // 省略しない名前
@@ -22,6 +34,7 @@ type command struct {
 	bang     bool   // "!" を付けられるか
 	rng      rangeKind
 	inGlobal bool // :g の中で実行できるか（:g 自身は、入れ子を E147 で断るために true にする）
+	bar      barKind
 	run      func(c *execCtx, inv *invocation) error
 }
 
@@ -33,8 +46,12 @@ type invocation struct {
 	// line1 と line2 は、範囲の始まりと終わりの行（0 始まり、両端を含む）である。rng が rangeNone のコマンドでは意味を持たない。
 	line1, line2 int
 	rangeCount   int    // 書かれていたアドレスの数。0 なら範囲は省略されている
-	arg          string // コマンド名と "!" の後の、先頭の空白を除いた引数
+	arg          string // コマンド名と "!" の後の、先頭の空白を除いた引数。barSplit のコマンドでは "|" の手前まで
 	argPos       int
+	// next と nextPos は、"|" の後に続くコマンドとその位置である。hasNext が false なら続くコマンドは無い。
+	next    string
+	nextPos int
+	hasNext bool
 }
 
 // commands は、対応する Ex コマンドの表である。
@@ -49,9 +66,9 @@ func init() {
 		{name: "xit", min: 1, bang: true, rng: rangeNone, run: runXit},
 		{name: "quit", min: 1, bang: true, rng: rangeNone, run: runQuit},
 		{name: "edit", min: 1, bang: true, rng: rangeNone, run: runEdit},
-		{name: "substitute", min: 1, rng: rangeCurrent, inGlobal: true, run: runSubstitute},
-		{name: "global", min: 1, bang: true, rng: rangeWhole, inGlobal: true, run: runGlobal},
-		{name: "vglobal", min: 1, rng: rangeWhole, inGlobal: true, run: runGlobal},
+		{name: "substitute", min: 1, rng: rangeCurrent, inGlobal: true, bar: barSelf, run: runSubstitute},
+		{name: "global", min: 1, bang: true, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal},
+		{name: "vglobal", min: 1, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal},
 		{name: "delete", min: 1, rng: rangeCurrent, inGlobal: true, run: runDelete},
 	}
 }
@@ -87,11 +104,28 @@ func noArg(inv *invocation) error {
 }
 
 // checkModified は、"!" が無く、未保存の変更があれば E37 を返す。
+// 同じ Execute の中で、編集中のファイルへの書き出し（File が空の ActionWrite）を先に返していて、
+// その後にバッファを変えていなければ、未保存の変更は無いものとする（:w|q）。
+// 書き出しが失敗したら呼び出し側は残りの動作を捨てる約束（Result.Actions）なので、終了してしまうことは無い。
 func (c *execCtx) checkModified(inv *invocation) error {
-	if !inv.bang && c.b.Modified() {
+	if !inv.bang && c.b.Modified() && !c.writePending() {
 		return errAt(inv.namePos, codeNoWrite, "最後の変更が保存されていません（! を付けると変更を捨てます）")
 	}
 	return nil
+}
+
+// writePending は、編集中のファイルへの書き出しを、現在の版のまま返しているかを返す。
+func (c *execCtx) writePending() bool {
+	return c.wroteVersion != nil && *c.wroteVersion == c.b.Version()
+}
+
+// addWrite は、ActionWrite を加える。編集中のファイルへの書き出しなら、その時点の版を覚える。
+func (c *execCtx) addWrite(file string, force bool) {
+	c.actions = append(c.actions, Action{Kind: ActionWrite, File: file, Force: force})
+	if file == "" {
+		v := c.b.Version()
+		c.wroteVersion = &v
+	}
 }
 
 // req: FR-08
@@ -100,7 +134,7 @@ func runWrite(c *execCtx, inv *invocation) error {
 	if err != nil {
 		return err
 	}
-	c.actions = append(c.actions, Action{Kind: ActionWrite, File: file, Force: inv.bang})
+	c.addWrite(file, inv.bang)
 	return nil
 }
 
@@ -110,9 +144,8 @@ func runWriteQuit(c *execCtx, inv *invocation) error {
 	if err != nil {
 		return err
 	}
-	c.actions = append(c.actions,
-		Action{Kind: ActionWrite, File: file, Force: inv.bang},
-		Action{Kind: ActionQuit, Force: inv.bang})
+	c.addWrite(file, inv.bang)
+	c.actions = append(c.actions, Action{Kind: ActionQuit, Force: inv.bang})
 	return nil
 }
 
@@ -124,8 +157,8 @@ func runXit(c *execCtx, inv *invocation) error {
 	if err != nil {
 		return err
 	}
-	if c.b.Modified() || file != "" {
-		c.actions = append(c.actions, Action{Kind: ActionWrite, File: file, Force: inv.bang})
+	if (c.b.Modified() && !c.writePending()) || file != "" {
+		c.addWrite(file, inv.bang)
 	}
 	c.actions = append(c.actions, Action{Kind: ActionQuit, Force: inv.bang})
 	return nil
@@ -167,13 +200,15 @@ func (c *execCtx) applyCount(inv *invocation, count int, pos int) error {
 }
 
 // runDelete は :d [x] [count] を実行する。消した行は Deletion として返す。
+// x は書き込めるレジスターの名前（英字、"、-、_、*、+）で、それ以外は E488 にする（:d ! など。Vim 9.1 と同じ）。
+// カーソルは、消した範囲の次の行（最後の行を消したときは新しい最後の行）の最初の空白でない文字へ移る。
 //
 // req: FR-08
 func runDelete(c *execCtx, inv *invocation) error {
 	s := &scanner{src: inv.arg, base: inv.argPos}
 	var reg rune
 	if ch := s.peek(); !s.eof() && !isDigit(ch) {
-		if ch >= 0x80 || ch == ' ' || ch == '\t' {
+		if !isWritableRegister(ch) {
 			return errAt(s.pos(), codeTrailing, "余分な文字があります: %s", inv.arg)
 		}
 		reg = rune(ch)
@@ -201,8 +236,14 @@ func runDelete(c *execCtx, inv *invocation) error {
 	}
 	c.replaced = append(c.replaced, lineReplace{start: l1, old: l2 - l1 + 1, new: 0})
 	c.deletions = append(c.deletions, Deletion{Register: reg, Lines: lines})
-	c.cursor = min(l1, c.b.LineCount()-1)
+	c.setCursor(min(l1, c.b.LineCount()-1), CursorFirstNonBlank)
 	return nil
+}
+
+// isWritableRegister は、ch が :d の書き込み先にできるレジスターの名前かを返す（Vim の valid_yank_reg の書き込みの場合）。
+// 数字は回数として読むので、ここには来ない。
+func isWritableRegister(ch byte) bool {
+	return isLetter(ch) || strings.IndexByte(`"-_*+`, ch) >= 0
 }
 
 // deleteLinesEdit は、l1 行目から l2 行目まで（0 始まり、両端を含む）を行ごと消す編集を返す。
