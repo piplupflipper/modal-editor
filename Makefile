@@ -16,6 +16,12 @@ MCP_BRIDGE := $(BIN_DIR)/modal-editor-mcp-bridge
 EXTENSIONS := modal-editor-ext-line modal-editor-ext-script modal-editor-ext-dap modal-editor-ext-lsp
 # cgo を使う標準の拡張機能。C コンパイラが要る。cgo を使うのはこれだけで、本体は CGO_ENABLED=0 で作る（NFR-02）。
 CGO_EXTENSIONS := modal-editor-ext-treesitter
+# cgo の拡張機能は、C の標準ライブラリごと静的にリンクする（NFR-01）。
+# 動的にリンクすると、ビルドしたマシンより古い glibc の環境（AlmaLinux 8 の glibc 2.28 など）や、
+# musl の環境（Alpine）で起動できない（docs/measurements/nfr-dist.md）。
+# netgo と osusergo は、静的にリンクした glibc では動かない名前の解決（getaddrinfo、getpwnam）を Go の実装に置き換える。
+CGO_STATIC_TAGS    := netgo,osusergo
+CGO_STATIC_LDFLAGS := -linkmode external -extldflags "-static"
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/piplupflipper/modal-editor/internal/version.version=$(VERSION)
 
@@ -70,7 +76,7 @@ build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行フ
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/modal-editor
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(MCP_BRIDGE) ./cmd/modal-editor-mcp-bridge
 	for e in $(EXTENSIONS); do CGO_ENABLED=0 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
-	for e in $(CGO_EXTENSIONS); do CGO_ENABLED=1 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
+	for e in $(CGO_EXTENSIONS); do CGO_ENABLED=1 go build -trimpath -tags $(CGO_STATIC_TAGS) -ldflags '$(CGO_STATIC_LDFLAGS)' -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
 
 .PHONY: build-check
 build-check: build ## make build の生成物を検査する（本体の静的リンクと CGO_ENABLED=0 など。NFR-02）

@@ -75,3 +75,46 @@ func TestBuildMainStatic(t *testing.T) {
 	}
 	assertStaticELF(t, path)
 }
+
+// pureGoBinaries は、cgo を使わずに作る実行ファイルである（Makefile の BINARY、MCP_BRIDGE、EXTENSIONS）。
+var pureGoBinaries = []string{
+	"modal-editor",
+	"modal-editor-mcp-bridge",
+	"modal-editor-ext-line",
+	"modal-editor-ext-script",
+	"modal-editor-ext-dap",
+	"modal-editor-ext-lsp",
+}
+
+// cgoBinaries は、cgo を使う実行ファイルである（Makefile の CGO_EXTENSIONS）。
+var cgoBinaries = []string{
+	"modal-editor-ext-treesitter",
+}
+
+// TestBuildAllStatic は、`make build` の全ての実行ファイルが静的にリンクされていることを確かめる。
+// 動的リンカーと共有ライブラリを要求しないので、glibc の版や musl かどうかによらず、ファイルを置くだけで起動する。
+// cgo の拡張機能も、C の標準ライブラリごと静的にリンクする。
+//
+// req: NFR-01
+func TestBuildAllStatic(t *testing.T) {
+	dir := buildDir(t)
+	for _, name := range append(append([]string{}, pureGoBinaries...), cgoBinaries...) {
+		t.Run(name, func(t *testing.T) {
+			assertStaticELF(t, filepath.Join(dir, name))
+		})
+	}
+}
+
+// TestBuildPureGo は、cgo の拡張機能以外が CGO_ENABLED=0 でビルドされていることを確かめる。
+// cgo を使うのは tree-sitter の拡張機能だけに限る（Makefile）。
+func TestBuildPureGo(t *testing.T) {
+	dir := buildDir(t)
+	for _, name := range pureGoBinaries {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, name)
+			if cgo, ok := buildSetting(t, path, "CGO_ENABLED"); !ok || cgo != "0" {
+				t.Errorf("%s の CGO_ENABLED = %q（ok=%v）, want \"0\"", path, cgo, ok)
+			}
+		})
+	}
+}
