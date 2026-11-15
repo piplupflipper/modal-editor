@@ -10,10 +10,10 @@
 
 | 状態 | 件数 | 意味 |
 |---|---|---|
-| 実装とテスト | 10 | 実装とテストの両方に注釈がある |
+| 実装とテスト | 11 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 25 | 注釈が無い |
+| 未着手 | 24 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -36,7 +36,7 @@
 | FR-14 | 未着手 | - | - | 拡張機能は、宣言した契機（対応するファイルを開いたとき、コマンドを呼んだとき、など）で初めて起動する。例: 言語サーバーの無いテキストファイルを開いている間は、LSP の拡張機能を起動しない |
 | FR-15 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239) | [internal/buffer/buffer_test.go:53](../internal/buffer/buffer_test.go#L53)<br>[internal/buffer/buffer_test.go:239](../internal/buffer/buffer_test.go#L239) | バッファの内容を変更できるのは本体だけとする。拡張機能は、編集の内容と、元にしたバッファのバージョン番号を本体へ送り、本体はバージョン番号が現在と一致した編集だけを適用する |
 | FR-16 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239)<br>[internal/buffer/buffer.go:347](../internal/buffer/buffer.go#L347)<br>[internal/buffer/buffer.go:365](../internal/buffer/buffer.go#L365)<br>[internal/buffer/edit.go:64](../internal/buffer/edit.go#L64) | [internal/buffer/buffer_test.go:382](../internal/buffer/buffer_test.go#L382) | 本体は拡張機能へ、最初にバッファの全文を送り、以後は差分を送る |
-| FR-17 | 未着手 | - | - | キー入力ごとに結果が要る操作（拡張機能のモーションなど）は、期限付きで応答を待ち、期限を超えたら操作を失敗させる。期限を超えた応答は、後から届いても適用しない |
+| FR-17 | 実装とテスト | [internal/rpc/conn.go:136](../internal/rpc/conn.go#L136)<br>[internal/rpc/conn.go:256](../internal/rpc/conn.go#L256) | [internal/rpc/conn_test.go:260](../internal/rpc/conn_test.go#L260)<br>[internal/rpc/conn_test.go:301](../internal/rpc/conn_test.go#L301) | キー入力ごとに結果が要る操作（拡張機能のモーションなど）は、期限付きで応答を待ち、期限を超えたら操作を失敗させる。期限を超えた応答は、後から届いても適用しない |
 | FR-18 | 未着手 | - | - | FR-17 の期限は設定で指定できる。0 を指定した場合は、待たずに次のキー入力を受け付け、結果が届いた時点でバッファのバージョン番号とカーソル位置が問い合わせたときと同じ場合だけ適用する。違う場合は破棄する |
 | FR-19 | 未着手 | - | - | マクロとドットリピートの再生中は、FR-18 の設定に関わらず、前の操作の完了を待ってから次の操作へ進む。拡張機能が応答しなければ、その位置で再生を止める |
 | FR-20 | 未着手 | - | - | 拡張機能ごとのメモリの上限を、設定で指定できる |
