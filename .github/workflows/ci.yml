@@ -20,3 +20,7 @@ jobs:
         run: make check
       - name: make build-check
         run: make build-check
+      - name: make dist-check
+        run: make dist-check
+      - name: make dist-smoke
+        run: make dist-smoke

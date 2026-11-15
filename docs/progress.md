@@ -12,8 +12,8 @@
 |---|---|---|
 | 実装とテスト | 27 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
-| テストのみ | 2 | テストに注釈があり、実装に無い |
-| 未着手 | 6 | 注釈が無い |
+| テストのみ | 3 | テストに注釈があり、実装に無い |
+| 未着手 | 5 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -49,9 +49,9 @@
 | FR-36 | 実装とテスト | [cmd/modal-editor-ext-script/main.go:135](../cmd/modal-editor-ext-script/main.go#L135) | [cmd/modal-editor-ext-script/main_test.go:182](../cmd/modal-editor-ext-script/main_test.go#L182)<br>[cmd/modal-editor-ext-script/main_test.go:244](../cmd/modal-editor-ext-script/main_test.go#L244) | スクリプトの拡張機能を実行する。yaegi は本体には入れず、スクリプトを実行する別の実行ファイルに入れる |
 | FR-40 | 未着手 | - | - | 設定ファイルの形式は JSONC とする |
 | FR-41 | 実装とテスト | [internal/editor/remap.go:50](../internal/editor/remap.go#L50) | [internal/editor/editor_test.go:72](../internal/editor/editor_test.go#L72)<br>[internal/editor/editor_test.go:247](../internal/editor/editor_test.go#L247)<br>[internal/editor/remap_test.go:11](../internal/editor/remap_test.go#L11) | 設定ファイルは本体が直接読む。キーマップなどの設定は、拡張機能の起動を待たずに反映する |
-| NFR-01 | テストのみ | - | [internal/distcheck/static_test.go:98](../internal/distcheck/static_test.go#L98) | メンテナンスされている一般的な Linux ディストリビューションに、ファイルを置くだけで動作する。本体と拡張機能は別々のファイルとして配布する |
+| NFR-01 | テストのみ | - | [internal/distcheck/dist_test.go:29](../internal/distcheck/dist_test.go#L29)<br>[internal/distcheck/static_test.go:98](../internal/distcheck/static_test.go#L98) | メンテナンスされている一般的な Linux ディストリビューションに、ファイルを置くだけで動作する。本体と拡張機能は別々のファイルとして配布する |
 | NFR-02 | テストのみ | - | [internal/distcheck/static_test.go:68](../internal/distcheck/static_test.go#L68) | 本体は cgo を使わず、C の標準ライブラリに依存しない実行ファイルにする |
 | NFR-03 | 実装とテスト | [internal/exthost/process.go:70](../internal/exthost/process.go#L70)<br>[internal/ui/decorations.go:68](../internal/ui/decorations.go#L68) | [cmd/modal-editor-ext-script/main_test.go:294](../cmd/modal-editor-ext-script/main_test.go#L294)<br>[cmd/modal-editor-ext-script/main_test.go:367](../cmd/modal-editor-ext-script/main_test.go#L367)<br>[cmd/modal-editor-ext-script/main_test.go:422](../cmd/modal-editor-ext-script/main_test.go#L422)<br>[cmd/modal-editor-ext-script/main_test.go:435](../cmd/modal-editor-ext-script/main_test.go#L435)<br>[internal/exthost/host_test.go:606](../internal/exthost/host_test.go#L606)<br>[internal/exthost/host_test.go:658](../internal/exthost/host_test.go#L658)<br>[internal/exthost/host_test.go:684](../internal/exthost/host_test.go#L684)<br>[internal/exthost/host_test.go:707](../internal/exthost/host_test.go#L707)<br>[internal/exthost/host_test.go:724](../internal/exthost/host_test.go#L724)<br>[internal/exthost/host_test.go:739](../internal/exthost/host_test.go#L739)<br>[internal/exthost/host_test.go:787](../internal/exthost/host_test.go#L787)<br>[internal/exthost/host_test.go:956](../internal/exthost/host_test.go#L956)<br>[internal/ui/decorations_test.go:65](../internal/ui/decorations_test.go#L65)<br>[internal/ui/decorations_test.go:115](../internal/ui/decorations_test.go#L115) | 拡張機能の異常終了が本体に波及しない。拡張機能のクラッシュ、panic、無限ループ、デッドロック、期限の超過、設定した上限の範囲でのメモリの使い切りが起きても、本体のプロセスは動き続け、編集中のバッファは失われない |
 | NFR-04 | 実装とテスト | [internal/editor/editor.go:292](../internal/editor/editor.go#L292)<br>[internal/exthost/host.go:339](../internal/exthost/host.go#L339) | [internal/editor/editor_test.go:247](../internal/editor/editor_test.go#L247)<br>[internal/exthost/host_test.go:286](../internal/exthost/host_test.go#L286) | 拡張機能の読み込みは非同期とする。本体は、拡張機能の読み込みが終わるのを待たずに起動し、キー入力を受け付ける |
 | NFR-05 | 未着手 | - | - | 軽量である。起動時間、メモリの使用量、実行ファイルのサイズの目標値は未定で、計測してから定める |
-| NFR-06 | 未着手 | - | - | 利用者のマシンに、C コンパイラなどのビルド用の道具を要求しない |
+| NFR-06 | テストのみ | - | [internal/distcheck/dist_test.go:29](../internal/distcheck/dist_test.go#L29) | 利用者のマシンに、C コンパイラなどのビルド用の道具を要求しない |

@@ -25,6 +25,15 @@ CGO_STATIC_LDFLAGS := -linkmode external -extldflags "-static"
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/piplupflipper/modal-editor/internal/version.version=$(VERSION)
 
+# 配布物（NFR-01、NFR-06）。ビルド済みの実行ファイルと宣言ファイルを 1 つのディレクトリと tar.gz にまとめる。
+# 宣言ファイルのある拡張機能は extensions/<名前>/ に実行ファイルと並べ（FR-13）、
+# 宣言ファイルの無い実行ファイル（スクリプトの実行環境）は本体と同じ階層に置く。
+DIST_ROOT := dist
+DIST_NAME := modal-editor-$(VERSION)-$(shell go env GOOS)-$(shell go env GOARCH)
+DIST_DIR  := $(DIST_ROOT)/$(DIST_NAME)
+# 配布物を起動して確かめるコンテナのイメージ。ビルド用の道具が無く、C の標準ライブラリが異なるものを選ぶ。
+DIST_SMOKE_IMAGES := debian:stable-slim almalinux:8-minimal alpine:3 busybox:stable
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -82,6 +91,37 @@ build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行フ
 build-check: build ## make build の生成物を検査する（本体の静的リンクと CGO_ENABLED=0 など。NFR-02）
 	MODAL_EDITOR_BUILD_DIR=$(abspath $(BIN_DIR)) go test -count=1 ./internal/distcheck
 
+.PHONY: dist
+dist: build ## 配布物を dist/ に作る（実行ファイルと宣言ファイルのディレクトリと tar.gz。NFR-01）
+	rm -rf $(DIST_DIR) $(DIST_DIR).tar.gz
+	mkdir -p $(DIST_DIR)/extensions
+	cp $(BINARY) $(MCP_BRIDGE) $(DIST_DIR)/
+	for e in $(EXTENSIONS) $(CGO_EXTENSIONS); do \
+		if [ -f cmd/$$e/manifest.json ]; then \
+			d=$(DIST_DIR)/extensions/$${e#modal-editor-ext-}; \
+			mkdir -p $$d && cp $(BIN_DIR)/$$e cmd/$$e/manifest.json $$d/ || exit 1; \
+		else \
+			cp $(BIN_DIR)/$$e $(DIST_DIR)/ || exit 1; \
+		fi; \
+	done
+	tar -C $(DIST_ROOT) -czf $(DIST_DIR).tar.gz $(DIST_NAME)
+
+.PHONY: dist-check
+dist-check: dist ## 配布物の形を検査する（宣言ファイルの command が実行ファイルを指し、静的にリンクされていること）
+	MODAL_EDITOR_DIST_DIR=$(abspath $(DIST_DIR)) go test -count=1 ./internal/distcheck
+
+.PHONY: dist-smoke
+dist-smoke: dist ## ビルド用の道具の無いコンテナで配布物を起動する（Docker が要る。NFR-01、NFR-06）
+	for img in $(DIST_SMOKE_IMAGES); do \
+		echo "== $$img"; \
+		docker run --rm --network none -v $(abspath $(DIST_DIR)):/opt/modal-editor:ro $$img /bin/sh -c '\
+			set -e; d=/opt/modal-editor; \
+			$$d/modal-editor --version; \
+			$$d/modal-editor-mcp-bridge --version; \
+			for m in $$d/extensions/*; do $$m/modal-editor-ext-$${m##*/} </dev/null; echo "$${m##*/}: ok"; done; \
+			$$d/modal-editor-ext-script 2>&1 | grep -q "^usage:"; echo "script: ok"' || exit 1; \
+	done
+
 .PHONY: run
 run: ## ビルドせずに実行する
 	go run ./cmd/modal-editor
@@ -92,4 +132,4 @@ hooks: ## コミット前に make check を実行する Git フックを有効�
 
 .PHONY: clean
 clean: ## ビルドの生成物を削除する
-	rm -rf $(BIN_DIR)
+	rm -rf $(BIN_DIR) $(DIST_ROOT)
