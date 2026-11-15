@@ -33,6 +33,25 @@ func TestBufferLines(t *testing.T) {
 	}
 }
 
+func TestBufferFinalNewline(t *testing.T) {
+	no, yes := false, true
+	for _, tt := range []struct {
+		v    *bool
+		want bool
+	}{{nil, true}, {&yes, true}, {&no, false}} {
+		b := newBuffer(&ext.BufferOpenParams{Buffer: 1, Text: "a", FinalNewline: tt.v})
+		if b.FinalNewline() != tt.want {
+			t.Errorf("finalNewline %v: FinalNewline() = %v, want %v", tt.v, b.FinalNewline(), tt.want)
+		}
+		if err := b.applyChange(&ext.BufferChangeParams{Buffer: 1, ToVersion: 1, Edits: []ext.Edit{{Range: rng(0, 1, 0, 1), Text: "\nb"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if b.FinalNewline() != tt.want || b.Clone().FinalNewline() != tt.want {
+			t.Errorf("finalNewline %v: buffer/change の後に FinalNewline() = %v, want %v", tt.v, b.FinalNewline(), tt.want)
+		}
+	}
+}
+
 // req: FR-16
 func TestApplyChangeSequential(t *testing.T) {
 	b := open("hello\nworld", 3)

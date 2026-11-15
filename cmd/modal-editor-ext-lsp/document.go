@@ -28,18 +28,21 @@ type snapshot struct {
 //
 // 言語サーバーへ送る文書の版の番号には、本体のバージョン番号をそのまま使う（基本設計 6.3）。
 //
-// 言語サーバーへ送る全文は、本体の全文の末尾に "\n" を 1 つ足したものである。
-// 本体は末尾の改行を含めずに全文を送り、書き出すときに復元する（基本設計 4.1）。
-// 末尾の改行の無い全文を送ると、gofmt のように末尾に改行を置く整形は、毎回、末尾に改行を足す編集を返し、
-// 本体のバッファに空の行が 1 つ増える。
+// 言語サーバーへ送る全文は、ファイルへ書き出したときの内容と同じにする。
+// 本体は末尾の改行を含めずに全文を送り、書き出すときに改行が付くかどうかを finalNewline で知らせる（ext.BufferOpenParams、基本設計 4.1）。
+// finalNewline が true なら、本体の全文の末尾に "\n" を 1 つ足して送る。
+// 足さずに送ると、gofmt のように末尾に改行を置く整形は、毎回、末尾に改行を足す編集を返し、本体のバッファに空の行が 1 つ増える。
 // 足した改行の後ろの空の行（仮想の行。lines の doc）を指す位置は、本体の最後の行の行末に変換する。
-// 本体のファイルが末尾の改行を持たない場合も "\n" を足すので、言語サーバーには改行があるように見える。
+// finalNewline が false なら、本体の全文をそのまま送る。このとき仮想の行は無い。
+// 整形が末尾に改行を足す編集を返せば、本体のバッファに空の行が 1 つ増え、書き出した内容は整形の結果と同じになる。
 type document struct {
 	buffer     ext.BufferID
 	path       string
 	uri        string
 	fileType   string
 	languageID string
+	// finalNewline は、本体がファイルへ書き出したときに最後の行の後に改行が付くかどうか（server.Buffer の FinalNewline）である。
+	finalNewline bool
 	// history は、覚えている版の行で、古い順に並ぶ。最後が現在の版である。長さは 1 以上 maxHistory 以下である。
 	history []snapshot
 }
@@ -57,8 +60,9 @@ func newDocument(b *server.Buffer, languageID string) *document {
 	return d
 }
 
-// reset は、履歴を捨て、b の全文を現在の版にする。
+// reset は、履歴を捨て、b の全文と末尾の改行の扱いを現在の版にする。
 func (d *document) reset(b *server.Buffer) {
+	d.finalNewline = b.FinalNewline()
 	ls := make(lines, b.LineCount())
 	for i := range ls {
 		ls[i] = b.Line(i)
@@ -79,9 +83,13 @@ func (d *document) at(v ext.Version) (lines, error) {
 	return nil, fmt.Errorf("version %d: %w", v, errNoSnapshot)
 }
 
-// lspText は、現在の版を、言語サーバーへ送る全文（末尾に "\n" を足したもの）にする。
+// lspText は、現在の版を、言語サーバーへ送る全文（finalNewline が true なら末尾に "\n" を足したもの）にする。
 func (d *document) lspText() string {
-	return strings.Join(d.current().lines, "\n") + "\n"
+	text := strings.Join(d.current().lines, "\n")
+	if d.finalNewline {
+		text += "\n"
+	}
+	return text
 }
 
 // apply は、buffer/change の編集の列を、逐次の数え方で現在の版に順に適用し、版 to を現在の版にする。
@@ -125,6 +133,9 @@ func (d *document) apply(edits []ext.Edit, to ext.Version, enc encoding, want bo
 // トランザクションは逐次の数え方なので、範囲の開始の位置の降順に並べ、開始の位置が同じものは配列の添字の降順に並べる（基本設計 6.3）。
 // 後ろの編集から適用すれば、前の編集の位置はずれない。
 //
+// finalNewline は、ls を言語サーバーへ送ったときに末尾に "\n" を足したかどうか（document の doc）である。
+// false なら仮想の行は無く、ls の外を指す位置は最後の行の行末にするだけで、編集は書き換えない。
+//
 // 仮想の行（言語サーバーに送った全文の末尾の改行の後ろ）に触れる編集は、本体の位置で表せるように書き換える。
 // 本体の全文を H とすると、言語サーバーの全文は H + "\n" で、仮想の行の先頭はその末尾である。
 // 終わりが仮想の行にある編集 [s, 末尾) を T で置き換えた結果は H[:s] + T なので、これが H' + "\n" の形になる H' を作る。
@@ -139,7 +150,7 @@ func (d *document) apply(edits []ext.Edit, to ext.Version, enc encoding, want bo
 // 編集が無ければ nil を返す。
 //
 // req: FR-30
-func formattingTransaction(ls lines, v ext.Version, edits []textEdit, enc encoding) *ext.Transaction {
+func formattingTransaction(ls lines, finalNewline bool, v ext.Version, edits []textEdit, enc encoding) *ext.Transaction {
 	if len(edits) == 0 {
 		return nil
 	}
@@ -156,7 +167,7 @@ func formattingTransaction(ls lines, v ext.Version, edits []textEdit, enc encodi
 			e = s
 		}
 		text := te.NewText
-		if ev {
+		if ev && finalNewline {
 			switch {
 			case sv:
 				if text == "" {

@@ -127,10 +127,6 @@ type State struct {
 	registers Registers
 	lastFind  target.Find
 
-	// emptied と emptiedVersion は、行単位の削除で全ての行を消したことと、そのときのバージョン番号である（noLines）。
-	emptied        bool
-	emptiedVersion uint64
-
 	// res は、処理中の Feed などの結果を溜める。
 	res Result
 

@@ -34,6 +34,8 @@ type Buffer struct {
 	fileType string
 	version  ext.Version
 	lines    []string
+	// finalNewline は、本体がファイルへ書き出したときに最後の行の後に改行が付くかどうかである。
+	finalNewline bool
 }
 
 // newBuffer は、buffer/open の params から複製を作る。
@@ -44,6 +46,8 @@ func newBuffer(p *ext.BufferOpenParams) *Buffer {
 		fileType: p.FileType,
 		version:  p.Version,
 		lines:    strings.Split(p.Text, "\n"),
+
+		finalNewline: p.HasFinalNewline(),
 	}
 }
 
@@ -58,6 +62,12 @@ func (b *Buffer) FileType() string { return b.fileType }
 
 // Version は、複製の内容に対応するバージョン番号を返す。
 func (b *Buffer) Version() ext.Version { return b.version }
+
+// FinalNewline は、本体がこのバッファをファイルへ書き出したときに、最後の行の後に改行が付くかどうかを返す。
+// Text は末尾の改行を含まないので、ファイルとしての内容は、これが true なら Text に "\n" を足したものになる。
+// 最後に受け取った buffer/open の finalNewline の値で、省かれていれば true である（ext.BufferOpenParams）。
+// buffer/change では変わらない。
+func (b *Buffer) FinalNewline() bool { return b.finalNewline }
 
 // LineCount は、行の数を返す。空のバッファでも 1 以上である。
 func (b *Buffer) LineCount() int { return len(b.lines) }

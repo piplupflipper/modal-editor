@@ -1043,6 +1043,61 @@ func TestUpdateBuffer(t *testing.T) {
 	}
 }
 
+// buffer/open の finalNewline は、BufferSnapshot の NoFinalNewline の逆で、既定（ゼロ値）は改行が付く。
+// SetFinalNewline で値が変わったら、稼働中の拡張機能へ buffer/open を送り直す。
+func TestFinalNewline(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)
+	hs.h.Activate(ext.ActivationTextObject, "x.obj")
+	hs.waitState("x", StateRunning)
+	b := buffer.New("a")
+	if err := hs.h.OpenBuffer(BufferSnapshot{ID: 1, Text: b.Text()}); err != nil {
+		t.Fatal(err)
+	}
+	b.SetFixEndOfLine(false)
+	if err := hs.h.OpenBuffer(BufferSnapshot{ID: 2, Text: b.Text(), NoFinalNewline: !b.FinalNewline()}); err != nil {
+		t.Fatal(err)
+	}
+	state := func() fakeState {
+		t.Helper()
+		var s fakeState
+		if err := hs.h.Call(ctx, "x", methodState, nil, callTimeout, &s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	check := func(s fakeState, id ext.BufferID, want bool) {
+		t.Helper()
+		if got := s.FinalNewline[id]; got == nil || *got != want {
+			t.Errorf("buffer %d: finalNewline = %v, want %v", id, got, want)
+		}
+	}
+	s := state()
+	check(s, 1, true)
+	check(s, 2, false)
+
+	if err := hs.h.SetFinalNewline(2, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := hs.h.SetFinalNewline(1, true); err != nil { // 変わらないので送らない
+		t.Fatal(err)
+	}
+	s = state()
+	check(s, 1, true)
+	check(s, 2, true)
+	var opens int
+	for _, l := range s.Log {
+		if strings.HasPrefix(l, "open:") {
+			opens++
+		}
+	}
+	if opens != 3 {
+		t.Errorf("received %d buffer/open, want 3: %v", opens, s.Log)
+	}
+	if err := hs.h.SetFinalNewline(3, false); !errors.Is(err, ErrBufferState) {
+		t.Errorf("SetFinalNewline of unopened buffer: %v", err)
+	}
+}
+
 // command/execute を問い合わせる。未起動の拡張機能は、この呼び出しで起動する。
 func TestExecuteCommand(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "x", modeNormal, "")}, nil, true)

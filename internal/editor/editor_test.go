@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 )
@@ -559,4 +560,107 @@ func TestHoldLimit(t *testing.T) {
 		}
 		e.held = nil
 	})
+}
+
+// 拡張機能へ送る buffer/open の finalNewline は、バッファの FinalNewline（末尾の改行の有無と、末尾の改行を補う設定）である。
+// 末尾の改行の無いファイルも、既定の設定では改行を付けて書き出すので true になる。
+func TestFinalNewlineToExtension(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	h.keys(`\e`)
+	h.eventually("a.txt の finalNewline", func() bool { return h.e.message.Text == "b1 finalNewline=true" })
+
+	// 行の無いバッファは空のファイルとして書き出すので false で送り、行の無いバッファでなくなれば true で送り直す。
+	for _, step := range []struct {
+		keys string
+		want bool
+	}{{"ggdG", false}, {"u", true}, {"<C-r>", false}, {"ix<Esc>", true}} {
+		h.keys(step.keys + `\e`)
+		want := fmt.Sprintf("b1 finalNewline=%v", step.want)
+		h.eventually(step.keys+" の後の finalNewline", func() bool { return h.e.message.Text == want })
+	}
+	h.keys("uu") // ix と、やり直した ggdG を戻して "abc" にする
+	h.settle()
+
+	// 末尾の改行を補う設定を無効にしたバッファ（設定ファイルの項目は #9 の後）は、false で送る。
+	h.e.do(func() {
+		b := buffer.New("x")
+		b.SetFixEndOfLine(false)
+		h.e.newBuffer(b, filepath.Join(dir, "b.txt"), "")
+	})
+	h.keys(`\e`)
+	h.eventually("b.txt の finalNewline", func() bool { return h.e.message.Text == "b2 finalNewline=false" })
+	h.keys(":w<CR>")
+	h.settle()
+	if b, _ := os.ReadFile(filepath.Join(dir, "b.txt")); string(b) != "x" {
+		t.Errorf("b.txt = %q, want %q", b, "x")
+	}
+	h.e.do(func() { h.e.switchTo(h.e.bufs[0]) })
+	h.keys(":w<CR>")
+	h.settle()
+	if b, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(b) != "abc\n" {
+		t.Errorf("a.txt = %q, want %q", b, "abc\n")
+	}
+}
+
+// 全ての行を消したバッファと、新しいファイルを編集せずに書き出すと、Vim 9.1 と同じく空のファイルになる。
+// 期待値は、手元の Vim 9.1 で vim -Nu NONE -n --not-a-term -c '<操作>' -c 'wq! out' in を実行して得た（2026-11-16）。
+//
+// req: FR-08
+func TestWriteNoLines(t *testing.T) {
+	tests := []struct {
+		name, in, keys, want string
+	}{
+		{"dd で最後の行を消す", "\n", "dd", ""},
+		{"末尾の改行なしの dd", "a", "dd", ""},
+		{"ggdG", "a\nb\n", "ggdG", ""},
+		{"ggVGd", "a\nb", "ggVGd", ""},
+		{":%d", "a\nb", ":%d<CR>", ""},
+		{":g/./d", "a\nb\n", ":g/./d<CR>", ""},
+		{"dd の後に u", "a", "ddu", "a\n"},
+		{"dd の後に入力して u", "a", "ddix<Esc>u", ""},
+		{"ggdG を戻してやり直す", "a\nb", "ggdGu<C-r>", ""},
+		{"ggdG の後に入力", "a\nb", "ggdGix<Esc>", "x\n"},
+		{"dd の後に o", "a", "ddo<Esc>", "\n\n"},
+		{"cc は行を残す", "a", "cc<Esc>", "\n"},
+		{"0d$ は行を残す", "abc", "0d$", "\n"},
+		{"空のファイルを編集しない", "", "", ""},
+		{"空のファイルに入力して消す", "", "ix<Esc>x", "\n"},
+		// 行の無いバッファの :d は、dd と同じくレジスターを変えない。yy した x が p で入る。
+		{"行の無いバッファの :d", "", "ix<Esc>yyu:d<CR>p", "\nx\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": tt.in})
+			h := start(t, Config{WorkDir: dir}, "a.txt")
+			h.keys(tt.keys + ":w<CR>")
+			h.settle()
+			if b, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(b) != tt.want {
+				t.Errorf("file = %q, want %q", b, tt.want)
+			}
+		})
+	}
+	// 行の無いバッファを開いた後、外部で "\n"（空の行 1 つ）に書き換えて :e! すると、行の無いバッファではなくなる。
+	for _, keys := range []string{"", "ggdG"} {
+		dir := writeFiles(t, map[string]string{"a.txt": ""})
+		h := start(t, Config{WorkDir: dir}, "a.txt")
+		h.keys(keys)
+		h.settle()
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h.keys(":e!<CR>:w!<CR>")
+		h.settle()
+		if b, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(b) != "\n" {
+			t.Errorf("%q の後に :e! :w!: file = %q, want %q", keys, b, "\n")
+		}
+	}
+	// 無いファイルを開いて、編集せずに書き出す。
+	dir := writeFiles(t, nil)
+	h := start(t, Config{WorkDir: dir}, "new.txt")
+	h.keys(":w<CR>")
+	h.settle()
+	if b, err := os.ReadFile(filepath.Join(dir, "new.txt")); err != nil || len(b) != 0 {
+		t.Errorf("new.txt = %q, %v; want empty", b, err)
+	}
 }

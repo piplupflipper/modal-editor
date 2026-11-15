@@ -7,7 +7,7 @@
 //   - textDocument/definition: 開いている文書と -defpath のファイルの中の "TARGET" の出現の位置をすべて返す
 //   - textDocument/hover: "char=<位置の文字>" を Markdown で返す
 //   - textDocument/formatting: "fmtme" の出現ごとに、同じ開始の位置の 2 つの編集（"<" の挿入と "FMTME" への置き換え）を、後ろの出現から順に返す。
-//     -fmt-whole なら、同じ結果の全文で、文書の全体（末尾の改行の後ろの空の行の先頭まで）を置き換える 1 つの編集を返す
+//     -fmt-whole なら、同じ結果の全文で、文書の全体（文書の末尾まで。末尾が改行なら、その後ろの空の行の先頭）を置き換える 1 つの編集を返す
 //   - didChange の後の文書が "CRASH" を含めば、終了コード 3 で終わる
 //
 // 受け取ったメッセージと、各時点の文書の全文は、-log のファイルへ JSON の行で書き足す。
@@ -262,9 +262,8 @@ func request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 func formatEdits(text string) []map[string]any {
 	offs := occurrences(text, "fmtme")
 	if *fmtWhole {
-		lines := strings.Count(text, "\n")
 		formatted := strings.ReplaceAll(text, "fmtme", "<FMTME")
-		return []map[string]any{{"range": rng{pos{0, 0}, pos{lines, 0}}, "newText": formatted}}
+		return []map[string]any{{"range": rng{pos{0, 0}, position(text, len(text))}, "newText": formatted}}
 	}
 	edits := []map[string]any{}
 	for i := len(offs) - 1; i >= 0; i-- {

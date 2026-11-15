@@ -667,6 +667,59 @@ func TestFormat(t *testing.T) {
 	}
 }
 
+// TestNoFinalNewline は、本体が書き出したときに末尾に改行が付かないバッファ（finalNewline が false）では、
+// 言語サーバーへ送る全文に改行を足さず、整形の結果をそのまま本体の編集にすることを確かめる。
+//
+// req: FR-30
+func TestNoFinalNewline(t *testing.T) {
+	for _, whole := range []bool{false, true} {
+		t.Run(fmt.Sprintf("whole=%v", whole), func(t *testing.T) {
+			var args []string
+			if whole {
+				args = []string{"-fmt-whole"}
+			}
+			h := startHost(t, hostOptions{args: args, maxRestarts: -1})
+			text := "fmtme\nx fmtme"
+			path := filepath.Join(h.dir, "a.go")
+			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h.texts[1], h.vers[1] = text, 1
+			no := false
+			if err := h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{
+				Buffer: 1, Path: path, FileType: "go", Version: 1, Text: text, FinalNewline: &no,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.waitText(1); got != text {
+				t.Errorf("didOpen text = %q, want %q", got, text)
+			}
+
+			want := strings.ReplaceAll(text, "fmtme", "<FMTME")
+			res := h.command(1, cmdFormat, pos(0, 0), true)
+			if !res.OK || res.Transaction == nil {
+				t.Fatalf("sync format = %+v", res)
+			}
+			if got := applyEdits(text, res.Transaction.Edits); got != want {
+				t.Errorf("formatted = %q, want %q", got, want)
+			}
+
+			h.change(1, edit(1, 0, 1, 0, "y"))
+			if got := h.waitText(2); got != h.texts[1] {
+				t.Errorf("text after didChange = %q, want %q", got, h.texts[1])
+			}
+
+			// 送り直しで finalNewline が true になれば、改行を足して送る。
+			if err := h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Path: path, FileType: "go", Version: 3, Text: "b"}); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.waitText(3); got != "b\n" {
+				t.Errorf("text after reopen = %q, want %q", got, "b\n")
+			}
+		})
+	}
+}
+
 // TestWillSaveDisabledAndCancel は、formatOnSave が false なら編集無しを答えることと、
 // 本体が buffer/willSave を取り消したら、言語サーバーへ $/cancelRequest を送ることを確かめる。
 //

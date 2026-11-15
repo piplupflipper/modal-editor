@@ -127,6 +127,18 @@ type BufferOpenParams struct {
 	// Text は、バッファの全文である。
 	// 位置を数えるもとのテキスト（行を "\n" でつないだもの）で、末尾の改行の有無は含めない（基本設計 4.1）。
 	Text string `json:"text"`
+	// FinalNewline は、本体がこのバッファをファイルへ書き出したときに、最後の行の後に改行が付くかどうかである。
+	// ファイルの末尾の改行の有無と、末尾の改行を補う設定（Vim の 'fixendofline'）から本体が決める（基本設計 4.1）。
+	// 行の無いバッファ（Vim の --No lines in buffer--。Text は空）は空のファイルとして書き出すので false にする。
+	// 値が変わると（全ての行を消した、行の無いバッファに入力した、など）、本体は buffer/open を送り直す。
+	// LSP の拡張機能は、true のときだけ、言語サーバーへ送る全文の末尾に改行を足す。
+	// 省いた場合（nil）は、改行が付くものとして扱う。本体は常に送る。値は HasFinalNewline で読む。
+	FinalNewline *bool `json:"finalNewline,omitempty"`
+}
+
+// HasFinalNewline は、FinalNewline の値を返す。FinalNewline が nil なら true を返す。
+func (p *BufferOpenParams) HasFinalNewline() bool {
+	return p.FinalNewline == nil || *p.FinalNewline
 }
 
 // BufferChangeParams は、buffer/change の params である。

@@ -54,6 +54,21 @@ func TestMessageJSON(t *testing.T) {
 		roundTrip(t, BufferOpenParams{Buffer: 1, Path: "/a.md", FileType: "markdown", Version: 0, Text: "a\nb"},
 			`{"buffer":1,"path":"/a.md","fileType":"markdown","version":0,"text":"a\nb"}`)
 		roundTrip(t, BufferOpenParams{Buffer: 2}, `{"buffer":2,"version":0,"text":""}`)
+		no, yes := false, true
+		roundTrip(t, BufferOpenParams{Buffer: 3, Text: "a", FinalNewline: &no}, `{"buffer":3,"version":0,"text":"a","finalNewline":false}`)
+		roundTrip(t, BufferOpenParams{Buffer: 3, Text: "a", FinalNewline: &yes}, `{"buffer":3,"version":0,"text":"a","finalNewline":true}`)
+	})
+	t.Run("buffer/open の FinalNewline", func(t *testing.T) {
+		no, yes := false, true
+		for _, tt := range []struct {
+			v    *bool
+			want bool
+		}{{nil, true}, {&yes, true}, {&no, false}} {
+			p := BufferOpenParams{FinalNewline: tt.v}
+			if got := p.HasFinalNewline(); got != tt.want {
+				t.Errorf("HasFinalNewline() with %v = %v, want %v", tt.v, got, tt.want)
+			}
+		}
 	})
 	t.Run("buffer/change", func(t *testing.T) {
 		roundTrip(t, BufferChangeParams{Buffer: 1, FromVersion: 4, ToVersion: 5, Edits: []Edit{{Range: testRange, Text: "x"}}},
