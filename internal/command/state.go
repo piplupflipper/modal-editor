@@ -210,6 +210,12 @@ func (s *State) Flush() Result {
 	return s.take()
 }
 
+// PendingChanges は、処理中の Feed、Execute、ApplyDeferred などが、その呼び出しの中でここまでに適用した変更を、適用した順に返す。
+// 呼び出しが戻ると Result.Changes として渡す変更と同じものである。
+// Extensions の実装は、マクロの再生の途中で問い合わせる前に、ここまでの差分を拡張機能へ送る（FR-16）ためにこれを読む。
+// 返したスライスは書き換えない。
+func (s *State) PendingChanges() []buffer.Change { return s.res.Changes }
+
 // take は、溜めた結果を返し、溜める場所を空にする。
 func (s *State) take() Result {
 	r := s.res
