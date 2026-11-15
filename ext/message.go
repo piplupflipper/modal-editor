@@ -27,6 +27,10 @@ const (
 	// MethodOperatorApply は、本体から拡張機能へのリクエストである。
 	// params は OperatorApplyParams、result は OperatorApplyResult。
 	MethodOperatorApply = "operator/apply"
+	// MethodCommandExecute は、本体から拡張機能へのリクエストである。
+	// params は CommandExecuteParams、result は CommandExecuteResult。
+	// 宣言ファイルの contributes.commands に書いたコマンドを実行する（基本設計 5.3 の表には無い。仮）。
+	MethodCommandExecute = "command/execute"
 
 	// MethodPing は、本体から拡張機能への生存確認のリクエストである。
 	// params は PingParams、result は PingResult。
@@ -76,6 +80,7 @@ type BufferOpenParams struct {
 	// Version は、Text の時点のバージョン番号である。
 	Version Version `json:"version"`
 	// Text は、バッファの全文である。
+	// 位置を数えるもとのテキスト（行を "\n" でつないだもの）で、末尾の改行の有無は含めない（基本設計 4.1）。
 	Text string `json:"text"`
 }
 
@@ -190,6 +195,33 @@ type OperatorApplyResult struct {
 	// Transaction は、オペレーターの編集である。
 	// 本体は、BaseVersion が現在のバージョン番号と一致した場合だけ適用する。
 	Transaction Transaction `json:"transaction"`
+}
+
+// CommandExecuteParams は、command/execute の params である。
+// 本体は、利用者がコマンドを呼んだときに送る。
+// 応答を待つかどうかと期限は、キー入力ごとの問い合わせ（基本設計 5.4）と同じに扱ってよい。
+type CommandExecuteParams struct {
+	Buffer BufferID `json:"buffer"`
+	// Version は、問い合わせた時点のバージョン番号である。
+	Version Version `json:"version"`
+	// ID は、宣言ファイルの contributes.commands に書いたコマンドの ID である。
+	ID string `json:"id"`
+	// Cursor は、問い合わせた時点のカーソル位置である。
+	Cursor Position `json:"cursor"`
+	// Count は、回数である。0 は省略を表す。
+	Count int `json:"count"`
+	// Args は、コマンドの引数である。無ければ省く。
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+// CommandExecuteResult は、command/execute の result である。
+type CommandExecuteResult struct {
+	// OK は、コマンドが成り立ったかどうかである。false なら操作は失敗し、本体はバッファを変えない。
+	OK bool `json:"ok"`
+	// Transaction は、コマンドの編集である。編集しないコマンドでは省く。
+	// 本体は、BaseVersion が現在のバージョン番号と一致した場合だけ適用する。
+	// 編集を buffer/edit でなく応答で返すのは、本体が応答を待っている間に buffer/edit を処理できないからである。
+	Transaction *Transaction `json:"transaction,omitempty"`
 }
 
 // PingParams は、ping の params である。中身は無い。
