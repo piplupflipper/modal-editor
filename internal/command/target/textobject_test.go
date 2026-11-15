@@ -54,6 +54,14 @@ var textObjectTests = []textObjectCase{
 	{obj: "iW", text: "これは、テス|トです。 x", want: "これは、テストです。", kind: Inclusive},
 	{obj: "aW", text: "x 日本　|語 y", want: "語 ", kind: Inclusive},
 
+	// 結合文字は前の文字と合わせて 1 文字、不正な UTF-8 のバイトはその値で分類する（期待値は Vim 9.1 で確かめた）
+	{obj: "iw", text: "|カ\u3099イト\u3099 x", want: "カ\u3099イト\u3099", kind: Inclusive}, // NFD の「ガイド」
+	{obj: "iw", text: "|\u2764\ufe0fabc d", want: "\u2764\ufe0f", kind: Inclusive},
+	{obj: "aw", text: "x |\u2764\ufe0f y", want: "\u2764\ufe0f ", kind: Inclusive},
+	{obj: "iw", text: "|葛\U000E0100飾 x", want: "葛\U000E0100飾", kind: Inclusive}, // 異体字セレクタ
+	{obj: "iw", text: "a| \u0301b c", want: " \u0301", kind: Inclusive},
+	{obj: "iw", text: "|foo\x80bar baz", want: "foo", kind: Inclusive},
+
 	// i" a" i' a'
 	{obj: `i"`, text: `x = "a|bc" y`, want: "abc", kind: Exclusive},
 	{obj: `a"`, text: `x = "a|bc" y`, want: `"abc" `, kind: Exclusive},

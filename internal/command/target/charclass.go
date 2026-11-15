@@ -27,8 +27,7 @@ const (
 //   - big が true なら、空白でない文字はすべて記号とする（全角空白は W でも空白）
 //
 // 文字の 0 は行末の位置を表し、空白とする。
-// 不正な UTF-8 のバイトは、utf8.RuneError（U+FFFD）として単語の文字になる。Vim はそのバイトの値で分類するので、ここは Vim と違う。
-// 結合文字（U+0300 など）は、前の文字と別の 1 文字として分類する。Vim は前の文字と合わせて 1 文字とするので、記号の後の結合文字ではここも Vim と違う。
+// 結合文字と不正な UTF-8 のバイトの扱いは、呼び出し側の cursor.cls が Vim に合わせる。
 func classOf(r rune, big bool) int {
 	var class int
 	switch {

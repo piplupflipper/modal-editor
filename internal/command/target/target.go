@@ -22,7 +22,6 @@ import (
 	"math"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 )
@@ -164,7 +163,7 @@ type Span struct {
 // Range は、範囲を、buffer.Slice と buffer.Edit で使える半開区間に直して返す。
 //
 //   - Exclusive は、Start から End の直前まで
-//   - Inclusive は、Start から End の文字の直後まで。End が行末の位置なら、改行は含めず行末まで
+//   - Inclusive は、Start から End の文字の直後まで（End の文字に続く結合文字も含める）。End が行末の位置なら、改行は含めず行末まで
 //   - Linewise は、Start の行の先頭から End の行の行末まで。行の後の改行をどう扱うかは、オペレーターが決める
 func (s Span) Range(b *buffer.Buffer) buffer.Range {
 	switch s.Kind {
@@ -172,8 +171,7 @@ func (s Span) Range(b *buffer.Buffer) buffer.Range {
 	case Inclusive:
 		line := b.Line(s.End.Line)
 		if s.End.Byte < len(line) {
-			_, size := utf8.DecodeRuneInString(line[s.End.Byte:])
-			return buffer.Range{Start: s.Start, End: buffer.Position{Line: s.End.Line, Byte: s.End.Byte + size}}
+			return buffer.Range{Start: s.Start, End: buffer.Position{Line: s.End.Line, Byte: nextCell(line, s.End.Byte)}}
 		}
 	case Linewise:
 		return buffer.Range{
@@ -348,8 +346,7 @@ func AdjustExclusive(b *buffer.Buffer, s Span) Span {
 	line := b.Line(s.End.Line)
 	s.End.Byte = len(line)
 	if len(line) > 0 {
-		_, size := utf8.DecodeLastRuneInString(line)
-		s.End.Byte -= size
+		s.End.Byte = lastCharByte(line)
 		s.Kind = Inclusive
 	}
 	return s

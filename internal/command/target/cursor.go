@@ -1,6 +1,7 @@
 package target
 
 import (
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -8,6 +9,7 @@ import (
 
 // cursor は、バッファの上を 1 文字ずつ進み戻りする位置である。
 // Vim の inc()、dec() と同じく、各行の最後の文字の後に行末の位置を 1 つ置いて数える。
+// 1 文字は、基底の文字とその後に続く結合文字を合わせたもの（nextCell、prevCell）である。
 type cursor struct {
 	b *buffer.Buffer
 	buffer.Position
@@ -48,8 +50,7 @@ func (c *cursor) char() rune {
 func (c *cursor) inc() int {
 	line := c.line()
 	if c.Byte < len(line) {
-		_, size := utf8.DecodeRuneInString(line[c.Byte:])
-		c.Byte += size
+		c.Byte = nextCell(line, c.Byte)
 		if c.Byte < len(line) {
 			return moved
 		}
@@ -66,8 +67,7 @@ func (c *cursor) inc() int {
 // dec は、1 文字戻る。行の先頭からは前の行の行末の位置へ戻る。
 func (c *cursor) dec() int {
 	if c.Byte > 0 {
-		_, size := utf8.DecodeLastRuneInString(c.line()[:c.Byte])
-		c.Byte -= size
+		c.Byte = prevCell(c.line(), c.Byte)
 		return moved
 	}
 	if c.Line > 0 {
@@ -76,6 +76,34 @@ func (c *cursor) dec() int {
 		return crossed
 	}
 	return stuck
+}
+
+// nextCell は、line の i バイト目の文字の次の文字の位置を返す。i の文字の後に続く結合文字は飛ばす（Vim の utfc_ptr2len()）。
+// i は len(line) より小さいこと。
+func nextCell(line string, i int) int {
+	_, size := utf8.DecodeRuneInString(line[i:])
+	i += size
+	for i < len(line) {
+		r, size := utf8.DecodeRuneInString(line[i:])
+		if !isComposing(r) {
+			break
+		}
+		i += size
+	}
+	return i
+}
+
+// prevCell は、line の i バイト目の前の文字の先頭の位置を返す。結合文字は前の基底の文字と合わせて戻る（Vim の utf_head_off()）。
+// 行頭から結合文字が続くときは、行頭へ戻る。i は 0 より大きいこと。
+func prevCell(line string, i int) int {
+	for i > 0 {
+		r, size := utf8.DecodeLastRuneInString(line[:i])
+		i -= size
+		if !isComposing(r) {
+			break
+		}
+	}
+	return i
 }
 
 // incl は、inc と同じだが、空でない行の行末の位置を飛ばす（Vim の incl()）。
@@ -105,9 +133,47 @@ func (c *cursor) oneLeft() bool {
 	return true
 }
 
-// cls は、位置の文字の分類を返す。
+// cls は、位置の文字の分類を返す（Vim の cls()）。
+//
+// Vim は基底の文字と、その後に続く結合文字（濁点 U+3099、異体字セレクタ U+FE0F や U+E0100 など）を合わせて 1 文字とする。
+// inc と dec は結合文字を飛ばすが、Request の Cursor が結合文字を指すこともあるので、結合文字の上では、同じ行の中で前にある最初の結合文字でない文字の分類を返す。
+// 行頭から結合文字が続くときは、その結合文字そのものの分類を返す（Vim でも前に基底の文字が無ければ単独の 1 文字になる）。
+//
+// 不正な UTF-8 のバイトは、Vim と同じくそのバイトの値（U+0080 から U+00FF）として分類する。
 func (c *cursor) cls(big bool) int {
-	return classOf(c.char(), big)
+	line := c.line()
+	i := c.Byte
+	for i > 0 && i < len(line) {
+		r, _ := utf8.DecodeRuneInString(line[i:])
+		if !isComposing(r) {
+			break
+		}
+		_, size := utf8.DecodeLastRuneInString(line[:i])
+		i -= size
+	}
+	return classOf(classRune(line, i), big)
+}
+
+// classRune は、分類に使う、line の i バイト目の文字を返す。行末の位置では 0 を返す。
+// 不正な UTF-8 のバイトは、utf8.RuneError ではなくバイトの値を返す（Vim の utf_ptr2char() と同じ）。
+func classRune(line string, i int) rune {
+	if i >= len(line) {
+		return 0
+	}
+	r, size := utf8.DecodeRuneInString(line[i:])
+	if r == utf8.RuneError && size == 1 {
+		return rune(line[i])
+	}
+	return r
+}
+
+// isComposing は、前の文字と合わせて 1 文字になる結合文字かを返す（Vim の utf_iscomposing()）。
+//
+// Unicode の一般カテゴリ Mn と Me の文字である。Mc（U+0903 などの前進する結合文字）は含めない。
+// Vim 9.1（パッチ 1-16）で strchars('a' .. nr2char(c), 1) が 1 になる文字（U+0080 から U+10FFFF）と、
+// Go 1.27 の unicode.Mn と unicode.Me が一致することを確かめた。
+func isComposing(r rune) bool {
+	return r >= 0x300 && unicode.In(r, unicode.Mn, unicode.Me)
 }
 
 // skipClass は、分類が class である間進むか戻る。バッファの端に着いたら true を返す（Vim の skip_chars()）。
@@ -142,13 +208,12 @@ func firstNonBlankByte(line string) int {
 	return lastCharByte(line)
 }
 
-// lastCharByte は、行の最後の文字の位置を返す。空の行では 0 を返す。
+// lastCharByte は、行の最後の文字（結合文字が続くならその基底の文字）の位置を返す。空の行では 0 を返す。
 func lastCharByte(line string) int {
 	if line == "" {
 		return 0
 	}
-	_, size := utf8.DecodeLastRuneInString(line)
-	return len(line) - size
+	return prevCell(line, len(line))
 }
 
 // charColumn は、行の先頭から byteOff までの文字数を返す。
