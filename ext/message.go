@@ -42,6 +42,9 @@ const (
 	MethodPing = "ping"
 	// MethodCancel は、本体から拡張機能への通知である。params は CancelParams。
 	MethodCancel = "$/cancel"
+	// MethodShutdown は、本体から拡張機能への通知である。params は ShutdownParams。
+	// 本体が拡張機能を正常に止めるとき（エディタの終了、拡張機能の無効化）に送る（基本設計 5.2）。
+	MethodShutdown = "shutdown"
 
 	// MethodBufferEdit は、拡張機能から本体へのリクエストである。
 	// params は BufferEditParams、result は BufferEditResult。
@@ -290,6 +293,16 @@ type CancelParams struct {
 	// id は数値と文字列のどちらでもよいので、受け取った形のまま持つ。
 	ID json.RawMessage `json:"id"`
 }
+
+// ShutdownParams は、shutdown の params である。中身は無い。
+//
+// 拡張機能は、shutdown を受け取ったら、自分が起動した子プロセス（言語サーバー、デバッグアダプター、デバッグ対象など）を
+// 正しい手順（LSP の shutdown と exit、DAP の disconnect など）で終わらせてから、自分も終了する。
+// 本体は shutdown を送った後、その拡張機能へ問い合わせと生存確認を送らない。
+// 期限（本体の設定。仮の値）までに終わらなければ、本体はプロセスグループへ SIGTERM を送り、
+// さらに期限を過ぎたら SIGKILL を送る（基本設計 5.2）。
+// 拡張機能は、終わるまでの間に本体へ通知を送ってよいが、本体がそれを処理する保証は無い。
+type ShutdownParams struct{}
 
 // BufferEditParams は、buffer/edit の params である。
 // 補完の確定や整形など、拡張機能の側から始める編集に使う。

@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/rpc"
@@ -24,6 +25,9 @@ var ErrNotRunning = errors.New("server: not serving")
 // 待つと詰まるので、これらはリクエストを送らずにこの誤りを返す（Edit と WaitBuffer の doc を参照）。
 var ErrEditInHandler = errors.New("server: request to the host called from a handler or hook; it would block the message loop")
 
+// shutdownFlushTimeout は、shutdown を処理した後に、送信の列を本体へ書き出すのを待つ上限である（仮）。
+const shutdownFlushTimeout = time.Second
+
 // codeRequestCancelled は、取り消されたリクエストへの応答のエラーコードである（LSP の RequestCancelled と同じ値）。
 const codeRequestCancelled = -32800
 
@@ -36,7 +40,7 @@ const codeRequestCancelled = -32800
 // # 処理の順序
 //
 // 本体から届いたリクエストと通知は、届いた順に、Server の持つ 1 つの goroutine（以下、ループ）が 1 件ずつ処理する。
-// ハンドラーとフック（OnInitialize、OnBufferOpen、OnBufferChange、OnBufferClose、OnBufferDidSave）は、すべてループから呼ばれる。
+// ハンドラーとフック（OnInitialize、OnBufferOpen、OnBufferChange、OnBufferClose、OnBufferDidSave、OnShutdown）は、すべてループから呼ばれる。
 // このため、ハンドラーが読む複製は、本体がそのリクエストより前に送った buffer/change をすべて適用した内容になる。
 // ハンドラーとフックが戻るまで次のメッセージを処理しないので、どちらも速やかに戻る。
 //
@@ -56,6 +60,7 @@ const codeRequestCancelled = -32800
 //   - buffer/open、buffer/change、buffer/close: 複製を作る、更新する、捨てる
 //   - buffer/willSave: BufferWillSave で登録したハンドラーを呼ぶ。登録していなければ、編集無しを応答する
 //   - buffer/didSave: OnBufferDidSave で登録したフックを呼ぶ
+//   - shutdown: OnShutdown で登録したフックを呼び、送信の列を書き出してから接続を閉じ、Serve から nil を返す
 //
 // # 本体へ送るメッセージ
 //
@@ -95,6 +100,7 @@ type Server struct {
 	onChange    func(ctx context.Context, e *BufferChangeEvent)
 	onClose     func(ctx context.Context, e *BufferCloseEvent)
 	onDidSave   func(ctx context.Context, e *BufferDidSaveEvent)
+	onShutdown  func(ctx context.Context, e *ShutdownEvent)
 	// willSave は、buffer/willSave のハンドラーである。登録は 1 つだけで、キーは空文字列である。
 	willSave map[string]entry[ext.BufferWillSaveParams, ext.BufferWillSaveResult]
 
@@ -109,6 +115,8 @@ type Server struct {
 	stale map[ext.BufferID]bool
 	// waiters は、WaitBuffer で複製を待っている呼び出しである。
 	waiters map[ext.BufferID][]*bufWaiter
+	// shutdown は、shutdown を処理したかどうかである。true になったら Serve は接続を閉じて戻る。
+	shutdown bool
 }
 
 // New は、ハンドラーを登録していない Server を作る。
@@ -140,7 +148,7 @@ func (s *Server) Run(ctx context.Context) error {
 // Serve は、r から本体のメッセージを読み、w へ書き、接続が終わるまでメッセージを処理する。
 // r と w が io.Closer を実装していれば、終わるときに閉じる。
 //
-// 本体が接続を閉じたとき（r が EOF になったとき）と、ctx が終わったときは nil を返す。
+// 本体が接続を閉じたとき（r が EOF になったとき）と、shutdown を処理し終えたときと、ctx が終わったときは nil を返す。
 // JSON-RPC として解釈できないメッセージを受け取ったときなど、それ以外の理由で終わったときは、その誤りを返す。
 // 1 つの Server で Serve を呼べるのは 1 回だけで、2 回目は誤りを返す。
 //
@@ -176,6 +184,14 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 				break
 			}
 			s.dispatch(m)
+			if s.shutdown {
+				// フックが送った通知を本体へ届けてから閉じる。本体が読まなくても、期限で諦める。
+				fctx, cancel := context.WithTimeout(ctx, shutdownFlushTimeout)
+				_ = conn.Flush(fctx)
+				cancel()
+				_ = conn.Close()
+				return nil
+			}
 		}
 		if len(batch) > 0 {
 			continue
@@ -393,6 +409,12 @@ func (s *Server) handleNotification(ctx context.Context, n *rpc.Notification) {
 			return
 		}
 		s.bufferDidSave(ctx, &p)
+	case ext.MethodShutdown:
+		// params は中身が無いので読まない。読めない params でも止める。
+		s.shutdown = true
+		if s.onShutdown != nil {
+			s.hook("shutdown hook", func() { s.onShutdown(ctx, &ShutdownEvent{}) })
+		}
 	default:
 		// 知らない通知は捨てる（JSON-RPC 2.0 では通知に応答しない）。
 	}

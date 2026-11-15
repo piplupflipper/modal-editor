@@ -134,7 +134,7 @@ func TestMethodNames(t *testing.T) {
 	got := []string{
 		MethodInitialize, MethodBufferOpen, MethodBufferChange, MethodBufferClose,
 		MethodMotionResolve, MethodTextObjectResolve, MethodOperatorApply,
-		MethodPing, MethodCancel, MethodBufferEdit, MethodDecorationSet, MethodMessageShow,
+		MethodPing, MethodCancel, MethodShutdown, MethodBufferEdit, MethodDecorationSet, MethodMessageShow,
 		MethodBufferResync,
 		MethodBufferWillSave, MethodBufferDidSave, MethodEditorState, MethodEditorOpen, MethodBufferSave,
 		MethodDiagnosticSet, MethodDiagnosticList, MethodSignSet, MethodPopupShow, MethodOutputAppend, MethodChoiceAsk,
@@ -142,7 +142,7 @@ func TestMethodNames(t *testing.T) {
 	want := []string{
 		"initialize", "buffer/open", "buffer/change", "buffer/close",
 		"motion/resolve", "textObject/resolve", "operator/apply",
-		"ping", "$/cancel", "buffer/edit", "decoration/set", "message/show",
+		"ping", "$/cancel", "shutdown", "buffer/edit", "decoration/set", "message/show",
 		"buffer/resync",
 		"buffer/willSave", "buffer/didSave", "editor/state", "editor/open", "buffer/save",
 		"diagnostic/set", "diagnostic/list", "sign/set", "popup/show", "output/append", "choice/ask",
