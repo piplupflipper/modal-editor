@@ -256,6 +256,16 @@ var undoCursorCases = []vimCase{
 	{"ab\ncdef|gh", "yypu", "ab\ncdefgh", "1:4", "V:cdefgh\n", "V:cdefgh\n", ":", ":", "v:A"},
 	{"ab\ncdef|gh", "yyp$u<C-r>", "ab\ncdefgh\ncdefgh", "1:4", "V:cdefgh\n", "V:cdefgh\n", ":", ":", "v:A"},
 	{"ab\ncdef|gh", "yyp0u<C-r>", "ab\ncdefgh\ncdefgh", "1:4", "V:cdefgh\n", "V:cdefgh\n", ":", ":", "v:A"},
+	// 短い行へ k で上げた選択の C と S は、Vim がカーソルを置く行末の後（NUL の位置）の列を、次の行の列として記録する（#86）。
+	{"a\nb|c", "vkCX<Esc>u", "a\nbc", "1:1", "V:a\nbc\n", "v:U", "V:a\nbc\n", ":", "v:A"},
+	{"a\nb|c", "vkSX<Esc>u", "a\nbc", "1:1", "V:a\nbc\n", "v:U", "V:a\nbc\n", ":", "v:A"},
+	{"a\nb|c", "VkcX<Esc>u", "a\nbc", "1:1", "V:a\nbc\n", "v:U", "V:a\nbc\n", ":", "v:A"},
+	{"a\nb|c", "VkCX<Esc>u", "a\nbc", "1:1", "V:a\nbc\n", "v:U", "V:a\nbc\n", ":", "v:A"},
+	{"ab\ncdef|g", "vkCX<Esc>u", "ab\ncdefg", "1:2", "V:ab\ncdefg\n", "v:U", "V:ab\ncdefg\n", ":", "v:A"},
+	{"ab\ncdef|g", "vkCX<Esc>u<C-r>", "X", "0:0", "V:ab\ncdefg\n", "v:U", "V:ab\ncdefg\n", ":", "v:A"},
+	{"ab\ncdef|g", "vk$CX<Esc>u", "ab\ncdefg", "1:2", "V:ab\ncdefg\n", "v:U", "V:ab\ncdefg\n", ":", "v:A"},
+	{"ab\ncd|efg", "vkCX<Esc>u", "ab\ncdefg", "1:2", "V:ab\ncdefg\n", "v:U", "V:ab\ncdefg\n", ":", "v:A"},
+	{"ab\ncdefg\nhijk|lmn", "vkkCX<Esc>u", "ab\ncdefg\nhijklmn", "1:2", "V:ab\ncdefg\nhijklmn\n", "v:U", "V:ab\ncdefg\nhijklmn\n", ":", "v:A"},
 }
 
 // アンドゥとリドゥの後のカーソルが、挿入、削除、置き換え、行の結合、行単位の削除、ドットリピートのそれぞれで Vim 9.1 と一致する。

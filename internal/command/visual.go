@@ -150,7 +150,7 @@ func (s *State) visualRegion() region {
 		// y の後のカーソルと、アンドゥの後のカーソルがこの位置になる。
 		at := pos(start.Line, 0)
 		if s.cursor.Less(s.visual.anchor) {
-			at = s.cursor
+			at = s.visualCursor()
 		}
 		return region{
 			start:    at,
@@ -160,6 +160,22 @@ func (s *State) visualRegion() region {
 	}
 	eol := s.line(end.Line) == "" || (end == s.cursor && s.want == target.WantEOL)
 	return s.charRegion(start, end, eol)
+}
+
+// visualCursor は、ビジュアルモードのカーソルの位置を、Vim が置く位置で返す。
+// Vim は、'selection' が inclusive のビジュアルモードで、望みの列が行の幅に届かない行（j や k で移った短い行、$ の後）では、
+// カーソルを最後の文字ではなく行末の後（NUL の位置）へ置く（coladvance()）。この実装のカーソルは最後の文字に留めるので、
+// 望みの列から Vim の位置を求め直す。
+//
+// 使うのは、行単位の選択の始まりの列（アンドゥの単位に記録する位置。vkC のアンドゥの後のカーソル）だけである。
+// 選択の範囲と表示（Selection）は、PR #38 の「ビジュアルモードで扱わないもの」のとおり、最後の文字までのままにしている（#86）。
+func (s *State) visualCursor() buffer.Position {
+	line := s.line(s.cursor.Line)
+	if line != "" && s.cursor.Byte == lastCharStart(line) &&
+		(s.want == target.WantEOL || s.want >= s.columns().Column(line, len(line))) {
+		return pos(s.cursor.Line, len(line))
+	}
+	return s.cursor
 }
 
 // charRegion は、start から end の文字まで（eol なら end の行の改行まで）の文字単位の範囲を返す。

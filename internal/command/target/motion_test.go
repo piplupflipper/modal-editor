@@ -28,6 +28,8 @@ var motionTests = []motionCase{
 	{motion: "h", text: "|abc"},
 	{motion: "h", text: "ab\n|cd"}, // 前の行へは移らない
 	{motion: "h", text: "|"},
+	{motion: "h", text: "|abc", op: AnyOperator, want: "|abc", kind: Exclusive}, // オペレーターの後は失敗しない（Vim の yh、ch）
+	{motion: "h", text: "|", op: ChangeOperator, want: "|", kind: Exclusive},
 
 	// l
 	{motion: "l", text: "|abc", want: "a|bc", kind: Exclusive},
