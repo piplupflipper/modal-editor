@@ -33,15 +33,15 @@ func left(b *buffer.Buffer, req Request) (Result, error) {
 
 // right は l である。回数の文字だけ右へ移る。
 // オペレーターが無ければ行の最後の文字を、あれば行末の位置を越えない（dl で最後の文字を消せるように）。
-// それ以上進めなければ失敗する。
+// オペレーターが無く、それ以上進めなければ失敗する。
+// オペレーターの後では失敗しない（Vim の nv_right()）。空の行では空の範囲になり、cl（s）はそのままインサートモードへ移る。
 func right(b *buffer.Buffer, req Request) (Result, error) {
 	p := req.Cursor
 	line := b.Line(p.Line)
 	limit := lastCharByte(line)
-	if req.Operator != NoOperator && line != "" {
+	if req.Operator != NoOperator {
 		limit = len(line)
-	}
-	if p.Byte >= limit {
+	} else if p.Byte >= limit {
 		return Result{}, ErrNoTarget
 	}
 	for range req.count1() {

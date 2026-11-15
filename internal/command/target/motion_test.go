@@ -37,7 +37,7 @@ var motionTests = []motionCase{
 	{motion: "l", text: "ab|c"},
 	{motion: "l", text: "ab|c\nd"}, // 次の行へは移らない
 	{motion: "l", text: "|"},
-	{motion: "l", text: "|", op: AnyOperator},
+	{motion: "l", text: "|", op: AnyOperator, want: "|", kind: Exclusive}, // オペレーターの後は失敗しない（Vim の cl、dl）
 
 	// j k
 	{motion: "j", text: "|abc\nde", want: "abc\n|de", kind: Linewise},

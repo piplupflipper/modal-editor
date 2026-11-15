@@ -100,6 +100,21 @@ func TestParserBuiltin(t *testing.T) {
 		{"x", `"_x`, []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindAction, Register: '_', Count: 1, Action: builtin("delete-char"),
 		})}},
+		{"省略形の D は回数とレジスターを持つ操作", `"a3D`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Register: 'a', Count: 3, CountGiven: true, Action: builtin("delete-to-line-end"),
+		})}},
+		{"省略形の C はインサートモードへ", "2C", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 2, CountGiven: true, Action: builtin("change-to-line-end"), Mode: editcmd.ModeInsert,
+		})}},
+		{"省略形の S はインサートモードへ", "S", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("substitute-line"), Mode: editcmd.ModeInsert,
+		})}},
+		{"ノーマルモードの s は操作", `2"_s`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Register: '_', Count: 2, CountGiven: true, Action: builtin("substitute-char"), Mode: editcmd.ModeInsert,
+		})}},
+		{"省略形の Y", "Y", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("yank-line"),
+		})}},
 		{"i はインサートモードへ", "i", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindAction, Count: 1, Action: builtin("insert"), Mode: editcmd.ModeInsert,
 		})}},

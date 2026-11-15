@@ -108,6 +108,14 @@ var (
 		{keys: "x", id: "delete-char"},
 		{keys: "X", id: "delete-char-before"},
 		{keys: "r", id: "replace-char", takesChar: true},
+		// 省略形のコマンド。D は d$、C は c$、S は cc、s は cl、Y は yy に当たり、実行の側（internal/command）が
+		// オペレーターと対象の組に置き換えて実行する。オペレーターの表ではなく操作の表に置くのは、
+		// 対象を待たずに 1 キーで完結するからである。ビジュアルモードの D、C、S、Y（行単位の操作）は未登録である。
+		{keys: "D", id: "delete-to-line-end"},
+		{keys: "C", id: "change-to-line-end", next: editcmd.ModeInsert},
+		{keys: "S", id: "substitute-line", next: editcmd.ModeInsert},
+		{keys: "s", id: "substitute-char", next: editcmd.ModeInsert},
+		{keys: "Y", id: "yank-line"},
 		{keys: "J", id: "join-lines"},
 		{keys: "o", id: "open-below", next: editcmd.ModeInsert},
 		{keys: "O", id: "open-above", next: editcmd.ModeInsert},
