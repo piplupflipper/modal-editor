@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 440" role="img" aria-label="本体は拡張機能を別の実行ファイルの子プロセスとして起動し、JSON-RPC で呼び出す" xmlns="http://www.w3.org/2000/svg" width="1000" height="440" class="fig">
+<style>
+svg{--bg:#f4f6f8; --surface:#ffffff; --fg:#1b2430; --muted:#5a6675; --line:#d5dce4;
+  --accent:#0e5f70; --accent-soft:#deeef1; --accent-ink:#0b4a57;
+  --sev-high:#a93226; --high-soft:#f7e3e0;
+  --sev-mid:#a66a12; --mid-soft:#f8ecd6;
+  --sev-low:#2e6f4e; --low-soft:#e0efe6;
+  --good:#2e6f4e; --good-soft:#e0efe6;
+  --info:#3a5b8c; --info-soft:#e4eaf4;
+  --code-bg:#eef1f4; --tip-bg:#1b2430; --tip-fg:#f4f6f8;
+  --font-body:"BIZ UDPGothic","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Noto Serif JP",serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;}
+svg.fig{font-family:var(--font-body);font-size:12px;color:var(--fg)}
+svg .bx{fill:var(--surface);stroke:var(--fg);stroke-width:1.2}
+svg .bx-acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.3}
+svg .bx-warn{fill:var(--mid-soft);stroke:var(--sev-mid);stroke-width:1.3}
+svg .bx-bad{fill:var(--high-soft);stroke:var(--sev-high);stroke-width:1.3}
+svg .bx-good{fill:var(--good-soft);stroke:var(--good);stroke-width:1.3}
+svg .bx-info{fill:var(--info-soft);stroke:var(--info);stroke-width:1.3}
+svg .bx-ghost{fill:none;stroke:var(--muted);stroke-width:1.1;stroke-dasharray:5 4}
+svg .zone{fill:none;stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .zone-fill{fill:var(--bg);stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .ln{stroke:var(--fg);stroke-width:1.3;fill:none}
+svg .ln-acc{stroke:var(--accent);stroke-width:1.5;fill:none}
+svg .ln-bad{stroke:var(--sev-high);stroke-width:1.4;fill:none}
+svg .ln-warn{stroke:var(--sev-mid);stroke-width:1.4;fill:none}
+svg .ln-dash{stroke-dasharray:5 4}
+svg .ln-thin{stroke:var(--muted);stroke-width:1}
+svg text{fill:var(--fg)}
+svg .tx-m{fill:var(--muted);font-size:11px}
+svg .tx-b{font-weight:700}
+svg .tx-s{font-size:10.5px}
+svg .tx-acc{fill:var(--accent-ink);font-weight:700}
+svg .tx-bad{fill:var(--sev-high);font-weight:700}
+svg .tx-warn{fill:var(--sev-mid);font-weight:700}
+svg .tx-good{fill:var(--good);font-weight:700}
+svg .mk{fill:var(--fg)} svg .mk-acc{fill:var(--accent)} svg .mk-bad{fill:var(--sev-high)} svg .mk-warn{fill:var(--sev-mid)} svg .mk-muted{fill:var(--muted)}
+svg .tick{stroke:var(--muted);stroke-width:1}
+</style>
+<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker><marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker><marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-bad"/></marker></defs>
+<rect x="20" y="170" width="120" height="44" rx="6" class="bx"/>
+<text x="80" y="197" text-anchor="middle" class="tx-b">端末</text>
+<line x1="140" y1="182" x2="198" y2="182" class="ln" marker-end="url(#ar)"/>
+<text x="146" y="174" class="tx-m">キー入力</text>
+<line x1="198" y1="202" x2="142" y2="202" class="ln" marker-end="url(#ar)"/>
+<text x="152" y="220" class="tx-m">描画</text>
+
+<rect x="200" y="30" width="300" height="380" rx="8" class="zone"/>
+<text x="212" y="50" class="tx-m">プロセス：modal-editor（本体）</text>
+<rect x="220" y="64" width="260" height="60" rx="6" class="bx-acc"/>
+<text x="350" y="88" text-anchor="middle" class="tx-b">入力の解釈と編集コマンド</text>
+<text x="350" y="108" text-anchor="middle" class="tx-m">モード、ドットリピート、マクロ</text>
+<rect x="220" y="140" width="260" height="60" rx="6" class="bx-acc"/>
+<text x="350" y="164" text-anchor="middle" class="tx-b">バッファ</text>
+<text x="350" y="184" text-anchor="middle" class="tx-m">内容の正本とバージョン番号</text>
+<rect x="220" y="216" width="260" height="60" rx="6" class="bx-acc"/>
+<text x="350" y="240" text-anchor="middle" class="tx-b">画面描画と設定の読み込み</text>
+<text x="350" y="260" text-anchor="middle" class="tx-m">設定は JSONC を本体が直接読む</text>
+<rect x="220" y="292" width="260" height="96" rx="6" class="bx-acc"/>
+<text x="350" y="318" text-anchor="middle" class="tx-b">拡張機能の管理</text>
+<text x="350" y="340" text-anchor="middle" class="tx-m">起動、監視、期限、再起動</text>
+<text x="350" y="358" text-anchor="middle" class="tx-m">バッファの差分の送信</text>
+<text x="350" y="376" text-anchor="middle" class="tx-m">返ってきた編集の検査と適用</text>
+
+<rect x="640" y="30" width="200" height="80" rx="8" class="zone"/>
+<text x="652" y="50" class="tx-m">子プロセス</text>
+<rect x="655" y="58" width="170" height="40" rx="6" class="bx"/>
+<text x="740" y="83" text-anchor="middle" class="tx-b">LSP の拡張機能</text>
+<rect x="640" y="130" width="200" height="80" rx="8" class="zone"/>
+<text x="652" y="150" class="tx-m">子プロセス（cgo を使用）</text>
+<rect x="655" y="158" width="170" height="40" rx="6" class="bx"/>
+<text x="740" y="183" text-anchor="middle" class="tx-b">tree-sitter の拡張機能</text>
+<rect x="640" y="230" width="200" height="80" rx="8" class="zone"/>
+<text x="652" y="250" class="tx-m">子プロセス</text>
+<rect x="655" y="258" width="170" height="40" rx="6" class="bx"/>
+<text x="740" y="283" text-anchor="middle" class="tx-b">スクリプトの実行（yaegi）</text>
+<text x="740" y="340" text-anchor="middle" class="tx-m">DAP、MCP、ACP の拡張機能と</text>
+<text x="740" y="358" text-anchor="middle" class="tx-m">利用者が足す拡張機能も同じ形</text>
+
+<line x1="480" y1="320" x2="638" y2="70" class="ln-acc" marker-start="url(#ara)" marker-end="url(#ara)"/>
+<line x1="480" y1="340" x2="638" y2="170" class="ln-acc" marker-start="url(#ara)" marker-end="url(#ara)"/>
+<line x1="480" y1="360" x2="638" y2="270" class="ln-acc" marker-start="url(#ara)" marker-end="url(#ara)"/>
+<text x="520" y="396" class="tx-acc">JSON-RPC（標準入出力）</text>
+
+<rect x="880" y="48" width="100" height="44" rx="6" class="bx"/>
+<text x="930" y="75" text-anchor="middle" class="tx-b">言語サーバー</text>
+<line x1="840" y1="70" x2="878" y2="70" class="ln" marker-start="url(#ar)" marker-end="url(#ar)"/>
+<text x="846" y="62" class="tx-m">LSP</text>
+<rect x="880" y="248" width="100" height="44" rx="6" class="bx"/>
+<text x="930" y="266" text-anchor="middle" class="tx-b">スクリプトの</text>
+<text x="930" y="282" text-anchor="middle" class="tx-b">ファイル</text>
+<line x1="878" y1="270" x2="842" y2="270" class="ln" marker-end="url(#ar)"/>
+<text x="846" y="262" class="tx-m">読込</text>
+</svg>

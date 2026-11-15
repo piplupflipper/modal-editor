@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 300" role="img" aria-label="キー入力は編集コマンドの値に解釈されてから実行され、マクロはキーを、ドットリピートは編集コマンドの値を記録する" xmlns="http://www.w3.org/2000/svg" width="1000" height="300" class="fig">
+<style>
+svg{--bg:#f4f6f8; --surface:#ffffff; --fg:#1b2430; --muted:#5a6675; --line:#d5dce4;
+  --accent:#0e5f70; --accent-soft:#deeef1; --accent-ink:#0b4a57;
+  --sev-high:#a93226; --high-soft:#f7e3e0;
+  --sev-mid:#a66a12; --mid-soft:#f8ecd6;
+  --sev-low:#2e6f4e; --low-soft:#e0efe6;
+  --good:#2e6f4e; --good-soft:#e0efe6;
+  --info:#3a5b8c; --info-soft:#e4eaf4;
+  --code-bg:#eef1f4; --tip-bg:#1b2430; --tip-fg:#f4f6f8;
+  --font-body:"BIZ UDPGothic","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Noto Serif JP",serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;}
+svg.fig{font-family:var(--font-body);font-size:12px;color:var(--fg)}
+svg .bx{fill:var(--surface);stroke:var(--fg);stroke-width:1.2}
+svg .bx-acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.3}
+svg .bx-warn{fill:var(--mid-soft);stroke:var(--sev-mid);stroke-width:1.3}
+svg .bx-bad{fill:var(--high-soft);stroke:var(--sev-high);stroke-width:1.3}
+svg .bx-good{fill:var(--good-soft);stroke:var(--good);stroke-width:1.3}
+svg .bx-info{fill:var(--info-soft);stroke:var(--info);stroke-width:1.3}
+svg .bx-ghost{fill:none;stroke:var(--muted);stroke-width:1.1;stroke-dasharray:5 4}
+svg .zone{fill:none;stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .zone-fill{fill:var(--bg);stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .ln{stroke:var(--fg);stroke-width:1.3;fill:none}
+svg .ln-acc{stroke:var(--accent);stroke-width:1.5;fill:none}
+svg .ln-bad{stroke:var(--sev-high);stroke-width:1.4;fill:none}
+svg .ln-warn{stroke:var(--sev-mid);stroke-width:1.4;fill:none}
+svg .ln-dash{stroke-dasharray:5 4}
+svg .ln-thin{stroke:var(--muted);stroke-width:1}
+svg text{fill:var(--fg)}
+svg .tx-m{fill:var(--muted);font-size:11px}
+svg .tx-b{font-weight:700}
+svg .tx-s{font-size:10.5px}
+svg .tx-acc{fill:var(--accent-ink);font-weight:700}
+svg .tx-bad{fill:var(--sev-high);font-weight:700}
+svg .tx-warn{fill:var(--sev-mid);font-weight:700}
+svg .tx-good{fill:var(--good);font-weight:700}
+svg .mk{fill:var(--fg)} svg .mk-acc{fill:var(--accent)} svg .mk-bad{fill:var(--sev-high)} svg .mk-warn{fill:var(--sev-mid)} svg .mk-muted{fill:var(--muted)}
+svg .tick{stroke:var(--muted);stroke-width:1}
+</style>
+<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker><marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker><marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-bad"/></marker></defs>
+<rect x="10" y="40" width="110" height="44" rx="6" class="bx"/>
+<text x="65" y="67" text-anchor="middle" class="tx-b">端末</text>
+<rect x="184" y="40" width="110" height="44" rx="6" class="bx-acc"/>
+<text x="239" y="67" text-anchor="middle" class="tx-b">キーの解読</text>
+<rect x="358" y="40" width="110" height="44" rx="6" class="bx-acc"/>
+<text x="413" y="67" text-anchor="middle" class="tx-b">入力の解釈</text>
+<rect x="532" y="40" width="110" height="44" rx="6" class="bx-acc"/>
+<text x="587" y="67" text-anchor="middle" class="tx-b">コマンドの実行</text>
+<rect x="706" y="40" width="110" height="44" rx="6" class="bx-acc"/>
+<text x="761" y="67" text-anchor="middle" class="tx-b">バッファ</text>
+<rect x="880" y="40" width="110" height="44" rx="6" class="bx-acc"/>
+<text x="935" y="67" text-anchor="middle" class="tx-b">画面描画</text>
+
+<line x1="120" y1="62" x2="182" y2="62" class="ln" marker-end="url(#ar)"/>
+<text x="126" y="54" class="tx-m">バイト列</text>
+<line x1="294" y1="62" x2="356" y2="62" class="ln" marker-end="url(#ar)"/>
+<text x="312" y="54" class="tx-m">キー</text>
+<line x1="468" y1="62" x2="530" y2="62" class="ln" marker-end="url(#ar)"/>
+<text x="470" y="30" class="tx-m">編集コマンド</text>
+<text x="482" y="46" class="tx-m">の値</text>
+<line x1="642" y1="62" x2="704" y2="62" class="ln" marker-end="url(#ar)"/>
+<text x="660" y="54" class="tx-m">編集</text>
+<line x1="816" y1="62" x2="878" y2="62" class="ln" marker-end="url(#ar)"/>
+<text x="822" y="54" class="tx-m">変更の通知</text>
+
+<line x1="325" y1="62" x2="325" y2="158" class="ln ln-dash" marker-end="url(#ar)"/>
+<rect x="210" y="160" width="230" height="60" rx="6" class="bx"/>
+<text x="325" y="184" text-anchor="middle" class="tx-b">マクロの記録</text>
+<text x="325" y="204" text-anchor="middle" class="tx-m">キーの列をレジスターに保存</text>
+
+<line x1="500" y1="62" x2="500" y2="158" class="ln ln-dash" marker-end="url(#ar)"/>
+<rect x="460" y="160" width="250" height="60" rx="6" class="bx"/>
+<text x="585" y="184" text-anchor="middle" class="tx-b">ドットリピートの記録</text>
+<text x="585" y="204" text-anchor="middle" class="tx-m">直前の編集コマンドの値を 1 つ保持</text>
+
+<line x1="620" y1="84" x2="820" y2="158" class="ln" marker-start="url(#ar)" marker-end="url(#ar)"/>
+<rect x="730" y="160" width="260" height="60" rx="6" class="bx-warn"/>
+<text x="860" y="184" text-anchor="middle" class="tx-b">拡張機能への問い合わせ</text>
+<text x="860" y="204" text-anchor="middle" class="tx-m">拡張機能が追加した操作のときだけ</text>
+
+<text x="10" y="262" class="tx-m">例：「d2w」は、キー 3 個から、編集コマンドの値 {オペレーター: 削除, 回数: 2, モーション: 次の単語} になる。</text>
+<text x="10" y="282" class="tx-m">「.」は、保持している値をもう一度「コマンドの実行」へ渡す。</text>
+</svg>

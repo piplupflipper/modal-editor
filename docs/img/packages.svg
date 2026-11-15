@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 420" role="img" aria-label="パッケージは 4 つの層に分け、上の層だけが下の層を import する" xmlns="http://www.w3.org/2000/svg" width="1000" height="420" class="fig">
+<style>
+svg{--bg:#f4f6f8; --surface:#ffffff; --fg:#1b2430; --muted:#5a6675; --line:#d5dce4;
+  --accent:#0e5f70; --accent-soft:#deeef1; --accent-ink:#0b4a57;
+  --sev-high:#a93226; --high-soft:#f7e3e0;
+  --sev-mid:#a66a12; --mid-soft:#f8ecd6;
+  --sev-low:#2e6f4e; --low-soft:#e0efe6;
+  --good:#2e6f4e; --good-soft:#e0efe6;
+  --info:#3a5b8c; --info-soft:#e4eaf4;
+  --code-bg:#eef1f4; --tip-bg:#1b2430; --tip-fg:#f4f6f8;
+  --font-body:"BIZ UDPGothic","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Noto Serif JP",serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;}
+svg.fig{font-family:var(--font-body);font-size:12px;color:var(--fg)}
+svg .bx{fill:var(--surface);stroke:var(--fg);stroke-width:1.2}
+svg .bx-acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.3}
+svg .bx-warn{fill:var(--mid-soft);stroke:var(--sev-mid);stroke-width:1.3}
+svg .bx-bad{fill:var(--high-soft);stroke:var(--sev-high);stroke-width:1.3}
+svg .bx-good{fill:var(--good-soft);stroke:var(--good);stroke-width:1.3}
+svg .bx-info{fill:var(--info-soft);stroke:var(--info);stroke-width:1.3}
+svg .bx-ghost{fill:none;stroke:var(--muted);stroke-width:1.1;stroke-dasharray:5 4}
+svg .zone{fill:none;stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .zone-fill{fill:var(--bg);stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .ln{stroke:var(--fg);stroke-width:1.3;fill:none}
+svg .ln-acc{stroke:var(--accent);stroke-width:1.5;fill:none}
+svg .ln-bad{stroke:var(--sev-high);stroke-width:1.4;fill:none}
+svg .ln-warn{stroke:var(--sev-mid);stroke-width:1.4;fill:none}
+svg .ln-dash{stroke-dasharray:5 4}
+svg .ln-thin{stroke:var(--muted);stroke-width:1}
+svg text{fill:var(--fg)}
+svg .tx-m{fill:var(--muted);font-size:11px}
+svg .tx-b{font-weight:700}
+svg .tx-s{font-size:10.5px}
+svg .tx-acc{fill:var(--accent-ink);font-weight:700}
+svg .tx-bad{fill:var(--sev-high);font-weight:700}
+svg .tx-warn{fill:var(--sev-mid);font-weight:700}
+svg .tx-good{fill:var(--good);font-weight:700}
+svg .mk{fill:var(--fg)} svg .mk-acc{fill:var(--accent)} svg .mk-bad{fill:var(--sev-high)} svg .mk-warn{fill:var(--sev-mid)} svg .mk-muted{fill:var(--muted)}
+svg .tick{stroke:var(--muted);stroke-width:1}
+</style>
+<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker><marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker><marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-bad"/></marker></defs>
+<line x1="50" y1="50" x2="50" y2="388" class="ln" marker-end="url(#ar)"/>
+<text x="62" y="224" class="tx-m">import の</text>
+<text x="62" y="240" class="tx-m">向き</text>
+
+<rect x="140" y="20" width="840" height="80" rx="8" class="zone"/>
+<text x="152" y="40" class="tx-m">入口</text>
+<rect x="160" y="48" width="240" height="40" rx="6" class="bx"/>
+<text x="280" y="73" text-anchor="middle" class="tx-b">cmd/modal-editor</text>
+<rect x="420" y="48" width="260" height="40" rx="6" class="bx"/>
+<text x="550" y="73" text-anchor="middle" class="tx-b">cmd/modal-editor-ext-*</text>
+<rect x="700" y="48" width="260" height="40" rx="6" class="bx"/>
+<text x="830" y="73" text-anchor="middle" class="tx-b">cmd/modal-editor-mcp-bridge</text>
+
+<rect x="140" y="116" width="840" height="80" rx="8" class="zone"/>
+<text x="152" y="136" class="tx-m">組み立て</text>
+<rect x="160" y="144" width="800" height="40" rx="6" class="bx-acc"/>
+<text x="560" y="169" text-anchor="middle" class="tx-b">internal/editor：イベントループ。下の層の部品をつなぐ</text>
+
+<rect x="140" y="212" width="840" height="96" rx="8" class="zone"/>
+<text x="152" y="232" class="tx-m">機能</text>
+<rect x="160" y="240" width="145" height="56" rx="6" class="bx"/>
+<text x="232" y="264" text-anchor="middle" class="tx-b">internal/input</text>
+<text x="232" y="282" text-anchor="middle" class="tx-m">キーの解読と解釈</text>
+<rect x="324" y="240" width="145" height="56" rx="6" class="bx"/>
+<text x="396" y="264" text-anchor="middle" class="tx-b">internal/command</text>
+<text x="396" y="282" text-anchor="middle" class="tx-m">編集コマンドの実行</text>
+<rect x="488" y="240" width="145" height="56" rx="6" class="bx"/>
+<text x="560" y="264" text-anchor="middle" class="tx-b">internal/ui</text>
+<text x="560" y="282" text-anchor="middle" class="tx-m">端末への描画</text>
+<rect x="652" y="240" width="145" height="56" rx="6" class="bx"/>
+<text x="724" y="264" text-anchor="middle" class="tx-b">internal/exthost</text>
+<text x="724" y="282" text-anchor="middle" class="tx-m">拡張機能の管理</text>
+<rect x="816" y="240" width="145" height="56" rx="6" class="bx"/>
+<text x="888" y="264" text-anchor="middle" class="tx-b">internal/config</text>
+<text x="888" y="282" text-anchor="middle" class="tx-m">設定の読み込み</text>
+
+<rect x="140" y="324" width="840" height="80" rx="8" class="zone"/>
+<text x="152" y="344" class="tx-m">土台（他のパッケージを import しない）</text>
+<rect x="160" y="352" width="250" height="40" rx="6" class="bx"/>
+<text x="285" y="377" text-anchor="middle" class="tx-b">internal/buffer：バッファと編集</text>
+<rect x="430" y="352" width="250" height="40" rx="6" class="bx"/>
+<text x="555" y="377" text-anchor="middle" class="tx-b">internal/rpc：JSON-RPC の送受信</text>
+<rect x="700" y="352" width="260" height="40" rx="6" class="bx-good"/>
+<text x="830" y="377" text-anchor="middle" class="tx-b">ext：拡張機能 API（公開）</text>
+</svg>

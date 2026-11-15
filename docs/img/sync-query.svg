@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 470" role="img" aria-label="拡張機能への同期の問い合わせは期限付きで待ち、期限内に届いてバージョン番号が一致した結果だけを適用する" xmlns="http://www.w3.org/2000/svg" width="1000" height="470" class="fig">
+<style>
+svg{--bg:#f4f6f8; --surface:#ffffff; --fg:#1b2430; --muted:#5a6675; --line:#d5dce4;
+  --accent:#0e5f70; --accent-soft:#deeef1; --accent-ink:#0b4a57;
+  --sev-high:#a93226; --high-soft:#f7e3e0;
+  --sev-mid:#a66a12; --mid-soft:#f8ecd6;
+  --sev-low:#2e6f4e; --low-soft:#e0efe6;
+  --good:#2e6f4e; --good-soft:#e0efe6;
+  --info:#3a5b8c; --info-soft:#e4eaf4;
+  --code-bg:#eef1f4; --tip-bg:#1b2430; --tip-fg:#f4f6f8;
+  --font-body:"BIZ UDPGothic","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Noto Serif JP",serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;}
+svg.fig{font-family:var(--font-body);font-size:12px;color:var(--fg)}
+svg .bx{fill:var(--surface);stroke:var(--fg);stroke-width:1.2}
+svg .bx-acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.3}
+svg .bx-warn{fill:var(--mid-soft);stroke:var(--sev-mid);stroke-width:1.3}
+svg .bx-bad{fill:var(--high-soft);stroke:var(--sev-high);stroke-width:1.3}
+svg .bx-good{fill:var(--good-soft);stroke:var(--good);stroke-width:1.3}
+svg .bx-info{fill:var(--info-soft);stroke:var(--info);stroke-width:1.3}
+svg .bx-ghost{fill:none;stroke:var(--muted);stroke-width:1.1;stroke-dasharray:5 4}
+svg .zone{fill:none;stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .zone-fill{fill:var(--bg);stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .ln{stroke:var(--fg);stroke-width:1.3;fill:none}
+svg .ln-acc{stroke:var(--accent);stroke-width:1.5;fill:none}
+svg .ln-bad{stroke:var(--sev-high);stroke-width:1.4;fill:none}
+svg .ln-warn{stroke:var(--sev-mid);stroke-width:1.4;fill:none}
+svg .ln-dash{stroke-dasharray:5 4}
+svg .ln-thin{stroke:var(--muted);stroke-width:1}
+svg text{fill:var(--fg)}
+svg .tx-m{fill:var(--muted);font-size:11px}
+svg .tx-b{font-weight:700}
+svg .tx-s{font-size:10.5px}
+svg .tx-acc{fill:var(--accent-ink);font-weight:700}
+svg .tx-bad{fill:var(--sev-high);font-weight:700}
+svg .tx-warn{fill:var(--sev-mid);font-weight:700}
+svg .tx-good{fill:var(--good);font-weight:700}
+svg .mk{fill:var(--fg)} svg .mk-acc{fill:var(--accent)} svg .mk-bad{fill:var(--sev-high)} svg .mk-warn{fill:var(--sev-mid)} svg .mk-muted{fill:var(--muted)}
+svg .tick{stroke:var(--muted);stroke-width:1}
+</style>
+<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker><marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker><marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-bad"/></marker></defs>
+<rect x="60" y="20" width="160" height="40" rx="6" class="bx"/>
+<text x="140" y="45" text-anchor="middle" class="tx-b">利用者</text>
+<rect x="400" y="20" width="200" height="40" rx="6" class="bx-acc"/>
+<text x="500" y="45" text-anchor="middle" class="tx-b">本体</text>
+<rect x="780" y="20" width="160" height="40" rx="6" class="bx"/>
+<text x="860" y="45" text-anchor="middle" class="tx-b">拡張機能</text>
+<line x1="140" y1="60" x2="140" y2="300" class="ln ln-dash"/>
+<line x1="500" y1="60" x2="500" y2="300" class="ln ln-dash"/>
+<line x1="860" y1="60" x2="860" y2="300" class="ln ln-dash"/>
+
+<line x1="140" y1="100" x2="498" y2="100" class="ln" marker-end="url(#ar)"/>
+<text x="150" y="92" class="tx-m">① キー入力（拡張機能のテキストオブジェクト）</text>
+<line x1="500" y1="140" x2="858" y2="140" class="ln-acc" marker-end="url(#ara)"/>
+<text x="510" y="132" class="tx-acc">② 問い合わせ（バージョン番号 12、カーソル位置）</text>
+<rect x="490" y="140" width="20" height="100" class="bx-warn"/>
+<text x="380" y="186" class="tx-warn">③ 期限まで待つ</text>
+<text x="380" y="204" class="tx-m">画面描画は継続</text>
+<line x1="860" y1="240" x2="512" y2="240" class="ln-acc" marker-end="url(#ara)"/>
+<text x="560" y="232" class="tx-acc">④ 範囲（元にしたバージョン番号 12）</text>
+<line x1="500" y1="280" x2="142" y2="280" class="ln" marker-end="url(#ar)"/>
+<text x="150" y="272" class="tx-m">⑤ 結果を適用して次のキー入力へ</text>
+
+<text x="20" y="336" class="tx-b">④ の届き方による分岐</text>
+<rect x="20" y="350" width="300" height="100" rx="6" class="bx-good"/>
+<text x="170" y="376" text-anchor="middle" class="tx-b">期限内に届き、番号が一致</text>
+<text x="170" y="400" text-anchor="middle" class="tx-m">結果を適用する</text>
+<rect x="350" y="350" width="300" height="100" rx="6" class="bx-bad"/>
+<text x="500" y="376" text-anchor="middle" class="tx-b">期限を超えた</text>
+<text x="500" y="400" text-anchor="middle" class="tx-m">操作は失敗。次のキー入力へ進む</text>
+<text x="500" y="420" text-anchor="middle" class="tx-m">後から届いた結果は破棄する</text>
+<rect x="680" y="350" width="300" height="100" rx="6" class="bx-warn"/>
+<text x="830" y="376" text-anchor="middle" class="tx-b">期限を 0 に設定している</text>
+<text x="830" y="400" text-anchor="middle" class="tx-m">③ で待たずに次のキー入力へ進む</text>
+<text x="830" y="420" text-anchor="middle" class="tx-m">届いた時点で番号とカーソル位置が</text>
+<text x="830" y="438" text-anchor="middle" class="tx-m">同じなら適用、違えば破棄する</text>
+</svg>

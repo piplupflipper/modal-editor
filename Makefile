@@ -48,8 +48,16 @@ tidy-check: ## go.mod と go.sum が整理済みでなければ失敗する
 vuln: ## 依存ライブラリの既知の脆弱性を調べる
 	$(GOVULNCHECK) ./...
 
+.PHONY: progress
+progress: ## 要件ごとの進捗（docs/progress.md）を生成する
+	go run ./cmd/reqtrace
+
+.PHONY: progress-check
+progress-check: ## docs/progress.md が最新でなければ失敗する
+	go run ./cmd/reqtrace -check
+
 .PHONY: check
-check: fmt-check typecheck lint test tidy-check ## コミット前の検査を全て実行する（CI と同じ内容）
+check: fmt-check typecheck lint test tidy-check progress-check ## コミット前の検査を全て実行する（CI と同じ内容）
 
 .PHONY: build
 build: ## 実行ファイルを bin/ に作る

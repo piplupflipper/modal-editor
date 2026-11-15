@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 340" role="img" aria-label="拡張機能は起動の契機で初めて起動し、異常があれば本体が再起動し、失敗が続けば無効にする" xmlns="http://www.w3.org/2000/svg" width="1000" height="340" class="fig">
+<style>
+svg{--bg:#f4f6f8; --surface:#ffffff; --fg:#1b2430; --muted:#5a6675; --line:#d5dce4;
+  --accent:#0e5f70; --accent-soft:#deeef1; --accent-ink:#0b4a57;
+  --sev-high:#a93226; --high-soft:#f7e3e0;
+  --sev-mid:#a66a12; --mid-soft:#f8ecd6;
+  --sev-low:#2e6f4e; --low-soft:#e0efe6;
+  --good:#2e6f4e; --good-soft:#e0efe6;
+  --info:#3a5b8c; --info-soft:#e4eaf4;
+  --code-bg:#eef1f4; --tip-bg:#1b2430; --tip-fg:#f4f6f8;
+  --font-body:"BIZ UDPGothic","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Noto Serif JP",serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;}
+svg.fig{font-family:var(--font-body);font-size:12px;color:var(--fg)}
+svg .bx{fill:var(--surface);stroke:var(--fg);stroke-width:1.2}
+svg .bx-acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.3}
+svg .bx-warn{fill:var(--mid-soft);stroke:var(--sev-mid);stroke-width:1.3}
+svg .bx-bad{fill:var(--high-soft);stroke:var(--sev-high);stroke-width:1.3}
+svg .bx-good{fill:var(--good-soft);stroke:var(--good);stroke-width:1.3}
+svg .bx-info{fill:var(--info-soft);stroke:var(--info);stroke-width:1.3}
+svg .bx-ghost{fill:none;stroke:var(--muted);stroke-width:1.1;stroke-dasharray:5 4}
+svg .zone{fill:none;stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .zone-fill{fill:var(--bg);stroke:var(--muted);stroke-width:1;stroke-dasharray:6 4}
+svg .ln{stroke:var(--fg);stroke-width:1.3;fill:none}
+svg .ln-acc{stroke:var(--accent);stroke-width:1.5;fill:none}
+svg .ln-bad{stroke:var(--sev-high);stroke-width:1.4;fill:none}
+svg .ln-warn{stroke:var(--sev-mid);stroke-width:1.4;fill:none}
+svg .ln-dash{stroke-dasharray:5 4}
+svg .ln-thin{stroke:var(--muted);stroke-width:1}
+svg text{fill:var(--fg)}
+svg .tx-m{fill:var(--muted);font-size:11px}
+svg .tx-b{font-weight:700}
+svg .tx-s{font-size:10.5px}
+svg .tx-acc{fill:var(--accent-ink);font-weight:700}
+svg .tx-bad{fill:var(--sev-high);font-weight:700}
+svg .tx-warn{fill:var(--sev-mid);font-weight:700}
+svg .tx-good{fill:var(--good);font-weight:700}
+svg .mk{fill:var(--fg)} svg .mk-acc{fill:var(--accent)} svg .mk-bad{fill:var(--sev-high)} svg .mk-warn{fill:var(--sev-mid)} svg .mk-muted{fill:var(--muted)}
+svg .tick{stroke:var(--muted);stroke-width:1}
+</style>
+<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker><marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker><marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-bad"/></marker></defs>
+<rect x="30" y="60" width="170" height="60" rx="28" class="bx"/>
+<text x="115" y="84" text-anchor="middle" class="tx-b">未起動</text>
+<text x="115" y="104" text-anchor="middle" class="tx-m">宣言ファイルだけ読込済み</text>
+<rect x="400" y="60" width="170" height="60" rx="28" class="bx"/>
+<text x="485" y="84" text-anchor="middle" class="tx-b">起動中</text>
+<text x="485" y="104" text-anchor="middle" class="tx-m">本体は待たずに動く</text>
+<rect x="800" y="60" width="170" height="60" rx="28" class="bx-acc"/>
+<text x="885" y="84" text-anchor="middle" class="tx-b">稼働中</text>
+<text x="885" y="104" text-anchor="middle" class="tx-m">問い合わせに応答できる</text>
+<rect x="400" y="230" width="170" height="60" rx="28" class="bx-warn"/>
+<text x="485" y="254" text-anchor="middle" class="tx-b">再起動待ち</text>
+<text x="485" y="274" text-anchor="middle" class="tx-m">待ち時間は失敗ごとに延長</text>
+<rect x="30" y="230" width="170" height="60" rx="28" class="bx-bad"/>
+<text x="115" y="254" text-anchor="middle" class="tx-b">無効</text>
+<text x="115" y="274" text-anchor="middle" class="tx-m">自動では起動しない</text>
+
+<line x1="200" y1="90" x2="398" y2="90" class="ln" marker-end="url(#ar)"/>
+<text x="210" y="82" class="tx-m">起動の契機（ファイルを開く、</text>
+<text x="210" y="108" class="tx-m">コマンドを呼ぶ、など）</text>
+<line x1="570" y1="90" x2="798" y2="90" class="ln" marker-end="url(#ar)"/>
+<text x="600" y="82" class="tx-m">初期化の応答が届く</text>
+<line x1="450" y1="120" x2="450" y2="228" class="ln-bad" marker-end="url(#arb)"/>
+<text x="300" y="170" class="tx-bad">起動の期限切れ、</text>
+<text x="300" y="188" class="tx-bad">起動中の異常終了</text>
+<line x1="520" y1="228" x2="520" y2="122" class="ln" marker-end="url(#ar)"/>
+<text x="530" y="180" class="tx-m">待ち時間の経過</text>
+<line x1="885" y1="120" x2="572" y2="250" class="ln-bad" marker-end="url(#arb)"/>
+<text x="740" y="208" class="tx-bad">異常終了、応答なしで強制終了</text>
+<line x1="398" y1="260" x2="202" y2="260" class="ln-bad" marker-end="url(#arb)"/>
+<text x="218" y="252" class="tx-bad">連続の失敗が上限に到達</text>
+<path d="M 115,230 C 115,170 300,150 420,118" class="ln" fill="none" marker-end="url(#ar)"/>
+<text x="60" y="170" class="tx-m">利用者が再起動を指示</text>
+</svg>
