@@ -6,6 +6,7 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 - 要件定義: [docs/requirements.md](docs/requirements.md)
 - 基本設計: [docs/basic-design.md](docs/basic-design.md)
 - 要件ごとの進捗: [docs/progress.md](docs/progress.md)（`make progress` が生成する）
+- Vim との違い（直さないと決めた食い違いと、見つけた未実装の機能）: [docs/vim-differences.md](docs/vim-differences.md)
 
 詳細設計の文書は作らず、コードと doc コメントを詳細設計として扱う。
 

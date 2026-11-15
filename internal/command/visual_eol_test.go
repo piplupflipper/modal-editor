@@ -62,6 +62,37 @@ var visualEOLCases = []vimCase{
 	{"ab|c\nd", "vly", "abc\nd", "0:2", "v:c\n", "v:c\n", ":", ":", "v:A"},
 	{"ab|c", "vld", "ab", "0:1", "v:c", "v:U", ":", "v:c", "v:A"},
 	{"ab|c\nd", "vl<Esc>x", "ab\nd", "0:1", "v:c", "v:U", ":", "v:c", "v:A"},
+	// > と < は、選択の終わりの行まで字下げする（改行まで選んでいても次の行は字下げしない）。
+	{"ab|c\nd\ne", "vj>", "\tabc\n\td\ne", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne", "vl>", "\tabc\nd\ne", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"\tab|c\n\td\n\te", "vj<", "abc\nd\n\te", "0:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne", "v$>", "\tabc\nd\ne", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\n\ncd", "vj>", "\tabc\n\ncd", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne\nf", "vj>.", "\t\tabc\n\t\td\ne\nf", "0:2", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne\nf\ng", "vj>j.", "\tabc\n\t\td\n\te\nf\ng", "1:2", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne", "vj>u", "abc\nd\ne", "0:2", "v:U", "v:U", ":", ":", "v:A"},
+	// 複数の行の選択のドットリピートは、終わりの列が繰り返す先の行の長さ以上のときだけ、その行の改行まで消す。
+	{"ab|c\nx\nfoo\nbar\nbaz\nqux", "vjdj.", "abfoo\nbaz\nqux", "1:2", "v:r\nba", "v:U", "v:r\nba", ":", "v:A"},
+	{"ab|c\nx\nfoo\nbar\nbazzz\nqux", "vjdj.", "abfoo\nbazzz\nqux", "1:2", "v:r\nba", "v:U", "v:r\nba", ":", "v:A"},
+	{"ab|c\nx\nfoo\nbar\nb\nqux", "vjdj.", "abfoo\nbaqux", "1:2", "v:r\nb\n", "v:U", "v:r\nb\n", ":", "v:A"},
+	{"ab|c\nx\nfoo\nbar\nbaz\nqux", "v$jdj.", "abfoo\nbaqux", "1:2", "v:r\nbaz\n", "v:U", "v:r\nbaz\n", ":", "v:A"},
+	{"ab|c\nx\nfoo\nbar\nbaz\nqux", "vjoldj.", "abcfoo\nbaz\nqux", "1:2", "v:r\nba", "v:U", "v:r\nba", ":", "v:A"},
+	{"abc\nd|e\nfoo\nbar\nbaz\nqux", "vkdj.", "a\nr\nbaz\nqux", "1:0", "v:foo\nba", "v:U", "v:foo\nba", ":", "v:A"},
+}
+
+// ビジュアルモードの SetCursor（拡張機能の編集の後に呼び出し側が置き直すもの）は、行末の後のカーソルを丸めない。
+// Vim で vj の後に <Cmd>call setline(3, 'E')<CR> を挟んで d を打つと、c と d と改行を消して abE になる。
+func TestVisualSetCursorKeepsEOL(t *testing.T) {
+	s := setup(t, "ab|c\nd\ne")
+	feedKeys(s, "vj")
+	s.SetCursor(s.Cursor())
+	if got := s.Cursor().String(); got != "1:1" {
+		t.Fatalf("cursor = %s, want 1:1", got)
+	}
+	feedKeys(s, "d")
+	if got := s.buf.Text(); got != "abe" {
+		t.Errorf("text = %q, want %q", got, "abe")
+	}
 }
 
 // 文字単位の選択の端が行末の後にあるとき、オペレーターが働く範囲が Vim 9.1 と一致する。

@@ -180,9 +180,11 @@ func (s *State) Cursor() buffer.Position { return s.cursor }
 
 // SetCursor は、カーソルを pos へ移す。バッファの外の位置は最も近い位置に丸める。
 // 望みの列は、移した位置の列にする。
+// ビジュアルモードでは、行末の位置（行末の後）をそのまま残す（Vim の check_cursor_col は、'selection' が old でない
+// ビジュアルモードで NUL の位置を残す。拡張機能の編集の後に呼び出し側が置き直しても、選択が改行を含んだままになる。#89）。
 func (s *State) SetCursor(pos buffer.Position) {
 	s.cursor = s.clampPos(pos)
-	if s.mode != ModeInsert {
+	if s.mode != ModeInsert && !s.mode.visual() {
 		s.cursor = s.clampNormal(s.cursor)
 	}
 	s.updateWant()

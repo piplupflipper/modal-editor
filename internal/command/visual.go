@@ -22,7 +22,7 @@ type visualExtent struct {
 	lines    int
 	chars    int
 	endByte  int
-	eol      bool // 終わりの行の改行まで選んでいた
+	eol      bool // 1 行なら、その行の改行まで選んでいた。複数の行なら、$ で行末を選んでいた
 }
 
 // Selection は、ビジュアルモードの選択の始まりと終わり（どちらも含む）と、行単位かどうかを返す。
@@ -217,10 +217,13 @@ func (s *State) extentOf(rg region) visualExtent {
 	}
 	start, end, _, _ := s.Selection()
 	ex.lines = end.Line - start.Line + 1
-	ex.eol = rg.r.End.Line > end.Line
 	if ex.lines == 1 {
+		ex.eol = rg.r.End.Line > end.Line
 		ex.chars = runeCount(s.line(start.Line)[start.Byte:nextChar(s.line(end.Line), end.Byte)])
 	} else {
+		// 複数の行では、Vim と同じく終わりの列だけを記録し、$ の後だけ行末とする（resel_VIsual_vcol が MAXCOL）。
+		// 終わりの列が繰り返す先の行の長さ以上なら、regionFromExtent がその行の改行まで選ぶ（#89）。
+		ex.eol = s.want == target.WantEOL
 		ex.endByte = end.Byte
 	}
 	return ex
@@ -235,14 +238,16 @@ func (s *State) regionFromExtent(ex visualExtent) region {
 		return region{start: start, r: buffer.Range{Start: pos(start.Line, 0), End: s.lineEnd(lastL)}, linewise: true}
 	}
 	var end buffer.Position
+	eol := ex.eol
 	if ex.lines == 1 {
 		line := s.line(start.Line)
 		b, _ := advanceChars(line, start.Byte, max(ex.chars-1, 0))
 		end = s.clampNormal(pos(start.Line, b))
 	} else {
+		eol = eol || ex.endByte >= len(s.line(lastL))
 		end = s.clampNormal(s.clampPos(pos(lastL, ex.endByte)))
 	}
-	return s.charRegion(start, end, ex.eol || s.line(end.Line) == "")
+	return s.charRegion(start, end, eol || s.line(end.Line) == "")
 }
 
 // linewiseVisualOperators は、ビジュアルモードだけのオペレーターのうち、選択を行単位にして働くもの（D、C、S、Y）と、
