@@ -81,7 +81,7 @@ func TestParseRange(t *testing.T) {
 			}}
 			c := &execCtx{b: buffer.New(tt.text), st: st, cursor: tt.cursor}
 			s := &scanner{src: tt.cmdline}
-			r, err := c.parseRange(s)
+			r, err := c.parseRange(s, addrLines)
 			if code := errCode(t, err); code != tt.wantCode {
 				t.Fatalf("code = %q, want %q (err = %v)", code, tt.wantCode, err)
 			}
@@ -170,7 +170,7 @@ func TestExecuteEdit(t *testing.T) {
 		{name: ":%d", text: "a\nb\n", cmdline: "%d", want: ""},
 		{name: ":d の回数", text: lines10, cmdline: "3d 2", want: "l1\nl2\nl5\nl6\nl7\nl8\nl9\nl10", wantCursor: 2},
 		{name: ":d の回数は最後の行で止まる", text: "a\nb\nc\n", cmdline: "2d 9", want: "a"},
-		{name: ":d の逆順の範囲", text: lines10, cmdline: "4,2d", want: "l1\nl5\nl6\nl7\nl8\nl9\nl10", wantCursor: 1},
+		{name: ":d の逆順の範囲は確認を求める", text: lines10, cmdline: "4,2d", want: strings.TrimSuffix(lines10, "\n"), wantCode: "E493"},
 		{name: ":d の余分な文字", text: "a\n", cmdline: "d a b", want: "a", wantCode: "E488"},
 		{name: ":d ! は書き込めないレジスター", text: "a\nb\n", cmdline: "d !", want: "a\nb", wantCode: "E488"},
 
@@ -193,7 +193,8 @@ func TestExecuteEdit(t *testing.T) {
 		// 誤り
 		{name: "未知のコマンド", text: "a\n", cmdline: "foo", want: "a", wantCode: "E492"},
 		{name: "英字でないコマンド", text: "a\n", cmdline: "1#", want: "a", wantCode: "E492"},
-		{name: "範囲を取らないコマンド", text: "a\n", cmdline: "1w", want: "a", wantCode: "E481"},
+		{name: "範囲を取らないコマンド", text: "a\n", cmdline: "1e", want: "a", wantCode: "E481"},
+		{name: ":w の一部の行", text: "a\nb\n", cmdline: "2w foo", want: "a\nb", wantCode: "E319"},
 		{name: "! を取らないコマンド", text: "a\n", cmdline: "d!", want: "a", wantCode: "E477"},
 	}
 	for _, tt := range tests {
@@ -294,6 +295,180 @@ func TestLineOverflowVim(t *testing.T) {
 	}
 }
 
+// 範囲の誤りの扱いを、Vim 9.1 と突き合わせる（issue #57）。逆順の範囲、:w と :q の範囲、誤りの後の ";" のカーソルを見る。
+// 表は、5 行のバッファの 3 行目の 6 バイト目にカーソルを置き、変更済みの状態で各コマンドを Vim 9.1 で実行した結果である。
+// Vim は "vim -Nu NONE -n --not-a-term -c <cmd>" で、Ex モードでない状態で実行した（2026-11-16）。
+// -c で実行した Vim は逆順の範囲で確認を求めずに E493 にするので、表の E493 は確認を求める場合に当たる（TestBackwardsRangeConfirm）。
+// :%w のようにファイル名の無い書き出しは、Vim では E32（ファイル名が無い）になるが、範囲の扱いは通ったので、表では誤り無しとした。
+// wantLine と wantCol は誤りのときも見る。wantCol は Move が CursorKeepColumn のときだけ意味を持ち、ここでは Move の種類で確かめる。
+//
+// req: FR-08
+func TestRangeErrorsVim(t *testing.T) {
+	const text = "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne\n"
+	tests := []struct {
+		cmdline  string
+		wantCode string
+		wantLine int // 0 始まり
+		wantCol  int // 0 始まりのバイト位置
+		want     string
+	}{
+		{cmdline: "4,2d", wantCode: "E493", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "9,2d", wantCode: "E493", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "1;4,2d", wantCode: "E493", wantLine: 0, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4,2s/a/x/", wantCode: "E493", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4,2g/a/d", wantCode: "E493", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4,2w", wantCode: "E493", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2,1q", wantCode: "E493", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4,2d|1d", wantCode: "E493", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "g/a/4,2d", wantCode: "E16", wantLine: 0, wantCol: 0, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4,2", wantCode: "", wantLine: 1, wantCol: 2, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "1;4,2", wantCode: "", wantLine: 1, wantCol: 2, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4,2|", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "3,1|", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "6w", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "6wq", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "6x", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4q", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2q", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "1q", wantCode: "E37", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "0q", wantCode: "E37", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "$q", wantCode: "E37", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: ".q", wantCode: "E37", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: ",q", wantCode: "E37", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "1,1q", wantCode: "E37", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: ".+1q", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "%q", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "/a/q", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "'aq", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "1,2q", wantCode: "E16", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2;3q", wantCode: "E16", wantLine: 1, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2e", wantCode: "E481", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "%w", wantCode: "", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "1,5w", wantCode: "", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "0,$w", wantCode: "", wantLine: 2, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2;9d", wantCode: "E16", wantLine: 1, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4;9d", wantCode: "E16", wantLine: 3, wantCol: 3, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "5;9d", wantCode: "E16", wantLine: 4, wantCol: 0, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2;4s/zzz/y/e", wantCode: "", wantLine: 1, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2;4s/zzz/y/", wantCode: "E486", wantLine: 1, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4;/zzz/d", wantCode: "E486", wantLine: 3, wantCol: 3, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2;9|", wantCode: "E16", wantLine: 1, wantCol: 5, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2;", wantCode: "", wantLine: 1, wantCol: 2, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2;3", wantCode: "", wantLine: 2, wantCol: 2, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "4;", wantCode: "", wantLine: 3, wantCol: 2, want: "  aaaa\n  bbbbbbb\n  ccccccc\n  dd\ne"},
+		{cmdline: "2;3d", wantCode: "", wantLine: 1, wantCol: 2, want: "  aaaa\n  dd\ne"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmdline, func(t *testing.T) {
+			b := buffer.New(text)
+			// Vim の setline と同じく変更済みにする（:q が E37 になる）。
+			if _, err := b.Apply(buffer.Transaction{BaseVersion: b.Version(), Edits: []buffer.Edit{{Range: buffer.Range{Start: buffer.Position{Line: 4}, End: buffer.Position{Line: 4, Byte: 1}}, Text: "e"}}}); err != nil {
+				t.Fatal(err)
+			}
+			res, err := Execute(b, nil, 2, tt.cmdline)
+			if code := errCode(t, err); code != tt.wantCode {
+				t.Fatalf("code = %q, want %q (err = %v)", code, tt.wantCode, err)
+			}
+			if got := b.Text(); got != tt.want {
+				t.Errorf("text = %q, want %q", got, tt.want)
+			}
+			if res.Cursor != tt.wantLine {
+				t.Errorf("cursor = %d, want %d", res.Cursor, tt.wantLine)
+			}
+			// 列は呼び出し側が決めるので、Move の種類が Vim の列と合うかを見る。
+			var col int
+			line := b.Line(res.Cursor)
+			switch res.Move {
+			case CursorUnchanged, CursorKeepColumn:
+				col = min(5, max(len(line)-1, 0))
+			case CursorFirstNonBlank:
+				col = len(line) - len(strings.TrimLeft(line, " \t"))
+			case CursorLineStart:
+				col = 0
+			}
+			if col != tt.wantCol {
+				t.Errorf("col = %d (move = %d), want %d", col, res.Move, tt.wantCol)
+			}
+		})
+	}
+}
+
+// 逆順の範囲は E493 と Result.Confirm を返し、Confirm.Resume で入れ替えて続きを実行する。
+// 期待値は Vim 9.1 で、対話のコマンドラインから打ち、確認に y と答えた結果である（feedkeys で入力、2026-11-16）。
+//
+// req: FR-08
+func TestBackwardsRangeConfirm(t *testing.T) {
+	tests := []struct {
+		cmdline    string
+		cursor     int
+		want       string
+		wantCursor int
+		wantCode   string // Resume の誤り
+	}{
+		// Vim 9.1: ":4,2d|1d" に y と答えると、2 行目から 4 行目を消した後に 1 行目を消す。
+		{cmdline: "4,2d|1d", cursor: 2, want: "e", wantCursor: 0},
+		// "." は、";" で移す前のカーソルの行で評価し直す（.-1;.-2 は 2;0 で、入れ替えると 0,2 になり 1 行目から消す）。
+		{cmdline: ".-1;.-2d", cursor: 2, want: "c\nd\ne", wantCursor: 0},
+		// 入れ替えた後に行数を超えていれば E16 にする（:d で 4 行になった後の 5,4d）。
+		{cmdline: "d|5,4d", cursor: 0, want: "b\nc\nd\ne", wantCursor: 0, wantCode: "E16"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmdline, func(t *testing.T) {
+			b := buffer.New("a\nb\nc\nd\ne\n")
+			st := &State{}
+			res, err := Execute(b, st, tt.cursor, tt.cmdline)
+			if code := errCode(t, err); code != CodeBackwardsRange {
+				t.Fatalf("code = %q, want %q (err = %v)", code, CodeBackwardsRange, err)
+			}
+			if res.Confirm == nil || res.Confirm.Prompt == "" {
+				t.Fatalf("Confirm = %+v, want a prompt", res.Confirm)
+			}
+			res, err = res.Confirm.Resume(b, st)
+			if code := errCode(t, err); code != tt.wantCode {
+				t.Fatalf("Resume code = %q, want %q (err = %v)", code, tt.wantCode, err)
+			}
+			if res.Confirm != nil {
+				t.Errorf("Confirm after Resume = %+v, want nil", res.Confirm)
+			}
+			if got := b.Text(); got != tt.want {
+				t.Errorf("text = %q, want %q", got, tt.want)
+			}
+			if res.Cursor != tt.wantCursor {
+				t.Errorf("cursor = %d, want %d", res.Cursor, tt.wantCursor)
+			}
+		})
+	}
+
+	t.Run("続くコマンドがまた確認を求める", func(t *testing.T) {
+		b := buffer.New("a\nb\nc\nd\ne\n")
+		res, err := Execute(b, nil, 0, "2,1d|3,2d")
+		if errCode(t, err) != CodeBackwardsRange || res.Confirm == nil {
+			t.Fatalf("err = %v, Confirm = %v", err, res.Confirm)
+		}
+		res, err = res.Confirm.Resume(b, nil)
+		if errCode(t, err) != CodeBackwardsRange || res.Confirm == nil {
+			t.Fatalf("err = %v, Confirm = %v", err, res.Confirm)
+		}
+		if got := b.Text(); got != "c\nd\ne" {
+			t.Errorf("text = %q", got)
+		}
+		if _, err := res.Confirm.Resume(b, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got := b.Text(); got != "c" {
+			t.Errorf("text = %q", got)
+		}
+	})
+
+	t.Run(":g の中は確認を求めない", func(t *testing.T) {
+		b := buffer.New("a\nb\nc\n")
+		res, err := Execute(b, nil, 0, "g/a/3,2d")
+		if errCode(t, err) != "E16" || res.Confirm != nil {
+			t.Fatalf("err = %v, Confirm = %v", err, res.Confirm)
+		}
+	})
+}
+
 // :v で全ての行が一致したときは、Vim と同じく番号の無い通知を誤りとして返す。
 //
 // req: FR-08
@@ -384,6 +559,11 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":q で未保存の変更", modified: true, cmdline: "q", wantCode: "E37"},
 		{name: ":q!", modified: true, cmdline: "q!", want: []Action{{Kind: ActionQuit, Force: true}}},
 		{name: ":q の余分な文字", cmdline: "q foo", wantCode: "E488"},
+		{name: ":%w は :w と同じ", cmdline: "%w", want: []Action{{Kind: ActionWrite}}},
+		{name: ":0,$wq は :wq と同じ", cmdline: "0,$wq", want: []Action{{Kind: ActionWrite}, {Kind: ActionQuit}}},
+		{name: ":1q は :q と同じ", cmdline: "1q", want: []Action{{Kind: ActionQuit}}},
+		{name: ":2q は E16", cmdline: "2q", wantCode: "E16"},
+		{name: ":2w は E16", cmdline: "2w", wantCode: "E16"},
 		{name: ":wq", modified: true, cmdline: "wq", want: []Action{{Kind: ActionWrite}, {Kind: ActionQuit}}},
 		{name: ":x で変更あり", modified: true, cmdline: "x", want: []Action{{Kind: ActionWrite}, {Kind: ActionQuit}}},
 		{name: ":x で変更なし", cmdline: "x", want: []Action{{Kind: ActionQuit}}},
@@ -438,7 +618,11 @@ func TestErrorPosition(t *testing.T) {
 		{cmdline: `s/a/x\U/`, pos: 5, msg: "E319: "},
 		{cmdline: "2d", pos: 0, msg: "E16: "},
 		{cmdline: "1, 3s/a/b/", pos: 3, msg: "E16: "},
-		{cmdline: "3,1d", pos: 0, msg: "E16: "},
+		{cmdline: "3,1d", pos: 0, msg: "E493: "},
+		{cmdline: "d| 3,1d", pos: 3, msg: "E493: "},
+		{cmdline: "3,1|", pos: 0, msg: "E16: "},
+		{cmdline: "2q", pos: 0, msg: "E16: "},
+		{cmdline: "/a/q", pos: 0, msg: "E16: "},
 		{cmdline: "5|d", pos: 0, msg: "E16: "},
 	}
 	for _, tt := range tests {

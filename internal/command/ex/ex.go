@@ -9,16 +9,20 @@
 //
 // コマンドは commands の表に登録する。対象の一覧（issue #9 の案）が裁定で増減しても、表の行を足し引きすればよい。
 //
-//	:w[rite][!] [file]   Action の ActionWrite を返す
-//	:q[uit][!]           Action の ActionQuit を返す。! が無く、未保存の変更があれば E37 で失敗する
-//	:wq[!] [file]        ActionWrite と ActionQuit を返す
-//	:x[it][!] [file]     変更があるか file を指定したときだけ ActionWrite を返し、続けて ActionQuit を返す
+//	:[range]w[rite][!] [file]  Action の ActionWrite を返す
+//	:[N]q[uit][!]              Action の ActionQuit を返す。! が無く、未保存の変更があれば E37 で失敗する
+//	:[range]wq[!] [file]       ActionWrite と ActionQuit を返す
+//	:[range]x[it][!] [file]    変更があるか file を指定したときだけ ActionWrite を返し、続けて ActionQuit を返す
 //	:e[dit][!] [file]    Action の ActionEdit を返す。! が無く、未保存の変更があれば E37 で失敗する
 //	:[range]s[ubstitute]/pat/rep/[flags] [count]
 //	:[range]g[lobal][!]/pat/cmd
 //	:[range]v[global]/pat/cmd
 //	:[range]d[elete] [x] [count]
 //	:[range]             範囲の最後の行へ移る（:3 など）。行数を超えた行番号は最後の行に丸める
+//
+// :w、:wq、:x の範囲は、バッファ全体（:%w、:1,$w）だけを受け付け、一部の行（:2,3w）は E319 にする。
+// Action は書き出す行の範囲を持たないので、一部の行の書き出しには対応していない。
+// :q の範囲は、Vim と同じくウィンドウの番号を数える。ウィンドウは 1 つなので、:0q、:1q、:$q、:.q は :q と同じで、:2q は E16 にする。
 //
 // コマンドは "|" で区切って続けられる（:w|q、:e foo|q）。
 // ファイル名や回数を取るコマンドでは、"\" の付かない最初の "|" で引数が終わり、"\|" は "|" そのものになる。
@@ -29,9 +33,17 @@
 //
 // アドレスは、行番号、"."（現在の行）、"$"（最後の行）、"/pat/"（次の行から前方へ探す）、"?pat?"（前の行から後方へ探す）と、
 // その後に続く "+n"、"-n" で書く。"%" は "1,$" と同じである。
-// 行数を超えた行番号は、コマンド名の無い範囲（:10）では最後の行に丸め、コマンドに付けた範囲（:10d、:1,10s/a/b/）と
+// 行数を超えた行番号は、コマンド名の無い範囲（:10）では最後の行に丸め、コマンドに付けた範囲（:10d、:1,10s/a/b/、:5w、:4q）と
 // "|" が続く範囲（:10|）では E16 にする。負の行番号はどれでも E16 にする。Vim 9.1 の Ex モードでない動作に合わせている。
+//
+// 逆順の範囲（:4,2d）は、コマンドに付けたときは E493 で失敗し、Result.Confirm で「入れ替えてよいか」の確認を求める。
+// 呼び出し側が確認を得たら Confirm.Resume で入れ替えて続きを実行し、断られたら何もしない（Vim 9.1 の対話の動作と同じ）。
+// 確認を求めない呼び出し側は、E493 をそのまま誤りとして示せばよい（Vim 9.1 が -c やスクリプトで実行したときと同じ）。
+// :g の cmd の中の逆順の範囲は、確認を求めずに E16 にする（Vim 9.1 と同じ）。
+// コマンド名の無い逆順の範囲は、"|" が続かなければ後の行へ移り（:4,2 は 2 行目）、"|" が続けば E16 にする（Vim 9.1 と同じ）。
+//
 // アドレスは "," か ";" で区切り、";" は次のアドレスを読む前に現在の行を前のアドレスへ移す。
+// ";" で移したカーソルは、その後で誤りになっても残す（Vim 9.1 と同じ。:2;9d は E16 で失敗し、カーソルは 2 行目に移る）。
 // 検索は Vim の既定（wrapscan）と同じく、バッファの端で反対の端へ折り返す。
 // マーク（"'a"、"'<,'>" など）は State.Mark で行に解決する。
 //
@@ -104,6 +116,10 @@ const (
 	// CursorLineStart は、Result.Cursor の行の先頭（0 バイト目）へ置くことを表す。
 	// :g が最後の印の行へ移り、cmd がカーソルを動かさなかったとき（:g/pat/s/x/y/ で x が無い）に当たる。
 	CursorLineStart
+	// CursorKeepColumn は、Result.Cursor の行へ移し、列は Execute を呼ぶ前のバイトの位置を保つ（その行に収まるように丸める）ことを表す。
+	// 範囲の ";" が行を移し、その後のコマンドがカーソルを置かなかったとき（:2;9d の E16、:2;4s/x/y/e で一致が無い）に当たる。
+	// Vim 9.1 は ";" で行だけを移し、列はそのまま残す。
+	CursorKeepColumn
 )
 
 // State は、Execute の呼び出しをまたいで保つ状態である。呼び出し側（internal/editor）が 1 つ持ち、毎回同じものを渡す。
@@ -147,6 +163,38 @@ type Result struct {
 	Changes []buffer.Change
 	// Deletions は、:d が消した行を、消した順に並べたものである。
 	Deletions []Deletion
+	// Confirm は、続きを実行する前に利用者の確認が要るときに nil でない。このとき Execute は E493 の *Error も返す。
+	// 確認が得られたら Confirm.Resume で続きを実行する。
+	Confirm *Confirm
+}
+
+// Confirm は、Ex コマンドの続きを実行する前に、利用者に確認を求めることを表す。
+// 今は、逆順の範囲（:4,2d）を入れ替えてよいかの確認だけである（Vim 9.1 の "Backwards range given, OK to swap (y/n)?"）。
+type Confirm struct {
+	// Prompt は、利用者に示す問いである。
+	Prompt string
+	// cursor は、確認を求めたコマンドを解析し始めたときのカーソルの行（0 始まり）である。
+	// 範囲の "." はこの行で評価するので、";" で移した後の行ではなく、この行から解析し直す。
+	cursor int
+	// src と base は、確認を求めたコマンドから後のコマンドラインと、その先頭のコマンドラインの中の位置である。
+	src  string
+	base int
+}
+
+// Resume は、確認が得られたときに、確認を求めたコマンドの逆順の範囲を入れ替えて、そのコマンドから後を実行する。
+// 確認を求めた Execute の後、バッファと st を変えずに呼ぶ。返す値は Execute と同じで、続くコマンドがまた確認を求めることもある。
+// Resume で行った編集は、確認を求めた Execute とは別のアンドゥの単位になる。
+//
+// req: FR-08
+func (cf *Confirm) Resume(b *buffer.Buffer, st *State) (Result, error) {
+	if st == nil {
+		st = &State{}
+	}
+	c := &execCtx{b: b, st: st, cursor: clampLine(b, cf.cursor), swapBackwards: true}
+	b.BeginUndoGroup()
+	defer b.EndUndoGroup()
+	err := c.runLine(cf.src, cf.base)
+	return c.res(), err
 }
 
 // Execute は、コマンドラインの文字列 cmdline を Ex コマンドとして解析し、バッファ b に対して実行する。
@@ -185,6 +233,11 @@ type execCtx struct {
 	wroteVersion *uint64
 	// replaced は、行の置き換えの記録である。:g が、印を付けた行の番号を編集に合わせて動かすのに使う。
 	replaced []lineReplace
+	// swapBackwards は、次に解析するコマンドの逆順の範囲を、確認を求めずに入れ替えるかどうかである（Confirm.Resume）。
+	// 1 つのコマンドを解析したら false に戻す。
+	swapBackwards bool
+	// confirm は、確認を求めて止めたときの続きである。
+	confirm *Confirm
 }
 
 // lineReplace は、start 行目（0 始まり）から old 行を、new 行で置き換えたことを表す。
@@ -193,7 +246,7 @@ type lineReplace struct {
 }
 
 func (c *execCtx) res() Result {
-	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions}
+	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions, Confirm: c.confirm}
 }
 
 // setCursor は、カーソルを line 行目（0 始まり）へ移し、列の置き方を記録する。
@@ -230,9 +283,13 @@ func (c *execCtx) runLine(src string, base int) error {
 //
 // req: FR-08
 func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more bool, err error) {
+	startCursor := c.cursor
+	swap := c.swapBackwards
+	c.swapBackwards = false
 	s := &scanner{src: src, base: base}
 	s.skipBlanksAndColons()
-	r, err := c.parseRange(s)
+	cmdStart := s.i
+	r, err := c.parseRange(s, c.addrKindAt(s.rest()))
 	if err != nil {
 		return "", 0, false, err
 	}
@@ -284,26 +341,41 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 		if r.count > 0 {
 			return "", 0, false, errAt(r.pos, codeNoRange, "範囲は使えません")
 		}
-	case rangeCurrent, rangeWhole:
+	case rangeCurrent, rangeWhole, rangeWindow:
 		if r.count == 0 {
-			if cmd.rng == rangeWhole {
+			switch cmd.rng {
+			case rangeWhole:
 				r.line1, r.line2 = 1, c.b.LineCount()
-			} else {
+			case rangeWindow:
+				r.line1, r.line2 = windowCount, windowCount
+			case rangeNone, rangeCurrent:
 				r.line1, r.line2 = c.cursor+1, c.cursor+1
 			}
 		}
-		if r.line1 > r.line2 {
+		// 逆順の範囲は、行数を超えているかを調べる前に確認を求める（:9,2d も E493。Vim 9.1 と同じ）。
+		// :g の cmd の中では確認を求めず、次の check で E16 にする（Vim 9.1 は global_busy の間は確認しない）。
+		if r.line1 > r.line2 && !c.inGlobal {
+			if !swap {
+				c.confirm = &Confirm{Prompt: "範囲が逆順です。入れ替えますか (y/n)?", cursor: startCursor, src: src[cmdStart:], base: base + cmdStart}
+				return "", 0, false, errAt(r.pos, codeBackwardsRange, "範囲が逆順です")
+			}
 			r.line1, r.line2 = r.line2, r.line1
 			r.pos1, r.pos2 = r.pos2, r.pos1
 		}
-		// 範囲を伴うコマンドは、行数を超えた行を丸めずに E16 にする（:4d、:1,4s/a/b/。Vim 9.1 と同じ）。
-		if err := r.check(c.b.LineCount()); err != nil {
+		// 範囲を伴うコマンドは、行数を超えた行を丸めずに E16 にする（:4d、:1,4s/a/b/、:5w、:2q。Vim 9.1 と同じ）。
+		limit := c.b.LineCount()
+		if cmd.rng == rangeWindow {
+			limit = windowCount
+		}
+		if err := r.check(limit); err != nil {
 			return "", 0, false, err
 		}
-		// 行番号 0 は、範囲を取るコマンドでは 1 行目として扱う（Vim と同じ）。
-		r.line1, r.line2 = max(r.line1, 1)-1, max(r.line2, 1)-1
+		if cmd.rng != rangeWindow {
+			// 行番号 0 は、範囲を取るコマンドでは 1 行目として扱う（Vim と同じ）。
+			r.line1, r.line2 = max(r.line1, 1)-1, max(r.line2, 1)-1
+		}
 	}
-	inv.line1, inv.line2, inv.rangeCount = r.line1, r.line2, r.count
+	inv.line1, inv.line2, inv.rangeCount, inv.rangePos = r.line1, r.line2, r.count, r.pos
 
 	s.skipBlanks()
 	inv.arg, inv.argPos = s.rest(), s.pos()
@@ -318,6 +390,18 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 		return "", 0, false, err
 	}
 	return inv.next, inv.nextPos, inv.hasNext, nil
+}
+
+// addrKindAt は、範囲から始まるコマンドライン src のコマンドが、範囲のアドレスで何を数えるかを返す。
+// 範囲を評価する前に、範囲を読み飛ばしてコマンド名を引く（Vim 9.1 の do_one_cmd と同じ順）。
+// コマンド名が無いか、知らないコマンドなら addrLines を返す（誤りはコマンド名を引き直すときに出す）。
+func (c *execCtx) addrKindAt(src string) addrKind {
+	s := &scanner{src: src}
+	skipRange(s)
+	if cmd := lookup(s.letters()); cmd != nil && cmd.rng == rangeWindow {
+		return addrWindows
+	}
+	return addrLines
 }
 
 // splitBar は、引数 arg を、"\" の付かない最初の "|" の手前までと、その後に分ける。

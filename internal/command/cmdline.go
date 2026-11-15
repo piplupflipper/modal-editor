@@ -76,6 +76,8 @@ func (s *State) runCommandLine(line string) {
 		s.setCursorNormal(s.firstNonBlankPos(min(res.Cursor, s.lastLine())))
 	case ex.CursorLineStart:
 		s.setCursorNormal(pos(min(res.Cursor, s.lastLine()), 0))
+	case ex.CursorKeepColumn:
+		s.setCursorNormal(pos(min(res.Cursor, s.lastLine()), s.cursor.Byte))
 	case ex.CursorUnchanged:
 		s.setCursorNormal(s.cursor)
 	}
