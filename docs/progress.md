@@ -10,10 +10,10 @@
 
 | 状態 | 件数 | 意味 |
 |---|---|---|
-| 実装とテスト | 11 | 実装とテストの両方に注釈がある |
+| 実装とテスト | 13 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 24 | 注釈が無い |
+| 未着手 | 22 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -27,8 +27,8 @@
 | FR-05 | 実装とテスト | [internal/input/key.go:78](../internal/input/key.go#L78) | [internal/input/key_test.go:10](../internal/input/key_test.go#L10) | マクロを記録し、再生できる。マクロはキー入力の列として記録する |
 | FR-06 | 実装とテスト | [internal/input/command.go:74](../internal/input/command.go#L74) | [internal/input/parser_test.go:22](../internal/input/parser_test.go#L22) | ドットリピートを持つ。解釈済みの編集コマンドを 1 つの値として記録し、その値を再実行する |
 | FR-07 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239)<br>[internal/buffer/buffer.go:283](../internal/buffer/buffer.go#L283)<br>[internal/buffer/buffer.go:291](../internal/buffer/buffer.go#L291)<br>[internal/buffer/buffer.go:347](../internal/buffer/buffer.go#L347)<br>[internal/buffer/buffer.go:365](../internal/buffer/buffer.go#L365) | [internal/buffer/buffer_test.go:283](../internal/buffer/buffer_test.go#L283)<br>[internal/buffer/buffer_test.go:358](../internal/buffer/buffer_test.go#L358)<br>[internal/buffer/buffer_test.go:495](../internal/buffer/buffer_test.go#L495) | アンドゥとリドゥを持つ |
-| FR-08 | 未着手 | - | - | Ex コマンドは `:w`、`:q`、`:s`、`:g` などの部分集合を持つ。対象の一覧は実装の段階で定める |
-| FR-09 | 未着手 | - | - | 正規表現は Go の標準ライブラリ（`regexp`）の文法に従う |
+| FR-08 | 実装とテスト | [internal/command/ex/commands.go:61](../internal/command/ex/commands.go#L61)<br>[internal/command/ex/commands.go:97](../internal/command/ex/commands.go#L97)<br>[internal/command/ex/commands.go:107](../internal/command/ex/commands.go#L107)<br>[internal/command/ex/commands.go:121](../internal/command/ex/commands.go#L121)<br>[internal/command/ex/commands.go:134](../internal/command/ex/commands.go#L134)<br>[internal/command/ex/commands.go:146](../internal/command/ex/commands.go#L146)<br>[internal/command/ex/commands.go:171](../internal/command/ex/commands.go#L171)<br>[internal/command/ex/ex.go:106](../internal/command/ex/ex.go#L106)<br>[internal/command/ex/ex.go:151](../internal/command/ex/ex.go#L151)<br>[internal/command/ex/parse.go:81](../internal/command/ex/parse.go#L81)<br>[internal/command/ex/parse.go:131](../internal/command/ex/parse.go#L131)<br>[internal/command/ex/substitute.go:18](../internal/command/ex/substitute.go#L18)<br>[internal/command/ex/substitute.go:179](../internal/command/ex/substitute.go#L179) | [internal/command/ex/ex_test.go:28](../internal/command/ex/ex_test.go#L28)<br>[internal/command/ex/ex_test.go:103](../internal/command/ex/ex_test.go#L103)<br>[internal/command/ex/ex_test.go:198](../internal/command/ex/ex_test.go#L198)<br>[internal/command/ex/ex_test.go:209](../internal/command/ex/ex_test.go#L209)<br>[internal/command/ex/ex_test.go:236](../internal/command/ex/ex_test.go#L236)<br>[internal/command/ex/ex_test.go:255](../internal/command/ex/ex_test.go#L255)<br>[internal/command/ex/ex_test.go:268](../internal/command/ex/ex_test.go#L268)<br>[internal/command/ex/ex_test.go:317](../internal/command/ex/ex_test.go#L317) | Ex コマンドは `:w`、`:q`、`:s`、`:g` などの部分集合を持つ。対象の一覧は実装の段階で定める |
+| FR-09 | 実装とテスト | [internal/command/ex/parse.go:183](../internal/command/ex/parse.go#L183)<br>[internal/command/ex/parse.go:208](../internal/command/ex/parse.go#L208)<br>[internal/command/ex/substitute.go:18](../internal/command/ex/substitute.go#L18)<br>[internal/command/ex/substitute.go:135](../internal/command/ex/substitute.go#L135)<br>[internal/command/ex/substitute.go:179](../internal/command/ex/substitute.go#L179) | [internal/command/ex/ex_test.go:103](../internal/command/ex/ex_test.go#L103)<br>[internal/command/ex/ex_test.go:347](../internal/command/ex/ex_test.go#L347) | 正規表現は Go の標準ライブラリ（`regexp`）の文法に従う |
 | FR-10 | 未着手 | - | - | 拡張機能は、コンパイルする拡張機能と、スクリプトの拡張機能の 2 種類を用意する。どちらも Go で書く |
 | FR-11 | 実装とテスト | [internal/input/keymap.go:98](../internal/input/keymap.go#L98) | [internal/input/parser_test.go:238](../internal/input/parser_test.go#L238)<br>[internal/input/parser_test.go:292](../internal/input/parser_test.go#L292)<br>[internal/input/parser_test.go:344](../internal/input/parser_test.go#L344) | 拡張機能は、モーション、オペレーター、テキストオブジェクト、コマンドを追加できる |
 | FR-12 | 実装とテスト | [internal/input/command.go:52](../internal/input/command.go#L52) | [internal/input/parser_test.go:238](../internal/input/parser_test.go#L238) | 拡張機能が追加した操作は、拡張機能の側に特別な処理を書かなくても、ドットリピートとマクロで繰り返せる。本体は、拡張機能の ID、コマンドの ID、引数を記録し、再実行のときに同じ拡張機能へ問い合わせ直す |
