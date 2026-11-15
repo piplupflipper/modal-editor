@@ -55,7 +55,10 @@ type Buffer struct {
 }
 
 // step は、アンドゥとリドゥの 1 単位である。
-// inverse を順に適用すると、edits を適用する前のテキストに戻る。
+// inverse は edits の各編集を取り消す逆の編集を、edits と同じ順（適用した順）に並べたものである。
+// inverse を末尾から先頭へ逆順に適用すると、edits を適用する前のテキストに戻る。
+// 逆順で持たないのは、グループの中の Apply をまとめるときに末尾へ足すだけで済ませるためである（#29）。
+// 先頭へ足す形にすると、まとめるたびに全体を写し直し、グループの中の Apply の回数の 2 乗に比例して遅くなる。
 // id は、この単位を適用し終えた状態を見分けるための、履歴の中で一意な番号（1 以上）である。
 type step struct {
 	id      uint64
@@ -263,7 +266,7 @@ func (b *Buffer) record(edits, inverse []Edit) {
 		last := &b.undo[len(b.undo)-1]
 		last.id = b.nextID
 		last.edits = append(last.edits, edits...)
-		last.inverse = slices.Concat(inverse, last.inverse)
+		last.inverse = append(last.inverse, inverse...)
 		return
 	}
 	b.undo = append(b.undo, step{id: b.nextID, edits: edits, inverse: inverse})
@@ -352,9 +355,11 @@ func (b *Buffer) Undo() (Change, bool) {
 	}
 	s := b.undo[len(b.undo)-1]
 	b.undo = b.undo[:len(b.undo)-1]
-	b.mustApplyAll(s.inverse)
+	undoEdits := slices.Clone(s.inverse)
+	slices.Reverse(undoEdits)
+	b.mustApplyAll(undoEdits)
 	b.redo = append(b.redo, s)
-	return b.commit(s.inverse), true
+	return b.commit(undoEdits), true
 }
 
 // Redo は、最後に取り消した単位を 1 つやり直し、その変更を返す（FR-07）。
@@ -383,7 +388,8 @@ func (b *Buffer) commit(edits []Edit) Change {
 	return Change{Before: before, After: b.version, Edits: slices.Clone(edits)}
 }
 
-// applyAll は、edits を順に適用し、適用前に戻すための逆の編集の列を返す。
+// applyAll は、edits を順に適用し、各編集を取り消す逆の編集を edits と同じ順に並べて返す。
+// 適用前に戻すには、返した列を逆順に適用する。
 // 途中で失敗した場合は、それまでの編集を取り消してからエラーを返す。
 func (b *Buffer) applyAll(edits []Edit) ([]Edit, error) {
 	inverse := make([]Edit, 0, len(edits))
@@ -396,7 +402,6 @@ func (b *Buffer) applyAll(edits []Edit) ([]Edit, error) {
 		}
 		inverse = append(inverse, inv)
 	}
-	slices.Reverse(inverse)
 	return inverse, nil
 }
 
