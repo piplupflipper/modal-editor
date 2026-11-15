@@ -84,6 +84,7 @@ var pureGoBinaries = []string{
 	"modal-editor-ext-script",
 	"modal-editor-ext-dap",
 	"modal-editor-ext-lsp",
+	"modal-editor-ext-acp",
 }
 
 // cgoBinaries は、cgo を使う実行ファイルである（Makefile の CGO_EXTENSIONS）。
