@@ -257,9 +257,13 @@ func runDelete(c *execCtx, inv *invocation) error {
 	for l := l1; l <= l2; l++ {
 		lines = append(lines, c.b.Line(l))
 	}
+	at := buffer.Position{Line: l1, Byte: firstNonBlankByte(c.b.Line(l1))}
 	if err := c.apply(deleteLinesEdit(c.b, l1, l2)); err != nil {
 		return err
 	}
+	// Vim の ex_operators は、カーソルを範囲の最初の行の最初の空白でない文字へ移してからアンドゥの単位を作る。
+	// アンドゥとリドゥの後のカーソルはその位置へ戻る。:g の中では、最初の :d の位置が残る。
+	c.b.SetUndoCursor(at)
 	if all {
 		// Vim と同じく、全ての行を消したバッファは行の無いバッファにし、空のファイルとして書き出す（基本設計 4.1）。
 		c.b.MarkNoLines()
@@ -268,6 +272,16 @@ func runDelete(c *execCtx, inv *invocation) error {
 	c.deletions = append(c.deletions, Deletion{Register: reg, Lines: lines})
 	c.setCursor(min(l1, c.b.LineCount()-1), CursorFirstNonBlank)
 	return nil
+}
+
+// firstNonBlankByte は、行の最初の空白でない文字の位置を返す。
+// 空白だけの行では最後の文字、空の行では 0 を返す（Vim の beginline(BL_SOL | BL_FIX) と同じ）。
+func firstNonBlankByte(line string) int {
+	i := len(line) - len(strings.TrimLeft(line, " \t"))
+	if i == len(line) && i > 0 {
+		return i - 1
+	}
+	return i
 }
 
 // isWritableRegister は、ch が :d の書き込み先にできるレジスターの名前かを返す（Vim の valid_yank_reg の書き込みの場合）。
