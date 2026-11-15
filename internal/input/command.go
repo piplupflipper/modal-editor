@@ -1,0 +1,92 @@
+package input
+
+// Kind は、編集コマンドの値の種類を表す。
+type Kind int
+
+// 編集コマンドの値の種類。
+const (
+	// KindMotion は、モーションだけの移動である（例: 3j）。Target に移動先が入る。
+	KindMotion Kind = iota + 1
+	// KindOperator は、オペレーターと対象の組である（例: d2w、ci"、dd）。
+	KindOperator
+	// KindAction は、対象を取らない操作である（例: x、p、rx、i、:）。
+	KindAction
+)
+
+// TargetKind は、オペレーターやモーションの対象の種類を表す。
+type TargetKind int
+
+// 対象の種類。
+const (
+	TargetNone       TargetKind = iota // 対象なし（KindAction）
+	TargetMotion                       // モーション
+	TargetTextObject                   // テキストオブジェクト
+	TargetLine                         // オペレーターの重ね押し（dd、yy）による行単位の対象
+)
+
+// Mode は、コマンドの実行の後に移るモードを表す。
+// モードの切り替えの実行は internal/command の担当で、この値はその指示である。
+type Mode int
+
+// 実行の後のモード。
+const (
+	ModeNormal      Mode = iota // ノーマルモードのまま
+	ModeInsert                  // インサートモード（i、a、c など）
+	ModeCommandLine             // コマンドラインモード（:）
+)
+
+// Ref は、操作（モーション、オペレーター、テキストオブジェクト、対象を取らない操作）を指す。
+// Extension が空なら本体の操作で、ID は本体の中の名前である。
+// 空でなければ拡張機能の ID で、ID はその拡張機能のコマンドの ID である。
+// ドットリピートとマクロの再実行では、本体はこの組で同じ拡張機能へ問い合わせ直す。
+//
+// req: FR-12
+type Ref struct {
+	ID        string
+	Extension string
+}
+
+// Builtin は、本体の操作であるかを返す。
+func (r Ref) Builtin() bool { return r.Extension == "" }
+
+// Target は、オペレーターまたはモーションの対象である。
+type Target struct {
+	Kind TargetKind
+	Ref  Ref  // TargetLine と TargetNone では空
+	Char rune // f、F、t、T のような文字の引数。引数を取らない対象では 0
+}
+
+// Command は、キーの列から解釈した編集コマンドの値である（基本設計 3 章の表）。
+// ドットリピートはこの値を記録し、もう一度実行へ渡す。
+//
+// 基本設計の表の「提供元」は、値全体で 1 つではなく、Operator、Target.Ref、Action の
+// それぞれの Ref に持つ。本体のオペレーターと拡張機能のテキストオブジェクトの組み合わせを表すためである。
+//
+// req: FR-02, FR-06
+type Command struct {
+	Kind Kind
+
+	// Register は、"a のように指定したレジスターの名前。省略した場合は 0 で、既定のレジスターを表す。
+	Register rune
+
+	// Count は回数で、省略した場合は 1。オペレーターの前と後の回数の積である（2d3w は 6）。
+	Count int
+	// CountGiven は、回数を明示したかを表す。G や :（範囲）のように、省略と 1 で意味が違う操作のために持つ。
+	CountGiven bool
+
+	// Operator は、KindOperator のときのオペレーター。
+	Operator Ref
+	// Target は、KindMotion と KindOperator のときの対象。
+	Target Target
+	// Action は、KindAction のときの操作。
+	Action Ref
+	// Char は、r のように文字の引数を取る操作（KindAction）の引数。
+	Char rune
+
+	// Mode は、実行の後に移るモード。
+	Mode Mode
+
+	// Text は、c や i のように挿入を伴うコマンドで入力された文字列である。
+	// Parser は埋めない。インサートモードを抜けた時点で internal/command が埋め、ドットリピートに使う。
+	Text string
+}

@@ -10,10 +10,10 @@
 
 | 状態 | 件数 | 意味 |
 |---|---|---|
-| 実装とテスト | 4 | 実装とテストの両方に注釈がある |
+| 実装とテスト | 10 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 31 | 注釈が無い |
+| 未着手 | 25 | 注釈が無い |
 | 合計 | 35 | |
 
 ## 一覧
@@ -21,17 +21,17 @@
 | ID | 状態 | 実装 | テスト | 要件 |
 |---|---|---|---|---|
 | FR-01 | 未着手 | - | - | ノーマル、インサート、ビジュアル、コマンドラインの各モードを持つ |
-| FR-02 | 未着手 | - | - | ノーマルモードで、回数、オペレーター、モーションまたはテキストオブジェクトを組み合わせて編集を指定できる（例: `d2w`、`ci"`） |
-| FR-03 | 未着手 | - | - | Vim の標準のモーション、オペレーター、テキストオブジェクトを本体が持つ。対象の一覧は実装の段階で定める |
+| FR-02 | 実装とテスト | [internal/input/command.go:65](../internal/input/command.go#L65)<br>[internal/input/parser.go:55](../internal/input/parser.go#L55)<br>[internal/input/parser.go:83](../internal/input/parser.go#L83) | [internal/input/parser_test.go:22](../internal/input/parser_test.go#L22)<br>[internal/input/parser_test.go:145](../internal/input/parser_test.go#L145)<br>[internal/input/parser_test.go:158](../internal/input/parser_test.go#L158)<br>[internal/input/parser_test.go:217](../internal/input/parser_test.go#L217) | ノーマルモードで、回数、オペレーター、モーションまたはテキストオブジェクトを組み合わせて編集を指定できる（例: `d2w`、`ci"`） |
+| FR-03 | 実装とテスト | [internal/input/builtin.go:21](../internal/input/builtin.go#L21)<br>[internal/input/builtin.go:99](../internal/input/builtin.go#L99) | [internal/input/parser_test.go:22](../internal/input/parser_test.go#L22)<br>[internal/input/parser_test.go:302](../internal/input/parser_test.go#L302) | Vim の標準のモーション、オペレーター、テキストオブジェクトを本体が持つ。対象の一覧は実装の段階で定める |
 | FR-04 | 未着手 | - | - | レジスターを持つ |
-| FR-05 | 未着手 | - | - | マクロを記録し、再生できる。マクロはキー入力の列として記録する |
-| FR-06 | 未着手 | - | - | ドットリピートを持つ。解釈済みの編集コマンドを 1 つの値として記録し、その値を再実行する |
+| FR-05 | 実装とテスト | [internal/input/key.go:67](../internal/input/key.go#L67) | [internal/input/key_test.go:10](../internal/input/key_test.go#L10) | マクロを記録し、再生できる。マクロはキー入力の列として記録する |
+| FR-06 | 実装とテスト | [internal/input/command.go:65](../internal/input/command.go#L65) | [internal/input/parser_test.go:22](../internal/input/parser_test.go#L22) | ドットリピートを持つ。解釈済みの編集コマンドを 1 つの値として記録し、その値を再実行する |
 | FR-07 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239)<br>[internal/buffer/buffer.go:283](../internal/buffer/buffer.go#L283)<br>[internal/buffer/buffer.go:291](../internal/buffer/buffer.go#L291)<br>[internal/buffer/buffer.go:347](../internal/buffer/buffer.go#L347)<br>[internal/buffer/buffer.go:365](../internal/buffer/buffer.go#L365) | [internal/buffer/buffer_test.go:283](../internal/buffer/buffer_test.go#L283)<br>[internal/buffer/buffer_test.go:358](../internal/buffer/buffer_test.go#L358)<br>[internal/buffer/buffer_test.go:495](../internal/buffer/buffer_test.go#L495) | アンドゥとリドゥを持つ |
 | FR-08 | 未着手 | - | - | Ex コマンドは `:w`、`:q`、`:s`、`:g` などの部分集合を持つ。対象の一覧は実装の段階で定める |
 | FR-09 | 未着手 | - | - | 正規表現は Go の標準ライブラリ（`regexp`）の文法に従う |
 | FR-10 | 未着手 | - | - | 拡張機能は、コンパイルする拡張機能と、スクリプトの拡張機能の 2 種類を用意する。どちらも Go で書く |
-| FR-11 | 未着手 | - | - | 拡張機能は、モーション、オペレーター、テキストオブジェクト、コマンドを追加できる |
-| FR-12 | 未着手 | - | - | 拡張機能が追加した操作は、拡張機能の側に特別な処理を書かなくても、ドットリピートとマクロで繰り返せる。本体は、拡張機能の ID、コマンドの ID、引数を記録し、再実行のときに同じ拡張機能へ問い合わせ直す |
+| FR-11 | 実装とテスト | [internal/input/keymap.go:64](../internal/input/keymap.go#L64) | [internal/input/parser_test.go:169](../internal/input/parser_test.go#L169)<br>[internal/input/parser_test.go:217](../internal/input/parser_test.go#L217)<br>[internal/input/parser_test.go:255](../internal/input/parser_test.go#L255) | 拡張機能は、モーション、オペレーター、テキストオブジェクト、コマンドを追加できる |
+| FR-12 | 実装とテスト | [internal/input/command.go:43](../internal/input/command.go#L43) | [internal/input/parser_test.go:169](../internal/input/parser_test.go#L169) | 拡張機能が追加した操作は、拡張機能の側に特別な処理を書かなくても、ドットリピートとマクロで繰り返せる。本体は、拡張機能の ID、コマンドの ID、引数を記録し、再実行のときに同じ拡張機能へ問い合わせ直す |
 | FR-13 | 実装とテスト | [ext/manifest.go:16](../ext/manifest.go#L16)<br>[ext/manifest.go:113](../ext/manifest.go#L113)<br>[ext/manifest.go:182](../ext/manifest.go#L182) | [ext/manifest_test.go:26](../ext/manifest_test.go#L26)<br>[ext/manifest_test.go:56](../ext/manifest_test.go#L56)<br>[ext/manifest_test.go:189](../ext/manifest_test.go#L189)<br>[ext/manifest_test.go:218](../ext/manifest_test.go#L218) | 拡張機能は、追加する操作の一覧と起動の契機を、実行せずに読める宣言ファイルに書く |
 | FR-14 | 未着手 | - | - | 拡張機能は、宣言した契機（対応するファイルを開いたとき、コマンドを呼んだとき、など）で初めて起動する。例: 言語サーバーの無いテキストファイルを開いている間は、LSP の拡張機能を起動しない |
 | FR-15 | 実装とテスト | [internal/buffer/buffer.go:239](../internal/buffer/buffer.go#L239) | [internal/buffer/buffer_test.go:53](../internal/buffer/buffer_test.go#L53)<br>[internal/buffer/buffer_test.go:239](../internal/buffer/buffer_test.go#L239) | バッファの内容を変更できるのは本体だけとする。拡張機能は、編集の内容と、元にしたバッファのバージョン番号を本体へ送り、本体はバージョン番号が現在と一致した編集だけを適用する |
