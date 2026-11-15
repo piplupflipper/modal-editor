@@ -49,8 +49,10 @@ func main() {
 	}
 }
 
-// run は、本体が標準入力を閉じるか、シグナルを受け取るまで、メッセージを処理する。
+// run は、本体から shutdown を受け取るか、本体が標準入力を閉じるか、シグナルを受け取るまで、メッセージを処理する。
 // 終わるときに、起動した言語サーバーを止める。
+// shutdown のときは、接続を閉じる前に OnShutdown のフックで止める（extension.stop）。
+// それ以外のときは接続が閉じているので、Serve が戻った後で止める。
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

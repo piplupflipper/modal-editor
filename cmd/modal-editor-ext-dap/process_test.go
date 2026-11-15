@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/rpc"
 )
 
@@ -119,5 +120,83 @@ func TestExtensionKilled(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitGone(t, "adapter", adapter)
+	waitGone(t, "debuggee", child)
+}
+
+// hostShutdownTimeout は、本体が shutdown を送ってから、拡張機能のプロセスグループへ SIGTERM を送るまでの期限である
+// （internal/exthost の DefaultShutdownTimeout。基本設計 5.2。値は仮）。
+const hostShutdownTimeout = 3 * time.Second
+
+// shutdown は、本体の役から shutdown を送り、拡張機能が接続を閉じる（Serve が戻る）までの時間を返す。
+func (h *host) shutdown() time.Duration {
+	h.t.Helper()
+	start := time.Now()
+	if err := h.conn.Notify(ext.MethodShutdown, ext.ShutdownParams{}); err != nil {
+		h.t.Fatalf("shutdown: %v", err)
+	}
+	select {
+	case <-h.conn.Done():
+	case <-time.After(testTimeout):
+		h.t.Fatal("the extension did not close the connection after shutdown")
+	}
+	return time.Since(start)
+}
+
+// startDebugging は、デバッグを始めて最初のブレークポイントで止まるまで進め、セッションとデバッグ対象の pid を返す。
+func (h *host) startDebugging() (*session, int) {
+	h.t.Helper()
+	h.open(1, srcPath, srcText)
+	h.mustExec(cmdToggleBreakpoint, 2)
+	h.mustExec(cmdStart, 0)
+	child := h.waitPID("child")
+	h.waitSigns(bp2, exec2)
+	h.d.mu.Lock()
+	s := h.d.sess
+	h.d.mu.Unlock()
+	return s, child
+}
+
+// TestShutdownStopsSession は、本体から shutdown を受け取ると、デバッグ中のデバッグアダプターへ terminate と disconnect を送り、
+// デバッグアダプターとデバッグ対象が終わってから接続を閉じること、それが本体の期限の中で終わることを確かめる（基本設計 5.2 の正常な終了）。
+//
+// req: FR-31
+func TestShutdownStopsSession(t *testing.T) {
+	h := newHost(t, fakeSettings(t, []string{"-terminate"}, map[string]any{"child": true}))
+	s, child := h.startDebugging()
+	if d := h.shutdown(); d >= hostShutdownTimeout {
+		t.Errorf("shutdown took %s, want < %s", d, hostShutdownTimeout)
+	}
+	// 接続を閉じた時点で、後始末は終わっている。待たずに確かめる。
+	select {
+	case <-s.ended:
+	default:
+		t.Fatal("the session has not ended when the connection is closed")
+	}
+	if !s.cmd.ProcessState.Success() {
+		t.Errorf("adapter exit = %v, want success (exited by disconnect, not killed)", s.cmd.ProcessState)
+	}
+	if !gone(child) {
+		t.Errorf("debuggee (pid %d) remains", child)
+	}
+	h.waitOutput("terminate requested")
+	h.waitMessage("デバッグを終了した")
+}
+
+// TestShutdownHungAdapter は、デバッグアダプターが terminate と disconnect に応答しないとき、shutdownTimeout で打ち切って
+// 強制終了し、本体の期限（SIGTERM を送るまで）の中で接続を閉じること、デバッグ対象が残らないことを確かめる。
+//
+// req: FR-31
+func TestShutdownHungAdapter(t *testing.T) {
+	h := newHost(t, fakeSettings(t, []string{"-terminate"}, map[string]any{"child": true, "ignore": []string{"terminate", "disconnect"}}))
+	s, child := h.startDebugging()
+	d := h.shutdown()
+	if d < shutdownTimeout || d >= hostShutdownTimeout {
+		t.Errorf("shutdown took %s, want in [%s, %s)", d, shutdownTimeout, hostShutdownTimeout)
+	}
+	select {
+	case <-s.procDone:
+	default:
+		t.Fatal("the adapter remains after the connection is closed")
+	}
 	waitGone(t, "debuggee", child)
 }

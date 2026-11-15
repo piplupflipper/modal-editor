@@ -39,6 +39,7 @@ var (
 	fmtWhole     = flag.Bool("fmt-whole", false, "整形を全体の置き換えで返す")
 	fmtDelay     = flag.Duration("fmt-delay", 0, "整形の応答を遅らせる時間")
 	initDelay    = flag.Duration("init-delay", 0, "initialize の応答を遅らせる時間")
+	hangShutdown = flag.Bool("hang-on-shutdown", false, "shutdown に応答せず、exit でも終わらない（止まった言語サーバーの代役）")
 )
 
 type pos struct {
@@ -180,6 +181,9 @@ func request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 			_ = reply(map[string]any{"capabilities": caps}, nil)
 		}()
 	case "shutdown":
+		if *hangShutdown {
+			return
+		}
 		_ = reply(nil, nil)
 	case "textDocument/definition":
 		var p struct {
@@ -289,6 +293,9 @@ func notification(_ context.Context, n *rpc.Notification) {
 			logEntry("configuration result", res)
 		}()
 	case "exit":
+		if *hangShutdown {
+			return
+		}
 		os.Exit(0)
 	case "textDocument/didOpen":
 		var p struct {

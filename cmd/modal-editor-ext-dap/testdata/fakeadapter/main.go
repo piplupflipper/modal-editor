@@ -45,6 +45,8 @@ type fakeOptions struct {
 	Child bool `json:"child"`
 	// LaunchBeforeInitialized は、launch の応答を initialized の event より先に返す。
 	LaunchBeforeInitialized bool `json:"launchBeforeInitialized"`
+	// Ignore は、受け取っても応答も処理もしない request のコマンドの名前である（止まったデバッグアダプターの代役）。
+	Ignore []string `json:"ignore"`
 }
 
 type message struct {
@@ -189,6 +191,9 @@ func (a *adapter) handle(m *message) {
 	}
 	if a.opts.CrashOn == m.Command {
 		os.Exit(3)
+	}
+	if slices.Contains(a.opts.Ignore, m.Command) {
+		return
 	}
 	switch m.Command {
 	case "initialize":
