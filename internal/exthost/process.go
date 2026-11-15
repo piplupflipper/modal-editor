@@ -174,7 +174,7 @@ func (h *Host) initialize(e *extension, r *run, p *process) error {
 	case <-p.exited:
 		return p.exitError()
 	case <-r.conn.Done():
-		return fmt.Errorf("%w: %w", errConnClosed, r.conn.Err())
+		return connEnded(r, p)
 	case <-r.failed:
 		return r.failErr
 	case <-h.ctx.Done():
@@ -220,7 +220,7 @@ func (h *Host) monitor(r *run, p *process) error {
 		case <-p.exited:
 			return p.exitError()
 		case <-r.conn.Done():
-			return fmt.Errorf("%w: %w", errConnClosed, r.conn.Err())
+			return connEnded(r, p)
 		case <-r.failed:
 			return r.failErr
 		case <-h.ctx.Done():
@@ -250,7 +250,7 @@ func (h *Host) ping(r *run, p *process) error {
 	case <-p.exited:
 		return p.exitError()
 	case <-r.conn.Done():
-		return fmt.Errorf("%w: %w", errConnClosed, r.conn.Err())
+		return connEnded(r, p)
 	case <-r.failed:
 		return r.failErr
 	case <-h.ctx.Done():
@@ -413,6 +413,22 @@ func (p *process) kill() {
 	pid := p.cmd.Process.Pid
 	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
 		_ = p.cmd.Process.Kill()
+	}
+}
+
+// exitWaitAfterEOF は、接続が閉じた後に、子プロセスの終了を待つ上限である。
+// 子プロセスが終わると、終了コードより先に標準出力の EOF が届くことが多いので、異常の理由を終了コードにするために少し待つ。
+const exitWaitAfterEOF = 200 * time.Millisecond
+
+// connEnded は、接続が閉じたときの異常の理由を返す。子プロセスがすぐに終われば、その終了の理由にする。
+func connEnded(r *run, p *process) error {
+	t := time.NewTimer(exitWaitAfterEOF)
+	defer t.Stop()
+	select {
+	case <-p.exited:
+		return fmt.Errorf("%w (%w)", p.exitError(), r.conn.Err())
+	case <-t.C:
+		return fmt.Errorf("%w: %w", errConnClosed, r.conn.Err())
 	}
 }
 
