@@ -41,9 +41,21 @@ const EnvExtensionDir = "MODAL_EDITOR_EXTENSION_DIR"
 
 // EnvMCPSocket は、本体がすべての拡張機能の子プロセスに渡す環境変数の名前である（名前は仮。基本設計 6.2）。
 // 値は、MCP の中継コマンドが接続する Unix ドメインソケットの絶対パスで、本体が起動ごとに一意に決める。
-// 本体はパスを決めて渡すだけで、そのパスで待ち受けるかどうかは起動の契機の裁定（基本設計 10 章）による。
-// MCP の拡張機能はこのパスで待ち受け、ACP の拡張機能はこのパスを中継コマンドの引数にしてエージェントへ渡す（基本設計 6.5）。
+// 本体は、起動の契機 ActivationSocket を宣言した拡張機能のために、このパスで起動時から待ち受ける（基本設計 6.2）。
+// ACP の拡張機能はこのパスを中継コマンドの引数にしてエージェントへ渡す（基本設計 6.5）。
 const EnvMCPSocket = "MODAL_EDITOR_MCP_SOCKET"
+
+// EnvSocketFDs は、本体が ActivationSocket の拡張機能へ引き継いだファイル記述子の数を渡す環境変数の名前である（名前は仮。基本設計 6.2）。
+// 値が n（1 以上）なら、ファイル記述子 SocketFDStart が待ち受けているソケットで、
+// SocketFDStart+1 から SocketFDStart+n-1 までが、本体が受け付けて拡張機能へ渡す接続である。
+// 値が空か変数が無ければ、何も引き継いでいない。
+// 本体は、すべての拡張機能の子プロセスでこの変数を上書きするので、本体の環境の古い値は引き継がない。
+// 拡張機能は ext/server の InheritedSocket で受け取る。
+const EnvSocketFDs = "MODAL_EDITOR_SOCKET_FDS"
+
+// SocketFDStart は、EnvSocketFDs で引き継ぐ最初のファイル記述子の番号である。
+// 0〜2 は標準入出力で、本体との通信に使う。
+const SocketFDStart = 3
 
 // ActivationKind は、起動の契機の種類である。
 type ActivationKind string
@@ -53,18 +65,22 @@ type ActivationKind string
 // ActivationOperator、ActivationMotion、ActivationTextObject、ActivationCommand は、
 // 同じ拡張機能が追加した、その種類の操作が呼ばれたときに成り立つ。
 // ActivationFileType は、Pattern と一致する種類のファイルを開いたときに成り立つ。
+// ActivationSocket は、本体が EnvMCPSocket のパスで待ち受けるソケットへ、最初の接続が来たときに成り立つ（基本設計 6.2）。
+// ID と Pattern は使わない。本体は、待ち受けているソケットと受け付けた接続を、子プロセスへ引き継ぐ（EnvSocketFDs）。
+// 1 つの本体で待ち受けるソケットは 1 つなので、この契機を宣言した拡張機能が複数あれば、本体は最初の 1 つだけに使う。
 const (
 	ActivationOperator   ActivationKind = "operator"
 	ActivationMotion     ActivationKind = "motion"
 	ActivationTextObject ActivationKind = "textObject"
 	ActivationCommand    ActivationKind = "command"
 	ActivationFileType   ActivationKind = "filetype"
+	ActivationSocket     ActivationKind = "socket"
 )
 
 // Known は、k がこの版の API の知っている契機の種類かどうかを返す。
 func (k ActivationKind) Known() bool {
 	switch k {
-	case ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType:
+	case ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType, ActivationSocket:
 		return true
 	}
 	return false
@@ -186,6 +202,7 @@ func (m *Manifest) Validate() (warnings []error, err error) {
 			if a.Pattern == "" {
 				errs = append(errs, fmt.Errorf("%s.pattern が空である", path))
 			}
+		case ActivationSocket:
 		default:
 			warnings = append(warnings, fmt.Errorf("%s.on %q は未知の契機なので無視する", path, a.On))
 		}

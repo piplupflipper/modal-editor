@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/ext/server"
 	"github.com/piplupflipper/modal-editor/internal/rpc"
 )
 
@@ -37,7 +40,15 @@ const (
 	modeIgnoreShutdown = "ignoreshutdown"
 	// modeStubborn は、shutdown を無視し、SIGTERM を受け取っても標準エラー出力に記録するだけで終わらない。
 	modeStubborn = "stubborn"
+	// modeSlowInit は、initialize に slowInitDelay だけ遅れて応答する。それ以外は modeNormal と同じである。
+	modeSlowInit = "slowinit"
+	// modeSocket は、modeNormal に加えて、本体から引き継いだ待ち受けと接続（socket の契機）で、
+	// 接続ごとに自分のプロセス ID と引き継いだ接続の数を 1 行書いて閉じる（socket_test.go）。
+	modeSocket = "socket"
 )
+
+// slowInitDelay は、modeSlowInit の拡張機能が initialize の応答を遅らせる時間である。
+const slowInitDelay = 300 * time.Millisecond
 
 // stubbornSIGTERM は、modeStubborn の拡張機能が SIGTERM を受け取ったときに標準エラー出力へ書く行である。
 const stubbornSIGTERM = "fake extension got SIGTERM"
@@ -71,6 +82,9 @@ type fakeEnv struct {
 	// MCP は、環境変数 ext.EnvMCPSocket の値である。
 	MCP    string `json:"mcp"`
 	MCPSet bool   `json:"mcpSet"`
+	// SocketFDs は、環境変数 ext.EnvSocketFDs の値である。
+	SocketFDs    string `json:"socketFDs"`
+	SocketFDsSet bool   `json:"socketFDsSet"`
 }
 
 // fakeBuffer は、拡張機能が持つバッファの写しである。
@@ -126,11 +140,43 @@ func runFakeExt(mode string) int {
 			}
 		}()
 	}
+	if mode == modeSocket {
+		serveInheritedSocket()
+	}
 	f := &fakeExt{mode: mode, docs: map[ext.BufferID]*fakeDoc{}, ready: make(chan struct{})}
 	f.conn = rpc.NewConn(os.Stdin, os.Stdout, rpc.HandlerFuncs{Request: f.request, Notification: f.notification})
 	close(f.ready)
 	<-f.conn.Done()
 	return 0
+}
+
+// serveInheritedSocket は、本体から引き継いだ接続と、引き継いだ待ち受けで受け付けた接続へ、
+// "<プロセス ID> <引き継いだ接続の数>" の 1 行を書いて閉じる。待ち受けを引き継いでいなければ何もしない。
+func serveInheritedSocket() {
+	ln, conns, err := server.InheritedSocket()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "inherited socket: %v\n", err)
+	}
+	if ln == nil {
+		return
+	}
+	line := fmt.Sprintf("%d %d\n", os.Getpid(), len(conns))
+	answer := func(c net.Conn) {
+		_, _ = io.WriteString(c, line)
+		_ = c.Close()
+	}
+	for _, c := range conns {
+		answer(c)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			answer(c)
+		}
+	}()
 }
 
 func (f *fakeExt) record(format string, args ...any) {
@@ -146,6 +192,9 @@ func (f *fakeExt) request(ctx context.Context, req *rpc.Request, reply rpc.Repli
 	case ext.MethodInitialize:
 		if f.mode == modeNoInit {
 			return
+		}
+		if f.mode == modeSlowInit {
+			time.Sleep(slowInitDelay)
 		}
 		_ = reply(ext.InitializeResult{APIVersion: ext.APIVersion}, nil)
 	case ext.MethodPing:
@@ -181,7 +230,8 @@ func (f *fakeExt) request(ctx context.Context, req *rpc.Request, reply rpc.Repli
 		wd, err := os.Getwd()
 		dir, ok := os.LookupEnv(ext.EnvExtensionDir)
 		mcp, mcpSet := os.LookupEnv(ext.EnvMCPSocket)
-		_ = reply(fakeEnv{Dir: dir, DirSet: ok, Wd: wd, MCP: mcp, MCPSet: mcpSet}, err)
+		fds, fdsSet := os.LookupEnv(ext.EnvSocketFDs)
+		_ = reply(fakeEnv{Dir: dir, DirSet: ok, Wd: wd, MCP: mcp, MCPSet: mcpSet, SocketFDs: fds, SocketFDsSet: fdsSet}, err)
 	case methodExit:
 		os.Exit(3)
 	case methodPanic:
@@ -296,7 +346,7 @@ func (f *fakeExt) notification(_ context.Context, n *rpc.Notification) {
 		f.mu.Unlock()
 	case ext.MethodShutdown:
 		f.record("notification:%s", n.Method)
-		if f.mode == modeNormal {
+		if f.mode == modeNormal || f.mode == modeSlowInit || f.mode == modeSocket {
 			// 片付けるものは無いので、すぐに終わる。
 			os.Exit(0)
 		}

@@ -176,6 +176,42 @@ func TestSyncTimeout(t *testing.T) {
 	}
 }
 
+// 起動を含む問い合わせは、SyncTimeout より長い StartSyncTimeout で待つ（基本設計 5.2、#43 の裁定 1-b）。
+// 拡張機能の起動と初期化は 1 ms では終わらないので、StartSyncTimeout も 1 ms にすると最初の操作は失敗する。
+//
+// req: FR-17
+func TestStartSyncTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start time.Duration
+		ok    bool
+	}{
+		{"default", 0, true},
+		{"short", time.Millisecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": "abc\ndef\n"})
+			h := start(t, Config{
+				WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(time.Millisecond), StartSyncTimeout: tc.start,
+			}, "a.txt")
+			if st := h.state("fake"); st != exthost.StateNotStarted {
+				t.Fatalf("fake: state = %v（未起動のはず）", st)
+			}
+			h.keys("dil")
+			h.settle()
+			if tc.ok {
+				if got, msg := h.text(), h.message(); got != "\ndef" || msg != "" {
+					t.Errorf("text = %q, message = %q（起動を待って適用するはず）", got, msg)
+				}
+				return
+			}
+			if msg := h.message(); !strings.Contains(msg, "timed out") {
+				t.Errorf("message = %q", msg)
+			}
+		})
+	}
+}
+
 // 期限が 0 なら待たずに次のキーを受け付け、結果が届いた時点で、バージョン番号とカーソルが同じなら適用し、違えば破棄する。
 //
 // req: FR-18

@@ -100,7 +100,12 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 		e.deferred = &pendingQuery{q: q, tag: tag, bs: bs, method: method}
 		return command.ErrDeferred
 	}
-	q, err := e.host.Send(ref.Extension, method, params, exthost.SendOptions{Tag: tag, Timeout: max(timeout, 0)})
+	opts := exthost.SendOptions{Tag: tag, Timeout: max(timeout, 0)}
+	if !info.Replaying {
+		// 起動を含む問い合わせだけ長い期限で待つ（基本設計 5.2）。拡張機能が稼働中なら exthost は使わない。
+		opts.StartTimeout = e.startSyncTimeout()
+	}
+	q, err := e.host.Send(ref.Extension, method, params, opts)
 	if err != nil {
 		return errExtension(ref, err)
 	}

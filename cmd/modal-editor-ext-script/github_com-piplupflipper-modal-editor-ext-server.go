@@ -15,6 +15,7 @@ func init() {
 		"ErrInvalidPosition": reflect.ValueOf(&server.ErrInvalidPosition).Elem(),
 		"ErrInvalidRange":    reflect.ValueOf(&server.ErrInvalidRange).Elem(),
 		"ErrNotRunning":      reflect.ValueOf(&server.ErrNotRunning).Elem(),
+		"InheritedSocket":    reflect.ValueOf(server.InheritedSocket),
 		"New":                reflect.ValueOf(server.New),
 
 		// type definitions

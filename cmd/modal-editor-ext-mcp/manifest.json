@@ -2,7 +2,7 @@
   "id": "mcp",
   "command": "./modal-editor-ext-mcp",
   "activation": [
-    { "on": "command", "id": "mcp.start" }
+    { "on": "socket" }
   ],
   "contributes": {
     "commands": [

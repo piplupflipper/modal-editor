@@ -21,9 +21,8 @@ const maxSocketPath = 103
 // MCPSocket は、本体が起動ごとに決める MCP のソケットのパスと、そのパスを置くディレクトリである（基本設計 6.2）。
 // [NewMCPSocket] で作り、エディタの終了時に [MCPSocket.Remove] で消す。
 //
-// 本体はパスを決めて、[Config.Env] で環境変数 ext.EnvMCPSocket としてすべての拡張機能へ渡すだけで、自分では待ち受けない。
-// 本体が待ち受けるか MCP の拡張機能が待ち受けるかは、起動の契機 socket の裁定待ちである（基本設計 10 章）。
-// 当面は MCP の拡張機能が、起動したときにこのパスで待ち受ける。
+// 本体はパスを決めて、[Config.Env] で環境変数 ext.EnvMCPSocket としてすべての拡張機能へ渡す。
+// 起動の契機 socket の拡張機能（MCP）があれば、[Config.SocketPath] にもこのパスを入れ、[Host] が起動時から待ち受ける（基本設計 6.2）。
 type MCPSocket struct {
 	// Path は、ソケットの絶対パスである。ファイルはまだ無い。
 	Path string

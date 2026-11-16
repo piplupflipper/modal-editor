@@ -194,16 +194,21 @@ func TestKnownActivation(t *testing.T) {
 		{On: ActivationOperator, ID: "surround.add"},
 		{On: "lsp"},
 		{On: ActivationFileType, Pattern: "markdown"},
+		{On: ActivationSocket},
 	}
 	want := []Activation{
 		{On: ActivationOperator, ID: "surround.add"},
 		{On: ActivationFileType, Pattern: "markdown"},
+		{On: ActivationSocket},
+	}
+	if _, err := m.Validate(); err != nil {
+		t.Errorf("Validate = %v", err)
 	}
 	if got := m.KnownActivation(); !reflect.DeepEqual(got, want) {
 		t.Errorf("KnownActivation = %#v, want %#v", got, want)
 	}
 
-	for _, k := range []ActivationKind{ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType} {
+	for _, k := range []ActivationKind{ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType, ActivationSocket} {
 		if !k.Known() {
 			t.Errorf("%q.Known() = false, want true", k)
 		}

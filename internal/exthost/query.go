@@ -119,6 +119,11 @@ type SendOptions struct {
 	// Timeout は、起動と応答を待つ上限である。0 以下なら [Config.SendTimeout] を使う。
 	// 期限 0 の設定（FR-18）でも、応答しない問い合わせの待ち受けが溜まらないように、この上限で打ち切る。
 	Timeout time.Duration
+	// StartTimeout は、起動を含む問い合わせ（Send を呼んだ時点で拡張機能が未起動か起動中のもの）で、Timeout の代わりに使う期限である（基本設計 5.2）。
+	// 大きなバッファを開いた直後の最初の問い合わせが、全文の送信を含む起動の時間で失敗しないようにする（#43 の裁定 1-b）。
+	// Timeout（0 以下なら [Config.SendTimeout]）より短いか 0 以下なら使わない。
+	// 稼働中の拡張機能への問い合わせには使わない。
+	StartTimeout time.Duration
 }
 
 // Query は、[Host.Send] で送った問い合わせである。
@@ -157,6 +162,9 @@ func (h *Host) send(id, method string, params any, opts SendOptions, defaultTime
 	h.mu.Lock()
 	e, err := h.lookupLocked(id)
 	if err == nil {
+		if (e.state == StateNotStarted || e.state == StateStarting) && opts.StartTimeout > timeout {
+			timeout = opts.StartTimeout
+		}
 		err = check(e)
 	}
 	if err != nil {

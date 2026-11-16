@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -15,12 +14,17 @@ import (
 	"github.com/piplupflipper/modal-editor/ext/server"
 )
 
-// socketEnv は、待ち受けるソケットのパスを受け取る環境変数の名前である（仮。cmd/modal-editor-mcp-bridge と同じ）。
+// socketEnv は、本体が待ち受けるソケットのパスを受け取る環境変数の名前である（仮。cmd/modal-editor-mcp-bridge と同じ）。
 // 本体（internal/editor）が起動ごとにパスを決め、すべての拡張機能へ渡す（基本設計 6.2）。
+// この拡張機能は、パスを利用者へ知らせるのに使うだけで、自分では待ち受けない。
 const socketEnv = ext.EnvMCPSocket
 
-// cmdStart は、拡張機能を起動する契機のコマンドである（仮。パッケージの doc の「MCP の接続」）。
+// cmdStart は、待ち受けているパスを利用者へ知らせるコマンドである（仮。パッケージの doc の「MCP の接続」）。
 const cmdStart = "mcp.start"
+
+// errNotInherited は、本体から待ち受けのソケットを引き継がなかったことを表す。
+// 本体がソケットのパスを決められなかったか、待ち受けられなかったときに、socket 以外の契機（mcp.start）で起動された場合である。
+var errNotInherited = errors.New("本体から待ち受けのソケットを引き継いでいません")
 
 // stopTimeout は、終わるときに、MCP の接続の処理が終わるのを待つ上限である（仮）。
 // 本体は shutdown を送ってから 3 秒（仮）で SIGTERM を送るので（基本設計 5.2）、それより短くする。
@@ -29,33 +33,48 @@ const stopTimeout = time.Second
 // notSentWait は、複製を持っていないバッファを読むときに、buffer/open の処理を待つ上限である（仮。hostEditor.ReadBuffer）。
 const notSentWait = time.Second
 
-// extension は、拡張機能の全体である。ext/server の Server、バッファの複製の一覧、ソケットの待ち受けを持つ。
+// extension は、拡張機能の全体である。ext/server の Server、バッファの複製の一覧、本体から引き継いだ待ち受けと接続を持つ。
 type extension struct {
 	srv      *server.Server
 	replicas *replicaSet
 	tools    *toolbox
-	getenv   func(string) string
 	log      *log.Logger
+	// path は、本体が待ち受けるソケットのパス（環境変数 socketEnv）である。利用者へ知らせるのに使う。
+	path string
 
 	mu sync.Mutex
-	// path は、待ち受けているソケットのパスである。待ち受けていなければ空。
-	path string
-	// listenErr は、待ち受けを始められなかった理由である。
+	// ln は、本体から引き継いだ待ち受けである。引き継がなかったか、止めた後は nil。
+	ln net.Listener
+	// conns は、本体が受け付けて引き継いだ接続のうち、まだ処理を始めていないものである。
+	conns []net.Conn
+	// listenErr は、待ち受けを引き継げなかった理由である。
 	listenErr error
-	ln        net.Listener
+	serving   bool
 	// cancel は、MCP の接続の処理を取り消す。
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	stopped bool
 }
 
-func newExtension(getenv func(string) string) *extension {
-	x := &extension{srv: server.New(), replicas: newReplicaSet(), getenv: getenv, log: log.New(os.Stderr, "modal-editor-ext-mcp: ", log.LstdFlags)}
+// newExtension は、本体から引き継いだ待ち受け ln と接続 conns（server.InheritedSocket の結果）で拡張機能を作る。
+// ln が nil なら、inheritErr（nil なら errNotInherited）を、引き継げなかった理由として mcp.start で利用者へ知らせる。
+// path は、本体が待ち受けるソケットのパスで、利用者へ知らせるのに使う。
+func newExtension(path string, ln net.Listener, conns []net.Conn, inheritErr error) *extension {
+	x := &extension{
+		srv: server.New(), replicas: newReplicaSet(), path: path, ln: ln, conns: conns,
+		log: log.New(os.Stderr, "modal-editor-ext-mcp: ", log.LstdFlags),
+	}
+	if ln == nil {
+		x.listenErr = inheritErr
+		if x.listenErr == nil {
+			x.listenErr = errNotInherited
+		}
+	}
 	x.srv.ErrorLog = x.log
 	x.tools = newToolbox(&hostEditor{Server: x.srv, replicas: x.replicas})
 
 	x.srv.OnInitialize(func(context.Context, *server.InitializeEvent) error {
-		// 待ち受けられなくても initialize は失敗させない。失敗させると本体が再起動を繰り返す。
+		// 引き継げなくても initialize は失敗させない。失敗させると本体が再起動を繰り返す。
 		// 理由は mcp.start で利用者へ知らせる。
 		x.start()
 		return nil
@@ -69,27 +88,26 @@ func newExtension(getenv func(string) string) *extension {
 	return x
 }
 
-// start は、環境変数 socketEnv のパスで待ち受けを始め、受け付けた接続ごとに serveMCP を動かす。
-// 既に待ち受けているか、止めた後なら何もしない。
+// start は、本体から引き継いだ接続の処理と、引き継いだ待ち受けでの受け付けを始める（基本設計 6.2）。
+// 接続ごとに serveMCP を動かす。既に始めたか、止めた後か、待ち受けを引き継いでいなければ何もしない。
+// ツールが本体へ問い合わせられるように、initialize を受け取ってから呼ぶ。
 func (x *extension) start() {
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	if x.ln != nil || x.stopped {
-		return
-	}
-	path := x.getenv(socketEnv)
-	if path == "" {
-		x.listenErr = fmt.Errorf("環境変数 %s にソケットのパスが設定されていません", socketEnv)
-		return
-	}
-	ln, err := listenSocket(path)
-	if err != nil {
-		x.listenErr = err
-		x.log.Printf("listen: %v", err)
+	if x.ln == nil || x.serving || x.stopped {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	x.ln, x.path, x.listenErr, x.cancel = ln, path, nil, cancel
+	x.serving, x.cancel = true, cancel
+	for _, c := range x.conns {
+		x.wg.Add(1)
+		go func() {
+			defer x.wg.Done()
+			x.serve(ctx, c)
+		}()
+	}
+	x.conns = nil
+	ln := x.ln
 	x.wg.Add(1)
 	go func() {
 		defer x.wg.Done()
@@ -115,21 +133,20 @@ func (x *extension) acceptLoop(ctx context.Context, ln net.Listener) {
 	}
 }
 
-// serve は、1 本の MCP の接続を処理する。接続の受け取り方に依らない差し込みの口で、
-// `socket` の契機の裁定の後は、本体から引き継いだ接続（net.FileConn）もここへ渡す。
+// serve は、1 本の MCP の接続を処理する。本体から引き継いだ接続も、引き継いだ待ち受けで受け付けた接続も、ここへ渡す。
 func (x *extension) serve(ctx context.Context, conn io.ReadWriteCloser) {
 	if err := serveMCP(ctx, conn, x.tools, x.log); err != nil {
 		x.log.Printf("mcp connection: %v", err)
 	}
 }
 
-// startCommand は、mcp.start を処理する。待ち受けていなければ始め、結果を利用者へ知らせる。
+// startCommand は、mcp.start を処理する。待ち受けているパスか、引き継げなかった理由を利用者へ知らせる。
 func (x *extension) startCommand() ext.CommandExecuteResult {
 	x.start()
 	x.mu.Lock()
-	path, lerr := x.path, x.listenErr
+	ln, lerr, path := x.ln, x.listenErr, x.path
 	x.mu.Unlock()
-	if path == "" {
+	if ln == nil {
 		if lerr == nil {
 			lerr = errors.New("拡張機能は終了処理中です")
 		}
@@ -141,14 +158,18 @@ func (x *extension) startCommand() ext.CommandExecuteResult {
 }
 
 // stop は、待ち受けをやめ、MCP の接続を閉じ、処理が終わるのを stopTimeout まで待つ。何度呼んでもよい。
+// 待ち受けは本体と共有しているので、閉じても本体の待ち受けは続く（本体は拡張機能が再起動を待つ間に受け付ける）。
 func (x *extension) stop() {
 	x.mu.Lock()
 	x.stopped = true
-	ln, cancel := x.ln, x.cancel
-	x.ln, x.cancel, x.path = nil, nil, ""
+	ln, cancel, conns := x.ln, x.cancel, x.conns
+	x.ln, x.cancel, x.conns = nil, nil, nil
 	x.mu.Unlock()
 	if ln != nil {
 		_ = ln.Close()
+	}
+	for _, c := range conns {
+		_ = c.Close()
 	}
 	if cancel != nil {
 		cancel()
@@ -163,36 +184,6 @@ func (x *extension) stop() {
 	case <-time.After(stopTimeout):
 		x.log.Printf("mcp connections did not finish within %v", stopTimeout)
 	}
-}
-
-// listenSocket は、path に Unix ドメインソケットを作って待ち受ける。
-// path に前回の起動で残ったソケットがあり、接続を受け付けるものがいなければ、消してから作る。
-// 他のエディタが待ち受けているソケットと、ソケットでないファイルは消さずに誤りを返す。
-// ソケットのファイルは所有者だけが読み書きできるようにする。接続した相手はバッファを読み書きできるためである。
-func listenSocket(path string) (net.Listener, error) {
-	if fi, err := os.Lstat(path); err == nil {
-		if fi.Mode()&os.ModeSocket == 0 {
-			return nil, fmt.Errorf("%s はソケットでないファイルとして既にあります", path)
-		}
-		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
-			_ = c.Close()
-			return nil, fmt.Errorf("%s は他のプロセスが待ち受けています", path)
-		}
-		if err := os.Remove(path); err != nil {
-			return nil, fmt.Errorf("残っていたソケット %s を消せません: %w", path, err)
-		}
-	}
-	var ln net.Listener
-	var err error
-	withPrivateUmask(func() { ln, err = net.Listen("unix", path) })
-	if err != nil {
-		return nil, fmt.Errorf("%s で待ち受けられません: %w", path, err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = ln.Close()
-		return nil, fmt.Errorf("%s の権限を変えられません: %w", path, err)
-	}
-	return ln, nil
 }
 
 // replicaSet は、拡張機能が複製を持っているバッファの番号の集合である。

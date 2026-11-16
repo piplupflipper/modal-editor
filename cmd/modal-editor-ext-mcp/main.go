@@ -1,6 +1,7 @@
 // Command modal-editor-ext-mcp は、エディタの状態と編集の操作を MCP（Model Context Protocol）のツールとして提供する拡張機能である（基本設計 6.2、FR-32）。
 //
-// 本体（internal/exthost）が、宣言ファイル manifest.json のコマンド mcp.start が呼ばれたときに子プロセスとして起動する。
+// 本体（internal/exthost）が、宣言ファイル manifest.json の起動の契機 socket（ext.ActivationSocket）で、
+// MCP のソケットへの最初の接続を受け付けたときに子プロセスとして起動する（FR-14）。
 // 本体とは標準入出力で JSON-RPC のメッセージ（Content-Length の区切り）をやり取りするので、ログは標準エラー出力へ書く。
 //
 // # MCP の接続
@@ -10,16 +11,16 @@
 // 1 本の接続の上の MCP のメッセージは、MCP の stdio と同じ改行区切りの JSON-RPC 2.0 である（serveMCP）。
 // serveMCP は 1 本の io.ReadWriteCloser だけを受け取り、接続をどう受け取ったかには依らない。
 //
-// 接続の受け取り方は、基本設計 6.2 の `socket` の起動の契機（本体が待ち受けて、最初の接続で拡張機能を起動し、
-// ファイル記述子を引き継ぐ）が裁定待ちなので、当面は次の形にしている（listenSocket）。
+// 接続の受け取り方は、基本設計 6.2 の起動の契機 socket（#43 の裁定 4）である。
 //
-//   - 起動の契機はコマンド mcp.start（仮）である。利用者がキーマップでキーを割り当てて呼ぶ
-//   - 拡張機能は、initialize を受け取った時点で、環境変数 MODAL_EDITOR_MCP_SOCKET（ext.EnvMCPSocket。中継コマンドと同じ名前）の
-//     パスで待ち受ける。パスは本体が起動ごとに決めて、すべての拡張機能へ渡す（$XDG_RUNTIME_DIR/modal-editor/<pid>-<乱数>/mcp.sock。
-//     基本設計 6.2）。ACP の拡張機能は同じ変数から中継コマンドの引数を作るので、ACP で起動したエージェントはこの拡張機能へつながる
-//   - mcp.start は、待ち受けているパスか、待ち受けられなかった理由を、利用者へのメッセージで知らせる
-//
-// 裁定の後は、本体が引き継いだファイル記述子から net.FileListener と net.FileConn で接続を作り、serveMCP へ渡す形に替える。
+//   - 本体は、環境変数 MODAL_EDITOR_MCP_SOCKET（ext.EnvMCPSocket。中継コマンドと同じ名前）のパスで起動時から待ち受ける。
+//     パスは本体が起動ごとに決めて、すべての拡張機能へ渡す（$XDG_RUNTIME_DIR/modal-editor/<pid>-<乱数>/mcp.sock）。
+//     ACP の拡張機能は同じ変数から中継コマンドの引数を作るので、ACP で起動したエージェントはこの拡張機能へつながる
+//   - 本体は、最初の接続を受け付けた時点でこの拡張機能を起動し、待ち受けているソケットと受け付けた接続のファイル記述子を引き継ぐ。
+//     拡張機能は ext/server の InheritedSocket で net.Listener と net.Conn にし、initialize を受け取った時点で、
+//     引き継いだ接続の処理と、待ち受けでの受け付けを始める。拡張機能は自分ではソケットを作らない
+//   - コマンド mcp.start（仮）は、待ち受けているパスか、引き継げなかった理由を、利用者へのメッセージで知らせる。
+//     本体がパスを決められなかったか待ち受けられなかったときは、socket の契機では起動しないので、mcp.start で起動して理由を知る
 //
 // # MCP の版
 //
@@ -41,6 +42,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/piplupflipper/modal-editor/ext/server"
 )
 
 func main() {
@@ -54,7 +57,11 @@ func main() {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	x := newExtension(os.Getenv)
+	ln, conns, err := server.InheritedSocket()
+	if err != nil {
+		log.Printf("modal-editor-ext-mcp: inherited socket: %v", err)
+	}
+	x := newExtension(os.Getenv(socketEnv), ln, conns, err)
 	defer x.stop()
 	return x.srv.Run(ctx)
 }
