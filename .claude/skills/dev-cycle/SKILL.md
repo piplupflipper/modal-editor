@@ -16,6 +16,7 @@ description: modal-editor の実装サイクル（issue 起票 → worktree で�
 2. `docs/progress.md` の集計と、開いている issue（`gh issue list`）を見る。`裁定要` と `低優先` のラベルの issue を分けて数える
 3. `docs/basic-design.md` 10 章と `docs/requirements.md` 7 章の未決の項目を読み、オーナーの裁定が要るものと、実装の中で決めてよいものを分ける
 4. main の CI が緑か（`gh run list --branch main --limit 1`）を見る。赤なら、それを直す issue から始める
+   - **`docs/progress.md` の「実装とテスト」は、画面から使えることを表さない。** 2026-11-16 は 35 件がそろった後に、ACP にプロンプトを渡す手段が無いこと（#130）と、拡張機能の出力・印・ホバーが画面に出ないこと（#132）が見つかった。要件がそろったら、`make dist` の本体を tmux で起動し、標準の拡張機能（LSP、DAP、MCP、ACP、tree-sitter、スクリプト）をそれぞれ実物で使い通して、基本設計 6 章の「最初の範囲」が画面から使えるかを確かめる
 5. 2026-11-16 のセッション 1 の終わりの時点で、要件 35 件はすべて「実装とテスト」になっている。次の作業は、未決の項目の裁定、`低優先` の issue、要件定義 8 章の段階 3 以降（未定）の相談のどれかになる。新しい要件を作り出さず、まずオーナーに段階 3 以降の方針を聞く
 
 ## 1. 役割
@@ -130,6 +131,7 @@ description: modal-editor の実装サイクル（issue 起票 → worktree で�
 6. CI（`gh pr checks <番号>`）が緑で、必須の指摘が無ければ `gh pr merge <番号> --merge --delete-branch` でマージする。マージ後に `git log origin/main` で入ったことを確かめる
    - **CI の判定と merge を 1 つのコマンドの `&&` で繋ぐときは、判定のコマンドをパイプに通さない。** `gh pr checks <番号> --watch | tail -1 && gh pr merge …` は、CI が失敗しても `tail` の終了コード 0 で merge まで進む（2026-11-16 の #115 で、失敗した CI のまま merge した）。`gh pr checks <番号> --watch >/dev/null && gh pr merge …` のように、判定のコマンドの終了コードをそのまま使う。表示が要るなら別のコマンドで出す
    - merge の後に、main の CI（`gh run watch <run> --exit-status`）が成功したことを確かめる。PR の CI が揺れるテストで落ちた場合は、手元で `-count` を回して揺れかを確かめ、揺れなら issue にする。揺れでなければ revert の PR を作る
+   - **stacked PR（上段の base が下段のブランチ）の下段は、`--delete-branch` を付けずにマージする。** 下段のブランチを消すと、GitHub は上段を main へ付け替えずに CLOSED にした（2026-11-16 の #133 → #134）。手順: 下段を `gh pr merge <下段> --merge` → `gh pr edit <上段> --base main` → 下段のブランチを `git push origin --delete <ブランチ>` で消す → 上段の CI を待ってマージ。閉じられてしまったら、下段の head（`gh pr view <下段> --json headRefOid`）を同じブランチ名で push し直し、`gh pr reopen <上段>` してから付け替える
    - `gh pr checks` が「no checks reported」になるのは、PR が main と衝突していて pull_request の CI が走らないときである。`gh pr view <番号> --json mergeable` を見る。マージの直後は `UNKNOWN` が返るので、数秒おいて読み直す
    - 小さな変更（数十行で、振る舞いを変えない性能の修正など）は、オーケストレータが差分を読んでレビューの代わりにしてよい。その場合も、失敗の経路（途中で失敗したときの巻き戻しなど）を読む。#41（MCP の中継）は、オーケストレータが読んで、標準入力の EOF でソケット全体を閉じると最後の応答が失われる穴を見つけた
    - レビューの「推奨」で、この PR の範囲を超えるもの（他のパッケージの取り決め、設計の改訂）は、差し戻さずに issue にする。差し戻しに入れると PR が膨らみ、並行する PR と衝突する
@@ -179,3 +181,5 @@ description: modal-editor の実装サイクル（issue 起票 → worktree で�
 - セッション全体で効いた進め方は 4 つあった。独立レビューを省かないこと（ほぼ全 PR で必須の指摘が出た）、実物（Vim、gopls、dlv、Claude Code、opencode、tmux）で動かすこと、並列に作る土台の契約を issue に書くこと、裁定を AskUserQuestion で選択肢として聞くこと
 - 失敗は 3 つあった。CI の判定をパイプに通して失敗した PR を merge したこと（#115）、Bash の書き換えでワーカーが止まったこと（#66）、Vim の細部の食い違いを 1 件ずつ issue にして連鎖させたこと（#79〜#88）。どれも 2 章と 4 章に織り込んだ
 - 次のセッションは 0 章から始める
+- 締めくくりの後（2026-11-16）: 未決の項目を棚卸しした（#124）ところ、FR-34 の ACP にプロンプトを渡す手段が無いことが分かり（#130）、それを直すと ACP の応答が画面に出ないことが分かった（#132）。注釈と単体の検査がそろっても、利用者が画面から使い通せるかは別に確かめる必要がある。0 章 4 に織り込んだ
+- stacked PR の下段を `--delete-branch` でマージし、上段が閉じられた（#134）。4 章 6 に手順を織り込んだ
