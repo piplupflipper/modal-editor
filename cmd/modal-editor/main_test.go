@@ -84,7 +84,7 @@ func TestLoadConfig(t *testing.T) {
   "keymap": { "normal": { "Q": ":q<CR>" } },
   "fixendofline": false,
   "fileTypes": { ".tmpl": "html" },
-  "extensions": { "syncTimeoutMs": 30, "startSyncTimeoutMs": 2500 },
+  "extensions": { "syncTimeoutMs": 30, "startSyncTimeoutMs": 2500, "memoryLimitMb": 6144 },
   "typo": 1,
 }`
 	if err := os.WriteFile(filepath.Join(dir, "config.jsonc"), []byte(text), 0o600); err != nil {
@@ -96,6 +96,9 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if cfg.SyncTimeout == nil || *cfg.SyncTimeout != 30*time.Millisecond {
 		t.Errorf("SyncTimeout = %v, want 30ms", cfg.SyncTimeout)
+	}
+	if cfg.Host.MemoryLimitMB != 6144 {
+		t.Errorf("Host.MemoryLimitMB = %d, want 6144", cfg.Host.MemoryLimitMB)
 	}
 	if cfg.FixEndOfLine == nil || *cfg.FixEndOfLine {
 		t.Errorf("FixEndOfLine = %v, want false", cfg.FixEndOfLine)
