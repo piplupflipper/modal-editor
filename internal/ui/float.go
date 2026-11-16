@@ -178,7 +178,7 @@ func (r *Renderer) wrapText(s string, width int) []string {
 }
 
 // drawChoice は、選択肢の問いを、画面の下から上へ広げて描き、カーソルの位置を返す（基本設計 6.7）。
-// 最後の行に選び方の案内（ChoicePrompt。続けて届いた問いなら前に "問い 2/3: "）を描き、その上に知らせの行（Choice.Note）と
+// 最後の行に選び方の案内（ChoicePrompt。続けて届いた問いなら前に "問い 2: "）を描き、その上に知らせの行（Choice.Note）と
 // 問いの文の行と、選択肢を 1 つずつ "[番号] ラベル" の行で描く。
 // 長い行は折り返す。改行を含むメッセージ（drawMessageLines）と違って画面の半分で止めず、案内の行を除く画面の全体まで広げる。
 // 収まらなければ、選択肢を残すために問いの文の行を先に減らし（最低 1 行）、それでも収まらなければ選択肢の行を減らす。
@@ -225,8 +225,8 @@ func (r *Renderer) drawChoice(g *Grid, theme Theme, c *Choice) Cursor {
 	row := r.Height - 1
 	blankRow(row)
 	prompt := ChoicePrompt(len(c.Labels))
-	if c.Total > 1 {
-		prompt = fmt.Sprintf("問い %d/%d: %s", c.Index, c.Total, prompt)
+	if c.Index > 0 {
+		prompt = fmt.Sprintf("問い %d: %s", c.Index, prompt)
 	}
 	end := r.drawText(g, row, 0, r.Width, prompt, a)
 	return Cursor{Row: row, Col: min(end, max(r.Width-1, 0)), Shape: CursorBlock, Visible: r.Width > 0}

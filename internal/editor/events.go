@@ -330,31 +330,35 @@ func (e *Editor) diagnosticList(p ext.DiagnosticListParams) ext.DiagnosticListRe
 }
 
 // activeChoice は、表示中の choice/ask を返す。取り下げられた問い（Done が閉じた）は、待たせている問いからも捨て、
-// 答えた問いと同じく choiceDone に数える。問いが無くなったら、一続きの問いの数と知らせを消す。
+// 答えた問いと同じく choiceDone に数える。
 func (e *Editor) activeChoice() *exthost.ChoiceAskRequest {
 	n := len(e.choices)
 	e.choices = slices.DeleteFunc(e.choices, func(c *exthost.ChoiceAskRequest) bool { return closed(c) })
 	e.choiceDone += n - len(e.choices)
 	if len(e.choices) == 0 {
-		e.endChoices()
 		return nil
 	}
 	return e.choices[0]
 }
 
-// endChoices は、一続きの問いが終わったときに、何件目かの数と知らせを消す。
+// endChoices は、一続きの問いを終え、何件目かの数と知らせを消す。問いを出していない間に、利用者のキーか貼り付けを
+// 処理するときに呼ぶ（handleKey、handlePaste）。
+//
+// 待たせている問いが無くなった時点では終えない。opencode 1.19.4 は、並べて呼んだツールの権限の問いを、
+// 前の問いの答えを受け取ってから次を送る（2026-11-16 に手元で確かめた）ので、次の問いが届くまでの間に待ちの列が空になる。
+// 利用者が問いの他に何もしていなければ、届いた問いを同じ一続きの次の問いとして数え、前の問いへの答えを添える。
 func (e *Editor) endChoices() {
 	e.choiceDone, e.choiceNote, e.choiceDropped = 0, "", 0
 }
 
 // choiceKey は、表示中の問いへのキーを処理する。1〜9 で選び、<Esc> で取り消す。
-// 答えを受け付けたことは、次の問いがあればその上の知らせの行に、無ければメッセージの行に 1 行で出す（#151）。
+// 答えを受け付けたことはメッセージの行に 1 行で出し、次の問いを出すときはその上の知らせの行にも出す（#151）。
 // 他のキーは、Vim 9.1 の confirm() の問いと同じく答えにせずに捨てるが、Vim と違って捨てた数を問いの上に出す（dropChoiceInput）。
 func (e *Editor) choiceKey(k editcmd.Key) {
 	c := e.choices[0]
 	which := "問い"
-	if total := e.choiceDone + len(e.choices); total > 1 {
-		which = fmt.Sprintf("問い %d/%d ", e.choiceDone+1, total)
+	if e.choiceDone > 0 || len(e.choices) > 1 {
+		which = fmt.Sprintf("問い %d ", e.choiceDone+1)
 	}
 	var ack string
 	switch {
@@ -372,11 +376,8 @@ func (e *Editor) choiceKey(k editcmd.Key) {
 	e.choices = e.choices[1:]
 	e.choiceDone++
 	e.choiceDropped = 0
-	if e.activeChoice() == nil {
-		e.message = infoMessage(ack)
-		return
-	}
 	e.choiceNote = ack
+	e.message = infoMessage(ack)
 }
 
 // dropChoiceInput は、問いの答えにならないキーか貼り付けを捨てたことを数える。数は問いの上の知らせの行に出す（#151）。
@@ -389,7 +390,8 @@ func (e *Editor) dropChoiceInput() {
 const maxChoiceKeys = 9
 
 // uiChoice は、表示中の問いを描画の入力にする。番号のキーで選べる最初の 9 つを選択肢として出し、残りは数だけを出す（#144）。
-// 続けて届いた問いが 2 件以上あれば何件目かを、前の問いへの答えと捨てた入力の数があれば知らせの行を添える（#151）。
+// 一続きの問いの 2 件目以降か、後に待たせている問いがあれば何件目かを出し、前の問いへの答え、待たせている問いの数、
+// 捨てた入力の数を知らせの行に添える（#151）。
 func (e *Editor) uiChoice() *ui.Choice {
 	c := e.choices[0]
 	chs := c.Params.Choices
@@ -399,12 +401,15 @@ func (e *Editor) uiChoice() *ui.Choice {
 		labels[i] = ch.Label
 	}
 	uc := &ui.Choice{Title: c.Params.Title, Labels: labels, Omitted: len(chs) - n}
-	if total := e.choiceDone + len(e.choices); total > 1 {
-		uc.Index, uc.Total = e.choiceDone+1, total
+	if e.choiceDone > 0 || len(e.choices) > 1 {
+		uc.Index = e.choiceDone + 1
 	}
 	var notes []string
 	if e.choiceNote != "" {
 		notes = append(notes, e.choiceNote)
+	}
+	if w := len(e.choices) - 1; w > 0 {
+		notes = append(notes, fmt.Sprintf("この後に %d 件の問いが待っています", w))
 	}
 	if e.choiceDropped > 0 {
 		notes = append(notes, fmt.Sprintf("番号と <Esc> 以外の入力は捨てます（捨てた数: %d）", e.choiceDropped))

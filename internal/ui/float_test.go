@@ -69,8 +69,7 @@ func TestGoldenChoice(t *testing.T) {
 		{"コマンドラインモードとメッセージより先に出す", Frame{Text: b, Mode: ModeCommandLine, CommandLine: "w", Message: Message{Text: "m"}, Choice: &Choice{Title: "t", Labels: []string{"only"}}}},
 		{"選択肢が無い", Frame{Text: b, Choice: &Choice{Title: "t"}}},
 		// 続けて届いた問いは、案内の前に何件目かを出し、知らせの行を問いの文の上に出す（#151）。
-		{"続けて届いた問いと知らせ", Frame{Text: b, Choice: &Choice{Title: "t", Labels: two, Index: 2, Total: 3, Note: "問い 1/3 に「Allow once」と答えました"}}},
-		{"1 件だけなら何件目かを出さない", Frame{Text: b, Choice: &Choice{Title: "t", Labels: two, Index: 1, Total: 1}}},
+		{"続けて届いた問いと知らせ", Frame{Text: b, Choice: &Choice{Title: "t", Labels: two, Index: 2, Note: "問い 1 に「Allow once」と答えました"}}},
 		{"知らせの行も問いの文と一緒に減らす", Frame{Text: b, Choice: &Choice{Title: "1\n2", Labels: []string{"a", "b", "c", "d"}, Note: "n1\nn2"}}},
 	}))
 	narrow := &Renderer{Width: 20, Height: 1, Theme: testTheme()}

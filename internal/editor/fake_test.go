@@ -171,6 +171,16 @@ func runFakeExt(mode string) int {
 			}
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.askseq は、choice/ask の問いを 3 つ、前の問いの答えを受け取ってから次を送る（opencode 1.19.4 の権限の問いと同じ順。#151）。
+		s.Command("fake.askseq", func(context.Context, *server.Buffer, *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			go func() {
+				for range 3 {
+					r, err := s.AskChoice(hostCtx, ext.ChoiceAskParams{Title: "どれ?", Choices: []ext.Choice{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
+					_ = s.AppendOutput("ask", fmt.Sprintf("selected=%s cancelled=%v err=%v\n", r.Selected, r.Cancelled, err))
+				}
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.Command("fake.state", func(_ context.Context, _ *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			go func() {
 				st, err := s.EditorState(hostCtx)
@@ -279,7 +289,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.save", `\w`),
-					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`),
+					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
 				},
 			},
 		},
