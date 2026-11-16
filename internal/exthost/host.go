@@ -36,7 +36,8 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/rpc"
 )
 
-// 設定の既定値。基本設計 10 章で未決の値なので、すべて仮である。
+// 設定の既定値。すべて仮である。
+// 期限と再起動の値、終了の期限は、基本設計 5.2 に表と一緒に書いてある。
 const (
 	// DefaultInitTimeout は、起動から initialize の応答までの期限の既定値（仮）である。
 	DefaultInitTimeout = 5 * time.Second
@@ -216,7 +217,8 @@ func (c Config) withDefaults() Config {
 
 // Spec は、[Host] が管理する 1 つの拡張機能の定義である。
 //
-// 宣言ファイルの読み込み（JSONC）と探す場所は未決（#9）なので、このパッケージは読み込んで検査した後の値を受け取る。
+// 宣言ファイルを探して JSONC を読むのは internal/config である（#9 の裁定と PR #109。基本設計 7 章）。
+// このパッケージは、読み込んで検査した後の値を受け取る。
 type Spec struct {
 	// Manifest は、検査済み（[ext.ValidateManifests] が誤りを返さなかった）の宣言ファイルの内容である。
 	Manifest ext.Manifest

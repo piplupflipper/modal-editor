@@ -300,7 +300,7 @@ func (h *Host) initialize(e *extension, r *run, p *process, stop <-chan struct{}
 	}
 	id := e.spec.Manifest.ID
 	if res.APIVersion != ext.APIVersion {
-		// 食い違った場合の扱いは未決なので、記録だけして続ける（基本設計 10 章）。
+		// 食い違った場合の扱いは未決なので、記録だけして続ける（要件定義 7 章の、本体と拡張機能のバージョンが食い違った場合の扱い）。
 		h.log.Warn("extension api version differs", "extension", id, "host", ext.APIVersion, "extension_api", res.APIVersion)
 	}
 

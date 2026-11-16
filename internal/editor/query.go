@@ -245,7 +245,7 @@ func count(n int, given bool) int {
 }
 
 // args は、操作の後に取った文字の引数を、拡張機能へ渡す Args にする（{"char":"x"}）。引数が無ければ nil。
-// 本体が引数のキー入力をどのように集めて渡すかは ext で未決なので、この形は仮である。
+// 本体が引数のキー入力をどのように集めて渡すかは未決なので、この形は仮である（基本設計 10 章の、コマンドラインから拡張機能のコマンドへ引数を渡す書き方）。
 func args(ch rune) json.RawMessage {
 	if ch == 0 {
 		return nil

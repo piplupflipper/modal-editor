@@ -104,7 +104,7 @@ type InitializeParams struct {
 // InitializeResult は、initialize の result である。
 type InitializeResult struct {
 	// APIVersion は、拡張機能が前提にした拡張機能 API のバージョンである。
-	// 本体のバージョンと食い違った場合の扱いは未決である。
+	// 本体のバージョンと食い違った場合の扱いは未決である（要件定義 7 章）。
 	APIVersion string `json:"apiVersion"`
 }
 

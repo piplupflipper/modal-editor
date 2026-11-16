@@ -235,7 +235,7 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 
 // reportError は、操作の失敗を知らせる。
 // Vim がビープを鳴らすだけの失敗（command.ErrFailed）と、期限 0 の結果の破棄（command.ErrStale）は知らせない。
-// 期限 0 で破棄したことを利用者へ知らせる方法は、要件定義 7 章で未決である。
+// 期限 0 で結果を破棄したことを利用者へ知らせる方法は、要件定義 7 章で未決である（基本設計 5.4）。
 func (e *Editor) reportError(err error) {
 	switch {
 	case errors.Is(err, command.ErrFailed), errors.Is(err, command.ErrStale):
