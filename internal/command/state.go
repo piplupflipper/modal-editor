@@ -102,6 +102,9 @@ type Result struct {
 	// Remaining は、Err が ErrBufferSwitched のときの、マクロの再生の残りである。
 	// 呼び出し側は、カーソルのあるバッファの State の ContinueReplay に渡して再生を続ける。
 	Remaining []ReplaySegment
+	// Message は、操作が利用者に知らせる通知である（検索したパターンと、検索の折り返しの警告）。無ければ Text が空である。
+	// 呼び出し側は、Err が nil でなければ Err を優先して知らせる。
+	Message Message
 }
 
 // State は、1 つのバッファを編集する状態である。
@@ -140,17 +143,20 @@ type State struct {
 	undoAtSet bool
 
 	// ドットリピート（FR-06）。
-	dot        *editcmd.Command
-	dotVisual  visualExtent
-	replaying  bool // ドットリピートの再実行中
-	insert     insertState
-	visual     visualState
-	cmdline    []rune
-	lastCmd    string // @: が繰り返す直前のコマンドライン
-	recording  rune   // マクロの記録先。0 なら記録していない
-	recorded   []editcmd.Key
-	lastPlayed rune // @@ が再生するレジスター
-	playDepth  int
+	dot       *editcmd.Command
+	dotVisual visualExtent
+	replaying bool // ドットリピートの再実行中
+	insert    insertState
+	visual    visualState
+	cmdline   []rune
+	search    *pendingSearch // / か ? でパターンを入力している間の値。Ex コマンドの入力中は nil
+	// searchBackward は、直前の検索（/、?、*、#）が後ろ向きだったかである。n と N の向きを決める。
+	searchBackward bool
+	lastCmd        string // @: が繰り返す直前のコマンドライン
+	recording      rune   // マクロの記録先。0 なら記録していない
+	recorded       []editcmd.Key
+	lastPlayed     rune // @@ が再生するレジスター
+	playDepth      int
 }
 
 // KeyParser は、キーを 1 個ずつ受け取り、編集コマンドの値に解釈する口である（基本設計 3 章の「入力の解釈」）。
@@ -316,6 +322,14 @@ func (s *State) run(cmd editcmd.Command) {
 //
 // req: FR-02
 func (s *State) execute(cmd editcmd.Command) error {
+	if t := cmd.Target; (cmd.Kind == editcmd.KindMotion || cmd.Kind == editcmd.KindOperator) &&
+		t.Kind == editcmd.TargetMotion && t.Ref.Builtin() && t.Pattern == "" {
+		if delim, ok := searchInputMotions[t.Ref.ID]; ok {
+			// / と ? は、パターンをコマンドラインで受け取ってから実行する。
+			s.startSearch(cmd, delim)
+			return nil
+		}
+	}
 	switch cmd.Kind {
 	case editcmd.KindMotion:
 		if s.mode.visual() {

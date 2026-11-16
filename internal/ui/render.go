@@ -606,7 +606,11 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool
 		return r.drawChoice(g, theme, f.Choice), true
 	}
 	if f.Mode == ModeCommandLine {
-		s := ":" + f.CommandLine
+		prefix := ':'
+		if f.CommandLineType != 0 {
+			prefix = f.CommandLineType
+		}
+		s := string(prefix) + f.CommandLine
 		tabStop := tabStopOr(r.TabStop)
 		// 末尾の後ろのカーソルの 1 列を残して収まるまで、先頭の文字を落とす。
 		for s != "" && StringWidth(s, tabStop)+1 > r.Width {

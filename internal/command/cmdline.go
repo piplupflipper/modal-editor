@@ -17,20 +17,35 @@ func (s *State) CommandLine() string { return string(s.cmdline) }
 // その場合は確定した文字列を ExecuteCommandLine へ渡す。
 // ここで最小の編集を持つのは、マクロの再生（@a）で記録した :s/a/b/<CR> のようなキーを、State の中だけで再生するためである。
 //
+// 検索（/ と ?）のパターンの入力も、同じ行の編集を使う。<CR> で検索を実行し、<Esc> と空の行の <BS> で、
+// 入力を始めたモード（ノーマルモードかビジュアルモード）へ戻る（startSearch）。
+//
 // req: FR-01
 func (s *State) cmdlineKey(k editcmd.Key) {
 	switch {
 	case k.Mod != 0:
 	case k.Code == editcmd.CodeEsc:
+		if s.search != nil {
+			s.cancelSearch()
+			return
+		}
 		s.mode = ModeNormal
 		s.cmdline = s.cmdline[:0]
 	case k.Code == editcmd.CodeEnter:
 		line := string(s.cmdline)
-		s.mode = ModeNormal
 		s.cmdline = s.cmdline[:0]
+		if s.search != nil {
+			s.finishSearch(line)
+			return
+		}
+		s.mode = ModeNormal
 		s.runCommandLine(line)
 	case k.Code == editcmd.CodeBackspace:
 		if len(s.cmdline) == 0 {
+			if s.search != nil {
+				s.cancelSearch()
+				return
+			}
 			s.mode = ModeNormal
 			return
 		}
@@ -49,6 +64,10 @@ func (s *State) cmdlineKey(k editcmd.Key) {
 // req: FR-01
 func (s *State) ExecuteCommandLine(line string) Result {
 	s.res = Result{}
+	if s.search != nil {
+		// 検索のパターンの入力の途中に Ex コマンドの実行を求められたら、検索を取り消してから実行する。
+		s.cancelSearch()
+	}
 	if s.mode.visual() {
 		s.exitVisual()
 	}

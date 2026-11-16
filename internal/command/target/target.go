@@ -122,6 +122,10 @@ type Request struct {
 	Last Find
 	// Operator は、このモーションの前に入力されたオペレーターである。テキストオブジェクトは見ない。
 	Operator Operator
+	// Search は、検索のモーションのパターンと向きである。
+	// / と ? は Pattern を検索し（向きは見ない）、n と N は Pattern を Backward の向き（N は逆の向き）に検索する。
+	// * と # は見ない。
+	Search Search
 }
 
 // count1 は、回数を 1 以上にして返す。
@@ -150,6 +154,12 @@ type Result struct {
 	// f、F、t、T は、文字が見つからずに ErrNoTarget を返すときも Find を返す。
 	// Vim と同じく、呼び出し側は失敗した検索も記録する。
 	Find Find
+	// Search は、検索のモーション（/、?、n、N、*、#）が検索したパターンと向きである。それ以外のモーションではゼロ値である。
+	// パターンが見つからずに ErrPatternNotFound を返すときも返す（Vim と同じく、見つからなかったパターンも直前のパターンになる）。
+	// 正規表現が正しくないときは返さない。
+	Search Search
+	// Wrapped は、検索がバッファの端を越えて反対の端から続けたことを表す（Vim の 'wrapscan'）。
+	Wrapped bool
 }
 
 // Span は、オペレーターが働く範囲、またはテキストオブジェクトの範囲である。
@@ -203,30 +213,36 @@ var ErrInvalidRequest = errors.New("target: invalid request")
 //
 // req: FR-03
 var motions = map[string]MotionFunc{
-	"left":                left,                   // h
-	"right":               right,                  // l
-	"down":                down,                   // j
-	"up":                  up,                     // k
-	"word-next":           wordForward(false),     // w
-	"bigword-next":        wordForward(true),      // W
-	"word-prev":           wordBackward(false),    // b
-	"bigword-prev":        wordBackward(true),     // B
-	"word-end":            wordEnd(false),         // e
-	"bigword-end":         wordEnd(true),          // E
-	"line-start":          lineStart,              // 0
-	"line-first-nonblank": firstNonBlank,          // ^
-	"line-end":            lineEnd,                // $
-	"file-start":          gotoLine(false),        // gg
-	"file-end":            gotoLine(true),         // G
-	"find-forward":        findChar(false, false), // f
-	"find-backward":       findChar(true, false),  // F
-	"till-forward":        findChar(false, true),  // t
-	"till-backward":       findChar(true, true),   // T
-	"find-repeat":         repeatFind(false),      // ;
-	"find-repeat-reverse": repeatFind(true),       // ,
-	"match-pair":          percent,                // %
-	"paragraph-prev":      paragraph(false),       // {
-	"paragraph-next":      paragraph(true),        // }
+	"left":                 left,                   // h
+	"right":                right,                  // l
+	"down":                 down,                   // j
+	"up":                   up,                     // k
+	"word-next":            wordForward(false),     // w
+	"bigword-next":         wordForward(true),      // W
+	"word-prev":            wordBackward(false),    // b
+	"bigword-prev":         wordBackward(true),     // B
+	"word-end":             wordEnd(false),         // e
+	"bigword-end":          wordEnd(true),          // E
+	"line-start":           lineStart,              // 0
+	"line-first-nonblank":  firstNonBlank,          // ^
+	"line-end":             lineEnd,                // $
+	"file-start":           gotoLine(false),        // gg
+	"file-end":             gotoLine(true),         // G
+	"find-forward":         findChar(false, false), // f
+	"find-backward":        findChar(true, false),  // F
+	"till-forward":         findChar(false, true),  // t
+	"till-backward":        findChar(true, true),   // T
+	"find-repeat":          repeatFind(false),      // ;
+	"find-repeat-reverse":  repeatFind(true),       // ,
+	"match-pair":           percent,                // %
+	"paragraph-prev":       paragraph(false),       // {
+	"paragraph-next":       paragraph(true),        // }
+	"search-forward":       searchMotion(false),    // /
+	"search-backward":      searchMotion(true),     // ?
+	"search-next":          searchRepeat(false),    // n
+	"search-prev":          searchRepeat(true),     // N
+	"search-word-forward":  searchWord(false),      // *
+	"search-word-backward": searchWord(true),       // #
 }
 
 // textObjects は、テキストオブジェクトの ID と、それを解決する関数の表である。

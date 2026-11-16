@@ -190,6 +190,7 @@ func (e *Editor) reload(bs *bufferState, b *buffer.Buffer) {
 		e.log.Error("buffer/close を送れない", "err", err)
 	}
 	regs := *bs.state.Registers()
+	last := bs.state.LastSearch()
 	bs.buf = b
 	bs.history = nil
 	bs.decorations = map[string]decorationSet{}
@@ -198,5 +199,6 @@ func (e *Editor) reload(bs *bufferState, b *buffer.Buffer) {
 	bs.signs = map[string][]ext.Sign{}
 	e.initState(bs)
 	*bs.state.Registers() = regs
+	bs.state.SetLastSearch(last)
 	bs.state.SetCursor(cursor)
 }

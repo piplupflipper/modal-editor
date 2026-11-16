@@ -63,6 +63,10 @@ type Target struct {
 	Kind TargetKind
 	Ref  Ref  // TargetLine と TargetNone では空
 	Char rune // f、F、t、T のような文字の引数。<CR> は '\n'、<Tab> は '\t'。引数を取らない対象では 0
+	// Pattern は、検索のモーション（/ と ?）のパターンである。Parser は埋めない。
+	// 空のまま実行すると、internal/command がコマンドラインでパターンを受け取り、<CR> の時点で埋めてから実行する。
+	// ドットリピートとマクロの再実行では、埋めた値で同じパターンを検索し直す（d/foo<CR> の後の . は foo を検索する）。
+	Pattern string
 }
 
 // Command は、キーの列から解釈した編集コマンドの値である（基本設計 3 章の表）。

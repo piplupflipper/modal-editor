@@ -31,18 +31,19 @@ func (e *Editor) frame() *ui.Frame {
 	bs := e.cur
 	st := bs.state
 	f := &ui.Frame{
-		Text:        bs.buf,
-		Name:        bs.path,
-		Modified:    bs.buf.Modified(),
-		Mode:        uiMode(st.Mode()),
-		Cursor:      st.Cursor(),
-		CommandLine: st.CommandLine(),
-		Recording:   st.Recording(),
-		Message:     e.message,
-		Decorations: bs.decoView,
-		Diagnostics: bs.uiDiagnostics(),
-		Signs:       bs.uiSigns(),
-		Output:      e.uiOutput(),
+		Text:            bs.buf,
+		Name:            bs.path,
+		Modified:        bs.buf.Modified(),
+		Mode:            uiMode(st.Mode()),
+		Cursor:          st.Cursor(),
+		CommandLine:     st.CommandLine(),
+		CommandLineType: st.CommandLineType(),
+		Recording:       st.Recording(),
+		Message:         e.message,
+		Decorations:     bs.decoView,
+		Diagnostics:     bs.uiDiagnostics(),
+		Signs:           bs.uiSigns(),
+		Output:          e.uiOutput(),
 	}
 	f.HitEnter = e.hitEnter()
 	f.OperatorPending = st.Mode() == command.ModeNormal && st.Pending()
