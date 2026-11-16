@@ -72,8 +72,8 @@ func TestTerminalPTY(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("aあ\x1b[1;5A\x1b[15~\x03")
-	wantKeys(t, tm, "aあ<C-Up><C-c>")
+	write("aあ\x1b[1;5A\x1b[15~\x1b[2~\x03")
+	wantKeys(t, tm, "aあ<C-Up><F5><Insert><C-c>")
 
 	// ESC の単独は、時間切れの後に <Esc> になる。
 	write("\x1b")

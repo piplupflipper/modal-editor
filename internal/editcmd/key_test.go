@@ -1,6 +1,7 @@
 package editcmd
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -43,6 +44,8 @@ func TestParseKeys(t *testing.T) {
 		{in: "<C-S-a>", want: []Key{{Code: CodeRune, Rune: 'a', Mod: ModCtrl | ModShift}}},
 		{in: "<A-S-a>", want: []Key{{Code: CodeRune, Rune: 'A', Mod: ModAlt}}, str: "<A-A>"},
 		{in: "<S-1>", want: []Key{{Code: CodeRune, Rune: '1', Mod: ModShift}}},
+		{in: "<Insert><F1><F12><F20>", want: []Key{Special(CodeInsert), Special(CodeF1), Special(CodeF1 + 11), Special(CodeF1 + 19)}},
+		{in: "<f5><C-F2><insert>", want: []Key{Special(CodeF1 + 4), {Code: CodeF1 + 1, Mod: ModCtrl}, Special(CodeInsert)}, str: "<F5><C-F2><Insert>"},
 	}
 	for _, tt := range tests {
 		got, err := ParseKeys(tt.in)
@@ -67,7 +70,7 @@ func TestParseKeys(t *testing.T) {
 }
 
 func TestParseKeysError(t *testing.T) {
-	for _, in := range []string{"<x>", "<Foo>", "a<Spcae>", "<Q-x>", "<>", "<C-Foo>"} {
+	for _, in := range []string{"<x>", "<Foo>", "a<Spcae>", "<Q-x>", "<>", "<C-Foo>", "<F0>", "<F21>"} {
 		if keys, err := ParseKeys(in); err == nil {
 			t.Errorf("ParseKeys(%q) = %+v, want エラー", in, keys)
 		}
@@ -94,6 +97,23 @@ func TestKeyNormalize(t *testing.T) {
 	for _, tt := range tests {
 		if got := tt.in.Normalize(); got != tt.want {
 			t.Errorf("%+v.Normalize() = %+v, want %+v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestFunctionKey(t *testing.T) {
+	for n := 1; n <= MaxFunctionKey; n++ {
+		c, ok := FunctionKey(n)
+		if !ok || c != CodeF1+Code(n-1) {
+			t.Fatalf("FunctionKey(%d) = %v, %v", n, c, ok)
+		}
+		if got, want := Special(c).String(), fmt.Sprintf("<F%d>", n); got != want {
+			t.Errorf("FunctionKey(%d) の表記 = %q, want %q", n, got, want)
+		}
+	}
+	for _, n := range []int{0, -1, MaxFunctionKey + 1} {
+		if c, ok := FunctionKey(n); ok {
+			t.Errorf("FunctionKey(%d) = %v, true, want false", n, c)
 		}
 	}
 }

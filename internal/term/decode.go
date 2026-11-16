@@ -2,7 +2,6 @@ package term
 
 import (
 	"bytes"
-	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -12,11 +11,8 @@ import (
 
 // Decoded は、端末から読んだバイト列を解読した 1 件である。
 type Decoded struct {
-	// Key は、解読したキーである。正規化済み（editcmd.Key.Normalize）である。Unsupported が空でないときは読まない。
+	// Key は、解読したキーである。正規化済み（editcmd.Key.Normalize）である。
 	Key editcmd.Key
-	// Unsupported は、列としては解読できたが、editcmd.Key に対応する種類が無いキー（"F1"、"Insert" など）の名前である。
-	// Terminal はこのキーを捨てる。列を捨てずに名前で残すのは、未知の列と区別してテストするためである。
-	Unsupported string
 }
 
 // 制御のバイトと、bracketed paste の始まりと終わりの印。
@@ -42,7 +38,7 @@ var pasteEnd = []byte("\x1b[201~")
 //   - ESC の後に CSI と SS3 の列でないキーが続けば、<Esc> とそのキーの 2 つにする（Vim と Neovim と同じ）。
 //     xterm の metaSendsEscape の Alt のキー（ESC と文字）は Alt にしない。Alt は CSI の修飾キーの引数でだけ付く
 //   - CSI（ESC [）と SS3（ESC O）の列は、矢印、Home、End、PageUp、PageDown、Delete、Shift-Tab、修飾キーの付いたそれらと、
-//     CSI u と CSI 27 ; 修飾 ; 文字 ~ の形の文字のキーを解読する。F キーと Insert は Unsupported にする。
+//     Insert、F1〜F20、CSI u と CSI 27 ; 修飾 ; 文字 ~ の形の文字のキーを解読する。
 //     それ以外の列（マウス、フォーカスの通知など）は捨てる
 //   - bracketed paste（ESC [ 200 ~ から ESC [ 201 ~ まで）の中身は、文字のキーにする。"\r\n"、"\r"、"\n" は <CR> 1 つ、
 //     "\t" は <Tab> にし、それ以外の制御文字は捨てる（貼り付けた ^C で中断しないため）。貼り付けの中では保留の時間切れを使わない
@@ -251,7 +247,7 @@ func parseCSI(b []byte) (Decoded, csiKind, int) {
 	case 'Z':
 		return keyDecoded(editcmd.CodeTab, mod|editcmd.ModShift), csiKey, n
 	case 'P', 'Q', 'R', 'S':
-		return Decoded{Unsupported: fmt.Sprintf("F%d", final-'P'+1)}, csiKey, n
+		return fkeyDecoded(int(final-'P')+1, mod), csiKey, n
 	case 'u':
 		dec, ok := codepointKey(param(0, -1), modOf(param(1, 1)))
 		if !ok {
@@ -275,7 +271,7 @@ func tildeKey(ps []int, param func(int, int) int, mod editcmd.Mod, n int) (Decod
 	case 4, 8:
 		return keyDecoded(editcmd.CodeEnd, mod), csiKey, n
 	case 2:
-		return Decoded{Unsupported: "Insert"}, csiKey, n
+		return keyDecoded(editcmd.CodeInsert, mod), csiKey, n
 	case 3:
 		return keyDecoded(editcmd.CodeDelete, mod), csiKey, n
 	case 5:
@@ -293,7 +289,7 @@ func tildeKey(ps []int, param func(int, int) int, mod editcmd.Mod, n int) (Decod
 		return dec, csiKey, n
 	default:
 		if f, ok := fkeyTilde[p]; ok {
-			return Decoded{Unsupported: fmt.Sprintf("F%d", f)}, csiKey, n
+			return fkeyDecoded(f, mod), csiKey, n
 		}
 	}
 	return Decoded{}, csiIgnored, n
@@ -367,6 +363,12 @@ func keyDecoded(c editcmd.Code, mod editcmd.Mod) Decoded {
 	return Decoded{Key: editcmd.Key{Code: c, Mod: mod}.Normalize()}
 }
 
+// fkeyDecoded は、n 番の F キーを返す。n は 1 から editcmd.MaxFunctionKey の範囲である（呼び出し側の表がそう作る）。
+func fkeyDecoded(n int, mod editcmd.Mod) Decoded {
+	c, _ := editcmd.FunctionKey(n)
+	return keyDecoded(c, mod)
+}
+
 // codepointKey は、CSI u と modifyOtherKeys の文字の番号と修飾キーを、キーにする。
 // 番号が制御文字の Tab、CR、Esc、BS なら特殊キーにする。私用領域の番号（kitty の機能キーの 57344〜63743）は捨てる。
 func codepointKey(cp int, mod editcmd.Mod) (Decoded, bool) {
@@ -396,7 +398,7 @@ func ss3Key(c byte) (Decoded, bool) {
 	case 'A', 'B', 'C', 'D', 'H', 'F':
 		return keyDecoded(cursorCode(c), 0), true
 	case 'P', 'Q', 'R', 'S':
-		return Decoded{Unsupported: fmt.Sprintf("F%d", c-'P'+1)}, true
+		return fkeyDecoded(int(c-'P')+1, 0), true
 	case 'M':
 		return keyDecoded(editcmd.CodeEnter, 0), true
 	}
