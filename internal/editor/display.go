@@ -293,6 +293,7 @@ func (e *Editor) rebuildDecorations(bs *bufferState) {
 	lines := bs.buf.LineCount()
 	done, stop := e.decoDone, e.stop
 	go func() {
+		defer e.recoverPanic()
 		r.view = buildDecorations(r.src, lines)
 		select {
 		case done <- r:

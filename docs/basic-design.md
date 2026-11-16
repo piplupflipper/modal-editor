@@ -1071,7 +1071,14 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 | 拡張機能の異常（5.2 の条件） | 強制終了して再起動待ちにする。利用者には 1 行のメッセージで知らせる |
 | 拡張機能の操作の失敗（期限切れ、バージョン番号の不一致、不正な UTF-8 のためにバッファを送っていない（5.3）） | 操作を無かったことにし、利用者には 1 行のメッセージで知らせる。バッファは変更しない |
 | 設定ファイルの誤り | 誤りのある項目を既定値にして起動し、位置と内容を知らせる |
-| 本体の panic | 端末を元の状態に戻してから終了する。未保存のバッファを退避する仕組みは、段階 1 では作らない |
+| 本体の panic | 端末を元の状態に戻してから終了する。未保存のバッファを退避する仕組みは、段階 1 では作らない。戻し方は表の後に書く |
+
+本体の panic で端末を戻す方式は、本体が起こす goroutine のそれぞれで recover し、端末を戻してから同じ値で panic を続ける形にする（#114）。
+Go の panic は、他の goroutine の recover で捕まえられないためである。
+`cmd/modal-editor` は、端末を戻す関数を、イベントループの goroutine では recover で、`internal/term` の goroutine では `term.Terminal.RestoreOnPanic` で、`internal/editor` と `internal/exthost` の goroutine では `editor.Config.OnPanic`（`exthost.Config.OnPanic`、拡張機能との接続は `rpc.WithPanicHook`）で呼ぶ。
+端末を戻す関数は何度呼んでもよく、どの goroutine からも呼べる。
+標準ライブラリの関数だけを呼ぶ goroutine（`signal.NotifyContext` の中のもの、子プロセスの回収の `cmd.Wait`）の panic と、本体が SIGKILL で終わったときは戻せない。
+これらまで覆うには、親のプロセスが本体を子として起動し、終わった後に端末を戻す形が要るが、1 章の「本体のプロセス 1 個」を変えるので採らない。
 
 ## 9. 要件との対応
 

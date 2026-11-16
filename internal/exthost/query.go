@@ -181,6 +181,7 @@ func (h *Host) send(id, method string, params any, opts SendOptions, defaultTime
 	go func() {
 		defer h.wg.Done()
 		defer q.cancel()
+		defer h.recoverPanic()
 		qr := &QueryResult{Extension: id, Method: method, Tag: opts.Tag}
 		qr.Err = h.sendAndWait(ctx, id, method, params, &qr.result)
 		if qr.Err != nil {

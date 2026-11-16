@@ -291,6 +291,7 @@ func (h *Host) purgeLocked(r *run) {
 func (h *Host) pump() {
 	defer close(h.pumpDone)
 	defer close(h.events)
+	defer h.recoverPanic()
 	for {
 		h.mu.Lock()
 		if len(h.queue) == 0 {

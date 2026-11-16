@@ -172,6 +172,7 @@ func (s *socketActivator) acceptsLocked() bool {
 // req: FR-14
 func (h *Host) acceptLoop(s *socketActivator) {
 	defer close(s.done)
+	defer h.recoverPanic()
 	for {
 		h.mu.Lock()
 		for !h.closing && !s.acceptsLocked() {

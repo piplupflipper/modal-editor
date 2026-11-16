@@ -9,10 +9,13 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
-// Decoded は、端末から読んだバイト列を解読した 1 件である。
+// Decoded は、端末から読んだバイト列を解読した 1 件である。キー 1 つか、貼り付けたテキスト 1 つである。
 type Decoded struct {
-	// Key は、解読したキーである。正規化済み（editcmd.Key.Normalize）である。
+	// Key は、解読したキーである。正規化済み（editcmd.Key.Normalize）である。Paste が空でなければ読まない。
 	Key editcmd.Key
+	// Paste は、bracketed paste で貼り付けたテキストである。空でなければ、この 1 件は貼り付けである。
+	// 改行は "\n" にそろえてあり、"\n" と "\t" の他の制御文字と、不正な UTF-8 は含まない。中身の無い貼り付けは送らない。
+	Paste string
 }
 
 // 制御のバイトと、bracketed paste の始まりと終わりの印。
@@ -40,15 +43,19 @@ var pasteEnd = []byte("\x1b[201~")
 //   - CSI（ESC [）と SS3（ESC O）の列は、矢印、Home、End、PageUp、PageDown、Delete、Shift-Tab、修飾キーの付いたそれらと、
 //     Insert、F1〜F20、CSI u と CSI 27 ; 修飾 ; 文字 ~ の形の文字のキーを解読する。
 //     それ以外の列（マウス、フォーカスの通知など）は捨てる
-//   - bracketed paste（ESC [ 200 ~ から ESC [ 201 ~ まで）の中身は、文字のキーにする。"\r\n"、"\r"、"\n" は <CR> 1 つ、
-//     "\t" は <Tab> にし、それ以外の制御文字は捨てる（貼り付けた ^C で中断しないため）。貼り付けの中では保留の時間切れを使わない
+//   - bracketed paste（ESC [ 200 ~ から ESC [ 201 ~ まで）の中身は、キーにせず、終わりの印までをまとめて 1 件の Decoded.Paste にする
+//     （#114。Vim と同じく、ノーマルモードで貼った文字列をコマンドとして実行しないため）。
+//     "\r\n"、"\r"、"\n" は "\n" 1 つにし、"\t" は残し、それ以外の制御文字は捨てる（貼り付けた ^C で中断しないため）。
+//     貼り付けの中では保留の時間切れを使わない
 //   - 不正な UTF-8 のバイトは捨てる
 type Decoder struct {
 	buf []byte
 	// paste は、bracketed paste の中身を読んでいる途中かどうかである。
 	paste bool
-	// pasteCR は、貼り付けの中で、直前に読んだ文字が '\r' だったかどうかである（"\r\n" を 1 つの <CR> にする）。
+	// pasteCR は、貼り付けの中で、直前に読んだ文字が '\r' だったかどうかである（"\r\n" を 1 つの改行にする）。
 	pasteCR bool
+	// pasted は、読んでいる途中の貼り付けの、ここまでのテキストである。
+	pasted []byte
 }
 
 // Feed は、端末から読んだバイト列 b を足して解読し、確定したキーを返す。
@@ -64,8 +71,24 @@ func (d *Decoder) Pending() bool { return !d.paste && len(d.buf) > 0 }
 
 // Flush は、保留しているバイトを、続きが来ないものとして確定させ、キーを返す。
 // ESC の単独は <Esc>、途中で切れた ESC [ と ESC O の列は <Esc> と、続く文字にする。途中で切れた UTF-8 は捨てる。
+// 貼り付けの途中なら、終わりの印が来ないもの（入力の終わり）として、ここまでのテキストを貼り付けとして返す。
 func (d *Decoder) Flush() []Decoded {
-	return d.decode(true)
+	out := d.decode(true)
+	if d.paste {
+		d.pasteText(d.buf, true)
+		d.buf = nil
+		out = d.endPaste(out)
+	}
+	return out
+}
+
+// endPaste は、貼り付けの状態を抜け、ここまでのテキストが空でなければ out に足して返す。
+func (d *Decoder) endPaste(out []Decoded) []Decoded {
+	if len(d.pasted) > 0 {
+		out = append(out, Decoded{Paste: string(d.pasted)})
+	}
+	d.paste, d.pasteCR, d.pasted = false, false, nil
+	return out
 }
 
 func (d *Decoder) decode(flush bool) []Decoded {
@@ -405,22 +428,22 @@ func ss3Key(c byte) (Decoded, bool) {
 	return Decoded{}, false
 }
 
-// pasteChunk は、貼り付けの中身を読める所まで読んで out に足し、読んだバイト数を返す。
-// 終わりの印を読んだら、貼り付けの状態を抜ける。
+// pasteChunk は、貼り付けの中身を読める所まで読んでテキストに足し、読んだバイト数を返す。
+// 終わりの印を読んだら、貼り付けの状態を抜け、テキストを 1 件の貼り付けとして out に足す。
 func (d *Decoder) pasteChunk(out *[]Decoded) int {
 	if end := bytes.Index(d.buf, pasteEnd); end >= 0 {
-		d.pasteText(d.buf[:end], true, out)
-		d.paste, d.pasteCR = false, false
+		d.pasteText(d.buf[:end], true)
+		*out = d.endPaste(*out)
 		return end + len(pasteEnd)
 	}
 	// 終わりの印の前半かもしれない末尾は残す。
 	limit := len(d.buf) - partialSuffix(d.buf, pasteEnd)
-	return d.pasteText(d.buf[:limit], false, out)
+	return d.pasteText(d.buf[:limit], false)
 }
 
-// pasteText は、貼り付けの中身 b を文字のキーにして out に足し、読んだバイト数を返す。
+// pasteText は、貼り付けの中身 b を、改行をそろえ制御文字を除いて d.pasted に足し、読んだバイト数を返す。
 // final が false なら、末尾の途中で切れた UTF-8 の文字は読まずに残す。
-func (d *Decoder) pasteText(b []byte, final bool, out *[]Decoded) int {
+func (d *Decoder) pasteText(b []byte, final bool) int {
 	i := 0
 	for i < len(b) {
 		c := b[i]
@@ -428,25 +451,25 @@ func (d *Decoder) pasteText(b []byte, final bool, out *[]Decoded) int {
 		d.pasteCR = false
 		switch {
 		case c == '\r':
-			*out = append(*out, Decoded{Key: editcmd.Special(editcmd.CodeEnter)})
+			d.pasted = append(d.pasted, '\n')
 			d.pasteCR = true
 			i++
 			continue
 		case c == '\n':
 			if !cr {
-				*out = append(*out, Decoded{Key: editcmd.Special(editcmd.CodeEnter)})
+				d.pasted = append(d.pasted, '\n')
 			}
 			i++
 			continue
 		case c == '\t':
-			*out = append(*out, Decoded{Key: editcmd.Special(editcmd.CodeTab)})
+			d.pasted = append(d.pasted, '\t')
 			i++
 			continue
 		case c < 0x20 || c == 0x7f:
 			i++
 			continue
 		case c < utf8.RuneSelf:
-			*out = append(*out, Decoded{Key: editcmd.Rune(rune(c))})
+			d.pasted = append(d.pasted, c)
 			i++
 			continue
 		}
@@ -459,7 +482,7 @@ func (d *Decoder) pasteText(b []byte, final bool, out *[]Decoded) int {
 		}
 		r, size := utf8.DecodeRune(b[i:])
 		if r != utf8.RuneError || size > 1 {
-			*out = append(*out, Decoded{Key: editcmd.Rune(r)})
+			d.pasted = append(d.pasted, b[i:i+size]...)
 		}
 		i += size
 	}

@@ -9,29 +9,35 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
-// keyQueue は、端末から読んだキーの列である。読む goroutine が積み、イベントループが取り出す。
+// keyInput は、端末から届いた入力 1 件である。paste が空でなければ貼り付けで、key は読まない。
+type keyInput struct {
+	key   editcmd.Key
+	paste string
+}
+
+// keyQueue は、端末から読んだキーと貼り付けの列である。読む goroutine が積み、イベントループが取り出す。
 // 上限を持たないのは、イベントループが長い操作の途中でも、読む goroutine が <C-c> を読めるようにするためである。
 type keyQueue struct {
 	mu    sync.Mutex
-	items []editcmd.Key
+	items []keyInput
 	// ready は、列が空でないことを知らせる。容量 1 で、取り出した後も残っていれば知らせ直す。
 	ready chan struct{}
 }
 
 func newKeyQueue() *keyQueue { return &keyQueue{ready: make(chan struct{}, 1)} }
 
-func (q *keyQueue) push(k editcmd.Key) {
+func (q *keyQueue) push(in keyInput) {
 	q.mu.Lock()
-	q.items = append(q.items, k)
+	q.items = append(q.items, in)
 	q.mu.Unlock()
 	signal(q.ready)
 }
 
-func (q *keyQueue) pop() (editcmd.Key, bool) {
+func (q *keyQueue) pop() (keyInput, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.items) == 0 {
-		return editcmd.Key{}, false
+		return keyInput{}, false
 	}
 	k := q.items[0]
 	q.items = q.items[1:]
@@ -47,13 +53,13 @@ func (q *keyQueue) empty() bool {
 	return len(q.items) == 0
 }
 
-// dropThrough は、列の先頭から k までのキー（k を含む）を捨てる。k が無ければ何もしない。
+// dropThrough は、列の先頭から k までのキー（k を含む）と、その間の貼り付けを捨てる。k が無ければ何もしない。
 // 中断（<C-c>）の後に、中断の前に先打ちしたキーを実行しないために使う（Vim と同じ）。
 func (q *keyQueue) dropThrough(k editcmd.Key) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for i, x := range q.items {
-		if x == k {
+		if x.paste == "" && x.key == k {
 			q.items = q.items[i+1:]
 			return
 		}
@@ -63,11 +69,15 @@ func (q *keyQueue) dropThrough(k editcmd.Key) {
 // handleKeys は、列からキーを 1 個取り出して処理する。残りがあれば ready が知らせ直すので、次の周回で処理する。
 // 1 個ずつにするのは、キーの間に届いた拡張機能のイベントも、届いた順に近く処理するためである。
 func (e *Editor) handleKeys() {
-	k, ok := e.keys.pop()
+	in, ok := e.keys.pop()
 	if !ok {
 		return
 	}
-	e.handleKey(k)
+	if in.paste != "" {
+		e.handlePaste(in.paste)
+	} else {
+		e.handleKey(in.key)
+	}
 	e.afterKey()
 }
 
@@ -128,6 +138,25 @@ func (e *Editor) handleKey(k editcmd.Key) {
 			break
 		}
 	}
+}
+
+// handlePaste は、端末から貼り付けたテキストを、カーソルのあるバッファへ入れる（#114）。
+// 貼り付けはキーマップを通さない（Vim と同じ）。キーマップの接頭辞を待っていれば、時間切れと同じく先に確定させて実行する。
+// 確認の問いと choice/ask の問いを出している間の貼り付けは、答えにせずに捨てる。
+func (e *Editor) handlePaste(text string) {
+	e.popup = nil
+	if e.confirm != nil || e.activeChoice() != nil {
+		return
+	}
+	e.message = noMessage
+	for _, k := range e.remap.flush() {
+		if !e.feedKey(k) {
+			e.remap.reset()
+			break
+		}
+	}
+	bs := e.cur
+	_ = e.handleResult(bs, bs.state.Paste(text)) // 失敗は handleResult が知らせる
 }
 
 // flushKeys は、曖昧なキーの列を、時間切れとして確定させて実行する。

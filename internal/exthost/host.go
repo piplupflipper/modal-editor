@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/rpc"
 )
 
 // 設定の既定値。基本設計 10 章で未決の値なので、すべて仮である。
@@ -130,6 +131,11 @@ type Config struct {
 	MemoryLimitMB int64
 	// Logger は、拡張機能の標準エラー出力と、状態の変化を記録する先である。nil なら slog.Default() を使う。
 	Logger *slog.Logger
+	// OnPanic は、Host が起こす goroutine（拡張機能の接続の読み書きと、そこから呼ぶハンドラーを含む）が panic したときに、
+	// その goroutine の上で呼ぶ関数である。呼んだ後、同じ値で panic を続ける（panic を止めはしない）。
+	// 本体は、端末を元に戻す関数を渡す（基本設計 8 章、#114）。Go の panic は他の goroutine の recover で捕まえられないので、
+	// panic した goroutine の上で戻す。どの goroutine からも、何度呼ばれてもよい関数にする。nil なら何もしない。
+	OnPanic func()
 	// Env は、すべての拡張機能の子プロセスに足す環境変数の列である。各要素は "名前=値" の形にする。
 	// 子プロセスの環境は、本体の環境、Env、ext.EnvExtensionDir の順に並べ、同じ名前は後のものが勝つ（os/exec の決まり）。
 	// MCP のソケットのパス（ext.EnvMCPSocket。[NewMCPSocket]）を渡すのに使う（基本設計 6.2）。
@@ -140,6 +146,26 @@ type Config struct {
 	// 空か、socket の契機を宣言した拡張機能が無ければ待ち受けない。
 	// 待ち受けたソケットのファイルは [Host.Close] で消す。
 	SocketPath string
+}
+
+// recoverPanic は、Host が起こす goroutine の始めに defer で呼ぶ（他の defer より後に書き、先に動かす）。
+// panic していれば、Config.OnPanic を呼んでから同じ値で panic を続ける。
+func (h *Host) recoverPanic() {
+	if h.cfg.OnPanic == nil {
+		return
+	}
+	if p := recover(); p != nil {
+		h.cfg.OnPanic()
+		panic(p)
+	}
+}
+
+// rpcOptions は、拡張機能との接続（rpc.Conn）に付けるオプションである。接続の goroutine の panic にも OnPanic を呼ぶ。
+func (h *Host) rpcOptions() []rpc.Option {
+	if h.cfg.OnPanic == nil {
+		return nil
+	}
+	return []rpc.Option{rpc.WithPanicHook(h.cfg.OnPanic)}
 }
 
 func (c Config) withDefaults() Config {
@@ -517,6 +543,7 @@ func (h *Host) CloseContext(ctx context.Context) error {
 	h.cancel()
 	done := make(chan struct{})
 	go func() {
+		defer h.recoverPanic()
 		h.wg.Wait()
 		close(done)
 	}()

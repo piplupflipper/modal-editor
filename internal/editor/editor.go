@@ -62,8 +62,12 @@ type Terminal interface {
 
 // TermEvent は、端末からのイベント 1 件である。
 type TermEvent struct {
-	// Key は、押されたキーである。Resize が true なら読まない。
+	// Key は、押されたキーである。Resize が true か Paste が空でなければ読まない。
 	Key editcmd.Key
+	// Paste は、端末から貼り付けた（bracketed paste）テキストである。空でなければ、このイベントは貼り付けである。
+	// 改行は "\n" にそろえ、"\n" と "\t" の他の制御文字を含まない形で渡す。
+	// キーの列と違い、利用者のキーマップを通さず、ノーマルモードとビジュアルモードでもコマンドとして解釈しない（command.State.Paste）。
+	Paste string
 	// Resize は、端末の大きさが Width と Height に変わったことを表す。
 	Resize        bool
 	Width, Height int
@@ -107,6 +111,12 @@ type Config struct {
 	MCPSocket string
 	// Logger は、ログの記録先である。nil なら slog.Default() を使う。
 	Logger *slog.Logger
+	// OnPanic は、Editor が起こす goroutine（端末の入力の受け取り、色の表の作成）が panic したときに、
+	// その goroutine の上で呼ぶ関数である。呼んだ後、同じ値で panic を続ける。nil なら何もしない。
+	// Host.OnPanic が nil なら、exthost の goroutine にも同じ関数を使う。
+	// 呼び出し側は、端末を元に戻す関数を渡す（基本設計 8 章、#114）。どの goroutine からも、何度呼ばれてもよい関数にする。
+	// Run を呼ぶ goroutine（イベントループ）の panic は、Run の呼び出し側が recover で扱う。
+	OnPanic func()
 	// FixEndOfLine は、書き出すときに末尾の改行を補うかどうか（基本設計 4.1。Vim の 'fixendofline'）である。
 	// 開くバッファすべてに buffer.Buffer.SetFixEndOfLine で設定する。nil なら既定の有効（true）である。
 	FixEndOfLine *bool
@@ -210,6 +220,9 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	}
 	if cfg.Host.Logger == nil {
 		cfg.Host.Logger = lg
+	}
+	if cfg.Host.OnPanic == nil {
+		cfg.Host.OnPanic = cfg.OnPanic
 	}
 	if cfg.WorkDir == "" {
 		wd, err := os.Getwd()
@@ -431,10 +444,16 @@ func (e *Editor) renderIdle() {
 // forwardInput は、端末の入力を読み、キーを列に積む。<C-c> を見たら中断の印を立てる。
 func (e *Editor) forwardInput() {
 	defer close(e.inputDone)
+	defer e.recoverPanic()
 	for ev := range e.term.Input() {
 		if ev.Resize {
 			e.size.Store([2]int{ev.Width, ev.Height})
 			signal(e.resizeCh)
+			continue
+		}
+		if ev.Paste != "" {
+			e.keys.push(keyInput{paste: ev.Paste})
+			e.forwarded.Add(1)
 			continue
 		}
 		k := ev.Key.Normalize()
@@ -442,8 +461,20 @@ func (e *Editor) forwardInput() {
 			e.interrupt.Store(true)
 			signal(e.intrCh)
 		}
-		e.keys.push(k)
+		e.keys.push(keyInput{key: k})
 		e.forwarded.Add(1)
+	}
+}
+
+// recoverPanic は、Editor が起こす goroutine の始めに defer で呼ぶ（他の defer より後に書き、先に動かす）。
+// panic していれば、Config.OnPanic を呼んでから同じ値で panic を続ける（基本設計 8 章）。
+func (e *Editor) recoverPanic() {
+	if e.cfg.OnPanic == nil {
+		return
+	}
+	if p := recover(); p != nil {
+		e.cfg.OnPanic()
+		panic(p)
 	}
 }
 

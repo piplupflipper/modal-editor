@@ -27,6 +27,10 @@ import (
 // closeTimeout は、終了のときに拡張機能が止まるのを待つ上限である。超えたら残りを SIGKILL で終わらせる（editor.Editor.Close）。
 const closeTimeout = 5 * time.Second
 
+// wrapLogHandler は、テストだけが設定する。nil でなければ、edit はロガーの Handler をこれで包む。
+// pty の結合のテストが、拡張機能の goroutine（標準エラー出力の記録）の中で panic を起こし、端末が戻ることを確かめるのに使う。
+var wrapLogHandler func(slog.Handler) slog.Handler
+
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		// -h と --help は、使い方を表示したうえで正常終了とする。
@@ -78,15 +82,22 @@ var errNotTerminal = errors.New("標準入力と標準出力が端末のとき�
 //   - SIGTERM、SIGHUP、SIGINT を受けたとき（Run の ctx を取り消し、Run が戻ってから戻す）。
 //     シグナルの受け付けは端末を開く前に始めるので、起動の途中（設定とファイルの読み込み）に受けても、
 //     既定の動作で終わらずに、読み込みを終えてから Run が直ちに戻り、端末を戻す
-//   - この goroutine（イベントループ）と、internal/term と terminal の goroutine で panic したとき（戻してから panic を続ける）
+//   - 本体の goroutine で panic したとき（その goroutine の上で戻してから panic を続ける。#114）。
+//     この goroutine（イベントループ）は guard、internal/term と terminal の goroutine は term.Terminal.RestoreOnPanic、
+//     internal/editor と internal/exthost（拡張機能との接続の internal/rpc を含む）の goroutine は editor.Config.OnPanic で戻す
 //
-// それ以外の goroutine（internal/exthost など）の panic は、Go では他の goroutine から捕まえられないので、端末を戻せない。
+// Go の panic は他の goroutine の recover で捕まえられないので、戻すのは panic した goroutine 自身である。
+// 標準ライブラリの関数だけを呼ぶ goroutine（signal.NotifyContext の中のもの、exthost の子プロセスの回収の cmd.Wait）の panic と、
+// SIGKILL で終わったときは戻せない。
 func edit(files []string, in, out *os.File, logPath string) (err error) {
 	logger, closeLog, err := openLog(logPath)
 	if err != nil {
 		return err
 	}
 	defer closeLog()
+	if wrapLogHandler != nil {
+		logger = slog.New(wrapLogHandler(logger.Handler()))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 	defer stop()
@@ -124,7 +135,10 @@ func guard(restore func() error, f func() error) (err error) {
 // Run が戻ったら、端末を戻してから拡張機能を止める（editor.Editor.Close の doc の順序）。
 // ctx はシグナルで取り消される。起動の途中で取り消されていれば、Run は直ちに戻る。
 func runEditor(ctx context.Context, files []string, tm *term.Terminal, logger *slog.Logger) error {
-	ed, err := editor.New(newTerminal(tm), loadConfig(logger))
+	cfg := loadConfig(logger)
+	// editor と exthost が起こす goroutine の panic でも、その goroutine の上で端末を戻してから panic を続ける（基本設計 8 章）。
+	cfg.OnPanic = func() { _ = tm.Restore() } // panic を続けるので、戻す誤りは捨てる
+	ed, err := editor.New(newTerminal(tm), cfg)
 	if err != nil {
 		return fmt.Errorf("エディタを作れない: %w", err)
 	}
