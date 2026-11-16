@@ -106,7 +106,7 @@ build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行フ
 
 .PHONY: build-check
 build-check: build ## make build の生成物を検査する（本体の静的リンクと CGO_ENABLED=0、本体の大きさなど。NFR-02、NFR-05）
-	MODAL_EDITOR_BUILD_DIR=$(abspath $(BIN_DIR)) go test -count=1 ./internal/distcheck
+	MODAL_EDITOR_BUILD_DIR=$(abspath $(BIN_DIR)) go test -count=1 -v ./internal/distcheck
 
 # 起動から最初の画面までの時間と本体の RSS を、make build の本体で測る（NFR-05）。
 # テストの実行ファイルは -race と -cover の計測を含むので測らない。測り方は docs/measurements/nfr05-footprint.md に合わせる。
