@@ -59,9 +59,10 @@ func (e *Editor) frame() *ui.Frame {
 	case e.prompt != nil:
 		f.Message = ui.Message{Text: e.prompt.text, Level: ui.MessageWarning}
 	case e.activeChoice() != nil:
-		f.Choice = uiChoice(e.choices[0])
+		f.Choice = e.uiChoice()
 	case e.popup != nil:
 		f.Popup = e.popup.text
+		f.PopupMarkdown = e.popup.markdown
 	case f.Message.Text == "" && st.Mode() == command.ModeNormal && !st.Pending():
 		// 他に出すものが無ければ、カーソルの行の診断の本文を出す。
 		if m, ok := bs.cursorDiagnostic(toExtPos(st.Cursor())); ok {

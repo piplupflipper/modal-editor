@@ -456,14 +456,63 @@ func TestUIChoice(t *testing.T) {
 	for i := range 11 {
 		chs = append(chs, ext.Choice{ID: fmt.Sprint(i), Label: fmt.Sprint("L", i)})
 	}
-	c := uiChoice(&exthost.ChoiceAskRequest{Params: ext.ChoiceAskParams{Title: "t", Choices: chs}})
-	if c.Title != "t" || len(c.Labels) != 9 || c.Labels[8] != "L8" || c.Omitted != 2 {
+	e := &Editor{choices: []*exthost.ChoiceAskRequest{{Params: ext.ChoiceAskParams{Title: "t", Choices: chs}}}}
+	c := e.uiChoice()
+	if c.Title != "t" || len(c.Labels) != 9 || c.Labels[8] != "L8" || c.Omitted != 2 || c.Total != 0 || c.Note != "" {
 		t.Errorf("uiChoice = %+v", c)
 	}
-	c = uiChoice(&exthost.ChoiceAskRequest{Params: ext.ChoiceAskParams{Title: "t", Choices: chs[:2]}})
+	e.choices[0].Params.Choices = chs[:2]
+	c = e.uiChoice()
 	if len(c.Labels) != 2 || c.Omitted != 0 {
 		t.Errorf("uiChoice(2) = %+v", c)
 	}
+}
+
+// 続けて届いた問いは、何件目かを案内の前に出し、答えを受け付けたことを、次の問いの上の知らせの行に、
+// 最後の問いならメッセージの行に出す。問いの間に打った番号と <Esc> 以外のキーと貼り付けは、捨てた数を出す（#151）。
+//
+// req: FR-34
+func TestChoiceQueue(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	h.keys(`\3`)
+	h.eventually("3 つの問い", func() bool { return h.e.activeChoice() != nil && len(h.e.choices) == 3 })
+	h.settle()
+	h.screenHas("1 件目の案内", "\n問い 1/3: 1〜2 で選ぶか <Esc> で取り消し")
+	// コマンドラインのキー（8 個）と貼り付け（1 回）は、答えにも編集にもせずに捨て、捨てた数を出す。
+	h.keys(":output<CR>")
+	h.paste("xyz")
+	h.settle()
+	h.screenHas("捨てた数", "\n番号と <Esc> 以外の入力は捨てます（捨てた数: 9）\nどれ?\n[1] A\n[2] B\n問い 1/3:")
+	h.keys("1")
+	h.settle()
+	h.screenHas("1 件目への答え", "\n問い 1/3 に「A」と答えました\nどれ?\n[1] A\n[2] B\n問い 2/3: 1〜2")
+	if strings.Contains(h.trimmedScreen(), "捨てた数") {
+		t.Errorf("答えた後も捨てた数が残る:\n%s", h.trimmedScreen())
+	}
+	h.keys("2")
+	h.settle()
+	h.screenHas("2 件目への答え", "\n問い 2/3 に「B」と答えました\nどれ?\n[1] A\n[2] B\n問い 3/3: 1〜2")
+	h.keys("<Esc>")
+	h.settle()
+	h.eventually("最後の答えはメッセージの行", func() bool {
+		return h.e.message.Text == "問い 3/3 を取り消しました" && h.e.activeChoice() == nil && h.e.choiceDone == 0
+	})
+	h.eventually("拡張機能へ返った答え", func() bool {
+		got := strings.Join(h.e.outputs[outputKey{"fake", "ask"}], "\n")
+		return strings.Count(got, "selected=a cancelled=false") == 1 && strings.Count(got, "selected=b cancelled=false") == 1 &&
+			strings.Count(got, "selected= cancelled=true") == 1
+	})
+	if got := h.text(); got != "abc" {
+		t.Errorf("問いの間の入力で編集した: %q", got)
+	}
+	// 一続きの問いが終わった後の 1 つだけの問いには、何件目かを出さない。
+	h.keys(`\a`)
+	h.eventually("次の問い", func() bool { return h.e.activeChoice() != nil })
+	h.settle()
+	h.screenHas("1 つだけの案内", "\n[2] B\n1〜2 で選ぶか <Esc> で取り消し")
+	h.keys("1")
+	h.eventually("1 つだけの問いの答え", func() bool { return strings.HasPrefix(h.e.message.Text, "selected=a") })
 }
 
 // 逆順の範囲の確認は、問いを出し、y で続ける。

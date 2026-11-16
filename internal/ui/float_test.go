@@ -21,7 +21,26 @@ func TestGoldenPopup(t *testing.T) {
 		{"右の端で左へ寄せる", Frame{Text: b, Cursor: pos(2, 4), Popup: "abcdefghij"}},
 		{"全角文字の半分に掛かる端", Frame{Text: buffer.New("xyz\nあいうえ\n"), Cursor: pos(0, 1), Popup: "q"}},
 		{"本文が空なら出さない", Frame{Text: b, Cursor: pos(0, 0), Popup: "\n\n"}},
+		// Markdown のコードの囲みの行は出さず、中身は残す。plaintext ではそのまま出す（#151）。
+		{"Markdown の囲みを除く", Frame{Text: b, Cursor: pos(0, 0), Popup: "```go\nfunc f()\n```\n\ndoc", PopupMarkdown: true}},
+		{"plaintext の囲みは残す", Frame{Text: b, Cursor: pos(0, 0), Popup: "```go\nfunc f()\n```"}},
 	}))
+}
+
+// stripCodeFences は、行頭の 3 つまでの空白の後に ``` か ~~~ が続く行だけを除く（#151）。
+func TestStripCodeFences(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"```go\nfunc add(a, b int) int\n```", "func add(a, b int) int"},
+		{"```go\nfunc f()\n```\n\n---\n\ndoc `x`", "func f()\n\n---\n\ndoc `x`"},
+		{"~~~\nx\n~~~", "x"},
+		{"   ```\nx\n    ```", "x\n    ```"},
+		{"a ``` b", "a ``` b"},
+		{"", ""},
+	} {
+		if got := stripCodeFences(tc.in); got != tc.want {
+			t.Errorf("stripCodeFences(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }
 
 // 改行を含むメッセージは、コマンドラインの行から上へ広げて描き、画面の半分を超える行は省いたことを書く。
@@ -49,6 +68,10 @@ func TestGoldenChoice(t *testing.T) {
 		{"ラベルの改行と長いラベル", Frame{Text: b, Choice: &Choice{Title: "t", Labels: []string{"two\nlines", strings.Repeat("long ", 10)}}}},
 		{"コマンドラインモードとメッセージより先に出す", Frame{Text: b, Mode: ModeCommandLine, CommandLine: "w", Message: Message{Text: "m"}, Choice: &Choice{Title: "t", Labels: []string{"only"}}}},
 		{"選択肢が無い", Frame{Text: b, Choice: &Choice{Title: "t"}}},
+		// 続けて届いた問いは、案内の前に何件目かを出し、知らせの行を問いの文の上に出す（#151）。
+		{"続けて届いた問いと知らせ", Frame{Text: b, Choice: &Choice{Title: "t", Labels: two, Index: 2, Total: 3, Note: "問い 1/3 に「Allow once」と答えました"}}},
+		{"1 件だけなら何件目かを出さない", Frame{Text: b, Choice: &Choice{Title: "t", Labels: two, Index: 1, Total: 1}}},
+		{"知らせの行も問いの文と一緒に減らす", Frame{Text: b, Choice: &Choice{Title: "1\n2", Labels: []string{"a", "b", "c", "d"}, Note: "n1\nn2"}}},
 	}))
 	narrow := &Renderer{Width: 20, Height: 1, Theme: testTheme()}
 	golden(t, "choice-narrow", renderSteps(narrow, []step{

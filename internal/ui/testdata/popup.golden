@@ -87,3 +87,33 @@ size 16x8 cursor 0,0 block
    | NORMA 1,1  Top |
 fx |SSSSSSSSSSSSSSSS|
    |                |
+
+## Markdown の囲みを除く
+size 16x8 cursor 0,0 block
+   |あいうえおかきく|
+   | func f()       |
+fx |vvvvvvvvvv      |
+   |                |
+fx |vvvvvvvvvv      |
+   | doc            |
+fx |vvvvvvvvvv      |
+   |line4           |
+   |line5           |
+   | NORMA 1,1  Top |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## plaintext の囲みは残す
+size 16x8 cursor 0,0 block
+   |あいうえおかきく|
+   | ```go          |
+fx |vvvvvvvvvv      |
+   | func f()       |
+fx |vvvvvvvvvv      |
+   | ```            |
+fx |vvvvvvvvvv      |
+   |line4           |
+   |line5           |
+   | NORMA 1,1  Top |
+fx |SSSSSSSSSSSSSSSS|
+   |                |

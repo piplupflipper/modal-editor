@@ -214,6 +214,13 @@ type Editor struct {
 	message ui.Message
 	popup   *popupState
 	choices []*exthost.ChoiceAskRequest
+	// choiceDone は、続けて届いた問い（choices が空になるまでの一続き）のうち、答えたか取り下げられた問いの数である。
+	// 表示中の問いが何件目か（choiceDone+1）を出すのに使い、choices が空になったら 0 に戻す（#151）。
+	choiceDone int
+	// choiceNote は、表示中の問いの上に出す知らせ（前の問いへの答え、捨てたキーの数）である。空なら出さない（#151）。
+	choiceNote string
+	// choiceDropped は、表示中の問いに対して、答えにならずに捨てたキーと貼り付けの数である。答えるたびに 0 に戻す（#151）。
+	choiceDropped int
 	// confirm は、表示中の Ex の確認の問いと、問いを出したバッファである。
 	confirm   *ex.Confirm
 	confirmBS *bufferState

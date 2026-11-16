@@ -105,6 +105,11 @@ type Choice struct {
 	Labels []string
 	// Omitted は、番号のキーが足りずに Labels に入れなかった選択肢の数である。0 より大きければ、その旨を選択肢の後の行に書く。
 	Omitted int
+	// Index と Total は、続けて届いた問いのうち何件目か（1 から数える）と、その一続きの問いの数である。
+	// Total が 2 以上なら、選び方の案内の前に "問い 2/3: " の形で出す（#151）。
+	Index, Total int
+	// Note は、問いの文の上に出す知らせ（前の問いへの答え、捨てた入力の数）である。改行を含んでよい。空なら出さない（#151）。
+	Note string
 }
 
 // SignKind は、行の印の種類である。値は sign/set の kind と同じ文字列である（基本設計 6.7）。
@@ -181,4 +186,7 @@ type Frame struct {
 	// Popup は、カーソルの近くに浮かべて出すテキスト（popup/show の本文）である。空なら出さない。
 	// カーソルの下の行に、下に収まらなければ上の行に、バッファの表示領域の上に重ねて出す。行は折り返す。
 	Popup string
+	// PopupMarkdown は、Popup の本文が Markdown（popup/show の format が markdown）かどうかである。
+	// true なら、コードの囲みの行（```go など）を描かずに中身の行だけを出す（基本設計 6.7。#151）。他の記法は整形しない。
+	PopupMarkdown bool
 }
