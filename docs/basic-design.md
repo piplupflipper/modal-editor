@@ -57,6 +57,7 @@
 | `internal/input` | 端末のバイト列からキーへの解読、キーの列から編集コマンドの値への解釈 | バッファの変更 |
 | `internal/command` | 編集コマンドの値の実行、レジスター、ドットリピートとマクロの記録 | キーの解釈、画面 |
 | `internal/ui` | 端末への描画 | バッファの変更 |
+| `internal/term` | 端末の制御（raw モード、代替画面、端末のバイト列からキーへの解読、`internal/ui` の格子の差分の出力）。`internal/ui` を import するので `internal/editor` と同じ層に置き、`internal/editor` へは `cmd/modal-editor` がつなぐ | 画面の内容の組み立て、編集の状態 |
 | `internal/exthost` | 拡張機能のプロセスの起動、監視、期限、再起動、差分の送信 | 個々の拡張機能の機能 |
 | `internal/config` | 設定ファイルと、拡張機能の宣言ファイルの読み込み | 設定の適用 |
 | `internal/editor` | イベントループ。上の部品をつなぎ、キー入力と拡張機能からのメッセージを 1 件ずつ処理する | 個々の部品の中身 |
