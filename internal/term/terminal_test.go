@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
@@ -47,19 +48,20 @@ func wantKeys(t *testing.T, tm *Terminal, want string) {
 // TestTerminalPTY は、偽の端末の上で、raw モードへの切り替えと復元、キーの解読、ESC の時間切れ、
 // 貼り付け、リサイズ、Close で Input が閉じることを確かめる。
 func TestTerminalPTY(t *testing.T) {
-	master, tty := openPTY(t, 80, 24)
-	before := getTermios(t, tty)
-	out := startCapture(master)
+	master, tty := ptytest.Open(t, 80, 24)
+	before := ptytest.Termios(t, tty)
+	out := ptytest.StartCapture(master)
 
-	tm, err := Open(tty, tty, Options{EscTimeout: 20 * time.Millisecond})
+	// 続きを待つ時間は、負荷の高い CI でも「ESC [ と B を別々に書く」が時間内に収まるように長めにする。
+	tm, err := Open(tty, tty, Options{EscTimeout: 300 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := getTermios(t, tty)
+	raw := ptytest.Termios(t, tty)
 	if raw.Lflag&(unix.ICANON|unix.ECHO|unix.ISIG) != 0 {
 		t.Errorf("raw モードになっていない: lflag=%#x", raw.Lflag)
 	}
-	out.waitFor(t, seqEnter)
+	out.WaitForString(t, seqEnter)
 	if w, h := tm.Size(); w != 80 || h != 24 {
 		t.Errorf("Size() = %d, %d, want 80, 24", w, h)
 	}
@@ -85,7 +87,7 @@ func TestTerminalPTY(t *testing.T) {
 	write("\x1b[200~x\x1by\r\n\x1b[201~")
 	wantKeys(t, tm, "xy<CR>")
 
-	setWinsize(t, master, 100, 30)
+	ptytest.SetSize(t, master, 100, 30)
 	// テストのプロセスは pty の前面のプロセスグループではないので、SIGWINCH を自分へ送る。
 	if err := syscall.Kill(os.Getpid(), syscall.SIGWINCH); err != nil {
 		t.Fatal(err)
@@ -99,7 +101,7 @@ func TestTerminalPTY(t *testing.T) {
 	if err := tm.Draw(s); err != nil {
 		t.Fatal(err)
 	}
-	out.waitFor(t, "\x1b[?25h")
+	out.WaitForString(t, "\x1b[?25h")
 	v := newVT(100, 30)
 	v.write(t, out.String())
 	v.check(t, s)
@@ -116,11 +118,11 @@ func TestTerminalPTY(t *testing.T) {
 	if err := tm.Restore(); err != nil {
 		t.Errorf("2 回目の Restore: %v", err)
 	}
-	after := getTermios(t, tty)
-	if *after != *before {
+	after := ptytest.Termios(t, tty)
+	if after != before {
 		t.Errorf("端末の設定が戻っていない:\n before %+v\n after  %+v", before, after)
 	}
-	out.waitFor(t, seqLeave)
+	out.WaitForString(t, seqLeave)
 	if o := out.String(); !strings.HasSuffix(o, seqLeave) {
 		t.Errorf("出力の最後が seqLeave でない: %q", o[max(0, len(o)-64):])
 	}
