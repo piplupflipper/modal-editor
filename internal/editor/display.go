@@ -608,7 +608,10 @@ func (bs *bufferState) cursorDiagnostic(cur ext.Position) (ui.Message, bool) {
 	if best == nil {
 		return ui.Message{}, false
 	}
-	text := best.Message
+	// 本文の空白の並び（改行と、続く行の頭のタブを含む）は、空白 1 つに詰めて 1 行にする。gopls の型検査の診断は
+	// "not enough arguments in call to f\n\thave ()\n\twant (int)" のように改行を含み、そのまま出すと
+	// メッセージの行が上へ広がり、カーソルを動かすたびにステータス行とカーソルの行を覆う（PR #134 のレビュー）。
+	text := strings.Join(strings.Fields(best.Message), " ")
 	if best.Source != "" {
 		text = best.Source + ": " + text
 	}

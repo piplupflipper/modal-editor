@@ -222,8 +222,9 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 		}
 	}
 	switch {
-	case res.Confirm != nil:
+	case res.Confirm != nil && !actionFailed:
 		// Err は確認を求めた E493 なので知らせず、問いを出す（render）。
+		// 左の動作が失敗したら問いを出さない（:w! dir|3,1d。Vim 9.1 は :w が失敗すると右のコマンドを実行しない）。
 		e.confirm, e.confirmBS = res.Confirm, bs
 	case res.Err != nil && !switched && !actionFailed:
 		e.reportError(res.Err)

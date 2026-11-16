@@ -35,7 +35,7 @@ func TestPopupLines(t *testing.T) {
 // req: FR-30
 func TestCursorDiagnosticMessage(t *testing.T) {
 	h := start(t, Config{})
-	h.keys("iabc def<CR>ghi<Esc>gg0")
+	h.keys("iabc def<CR>ghi<CR>f()<Esc>gg0")
 	h.settle()
 	h.e.do(func() {
 		bs := h.e.cur
@@ -45,6 +45,8 @@ func TestCursorDiagnosticMessage(t *testing.T) {
 		h.e.setDiagnostics("lsp", ext.DiagnosticSetParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Diagnostics: []ext.Diagnostic{
 			{Range: rng(0, 4, 7), Severity: ext.SeverityError, Message: "undefined: def", Source: "gopls"},
 			{Range: rng(0, 0, 3), Severity: ext.SeverityHint, Message: "unused abc"},
+			// gopls v0.24.0 の型検査の診断の形（PR #134 のレビューで実物から写したもの）。本文に改行とタブを含む。
+			{Range: rng(2, 0, 3), Severity: ext.SeverityError, Message: "not enough arguments in call to f\n\thave ()\n\twant (int)", Source: "compiler"},
 		}})
 	})
 	h.keys("<Esc>")
@@ -53,7 +55,13 @@ func TestCursorDiagnosticMessage(t *testing.T) {
 	h.screenHas("重い診断", "E gopls: undefined: def")
 	h.keys("j")
 	h.eventually("診断の無い行", func() bool { return !strings.Contains(h.term.screen(), "undefined") })
-	h.keys("k:foo<CR>")
+	// 改行を含む本文は 1 行に詰め、メッセージの行を上へ広げない（ステータス行とバッファの行を覆わない）。
+	h.keys("j")
+	h.screenHas("改行を含む診断", "E compiler: not enough arguments in call to f have () want (int)")
+	if scr := h.trimmedScreen(); !strings.Contains(scr, "f()\n") || !strings.Contains(scr, "NORMAL") {
+		t.Errorf("診断の本文がバッファの行かステータス行を覆った:\n%s", scr)
+	}
+	h.keys("gg:foo<CR>")
 	h.settle()
 	if scr := h.term.screen(); strings.Contains(scr, "undefined") || !strings.Contains(scr, "E492") {
 		t.Errorf("メッセージがあれば診断の本文は出さない:\n%s", scr)
@@ -63,14 +71,14 @@ func TestCursorDiagnosticMessage(t *testing.T) {
 // :w の後のコマンドの誤りは、:w の「書き込みました」に上書きされずに見える（Vim 9.1 の :w|foo と同じく、書いた後に E492 を出す）。
 // :w が失敗したら、その誤りを知らせ、右のコマンドの誤りは知らせない。
 func TestMessageOrderAfterWrite(t *testing.T) {
-	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
+	dir := writeFiles(t, map[string]string{"a.txt": "abc\ndef\n"})
 	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
 	h.keys("x:w|foo<CR>")
 	h.settle()
 	if msg := h.message(); !strings.HasPrefix(msg, "E492") {
 		t.Errorf(":w|foo: message = %q, want E492", msg)
 	}
-	if disk, err := os.ReadFile(filepath.Join(dir, "a.txt")); err != nil || string(disk) != "bc\n" {
+	if disk, err := os.ReadFile(filepath.Join(dir, "a.txt")); err != nil || string(disk) != "bc\ndef\n" {
 		t.Errorf(":w|foo: disk = %q, %v（:w は行う）", disk, err)
 	}
 	h.keys(":w|fake.upper<CR>")
@@ -83,5 +91,18 @@ func TestMessageOrderAfterWrite(t *testing.T) {
 	h.settle()
 	if msg := h.message(); !strings.HasPrefix(msg, "E212") {
 		t.Errorf(":w! dir|foo: message = %q, want E212", msg)
+	}
+	// :w が失敗したら、右のコマンドの確認の問い（逆順の範囲）も出さない（Vim 9.1 は :w! dir|foo で E502 を出し、右を実行しない）。
+	h.keys(":w! " + dir + "|2,1d<CR>")
+	h.settle()
+	var asked bool
+	h.e.do(func() { asked = h.e.confirm != nil })
+	if msg := h.message(); asked || !strings.HasPrefix(msg, "E212") {
+		t.Errorf(":w! dir|2,1d: 問い = %v, message = %q, want 問いなしの E212", asked, msg)
+	}
+	h.keys("y")
+	h.settle()
+	if got := h.text(); got != "bc\ndef" {
+		t.Errorf(":w! dir|2,1d の後の y: text = %q（消さない）", got)
 	}
 }
