@@ -20,6 +20,8 @@
 //	:[range]d[elete] [x] [count]
 //	:[range]             範囲の最後の行へ移る（:3 など）。行数を超えた行番号は最後の行に丸める
 //	:<コマンドの ID> [引数]  拡張機能のコマンドを実行する Action の ActionExtCommand を返す（State.ExtCommand。例: :acp.prompt 説明して）
+//	:out[put] [名前]     出力の欄を開く（名前の欄に切り替える）Action の ActionOutput を返す。Vim に無い本体のコマンド（名前は仮）
+//	:outc[lose]          出力の欄を閉じる Action の ActionOutput を返す。Vim に無い本体のコマンド（名前は仮）
 //
 // 拡張機能のコマンドは、ID と完全に一致する名前だけで呼べ、本体のコマンドの名前か省略形と同じ ID は本体のコマンドを優先する。
 // 引数は行末までの文字列で、"|" で区切らない。範囲と "!" は取らず、:w などの動作を返すコマンドの後には置けない（E319）。
@@ -68,6 +70,7 @@ package ex
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -89,6 +92,26 @@ const (
 	// Extension と Command にコマンドを、Text に引数の文字列を入れる。
 	// internal/command の State は、この動作を呼び出し側へ返さずに、自分で拡張機能へ問い合わせる（基本設計 5.4 の期限の扱いを通すため）。
 	ActionExtCommand
+	// ActionOutput は、出力の欄（拡張機能の output/append の行。基本設計 6.7）を開く、閉じる、切り替える、スクロールする動作である。
+	// Output に操作を、Text に欄の名前（OutputOpen のときだけ。空なら最後に書き足された欄）を入れる。
+	// バッファを読み書きしないので、後に拡張機能のコマンドを置ける（:output|acp.prompt ...）。
+	ActionOutput
+)
+
+// OutputOp は、ActionOutput の操作である。
+type OutputOp int
+
+// 出力の欄の操作。
+const (
+	// OutputOpen は、欄を開く。開いていれば、Text の欄に切り替える。
+	OutputOpen OutputOp = iota
+	// OutputClose は、欄を閉じる。
+	OutputClose
+	// OutputNext は、閉じていれば開き、開いていれば次の欄に切り替える。
+	OutputNext
+	// OutputScrollUp と OutputScrollDown は、欄を半分の高さだけ上と下へスクロールする。
+	OutputScrollUp
+	OutputScrollDown
 )
 
 // Action は、Ex コマンドが呼び出し側へ求めるエディタの動作である。
@@ -105,7 +128,10 @@ type Action struct {
 	Command   string
 	// Text は、ActionExtCommand で、コマンドの ID の後の空白を除いた、行末までの引数の文字列である。
 	// "|" と '"' も引数に含める（Vim の -bar を付けない利用者定義のコマンドと同じ）。引数が無ければ空である。
+	// ActionOutput では、開く欄の名前である。
 	Text string
+	// Output は、ActionOutput の操作である。
+	Output OutputOp
 }
 
 // Deletion は、:d が消した行の記録である。
@@ -429,6 +455,7 @@ func extCommandName(src string) string {
 // 本体のコマンドの名前か省略形と同じ ID（"w"、"write"、"s" など）は、本体のコマンドを優先する。
 // 範囲と "!" は取らず、付ければ E481 と E477 にする（ビジュアルモードの : が入れる '<,'> も E481。Vim の -range なしと同じ）。
 // :g の cmd の中と、同じ行の前のコマンドが動作（Result.Actions。:w|acp.prompt の :w）を積んだ後は E319 にする。
+// ただし、バッファを読み書きしない出力の欄の動作（ActionOutput。:output|acp.prompt の :output）の後には置ける。
 // 動作は呼び出し側が Execute の後に行うので、後に置いた拡張機能のコマンドが先に動き、:w が拡張機能の編集の後の内容を書き出すためである。
 // バッファの中で済むコマンド（:s/a/b/|acp.prompt）の後には置ける。
 // 引数は、ID の後の空白を除いた行末までで、"|" を区切りとしない（Vim の -bar を付けない利用者定義のコマンドと同じ）。
@@ -450,7 +477,7 @@ func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) 
 	switch {
 	case c.inGlobal:
 		return true, errAt(namePos, codeNotAvailable, ":global の中では使えません: %s", id)
-	case len(c.actions) > 0:
+	case slices.ContainsFunc(c.actions, func(a Action) bool { return a.Kind != ActionOutput }):
 		// 前のコマンドの動作（:w の書き出しなど）は、呼び出し側が Execute の後に行う。
 		// 拡張機能のコマンドの問い合わせはそれより先に行われるので、Vim の左から右の順を保てない。
 		return true, errAt(namePos, codeNotAvailable, ":w などの後には拡張機能のコマンドを置けません: %s", id)

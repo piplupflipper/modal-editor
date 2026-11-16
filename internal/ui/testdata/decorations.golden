@@ -1,15 +1,15 @@
 ## 構文の色と診断
-size 20x6 cursor 3,0 block
-   |func f() {          |
-fg |kkkk................|
-fx |  ~~~~~             |
-   |        // note     |
-fg |........ccccsks.....|
-fx |           ____     |
-   |        return "s"  |
-fg |sssssssssskkkk.sss..|
-fx |_________         _ |
-   |}                   |
+size 20x6 cursor 3,2 block
+   |E func f() {        |
+fg |..kkkk..............|
+fx |    ~~~~~           |
+   |W         // note   |
+fg |..........ccccsks...|
+fx |             ____   |
+   |W         return "s"|
+fg |..sssssssssskkkk.sss|
+fx |  _________         |
+   |  }                 |
    | NORMAL  [ 4,1  All |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |

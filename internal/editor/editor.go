@@ -37,6 +37,8 @@ const (
 	maxHistory = 100
 	// maxOutputLines は、出力の欄 1 つあたりに持つ行数の上限である（基本設計 6.7。仮に 10000）。
 	maxOutputLines = 10000
+	// maxOutputLineBytes は、出力の欄の 1 行のバイト数の上限である（基本設計 6.7。仮に 4096）。超えたら次の行へ送る（NFR-03）。
+	maxOutputLineBytes = 4096
 )
 
 // interruptKey は、中断のキー（<C-c>）である。
@@ -186,6 +188,12 @@ type Editor struct {
 	confirm   *ex.Confirm
 	confirmBS *bufferState
 	outputs   map[outputKey][]string
+	// outputOrder は、出力の欄を、最初に書き足された順に並べたものである（<C-w>P で切り替える順）。
+	outputOrder []outputKey
+	// outputLast は、最後に書き足された欄である。
+	outputLast outputKey
+	// outView は、開いている出力の欄である。nil なら閉じている。
+	outView *outputView
 
 	quit bool
 }

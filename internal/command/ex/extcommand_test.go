@@ -33,6 +33,7 @@ func TestExtCommand(t *testing.T) {
 		{name: "バッファの中で済むコマンドの後", cmdline: "s/a/X/|acp.prompt x", want: []Action{ext("acp", "acp.prompt", "x")}},
 		{name: "動作を返すコマンドの後", cmdline: "w|acp.prompt x", wantCode: "E319"},
 		{name: "動作を返すコマンドの後（:e）", cmdline: "e foo|dap.start", wantCode: "E319"},
+		{name: "出力の欄を開く動作の後には置ける", cmdline: "output|acp.prompt x", want: []Action{{Kind: ActionOutput, Output: OutputOpen}, ext("acp", "acp.prompt", "x")}},
 		{name: "本体のコマンドを優先", cmdline: "w", want: []Action{{Kind: ActionWrite}}},
 		{name: "本体の省略形と始まりが同じ ID", cmdline: "edit-x y", want: []Action{ext("x", "edit-x", "y")}},
 		{name: "省略形では呼べない", cmdline: "acp.prom x", wantCode: "E492"},

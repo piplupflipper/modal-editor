@@ -151,6 +151,15 @@ var (
 		// Vim と同じく、オペレーターの後では使えない（d<PageDown> は誤りになる）。
 		{keys: "<PageDown>", id: "page-down", modes: MapNormal | MapVisual},
 		{keys: "<PageUp>", id: "page-up", modes: MapNormal | MapVisual},
+		// 出力の欄（拡張機能の output/append の行）の操作（名前とキーは仮。基本設計 6.7）。欄にカーソルは入らない。
+		// <C-w>P は、閉じていれば開き、開いていれば次の欄へ切り替える（Vim ではプレビューの窓へ移るキー）。
+		// <C-w>z は閉じる（Vim でもプレビューの窓を閉じるキー）。<C-w><PageUp> と <C-w><PageDown> は、欄を半分の高さずつスクロールする。
+		// スクロールのキーは、Vim 9.1 と Neovim 0.12.5 のヘルプの tags に CTRL-W_<PageUp> と CTRL-W_<PageDown> が無いことを確かめて選んだ。
+		// <C-w>d は、Vim では :dsplit、Neovim では診断の浮動窓を開く既定のキーなので使わない（PR #133 のレビュー）。
+		{keys: "<C-w>P", id: "output-next", modes: MapNormal},
+		{keys: "<C-w>z", id: "output-close", modes: MapNormal},
+		{keys: "<C-w><PageUp>", id: "output-scroll-up", modes: MapNormal},
+		{keys: "<C-w><PageDown>", id: "output-scroll-down", modes: MapNormal},
 	}
 )
 

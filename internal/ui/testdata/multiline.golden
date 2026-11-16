@@ -1,47 +1,47 @@
 ## 先頭
-size 20x8 cursor 0,0 block
-   |line 00 abcdefgh    |
-fg |kkkkkkkkkkkkkkkk....|
-fx |   _____________    |
-   |line 01 abcdefgh    |
-fg |kk...ccccccccccc....|
-fx |________________    |
-   |line 02 abcdefgh    |
-fg |ccccccssssssssss....|
-fx |__**************    |
-   |line 03 abcdefgh    |
-fg |ssssssssssssssss....|
-fx |****************    |
-   |line 04 abcdefgh    |
-fg |ssssssssssssssss....|
-fx |****************    |
-   |line 05 abcdefgh    |
-fg |sskkkkssssssssss....|
-fx |****************    |
+size 20x8 cursor 0,2 block
+   |  line 00 abcdefgh  |
+fg |..kkkkkkkkkkkkkkkk..|
+fx |     _____________  |
+   |  line 01 abcdefgh  |
+fg |..kk...ccccccccccc..|
+fx |  ________________  |
+   |E line 02 abcdefgh  |
+fg |..ccccccssssssssss..|
+fx |  __**************  |
+   |  line 03 abcdefgh  |
+fg |..ssssssssssssssss..|
+fx |  ****************  |
+   |  line 04 abcdefgh  |
+fg |..ssssssssssssssss..|
+fx |  ****************  |
+   |  line 05 abcdefgh  |
+fg |..sskkkkssssssssss..|
+fx |  ****************  |
    | NORMAL  [ 1,1  Top |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 
 ## 中ほど
-size 20x8 cursor 3,0 block
-   |line 07 abcdefgh    |
-fg |WWWWWWWWWWWWWWWW....|
-fx |****************    |
-   |line 08 abcdefgh    |
-fg |Wccccccccccccccc....|
-fx |***_____________    |
-   |line 09 abcdefgh    |
-fg |cccccccccccccccc....|
-fx |________________    |
-   |line 10 abcdefgh    |
-fg |cccccccccccccccc....|
-fx |________________    |
-   |line 11 abcdefgh    |
-fg |cccWWWWWWWWWWWWW....|
-fx |________________    |
-   |line 12 abcdefgh    |
-fg |WWWWWWWWWWWWWWWW....|
-fx |________________    |
+size 20x8 cursor 3,2 block
+   |  line 07 abcdefgh  |
+fg |..WWWWWWWWWWWWWWWW..|
+fx |  ****************  |
+   |  line 08 abcdefgh  |
+fg |..Wccccccccccccccc..|
+fx |  ***_____________  |
+   |  line 09 abcdefgh  |
+fg |..cccccccccccccccc..|
+fx |  ________________  |
+   |  line 10 abcdefgh  |
+fg |..cccccccccccccccc..|
+fx |  ________________  |
+   |  line 11 abcdefgh  |
+fg |..cccWWWWWWWWWWWWW..|
+fx |  ________________  |
+   |  line 12 abcdefgh  |
+fg |..WWWWWWWWWWWWWWWW..|
+fx |  ________________  |
    | NORMAL   11,1  70% |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
