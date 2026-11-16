@@ -1,7 +1,7 @@
 # modal-editor
 
 Vim のキーバインドを持つ、ターミナル用のモーダルエディタ（仮称）。
-実装は未着手で、現在は開発環境と設計の文書だけがある。
+本体は端末で動く。
 
 - 要件定義: [docs/requirements.md](docs/requirements.md)
 - 基本設計: [docs/basic-design.md](docs/basic-design.md)
@@ -21,6 +21,21 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 
 リンターなどの開発ツールは、`make` が `go run` でバージョンを固定して実行するので、インストールは不要である。
 初回の実行時だけ、ツールのビルドに数分かかる。
+
+## 使い方
+
+```sh
+make build
+bin/modal-editor [ファイル ...]   # 最初のファイルを表示して起動する。ファイルを省くと空のバッファで起動する
+bin/modal-editor --log ed.log a.go # ログを ed.log に追記する（既定ではログを書かない）
+```
+
+標準入力と標準出力が端末のときだけ起動する。
+起動時に、設定ファイル（`$XDG_CONFIG_HOME/modal-editor/config.jsonc`）と、拡張機能の宣言ファイル（`$XDG_DATA_HOME/modal-editor/extensions/<名前>/manifest.json` と、本体の隣の `extensions/<名前>/manifest.json`）を読む。
+置き場所と項目は仮で、`go doc ./internal/config` にある。設定の誤りは、起動後にコマンドラインの行へ位置と内容を 1 行で出す。
+端末は xterm の制御シーケンスで制御する（代替画面、bracketed paste、24 ビット色、カーソルの形）。terminfo は読まない。
+実際の端末で動きを確かめたのは、2026-11-16 時点で tmux 3.4 の中だけである。
+F キーと Insert キーは、キーの型（`internal/editcmd`）に対応する種類が無いので、押しても何もしない。
 
 ## 開発
 

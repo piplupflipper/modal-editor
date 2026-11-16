@@ -107,6 +107,12 @@ type Config struct {
 	MCPSocket string
 	// Logger は、ログの記録先である。nil なら slog.Default() を使う。
 	Logger *slog.Logger
+	// FixEndOfLine は、書き出すときに末尾の改行を補うかどうか（基本設計 4.1。Vim の 'fixendofline'）である。
+	// 開くバッファすべてに buffer.Buffer.SetFixEndOfLine で設定する。nil なら既定の有効（true）である。
+	FixEndOfLine *bool
+	// Problems は、呼び出し側が設定ファイルと宣言ファイルを読んだときの誤り（位置と内容）である（基本設計 8 章）。
+	// New は、すべてをログに記録し、New 自身が見つけた設定の誤りより先に並べて、最初の 1 件を起動後のメッセージで知らせる。
+	Problems []error
 }
 
 // Editor は、イベントループと、編集の状態の全体である。New で作り、Run で動かし、Close で終える。
@@ -120,6 +126,8 @@ type Editor struct {
 	keymap   *input.Keymap
 	remap    *remapper
 	fileType map[string]string
+	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
+	fixEOL bool
 
 	// mcpSocket は、New が決めた MCP のソケットのパスである。Config.MCPSocket を指定したときと、決められなかったときは nil。
 	mcpSocket *exthost.MCPSocket
@@ -254,8 +262,11 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	for k, v := range cfg.FileTypes {
 		e.fileType[k] = v
 	}
-	var warnings []error
-	e.keymap, warnings = buildKeymap(cfg.Extensions)
+	e.fixEOL = cfg.FixEndOfLine == nil || *cfg.FixEndOfLine
+	warnings := slices.Clone(cfg.Problems)
+	var w1 []error
+	e.keymap, w1 = buildKeymap(cfg.Extensions)
+	warnings = append(warnings, w1...)
 	var w2 []error
 	e.remap, w2 = newRemapper(cfg.Keymap)
 	warnings = append(warnings, w2...)
@@ -263,7 +274,12 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		lg.Warn("設定の誤り", "err", w)
 	}
 	if len(warnings) > 0 {
-		e.message = ui.Message{Text: warnings[0].Error(), Level: ui.MessageError}
+		text := warnings[0].Error()
+		if n := len(warnings) - 1; n > 0 {
+			// 他にも誤りがあることを知らせる。全件はログ（Config.Logger）にある。
+			text = fmt.Sprintf("%s（他 %d 件）", text, n)
+		}
+		e.message = ui.Message{Text: text, Level: ui.MessageError}
 	}
 	return e, nil
 }
@@ -345,7 +361,9 @@ func (e *Editor) Open(path string) error {
 // req: NFR-04
 func (e *Editor) Run(ctx context.Context) error {
 	if e.cur == nil {
-		e.newBuffer(buffer.New(""), "", "")
+		b := buffer.New("")
+		b.SetFixEndOfLine(e.fixEOL)
+		e.newBuffer(b, "", "")
 	}
 	w, h := e.term.Size()
 	e.setSize(w, h)
@@ -557,6 +575,8 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	case err != nil:
 		return nil, fmt.Errorf("%s を開けない: %w", path, err)
 	}
+	// :e での読み直し（reload）は、元のバッファの設定を引き継ぐので、ここで設定するのは開くときだけである。
+	b.SetFixEndOfLine(e.fixEOL)
 	prev := e.cur
 	bs := e.newBuffer(b, abs, e.detectFileType(abs))
 	if !focus && prev != nil {

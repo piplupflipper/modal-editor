@@ -57,14 +57,16 @@ svg .tick{stroke:var(--muted);stroke-width:1}
 
 <rect x="140" y="116" width="840" height="80" rx="8" class="zone"/>
 <text x="152" y="136" class="tx-m">組み立て</text>
-<rect x="160" y="144" width="800" height="40" rx="6" class="bx-acc"/>
-<text x="560" y="169" text-anchor="middle" class="tx-b">internal/editor：イベントループ。下の層の部品をつなぐ</text>
+<rect x="160" y="144" width="560" height="40" rx="6" class="bx-acc"/>
+<text x="440" y="169" text-anchor="middle" class="tx-b">internal/editor：イベントループ。下の層の部品をつなぐ</text>
+<rect x="740" y="144" width="220" height="40" rx="6" class="bx"/>
+<text x="850" y="169" text-anchor="middle" class="tx-b">internal/term：端末の制御</text>
 
 <rect x="140" y="212" width="840" height="96" rx="8" class="zone"/>
 <text x="152" y="232" class="tx-m">機能</text>
 <rect x="160" y="240" width="145" height="56" rx="6" class="bx"/>
 <text x="232" y="264" text-anchor="middle" class="tx-b">internal/input</text>
-<text x="232" y="282" text-anchor="middle" class="tx-m">キーの解読と解釈</text>
+<text x="232" y="282" text-anchor="middle" class="tx-m">キーの列の解釈</text>
 <rect x="324" y="240" width="145" height="56" rx="6" class="bx"/>
 <text x="396" y="264" text-anchor="middle" class="tx-b">internal/command</text>
 <text x="396" y="282" text-anchor="middle" class="tx-m">編集コマンドの実行</text>
