@@ -7,6 +7,7 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 - 基本設計: [docs/basic-design.md](docs/basic-design.md)
 - 要件ごとの進捗: [docs/progress.md](docs/progress.md)（`make progress` が生成する）
 - Vim との違い（直さないと決めた食い違いと、見つけた未実装の機能）: [docs/vim-differences.md](docs/vim-differences.md)
+- 設定と標準の拡張機能の使い方: [docs/usage.md](docs/usage.md)
 
 詳細設計の文書は作らず、コードと doc コメントを詳細設計として扱う。
 
@@ -46,6 +47,7 @@ Vim との違いは [docs/vim-differences.md](docs/vim-differences.md) にある
 `make build` は `bin/` に実行ファイルだけを作り、宣言ファイルを置かないので、`bin/modal-editor` は標準の拡張機能を読まない（行のテキストオブジェクトの `dil` を打っても何も起きない）。
 標準の拡張機能も使うときは、`make dist` で作る配布物の本体（`dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor`）を起動する。
 配布物では、宣言ファイルと実行ファイルが本体の隣の `extensions/<名前>/` に並ぶ。
+設定ファイルの書き方、拡張機能のコマンドのキーへの割り当て、標準の拡張機能（LSP、DAP、ACP、MCP など）ごとのコマンドと使い方は [docs/usage.md](docs/usage.md) にある。
 端末は xterm の制御シーケンスで制御する（代替画面、bracketed paste、24 ビット色、カーソルの形）。terminfo は読まない。
 実際の端末で動きを確かめたのは、2026-11-16 時点で tmux 3.4 の中だけである。
 F キーと Insert キーは、キーの型（`internal/editcmd`）に対応する種類が無いので、押しても何もしない。
