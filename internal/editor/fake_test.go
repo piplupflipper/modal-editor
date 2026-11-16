@@ -125,6 +125,11 @@ func runFakeExt(mode string) int {
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("v%d:%q", b.Version(), b.Text()))
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.echo は、受け取った command/execute の args をそのまま表示する。
+		s.Command("fake.echo", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("args=%s", p.Args))
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		// fake.eol は、複製の FinalNewline（buffer/open の finalNewline）を表示する。
 		s.Command("fake.eol", func(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("b%d finalNewline=%v", b.ID(), b.FinalNewline()))
@@ -232,6 +237,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 			Activation: []ext.Activation{
 				act(ext.ActivationTextObject, "fake.line"), act(ext.ActivationTextObject, "fake.slow"),
 				act(ext.ActivationTextObject, "fake.hang"), act(ext.ActivationCommand, "fake.upper"),
+				act(ext.ActivationCommand, "fake.echo"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -240,7 +246,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.dump", `\d`), contrib("fake.ask", `\a`), contrib("fake.state", `\s`),
 					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
-					contrib("fake.endofline", `\o`),
+					contrib("fake.endofline", `\o`), contrib("fake.echo", ""),
 				},
 			},
 		},

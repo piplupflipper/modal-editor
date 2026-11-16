@@ -45,6 +45,9 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 		return nil
 	case ex.ActionEdit:
 		return e.edit(bs, a)
+	case ex.ActionExtCommand:
+		// command.State が問い合わせるので、Result.Actions には入らない。来たら内部の誤りである。
+		return fmt.Errorf("内部の誤り: 拡張機能のコマンド %s が本体の動作として渡された", a.Command)
 	}
 	return fmt.Errorf("未知の動作 %d", a.Kind)
 }

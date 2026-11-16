@@ -387,6 +387,39 @@ func TestToggleBreakpointBeforeStart(t *testing.T) {
 	h.waitMessage("ブレークポイントを置けない")
 }
 
+// TestCommandArgs は、どのコマンドも引数を取らず、コマンドラインから引数を付けて呼ぶと（args の text）、
+// 何もせずに ok を false で返して知らせることを確かめる。空白だけの text と、キーで取った文字（char）は引数として扱わない。
+func TestCommandArgs(t *testing.T) {
+	h := newHost(t, "")
+	h.open(1, srcPath, srcText)
+	call := func(id, args string) ext.CommandExecuteResult {
+		t.Helper()
+		var res ext.CommandExecuteResult
+		h.mu.Lock()
+		v := h.versions[1]
+		h.mu.Unlock()
+		p := ext.CommandExecuteParams{Buffer: 1, Version: v, ID: id, Cursor: ext.Position{Line: 5}, Args: json.RawMessage(args)}
+		if err := h.conn.Call(h.ctx(), ext.MethodCommandExecute, p, &res); err != nil {
+			t.Fatalf("command/execute %s: %v", id, err)
+		}
+		return res
+	}
+	for _, id := range []string{cmdStart, cmdStop, cmdToggleBreakpoint, cmdContinue, cmdNext, cmdStepIn, cmdStepOut} {
+		if res := call(id, `{"text":"foo"}`); res.OK {
+			t.Errorf("%s foo: ok = true", id)
+		}
+		h.waitMessage(id + ": 引数を取らない")
+	}
+	if res := call(cmdToggleBreakpoint, `{"text":" "}`); !res.OK {
+		t.Error("空白だけの text: ok = false")
+	}
+	h.waitSigns(bp5)
+	if res := call(cmdToggleBreakpoint, `{"char":"x"}`); !res.OK {
+		t.Error("char: ok = false")
+	}
+	h.waitSigns()
+}
+
 // TestDebugSession は、初期化、ブレークポイント、停止の印とカーソルの移動、デバッグ対象の出力、続行、ステップ実行、終了を通しで確かめる。
 //
 // req: FR-31

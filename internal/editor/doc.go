@@ -24,7 +24,8 @@
 //   - 期限が正の値（FR-17）: 結果か期限の超過を、入れ子の待ち（wait）で待つ。待つ間も、リサイズに応じて描画し、
 //     <C-c> で問い合わせを取り消す。拡張機能からのイベントは取っておき、待ちが終わってから届いた順に処理する
 //   - 期限が 0（FR-18）: 送って command.ErrDeferred を返し、次のキー入力を受け付ける。
-//     結果が届いたら command.State.ApplyDeferred で、バージョン番号とカーソルが問い合わせたときと同じ場合だけ適用する
+//     結果が届いたら command.State.ApplyDeferred で、バージョン番号とカーソルが問い合わせたときと同じ場合だけ適用する。
+//     違って破棄したら、メッセージの行に 1 行で知らせる（showDiscarded）
 //   - マクロとドットリピートの再生中（FR-19）: 期限の設定に関わらず入れ子の待ちで待つ。
 //     上限（Config.ReplayTimeout）を超えるか <C-c> で取り消すと、その操作が失敗し、再生はそこで止まる
 //
@@ -32,6 +33,9 @@
 // 待ちは command.State の操作の途中なので、他の拡張機能の buffer/edit をその間に適用すると、操作の途中でバッファが変わる。
 // 取っておく数の上限と、超えたときの捨て方は hold の doc にある。
 // Run の ctx が終わったら、待ちの途中でもやめて戻る。
+//
+// 拡張機能のコマンド（contributes.commands）は、キーのほかに、コマンドラインから ID で呼べる（:acp.prompt 説明して）。
+// ID の後の引数の文字列は、command/execute の args に {"text":"..."} で渡す（commandArgs。基本設計 6.7）。
 //
 // 再生中の command/execute の結果の open が別のバッファへ移したら、マクロの残りのキーは移った先のバッファで続ける
 // （command.ErrBufferSwitched と command.State.ContinueReplay）。

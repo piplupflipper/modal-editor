@@ -15,6 +15,8 @@
 //   - dap.start、dap.stop: デバッグを始める、終える
 //   - dap.continue、dap.next、dap.stepIn、dap.stepOut: 続行とステップ実行
 //
+// どれも引数を取らない。本体のコマンドラインから引数を付けて呼んだ（:dap.start foo）ら、ok を false で返して知らせる（noArgs）。
+//
 // 状態の持ち方と、本体との取り決めの詳細は debugger の doc に、DAP の手順は session の doc にある。
 // 設定（initialize の settings）の項目は settings の doc にある。
 package main

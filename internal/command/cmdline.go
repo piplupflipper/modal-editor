@@ -65,6 +65,11 @@ func (s *State) runCommandLine(line string) {
 	}
 	s.lastCmd = line
 	s.registers.cmdline = line
+	// コマンドラインの編集と、後に置いた拡張機能のコマンドの編集（:s/a/X/|dup.line）を、アンドゥの 1 単位にまとめる
+	// （Vim 9.1 で :s/a/X/|Dup y の後の u 1 回で両方が戻るのと同じ）。
+	// 期限 0 で保留した拡張機能のコマンドの結果は、届いたときに別の単位で適用する。
+	s.buf.BeginUndoGroup()
+	defer s.buf.EndUndoGroup()
 	res, err := ex.Execute(s.buf, &s.Ex, s.cursor.Line, line)
 	s.applyExResult(res, err)
 }
@@ -76,7 +81,14 @@ func (s *State) applyExResult(res ex.Result, err error) {
 		s.res.Confirm = res.Confirm
 	}
 	s.res.Changes = append(s.res.Changes, res.Changes...)
-	s.res.Actions = append(s.res.Actions, res.Actions...)
+	var extCmds []ex.Action
+	for _, a := range res.Actions {
+		if a.Kind == ex.ActionExtCommand {
+			extCmds = append(extCmds, a)
+			continue
+		}
+		s.res.Actions = append(s.res.Actions, a)
+	}
 	for _, d := range res.Deletions {
 		s.registers.delete(d.Register, Register{Text: strings.Join(d.Lines, "\n"), Linewise: true}, false, false)
 	}
@@ -92,6 +104,13 @@ func (s *State) applyExResult(res ex.Result, err error) {
 	}
 	if err != nil {
 		s.fail(err)
+	}
+	// 拡張機能のコマンド（ex.ActionExtCommand）は、呼び出し側へ返さずにここで問い合わせる。
+	// キーから呼んだ拡張機能の操作と同じく、期限の扱い（FR-17、FR-18）と再生中の待ち（FR-19）を通すためである。
+	// 引数が行末までを取るので、コマンドラインの最後のコマンドである。
+	// :w などの動作（Result.Actions）の後には置けない（ex が E319 にする）ので、動作との順序は問題にならない。
+	for _, a := range extCmds {
+		s.runExtCommand(a)
 	}
 }
 

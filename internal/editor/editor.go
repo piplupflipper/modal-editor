@@ -134,8 +134,10 @@ type Editor struct {
 	host     *exthost.Host
 	renderer *ui.Renderer
 	keymap   *input.Keymap
-	remap    *remapper
-	fileType map[string]string
+	// exCommands は、コマンドラインから呼べる拡張機能のコマンドの ID から、宣言した拡張機能の ID への表である（buildExCommands）。
+	exCommands map[string]string
+	remap      *remapper
+	fileType   map[string]string
 	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
 	fixEOL bool
 
@@ -280,6 +282,9 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	var w1 []error
 	e.keymap, w1 = buildKeymap(cfg.Extensions)
 	warnings = append(warnings, w1...)
+	var w3 []error
+	e.exCommands, w3 = buildExCommands(cfg.Extensions)
+	warnings = append(warnings, w3...)
 	var w2 []error
 	e.remap, w2 = newRemapper(cfg.Keymap)
 	warnings = append(warnings, w2...)
@@ -329,6 +334,31 @@ func buildKeymap(specs []exthost.Spec) (*input.Keymap, []error) {
 		}
 	}
 	return km, errs
+}
+
+// buildExCommands は、拡張機能が宣言したコマンド（contributes.commands）を、コマンドラインから ID で呼ぶための表にする
+// （:acp.prompt 説明して。ex.State.ExtCommand）。
+// 2 つの拡張機能が同じ ID のコマンドを宣言していたら、先の拡張機能のものを残し、誤りを返す。
+// 本体の Ex コマンドと同じ名前の ID は表に残すが、コマンドラインでは本体のコマンドを優先する（ex パッケージの runExtCommand）。
+func buildExCommands(specs []exthost.Spec) (map[string]string, []error) {
+	cmds := map[string]string{}
+	var errs []error
+	for _, s := range specs {
+		for _, c := range s.Manifest.Contributes.Commands {
+			if prev, ok := cmds[c.ID]; ok {
+				errs = append(errs, fmt.Errorf("拡張機能 %s のコマンド %s は拡張機能 %s のものと重なるので、コマンドラインからは %s のものを呼ぶ", s.Manifest.ID, c.ID, prev, prev))
+				continue
+			}
+			cmds[c.ID] = s.Manifest.ID
+		}
+	}
+	return cmds, errs
+}
+
+// extCommand は、コマンドラインのコマンド名 id が拡張機能のコマンドなら、宣言した拡張機能の ID を返す（ex.State.ExtCommand）。
+func (e *Editor) extCommand(id string) (string, bool) {
+	extID, ok := e.exCommands[id]
+	return extID, ok
 }
 
 // Close は、拡張機能のプロセスをすべて正常に止める（exthost.Host.CloseContext。基本設計 5.2）。
@@ -537,6 +567,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Columns = e.renderer.Columns()
 	bs.state.Viewport = viewport{r: e.renderer}
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
+	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Interrupted = e.interrupt.Load
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
 		ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text(),

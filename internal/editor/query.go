@@ -13,6 +13,7 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // queryTag は、exthost.SendOptions の Tag に入れる、問い合わせを見分ける値である。
@@ -24,6 +25,8 @@ type pendingQuery struct {
 	tag    queryTag
 	bs     *bufferState
 	method string
+	// ref は、問い合わせた操作である。結果を破棄したことを知らせる文言に使う。
+	ref editcmd.Ref
 	// d は、command.State が保留した操作である。Feed が戻ってから trackDeferred が入れる。
 	d *command.Deferred
 }
@@ -44,9 +47,26 @@ type extQuery struct {
 }
 
 // errExtension は、拡張機能の操作の失敗を、利用者へ知らせる文言に包む。
+// 拡張機能が動いていない（exthost.ErrUnavailable）ときは、exthost の内部の英語の文言を出さずに、日本語の 1 行にする（unavailableError）。
 func errExtension(ref editcmd.Ref, err error) error {
+	if errors.Is(err, exthost.ErrUnavailable) {
+		return &unavailableError{ref: ref, err: err}
+	}
 	return fmt.Errorf("拡張機能 %s の %s が失敗しました: %w", ref.Extension, ref.ID, err)
 }
+
+// unavailableError は、拡張機能が無効か、再起動の待ちか、問い合わせの途中で異常終了したので、操作を使えなかったことを表す。
+// 文言は利用者に表示するので日本語にする。errors.Is で exthost.ErrUnavailable を判定できる。
+type unavailableError struct {
+	ref editcmd.Ref
+	err error
+}
+
+func (e *unavailableError) Error() string {
+	return fmt.Sprintf("拡張機能 %s の %s は使えません: 拡張機能が動いていません（無効か、異常終了の後の再起動の待ち）", e.ref.Extension, e.ref.ID)
+}
+
+func (e *unavailableError) Unwrap() error { return e.err }
 
 // errWithheld は、拡張機能へ送っていないバッファ（不正な UTF-8 を含むもの。基本設計 5.3）で、
 // 拡張機能の操作が使えないことを、利用者へ知らせる文言にする。
@@ -97,7 +117,7 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 		if e.deferred != nil {
 			e.deferred.q.Cancel()
 		}
-		e.deferred = &pendingQuery{q: q, tag: tag, bs: bs, method: method}
+		e.deferred = &pendingQuery{q: q, tag: tag, bs: bs, method: method, ref: ref}
 		return command.ErrDeferred
 	}
 	opts := exthost.SendOptions{Tag: tag, Timeout: max(timeout, 0)}
@@ -211,6 +231,7 @@ func (e *Editor) trackDeferred(bs *bufferState, d *command.Deferred) {
 
 // applyDeferred は、期限 0 の設定で保留した問い合わせの結果 r を適用する（FR-18）。
 // バージョン番号とカーソル位置が問い合わせたときと同じ場合だけ適用し、違えば破棄する（command.State.ApplyDeferred）。
+// 破棄したら、メッセージの行で知らせる（showDiscarded）。
 //
 // req: FR-18
 func (e *Editor) applyDeferred(p *pendingQuery, r *exthost.QueryResult) {
@@ -220,6 +241,7 @@ func (e *Editor) applyDeferred(p *pendingQuery, r *exthost.QueryResult) {
 	}
 	if p.bs.state.Pending() {
 		// キーの列の解釈の途中（d の後など）に届いた結果は破棄する。利用者は続きのキーを、保留した操作の後のつもりで打っていない。
+		e.showDiscarded(p, r)
 		return
 	}
 	if r.Err != nil {
@@ -227,13 +249,55 @@ func (e *Editor) applyDeferred(p *pendingQuery, r *exthost.QueryResult) {
 			if e.host.Withheld(p.bs.id) {
 				e.showError(errWithheld(editcmd.Ref{Extension: r.Extension, ID: r.Method}))
 			} else {
-				e.showError(fmt.Errorf("拡張機能 %s の %s が失敗しました: %w", r.Extension, r.Method, r.Err))
+				e.showError(errExtension(editcmd.Ref{Extension: r.Extension, ID: r.Method}, r.Err))
 			}
 		}
 		return
 	}
 	x := &extQuery{e: e, bs: p.bs, answer: r, answerMethod: p.method}
-	_ = e.handleResult(p.bs, p.bs.state.ApplyDeferred(*p.d, x)) // 失敗は handleResult が知らせる
+	res := p.bs.state.ApplyDeferred(*p.d, x)
+	_ = e.handleResult(p.bs, res) // 失敗は handleResult が知らせる
+	if errors.Is(res.Err, command.ErrStale) {
+		e.showDiscarded(p, r)
+	}
+}
+
+// showDiscarded は、期限 0 の設定で保留した問い合わせの結果 r を破棄したことを、メッセージの行に 1 行で知らせる（FR-18）。
+// 文言は日本語で、Vim に対応するエラーが無いので番号は付けない。
+//
+// メッセージの行は 1 行で、知らせは前のメッセージを上書きし、次のキー入力で消える。破棄が続いても行が増えることは無い。
+// 保留できる問い合わせは 1 つだけで、次の問い合わせにはキー入力が要るので、知らせが重なることもほぼ無い。
+// 結果が適用するものを持たない場合（ok が false のもの、command/execute で編集もカーソルの移動も無いもの）は、
+// 破棄しても失われるものが無いので知らせない（acp.prompt のように、受け付けたことだけを返すコマンド）。
+//
+// 新しい問い合わせを送るために取り消した、前の保留中の問い合わせ（query の Cancel）は、結果が届いていないので知らせない。
+//
+// req: FR-18
+func (e *Editor) showDiscarded(p *pendingQuery, r *exthost.QueryResult) {
+	if !hasEffect(p.method, r) {
+		e.log.Debug("適用するものの無い期限 0 の結果を捨てた", "ext", p.ref.Extension, "id", p.ref.ID)
+		return
+	}
+	text := fmt.Sprintf("拡張機能 %s の %s の結果を破棄しました（問い合わせの後にバッファかカーソルが変わったため）", p.ref.Extension, p.ref.ID)
+	e.message = ui.Message{Text: text, Level: ui.MessageWarning}
+	e.log.Debug("期限 0 の結果を破棄した", "ext", p.ref.Extension, "id", p.ref.ID)
+}
+
+// hasEffect は、method の結果 r が、適用すればバッファかカーソルを変えうるものかを返す。
+// ok が false なら、適用しても操作は失敗するだけなので false である。
+func hasEffect(method string, r *exthost.QueryResult) bool {
+	var v struct {
+		OK          bool                  `json:"ok"`
+		Transaction *ext.Transaction      `json:"transaction"`
+		Open        *ext.EditorOpenParams `json:"open"`
+	}
+	if err := r.Decode(&v); err != nil || !v.OK {
+		return false
+	}
+	if method != ext.MethodCommandExecute {
+		return true
+	}
+	return (v.Transaction != nil && len(v.Transaction.Edits) > 0) || v.Open != nil
 }
 
 // count は、ext の回数（0 は省略）を返す。
@@ -244,13 +308,23 @@ func count(n int, given bool) int {
 	return n
 }
 
-// args は、操作の後に取った文字の引数を、拡張機能へ渡す Args にする（{"char":"x"}）。引数が無ければ nil。
-// 本体が引数のキー入力をどのように集めて渡すかは未決なので、この形は仮である（基本設計 10 章の、コマンドラインから拡張機能のコマンドへ引数を渡す書き方）。
+// args は、操作の後に取った文字の引数を、拡張機能へ渡す Args にする（{"char":"x"}。仮。基本設計 6.7）。引数が無ければ nil。
 func args(ch rune) json.RawMessage {
 	if ch == 0 {
 		return nil
 	}
 	b, _ := json.Marshal(map[string]string{"char": string(ch)})
+	return b
+}
+
+// commandArgs は、command/execute の Args を作る。
+// コマンドラインから引数を付けて呼んだとき（:acp.prompt 説明して）は、引数の文字列を {"text":"..."} で渡す（仮。基本設計 6.7）。
+// それ以外は args と同じである。
+func commandArgs(q command.ActionQuery) json.RawMessage {
+	if q.Text == "" {
+		return args(q.Char)
+	}
+	b, _ := json.Marshal(map[string]string{"text": q.Text})
 	return b
 }
 
@@ -374,7 +448,7 @@ func (x *extQuery) Operator(ref editcmd.Ref, b *buffer.Buffer, q command.Operato
 func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQuery, info command.QueryInfo) (buffer.Transaction, error) {
 	p := ext.CommandExecuteParams{
 		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
-		Cursor: toExtPos(q.Cursor), Count: count(q.Count, q.CountGiven), Args: args(q.Char), Sync: info.Replaying,
+		Cursor: toExtPos(q.Cursor), Count: count(q.Count, q.CountGiven), Args: commandArgs(q), Sync: info.Replaying,
 	}
 	var r ext.CommandExecuteResult
 	err := x.call(ref, ext.MethodCommandExecute, p, info, &r)

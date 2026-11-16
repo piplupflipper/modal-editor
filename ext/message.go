@@ -277,6 +277,8 @@ type CommandExecuteParams struct {
 	// Count は、回数である。0 は省略を表す。
 	Count int `json:"count"`
 	// Args は、コマンドの引数である。無ければ省く。
+	// コマンドラインから引数を付けて呼んだとき（:acp.prompt 説明して）は {"text":"説明して"}、
+	// キーで呼んで後に 1 文字を取ったときは {"char":"x"} である（package の doc の「キー入力ごとの問い合わせ」）。
 	Args json.RawMessage `json:"args,omitempty"`
 	// Sync は、本体がマクロかドットリピートを再生している（FR-19）ことを表す（基本設計 6 章の冒頭）。
 	// true なら、拡張機能は結果がそろうまで応答を返さず、編集を応答の Transaction で、カーソルの移動を応答の Open で返す。
