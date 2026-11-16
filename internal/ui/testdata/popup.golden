@@ -7,7 +7,7 @@ fx |vvvvvvvvvvvvvvvv|
 fx |vvvvvvvvvvvvvvvv|
    | long line that |
 fx |vvvvvvvvvvvvvvvv|
-   |  wraps         |
+   | wraps          |
 fx |vvvvvvvvvvvvvvvv|
    |line5           |
    | NOR 1,4-3  Top |
@@ -112,6 +112,21 @@ fx |vvvvvvvvvv      |
 fx |vvvvvvvvvv      |
    | ```            |
 fx |vvvvvvvvvv      |
+   |line4           |
+   |line5           |
+   | NORMA 1,1  Top |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## 空白の位置で折り返す
+size 16x8 cursor 0,0 block
+   |あいうえおかきく|
+   | writes to      |
+fx |vvvvvvvvvvvv    |
+   | standard       |
+fx |vvvvvvvvvvvv    |
+   | output         |
+fx |vvvvvvvvvvvv    |
    |line4           |
    |line5           |
    | NORMA 1,1  Top |

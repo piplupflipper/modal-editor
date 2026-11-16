@@ -24,7 +24,39 @@ func TestGoldenPopup(t *testing.T) {
 		// Markdown のコードの囲みの行は出さず、中身は残す。plaintext ではそのまま出す（#151）。
 		{"Markdown の囲みを除く", Frame{Text: b, Cursor: pos(0, 0), Popup: "```go\nfunc f()\n```\n\ndoc", PopupMarkdown: true}},
 		{"plaintext の囲みは残す", Frame{Text: b, Cursor: pos(0, 0), Popup: "```go\nfunc f()\n```"}},
+		// 英語の文は空白の位置で折り返し、単語の途中で切らない（#155）。
+		{"空白の位置で折り返す", Frame{Text: b, Cursor: pos(0, 0), Popup: "writes to standard output"}},
 	}))
+}
+
+// wrapWords は、空白の位置で折り返す。空白の無い長い単語と日本語の文は幅で切る。行末からはみ出す空白は次の行へ送らない（#155）。
+func TestWrapWords(t *testing.T) {
+	tests := []struct {
+		s     string
+		width int
+		want  []string
+	}{
+		{"", 5, []string{""}},
+		{"abc def", 7, []string{"abc def"}},
+		{"writes to standard output", 14, []string{"writes to ", "standard ", "output"}},
+		{"ab cd", 2, []string{"ab", "cd"}},
+		{"ab   cd", 3, []string{"ab ", "cd"}},
+		{"abcdefgh ij", 3, []string{"abc", "def", "gh ", "ij"}},
+		{"a abcdefgh", 4, []string{"a ", "abcd", "efgh"}},
+		{"あいうえお", 4, []string{"あい", "うえ", "お"}},
+		{"ab\tcd ef", 10, []string{"ab\tcd", "ef"}},
+		{"ab\tcd ef", 4, []string{"ab", "cd ", "ef"}},
+		{"ab ", 2, []string{"ab"}},
+	}
+	for _, tt := range tests {
+		var got []string
+		for _, row := range wrapWords(0, tt.s, tt.width, 8) {
+			got = append(got, tt.s[row.start:row.end])
+		}
+		if strings.Join(got, "|") != strings.Join(tt.want, "|") {
+			t.Errorf("wrapWords(%q, %d) = %q, want %q", tt.s, tt.width, got, tt.want)
+		}
+	}
 }
 
 // stripCodeFences は、行頭の 3 つまでの空白の後に ``` か ~~~ が続く行だけを除く（#151）。
