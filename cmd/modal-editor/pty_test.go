@@ -187,9 +187,8 @@ func TestSignalWhileLoadingInPTY(t *testing.T) {
 		t.Error("シグナルで終わったのに終了コードが 0")
 	}
 	p.checkRestored(t, before)
-	if !strings.Contains(p.out.String(), "シグナルを受けて終了した") {
-		t.Errorf("終了の理由が出ていない: %q", p.out.String())
-	}
+	// 終了の理由は終わる前に書かれているが、Capture の読み取りが遅れることがあるので待つ（#116）。
+	p.out.WaitForString(t, "シグナルを受けて終了した")
 }
 
 // TestSuspendResumeInPTY は、SIGTSTP で端末を戻してから止まり、SIGCONT で raw モードに入り直して全体を描き直すことを確かめる。
@@ -204,10 +203,12 @@ func TestSuspendResumeInPTY(t *testing.T) {
 	if got := ptytest.Termios(t, p.tty); got != before {
 		t.Errorf("止まっている間の端末の設定が戻っていない:\n before %+v\n got    %+v", before, got)
 	}
+	// エディタは代替画面から戻る列を書いてから止まるので、止まった時点で列は pty に書かれている。
+	// ただし、テストの側が master から読む goroutine（Capture）は遅れることがあるので、読み終えるまで待つ。
+	// 直ちに確かめていたときは、CPU に負荷をかけると 200 回に 1 回ほど、列が 5 ms ほど遅れて読まれて落ちた（#116）。
+	// 止まっている間はエディタが書かないので、待って届いた列は止まる前に書いたものである。
+	p.out.WaitForString(t, "\x1b[?1049l")
 	mark := len(p.out.String())
-	if !strings.Contains(p.out.String(), "\x1b[?1049l") {
-		t.Error("止まる前に代替画面から戻っていない")
-	}
 	if err := p.cmd.Process.Signal(syscall.SIGCONT); err != nil {
 		t.Fatal(err)
 	}
@@ -309,9 +310,7 @@ func TestSignalRestoresTerminal(t *testing.T) {
 				t.Error("シグナルで終わったのに終了コードが 0")
 			}
 			p.checkRestored(t, before)
-			if !strings.Contains(p.out.String(), "シグナルを受けて終了した") {
-				t.Errorf("終了の理由が出ていない: %q", p.out.String())
-			}
+			p.out.WaitForString(t, "シグナルを受けて終了した") // Capture の読み取りの遅れを待つ（#116）
 		})
 	}
 }
