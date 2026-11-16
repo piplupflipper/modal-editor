@@ -9,8 +9,34 @@ import (
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 )
+
+// stat が戻らないと、定期的な確認は期限の後に 1 回知らせ、:checktime もその旨を知らせる（黙って止まらない）。
+// stat が戻れば、確認は続く。
+func TestCheckStalled(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
+	path := filepath.Join(dir, "a.txt")
+	h := start(t, Config{WorkDir: dir, CheckInterval: 10 * time.Millisecond}, "a.txt")
+	release := make(chan struct{})
+	h.e.do(func() {
+		h.e.checkStall = 50 * time.Millisecond
+		h.e.statFn = func(p string) (fileStamp, error) {
+			<-release
+			return statFile(p)
+		}
+	})
+	h.eventually("定期的な確認の知らせ", func() bool { return strings.Contains(h.e.message.Text, "終わりません") })
+	h.keys("<Esc>:checktime<CR>")
+	h.settle()
+	if msg := h.message(); !strings.Contains(msg, "終わりません") {
+		t.Fatalf(":checktime: message = %q", msg)
+	}
+	close(release)
+	writeExternal(t, path, "new\n")
+	h.eventually("stat が戻った後の読み直し", func() bool { return h.e.cur.buf.Text() == "new" })
+}
 
 // reloadEdits の編集を適用すると読み直した内容になり、編集は変わった行の範囲だけを置き換える。
 func TestReloadEdits(t *testing.T) {
@@ -389,8 +415,26 @@ func TestNoticeAfterExtCommand(t *testing.T) {
 	h.settle()
 	writeExternal(t, path, "Y\n")
 	h.eventually("W12 の記録", func() bool { return strings.HasPrefix(h.e.cur.notice, "W12") })
+	// キーに割り当てたコマンドの後は問わない（続けて打つキーを答えに取らない）。記録は残る。
 	h.keys(`\d`)
-	h.eventually("拡張機能のコマンドの後の問い", func() bool { return h.e.prompt != nil && strings.HasPrefix(h.e.prompt.text, "W12") })
+	h.eventually("キーのコマンドの結果", func() bool { return strings.HasPrefix(h.e.message.Text, "v") })
+	if p, n := h.promptText(), h.noticeOf(); p != "" || !strings.HasPrefix(n, "W12") {
+		t.Fatalf("キーのコマンドの後: prompt = %q, notice = %q", p, n)
+	}
+	// コマンドラインから実行したコマンドでも、先読みのキーが溜まっていれば問わずに次へ回す。
+	h.e.do(func() {
+		for _, k := range []string{":", "f", "a", "k", "e", ".", "d", "u", "m", "p", "<CR>", "l"} {
+			h.e.keys.push(keyInput{key: editcmd.MustParseKeys(k)[0]})
+		}
+		for !h.e.keys.empty() {
+			h.e.handleKeys()
+		}
+	})
+	if p, n := h.promptText(), h.noticeOf(); p != "" || !strings.HasPrefix(n, "W12") {
+		t.Fatalf("先読みのキーがあるときのコマンドの後: prompt = %q, notice = %q", p, n)
+	}
+	h.keys(":fake.dump<CR>")
+	h.eventually("コマンドラインのコマンドの後の問い", func() bool { return h.e.prompt != nil && strings.HasPrefix(h.e.prompt.text, "W12") })
 	h.keys("a")
 	h.settle()
 	if got := h.text(); got != "Y" {

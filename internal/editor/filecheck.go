@@ -202,12 +202,17 @@ func (e *Editor) startCheck(ask bool) {
 		return
 	}
 	e.checking, e.checkAsk = true, ask
+	e.checkStart, e.checkWarned = time.Now(), false
 	done, stop := e.checkDone, e.stop
+	stat := e.statFn
+	if stat == nil {
+		stat = statFile
+	}
 	go func() {
 		defer e.recoverPanic()
 		for i := range jobs {
 			j := &jobs[i]
-			now, err := statFile(j.path)
+			now, err := stat(j.path)
 			if err != nil {
 				// 状態を得られなければ、変わっていないものとして扱う。
 				now = j.seen
@@ -338,7 +343,43 @@ func (e *Editor) checkTime() {
 	if e.askNotice() {
 		return
 	}
+	if e.checking && time.Since(e.checkStart) >= e.stallTimeout() {
+		// 前の確認が戻らない（stat が固まっている）。黙って待たずに知らせる。終われば、その結果で問う。
+		e.checkAsk = true
+		e.warnStalled()
+		return
+	}
 	e.startCheck(true)
+}
+
+// checkStallTimeout は、外での変更の確認が終わらないと知らせるまでの時間（仮）である。
+// NFS のように stat が戻らないファイルシステムで、定期的な確認と :checktime が黙って止まって見えないようにする。
+const checkStallTimeout = 5 * time.Second
+
+func (e *Editor) stallTimeout() time.Duration {
+	if e.checkStall > 0 {
+		return e.checkStall
+	}
+	return checkStallTimeout
+}
+
+// checkStalled は、定期的な確認の時点で、前の確認が期限を過ぎても終わっていなければ、1 回だけ知らせる。知らせたら true を返す。
+// 固まった goroutine の上に新しい確認を重ねても同じところで止まるので、新しくは始めず、終わるのを待つ。
+func (e *Editor) checkStalled() bool {
+	if !e.checking || e.checkWarned || time.Since(e.checkStart) < e.stallTimeout() {
+		return false
+	}
+	e.warnStalled()
+	return true
+}
+
+// warnStalled は、外での変更の確認が終わらないことを知らせる。
+func (e *Editor) warnStalled() {
+	e.checkWarned = true
+	e.message = ui.Message{
+		Text:  fmt.Sprintf("警告: 外での変更の確認が %d 秒たっても終わりません（ファイルシステムが応答していない可能性があります）", int(time.Since(e.checkStart).Seconds())),
+		Level: ui.MessageWarning,
+	}
 }
 
 // shortName は、問いと警告に出すバッファの名前を返す。作業ディレクトリの下のファイルなら相対パスにする。

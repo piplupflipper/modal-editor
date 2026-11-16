@@ -176,6 +176,15 @@ type Editor struct {
 	// extRan は、直前のキーの処理で拡張機能のコマンド（command/execute）を実行したかである。
 	// 実行した後は、記録した外での変更の問いを出してよい時点である（afterKey）。
 	extRan bool
+	// fromCmdline は、直前に処理した利用者のキーを、コマンドラインモードで打ったかである（handleKey）。
+	fromCmdline bool
+	// statFn は、外での変更の確認で使う stat である。テストが、戻らない stat に差し替える。
+	statFn func(string) (fileStamp, error)
+	// checkStart は、外での変更の確認を別の goroutine で始めた時刻、checkWarned はその確認が長引いていると知らせたかである。
+	checkStart  time.Time
+	checkWarned bool
+	// checkStall は、確認が長引いていると知らせるまでの時間である。0 なら checkStallTimeout を使う。テストが短くする。
+	checkStall time.Duration
 	// stop は、Run が戻ると閉じる。イベントループへ渡す先の無くなった goroutine を終わらせる。
 	stop chan struct{}
 
@@ -499,6 +508,9 @@ func (e *Editor) Run(ctx context.Context) error {
 		case r := <-e.decoDone:
 			e.decorationsBuilt(r)
 		case <-checkC:
+			if e.checkStalled() {
+				break // 確認が終わらないことを知らせたので描き直す
+			}
 			if e.idle() {
 				e.startCheck(false)
 			}

@@ -95,10 +95,15 @@ func (e *Editor) afterKey() {
 		e.stopKeyTimer()
 	}
 	if e.extRan {
-		// 拡張機能のコマンドの後は、記録した外での変更の問いを出してよい時点である（askNotice）。
+		// コマンドラインから実行した拡張機能のコマンドの後は、記録した外での変更の問いを出してよい時点である（askNotice）。
+		// ノーマルモードのキーに割り当てたコマンドの後は出さない。続けて打つ l や o を答えに取らないためである（PR #149 の再レビュー）。
+		// 出さなかった問い、打ちかけのキーや先読みのキーがあって出せなかった問いは、記録したまま次の安全な時点へ回る。
 		e.extRan = false
-		e.askNotice()
+		if e.fromCmdline {
+			e.askNotice()
+		}
 	}
+	e.fromCmdline = false
 }
 
 func (e *Editor) armKeyTimer() {
@@ -148,6 +153,9 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		return
 	}
 	e.message = noMessage
+	// 利用者がコマンドラインで打ったキー（:acp.prompt ...<CR> の <CR>）かを覚える。afterKey が、拡張機能のコマンドの後に
+	// 記録した問いを出してよいかを決めるのに使う。キーマップの展開で入ったコマンドラインは、利用者のキーがノーマルモードなので数えない。
+	e.fromCmdline = e.cur.state.Mode() == command.ModeCommandLine
 	for _, k := range e.remap.feed(e.mapMode(), k) {
 		if !e.feedKey(k) {
 			e.remap.reset()
