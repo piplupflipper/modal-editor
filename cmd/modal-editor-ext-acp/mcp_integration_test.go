@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,10 +76,10 @@ func (o *outputCollector) String() string {
 }
 
 // 本体（exthost）が決めた MCP のソケットのパスを、MCP の拡張機能と ACP の拡張機能の両方が環境変数で受け取る。
-// ACP の拡張機能が session/new でエージェントへ渡す MCP サーバー（中継コマンド）の引数のパスは、MCP の拡張機能が待ち受けるパスと一致し、
-// その設定のとおりに中継コマンドを起動すると、MCP の拡張機能と initialize をやり取りできる（基本設計 6.2、6.5）。
+// ACP の拡張機能が session/new でエージェントへ渡す MCP サーバー（中継コマンド）の引数のパスは、本体が待ち受けるパスと一致し、
+// その設定のとおりに中継コマンドを起動すると、本体が MCP の拡張機能を起動して接続を引き継ぎ、initialize をやり取りできる（基本設計 6.2、6.5）。
 //
-// 本体の側は internal/editor の New と同じく、exthost.NewMCPSocket で決めたパスを Config.Env で渡す。
+// 本体の側は internal/editor の New と同じく、exthost.NewMCPSocket で決めたパスを Config.Env と Config.SocketPath で渡す。
 // エディタを通さないのは、ACP のプロンプトの本文を command/execute の引数で渡す書き方がエディタに無いため（基本設計 10 章）である。
 //
 // req: FR-33, FR-34
@@ -119,7 +118,7 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 	if testing.Verbose() {
 		logger = slog.Default()
 	}
-	host, err := exthost.New(specs, exthost.Config{Env: []string{sock.Env()}, Logger: logger})
+	host, err := exthost.New(specs, exthost.Config{Env: []string{sock.Env()}, SocketPath: sock.Path, Logger: logger})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,12 +139,8 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
-	// バッファを開かずに呼ぶので、Withheld でバッファの複製が無いことを伝える（どちらのコマンドもバッファを使わない）。
-	// MCP の拡張機能を起動する。起動すると本体が決めたパスで待ち受ける。
-	start, err := host.ExecuteCommand(ctx, "mcp", ext.CommandExecuteParams{ID: "mcp.start", Withheld: true}, testTimeout)
-	if err != nil || !start.OK {
-		t.Fatalf("mcp.start = %+v, %v", start, err)
-	}
+	// バッファを開かずに呼ぶので、Withheld でバッファの複製が無いことを伝える（このコマンドはバッファを使わない）。
+	// MCP の拡張機能は、本体が決めたパスへの最初の接続で本体が起動する（起動の契機 socket）。
 	// ACP の拡張機能にプロンプトを送り、テスト用のエージェントが session/new で受け取った内容を欄へ書かせる。
 	args, err := json.Marshal(map[string]string{"text": `{"op":"session"}`})
 	if err != nil {
@@ -185,12 +180,13 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 		t.Fatalf("mcpServers[0] = %+v, want %s --socket %s", srv, bridge, sock.Path)
 	}
 
-	// MCP の拡張機能は、同じパスで待ち受けている。
-	conn, err := net.Dial("unix", sock.Path)
-	if err != nil {
-		t.Fatalf("MCP の拡張機能が %s で待ち受けていない: %v", sock.Path, err)
+	// 本体は、同じパスで起動時から待ち受けている。MCP の拡張機能はまだ起動していない。
+	if st, _ := host.State("mcp"); st != exthost.StateNotStarted {
+		t.Fatalf("接続の前の MCP の拡張機能の状態 = %v, want not-started", st)
 	}
-	_ = conn.Close()
+	if _, err = os.Stat(sock.Path); err != nil {
+		t.Fatalf("本体が %s で待ち受けていない: %v", sock.Path, err)
+	}
 
 	// エージェントと同じく、受け取った設定のとおりに中継コマンドを起動し、MCP の initialize をやり取りする。
 	cmd := exec.CommandContext(ctx, srv.Command, srv.Args...) //nolint:gosec // テストでビルドした中継コマンドを、ACP の拡張機能が渡した引数で起動する

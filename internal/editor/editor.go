@@ -24,8 +24,12 @@ import (
 // 設定の既定値（仮）。
 const (
 	// DefaultSyncTimeout は、キー入力ごとに結果が要る問い合わせの期限の既定値である（FR-17）。
-	// 期限の既定値は #43 の裁定待ちで、段階 1 の計測からの提案値（PR #37）を仮に使う。
+	// 既定値は #43 の裁定 1-a で 100 ms に決まった（段階 1 の計測からの提案値。PR #37）。
 	DefaultSyncTimeout = 100 * time.Millisecond
+	// DefaultStartSyncTimeout は、起動を含む問い合わせ（拡張機能が未起動か起動中のときの問い合わせ）の期限の既定値（仮）である（基本設計 5.2）。
+	// #43 の裁定 1-b で、起動を含む問い合わせだけ別の長い期限を使うことに決まった。
+	// 段階 1 の計測では、起動から最初の応答まで 10 万行で 43〜56 ms、100 万行で 411〜547 ms だったので、仮に 1 秒にした。
+	DefaultStartSyncTimeout = time.Second
 	// DefaultKeyTimeout は、曖昧なキーの列（利用者のキーマップの接頭辞、本体の y と拡張機能の ys）を確定させるまでの待ち時間である。
 	// Vim の 'timeoutlen' の既定と同じ 1000 ms にした。
 	DefaultKeyTimeout = time.Second
@@ -76,6 +80,10 @@ type Config struct {
 	// SyncTimeout は、キー入力ごとに結果が要る問い合わせの期限（基本設計 7 章の syncTimeoutMs）である。
 	// nil なら DefaultSyncTimeout を使う。0 は「待たない」（FR-18）。
 	SyncTimeout *time.Duration
+	// StartSyncTimeout は、キー入力ごとに結果が要る問い合わせのうち、起動を含むもの（問い合わせた時点で拡張機能が未起動か起動中）の期限である（基本設計 5.2）。
+	// 0 以下なら DefaultStartSyncTimeout を使う。SyncTimeout より短ければ SyncTimeout を使う。
+	// SyncTimeout が 0（待たない）のときと、マクロとドットリピートの再生中は使わない。
+	StartSyncTimeout time.Duration
 	// ReplayTimeout は、マクロとドットリピートの再生中に、拡張機能の応答を待つ上限である（FR-19 の「応答が無ければ」）。
 	// 0 以下なら exthost の Config.SendTimeout を使う。
 	ReplayTimeout time.Duration
@@ -94,6 +102,8 @@ type Config struct {
 	// 空なら、New が exthost.NewMCPSocket で起動ごとに一意なパスを決め、Close でそのディレクトリを消す。
 	// 決められなければ、空の値を渡す（本体の環境の同じ名前の変数は引き継がない）。
 	// 指定したパスは、呼び出し側が用意し、後始末する。
+	// Host.SocketPath が空なら、このパスを入れる。起動の契機 socket の拡張機能があれば、本体はこのパスで起動時から待ち受け、
+	// 待ち受けたソケットのファイルは Close で消す（exthost.Config.SocketPath）。
 	MCPSocket string
 	// Logger は、ログの記録先である。nil なら slog.Default() を使う。
 	Logger *slog.Logger
@@ -202,7 +212,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	}
 	var sock *exthost.MCPSocket
 	if cfg.MCPSocket == "" {
-		// 決められなくてもエディタは動かす。MCP の拡張機能は待ち受けられなかったことを mcp.start で利用者へ知らせ、
+		// 決められなくてもエディタは動かす。本体は待ち受けず、MCP の拡張機能はソケットを引き継がなかったことを mcp.start で利用者へ知らせ、
 		// ACP の拡張機能はエージェントへ MCP サーバーを渡さない。
 		s, err := exthost.NewMCPSocket()
 		if err != nil {
@@ -215,6 +225,10 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	// 決められなかったときも空の値で上書きし、本体の環境の古い値（ACP のエージェントの中で起動したときの外側のエディタのパスなど）を
 	// 拡張機能へ引き継がない。拡張機能と中継コマンドは、空の値を変数が無いのと同じに扱う（os.Getenv）。
 	cfg.Host.Env = append(slices.Clone(cfg.Host.Env), ext.EnvMCPSocket+"="+cfg.MCPSocket)
+	// 起動の契機 socket の拡張機能（MCP）のために、本体が起動時からこのパスで待ち受ける（基本設計 6.2）。
+	if cfg.Host.SocketPath == "" {
+		cfg.Host.SocketPath = cfg.MCPSocket
+	}
 	host, err := exthost.New(cfg.Extensions, cfg.Host)
 	if err != nil {
 		_ = sock.Remove()
@@ -575,6 +589,14 @@ func (e *Editor) syncTimeout() time.Duration {
 		return DefaultSyncTimeout
 	}
 	return max(*e.cfg.SyncTimeout, 0)
+}
+
+// startSyncTimeout は、起動を含む問い合わせの期限を返す。
+func (e *Editor) startSyncTimeout() time.Duration {
+	if e.cfg.StartSyncTimeout <= 0 {
+		return DefaultStartSyncTimeout
+	}
+	return e.cfg.StartSyncTimeout
 }
 
 // keyTimeout は、曖昧なキーの列を確定させるまでの待ち時間を返す。

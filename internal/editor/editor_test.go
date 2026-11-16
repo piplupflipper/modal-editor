@@ -176,6 +176,80 @@ func TestSyncTimeout(t *testing.T) {
 	}
 }
 
+// 起動を含む問い合わせは、SyncTimeout より長い StartSyncTimeout で待つ（基本設計 5.2、#43 の裁定 1-b）。
+// 拡張機能の起動と初期化は 1 ms では終わらないので、StartSyncTimeout も 1 ms にすると最初の操作は失敗する。
+//
+// req: FR-17
+func TestStartSyncTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start time.Duration
+		ok    bool
+	}{
+		{"default", 0, true},
+		{"short", time.Millisecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": "abc\ndef\n"})
+			h := start(t, Config{
+				WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(time.Millisecond), StartSyncTimeout: tc.start,
+			}, "a.txt")
+			if st := h.state("fake"); st != exthost.StateNotStarted {
+				t.Fatalf("fake: state = %v（未起動のはず）", st)
+			}
+			h.keys("dil")
+			h.settle()
+			if tc.ok {
+				if got, msg := h.text(), h.message(); got != "\ndef" || msg != "" {
+					t.Errorf("text = %q, message = %q（起動を待って適用するはず）", got, msg)
+				}
+				return
+			}
+			if msg := h.message(); !strings.Contains(msg, "timed out") {
+				t.Errorf("message = %q", msg)
+			}
+		})
+	}
+}
+
+// 期限が 0（FR-18）と、マクロの再生中（FR-19）は、起動を含む問い合わせでも StartSyncTimeout を使わない（基本設計 5.2）。
+//
+// req: FR-18, FR-19
+func TestStartSyncTimeoutNotUsed(t *testing.T) {
+	t.Run("zero", func(t *testing.T) {
+		dir := writeFiles(t, map[string]string{"a.txt": "abc\ndef\n"})
+		h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(0), StartSyncTimeout: 5 * time.Second}, "a.txt")
+		// fake.slow は応答を slowDelay だけ遅らせる。期限 0 なら起動も応答も待たずに戻る。
+		began := time.Now()
+		h.keys("dis")
+		h.settle()
+		if d := time.Since(began); d >= slowDelay {
+			t.Errorf("期限 0 で %v 待った", d)
+		}
+		if got := h.text(); got != "abc\ndef" {
+			t.Errorf("待たずに戻る前に適用した: %q", got)
+		}
+		h.eventually("後からの適用", func() bool { return h.e.cur.buf.Text() == "\ndef" })
+	})
+	t.Run("replay", func(t *testing.T) {
+		// レジスター a に "dil" を入れ、未起動の拡張機能の操作をマクロとして再生する。
+		// 再生中は ReplayTimeout（1 ms）で打ち切るので、StartSyncTimeout（5 秒）を使えば成功するはずの操作が失敗する。
+		dir := writeFiles(t, map[string]string{"a.txt": "dil\nabc\n"})
+		h := start(t, Config{
+			WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(5 * time.Second),
+			StartSyncTimeout: 5 * time.Second, ReplayTimeout: time.Millisecond,
+		}, "a.txt")
+		h.keys(`"ay$j@a`)
+		h.settle()
+		if got := h.text(); got != "dil\nabc" {
+			t.Errorf("text = %q（再生中に起動を待った）", got)
+		}
+		if msg := h.message(); !strings.Contains(msg, "timed out") {
+			t.Errorf("message = %q", msg)
+		}
+	})
+}
+
 // 期限が 0 なら待たずに次のキーを受け付け、結果が届いた時点で、バージョン番号とカーソルが同じなら適用し、違えば破棄する。
 //
 // req: FR-18

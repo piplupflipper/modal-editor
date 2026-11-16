@@ -83,6 +83,7 @@ func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 			e.run = nil
 			// 止めている間に届き、まだ渡していないイベントは捨てる（Close と同じ扱い）。
 			h.purgeLocked(r)
+			h.dropPendingLocked(e)
 			h.setStateLocked(e, StateDisabled, nil)
 			h.mu.Unlock()
 			return
@@ -96,6 +97,7 @@ func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 		// 図 4 のとおり、異常ではいったん再起動待ちへ移り、連続の失敗が上限に達していれば待たずに無効へ移る。
 		h.setStateLocked(e, StateRestartWait, err)
 		if e.failures >= h.cfg.MaxFailures {
+			h.dropPendingLocked(e)
 			h.setStateLocked(e, StateDisabled, fmt.Errorf("%w (%d consecutive failures)", err, e.failures))
 			h.mu.Unlock()
 			return
@@ -115,6 +117,7 @@ func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 			t.Stop()
 			h.mu.Lock()
 			if !h.closing {
+				h.dropPendingLocked(e)
 				h.setStateLocked(e, StateDisabled, nil)
 			}
 			h.mu.Unlock()
@@ -122,6 +125,15 @@ func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 		}
 
 		h.mu.Lock()
+		// 起動の契機 socket の拡張機能は、再起動待ちのまま次の接続を待ってから起動する（基本設計 6.2）。
+		if !h.waitConnectionLocked(e, stop) {
+			if !h.closing {
+				h.dropPendingLocked(e)
+				h.setStateLocked(e, StateDisabled, nil)
+			}
+			h.mu.Unlock()
+			return
+		}
 		if h.closing {
 			h.mu.Unlock()
 			return
@@ -150,7 +162,16 @@ func (h *Host) restartDelay(failures int) time.Duration {
 // 異常な拡張機能は shutdown を処理できないことが多く、待つと再起動が遅れるためである。
 func (h *Host) runOnce(e *extension, r *run, stop <-chan struct{}) (err error) {
 	id := e.spec.Manifest.ID
-	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args, e.spec.Dir, h.cfg.Env)
+	listener, conns := h.takeSocketFiles(e)
+	var extra []*os.File
+	if listener != nil {
+		extra = append([]*os.File{listener}, conns...)
+	}
+	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args, e.spec.Dir, h.cfg.Env, extra)
+	// 受け付けた接続は子プロセスへ複製したので、本体の側は閉じる。起動に失敗したときは接続が失われ、中継コマンドは終わる。
+	for _, f := range conns {
+		_ = f.Close()
+	}
 	if err != nil {
 		return err
 	}
@@ -562,7 +583,9 @@ type process struct {
 // 標準入出力は os.Pipe でつなぎ、子の側の端は起動後に閉じる。
 // dir（宣言ファイルのディレクトリ。空でもよい）は、絶対パスにして環境変数 ext.EnvExtensionDir で渡す。
 // env（"名前=値" の列。[Config.Env]）は、本体の環境の後、ext.EnvExtensionDir の前に足す。
-func startProcess(path string, args []string, dir string, env []string) (p *process, err error) {
+// extra は、子プロセスへファイル記述子 ext.SocketFDStart から引き継ぐファイルで、その数を ext.EnvSocketFDs で渡す（基本設計 6.2）。
+// extra が無ければ ext.EnvSocketFDs を空の値にする。
+func startProcess(path string, args []string, dir string, env []string, extra []*os.File) (p *process, err error) {
 	var opened []*os.File
 	defer func() {
 		if err != nil {
@@ -599,7 +622,8 @@ func startProcess(path string, args []string, dir string, env []string) (p *proc
 			dir = abs
 		}
 	}
-	cmd.Env = append(append(os.Environ(), env...), ext.EnvExtensionDir+"="+dir)
+	cmd.Env = append(append(os.Environ(), env...), ext.EnvExtensionDir+"="+dir, socketEnv(len(extra)))
+	cmd.ExtraFiles = extra
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW

@@ -48,6 +48,7 @@ import (
 //	  "fileTypes": { ".tmpl": "html", "Justfile": "make" },
 //	  "extensions": {
 //	    "syncTimeoutMs": 50,
+//	    "startSyncTimeoutMs": 1000,
 //	    "memoryLimitMb": 0,
 //	    "settings": { "lsp": { "servers": [] } },
 //	    "activation": { "lsp": [{ "on": "filetype", "pattern": "python" }] }
@@ -61,6 +62,10 @@ type Config struct {
 	// SyncTimeout は extensions.syncTimeoutMs の値で、editor.Config.SyncTimeout にそのまま渡す。
 	// 項目が無いか誤りなら nil（editor の既定値）。0 は「待たない」（FR-18）。
 	SyncTimeout *time.Duration
+	// StartSyncTimeout は extensions.startSyncTimeoutMs の値で、editor.Config.StartSyncTimeout にそのまま渡す。
+	// 起動を含む問い合わせ（拡張機能が未起動か起動中のときの問い合わせ）の期限である（基本設計 5.2、5.4）。
+	// 項目が無いか誤りか 0 なら 0 で、editor の既定値（editor.DefaultStartSyncTimeout。仮に 1 秒）を使う。
+	StartSyncTimeout time.Duration
 	// FixEndOfLine は fixendofline の値で、書き出すときに末尾の改行を補うかどうかである（基本設計 4.1。Vim の 'fixendofline'）。
 	// 項目が無いか誤りなら nil で、既定の有効（true）として扱う。
 	// editor.Config にはまだ対応する項目が無いので、呼び出し側が buffer.Buffer.SetFixEndOfLine へ写す。
@@ -239,6 +244,10 @@ func (s *source) extensions(v *hujson.Value, cfg *Config) {
 			if n, ok := s.nonNegInt(m.value, path, maxSyncTimeoutMs); ok {
 				d := time.Duration(n) * time.Millisecond
 				cfg.SyncTimeout = &d
+			}
+		case "startSyncTimeoutMs":
+			if n, ok := s.nonNegInt(m.value, path, maxSyncTimeoutMs); ok {
+				cfg.StartSyncTimeout = time.Duration(n) * time.Millisecond
 			}
 		case "memoryLimitMb":
 			if n, ok := s.nonNegInt(m.value, path, math.MaxInt64>>20); ok {

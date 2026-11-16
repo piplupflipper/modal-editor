@@ -87,7 +87,7 @@ type client struct {
 	settings settings
 	timeouts timeouts
 	logger   *log.Logger
-	// unopened は、開いていないファイルへの fs/write_text_file の書き方である（#43 の 3 の裁定待ち。unopenedFileWriter）。
+	// unopened は、開いていないファイルへの fs/write_text_file の書き方である（#43 の裁定 3 の A で、本体にバッファとして開かせる。unopenedFileWriter）。
 	unopened unopenedFileWriter
 	// getenv と executable は、環境変数と自分の実行ファイルのパスを得る関数である。テストが差し替える。
 	getenv     func(string) string

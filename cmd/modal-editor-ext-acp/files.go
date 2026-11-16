@@ -124,10 +124,9 @@ func (c *client) writeTextFile(ctx context.Context, p *writeTextFileParams) (wri
 
 // unopenedFileWriter は、本体が開いていないファイルへの fs/write_text_file の書き方である。
 //
-// どう書くかは #43 の 3 の裁定待ちである（基本設計 6.5、10 章。FR-15 が拡張機能による開いていないファイルへの直接の書き込みを禁じるか）。
-// 案は 2 つで、A は本体にバッファとして開かせてバッファを通して書く（openAsBuffer。推奨で、当面はこれを使う）、
-// B は拡張機能がファイルへ直接書く。B に決まったら、このインターフェースを満たす型を足し、newClient で差し替える。
-// 開いているファイルへの書き込みは、どちらの案でもバッファを通す（client.writeBuffer）。
+// #43 の裁定 3 の A で、FR-15 は拡張機能による開いていないファイルへの直接の書き込みも禁じる（基本設計 6.5）。
+// このため、本体にバッファとして開かせてバッファを通して書く（openAsBuffer）。拡張機能がファイルへ直接書く実装は持たない。
+// 開いているファイルへの書き込みもバッファを通す（client.writeBuffer）。
 type unopenedFileWriter interface {
 	// writeUnopened は、path の内容を content にする。ファイルが無ければ作る（ACP の File System）。
 	writeUnopened(ctx context.Context, path, content string) error

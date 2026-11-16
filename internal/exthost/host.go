@@ -111,7 +111,13 @@ type Config struct {
 	// Env は、すべての拡張機能の子プロセスに足す環境変数の列である。各要素は "名前=値" の形にする。
 	// 子プロセスの環境は、本体の環境、Env、ext.EnvExtensionDir の順に並べ、同じ名前は後のものが勝つ（os/exec の決まり）。
 	// MCP のソケットのパス（ext.EnvMCPSocket。[NewMCPSocket]）を渡すのに使う（基本設計 6.2）。
+	// ext.EnvSocketFDs は Host が子プロセスごとに決めるので、ここに書いても上書きする。
 	Env []string
+	// SocketPath は、起動の契機 socket（ext.ActivationSocket）のために、[New] の時点から待ち受ける Unix ドメインソケットのパスである（基本設計 6.2）。
+	// 本体が起動ごとに決める MCP のソケットのパス（[NewMCPSocket]）を入れる。
+	// 空か、socket の契機を宣言した拡張機能が無ければ待ち受けない。
+	// 待ち受けたソケットのファイルは [Host.Close] で消す。
+	SocketPath string
 }
 
 func (c Config) withDefaults() Config {
@@ -261,6 +267,8 @@ type Host struct {
 	docs    map[ext.BufferID]*document
 	queue   []queued
 	closing bool
+	// sock は、起動の契機 socket のために待ち受けているソケットである。待ち受けていなければ nil。New の後は変えない。
+	sock *socketActivator
 }
 
 // extension は、1 つの拡張機能の状態である。可変のフィールドは Host.mu が守る。
@@ -280,6 +288,8 @@ type extension struct {
 }
 
 // New は、specs の拡張機能を管理する Host を作る。子プロセスは起動しない（FR-14、NFR-04）。
+// 起動の契機 socket（ext.ActivationSocket）を宣言した拡張機能があれば、[Config.SocketPath] で待ち受けを始め、
+// 最初の接続でその拡張機能を起動する（基本設計 6.2）。待ち受けられなくても誤りにせず、記録だけする。
 // 拡張機能の ID が重複していれば誤りを返す。
 // 使い終わったら Close を呼ぶ。
 func New(specs []Spec, cfg Config) (*Host, error) {
@@ -307,6 +317,7 @@ func New(specs []Spec, cfg Config) (*Host, error) {
 		h.exts[id] = e
 		h.order = append(h.order, e)
 	}
+	h.startSocket()
 	go h.pump()
 	return h, nil
 }
@@ -390,7 +401,8 @@ func (h *Host) Start(id string) error {
 }
 
 // Restart は、無効になった拡張機能の連続の失敗の数を 0 に戻し、起動し直す（図 4 の「利用者が再起動を指示」）。
-// 未起動の拡張機能なら起動する。それ以外の状態では何もしない。起動は非同期である。
+// 未起動の拡張機能なら起動する。起動の契機 socket の拡張機能が異常の後の再起動待ちなら、接続を待たずに起動する
+// （再起動の待ち時間の中なら、待ち時間が過ぎた時点で起動する。基本設計 6.2）。それ以外の状態では何もしない。起動は非同期である。
 // 停止中（[StateStopping]）でも何もしないので、無効へ移った後に呼び直す。
 func (h *Host) Restart(id string) error {
 	h.mu.Lock()
@@ -403,7 +415,11 @@ func (h *Host) Restart(id string) error {
 	case StateDisabled, StateNotStarted:
 		e.failures = 0
 		h.startLocked(e)
-	case StateStarting, StateRunning, StateStopping, StateRestartWait:
+	case StateRestartWait:
+		// 起動の契機 socket の拡張機能は、異常の後に接続を待つので、利用者の指示で接続を待たずに起動する（基本設計 6.2）。
+		// 再起動の待ち時間の中なら、待ち時間が過ぎた時点で起動する。それ以外の拡張機能は、待ち時間の後に自動で起動する。
+		h.kickLocked(e, false)
+	case StateStarting, StateRunning, StateStopping:
 	}
 	return nil
 }
@@ -490,6 +506,7 @@ func (h *Host) CloseContext(ctx context.Context) error {
 		close(h.force)
 		<-done
 	}
+	h.closeSocket()
 	<-h.pumpDone
 	return err
 }

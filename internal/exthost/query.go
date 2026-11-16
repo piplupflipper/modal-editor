@@ -119,6 +119,11 @@ type SendOptions struct {
 	// Timeout は、起動と応答を待つ上限である。0 以下なら [Config.SendTimeout] を使う。
 	// 期限 0 の設定（FR-18）でも、応答しない問い合わせの待ち受けが溜まらないように、この上限で打ち切る。
 	Timeout time.Duration
+	// StartTimeout は、起動を含む問い合わせ（Send を呼んだ時点で拡張機能が未起動か起動中のもの）で、Timeout の代わりに使う期限である（基本設計 5.2）。
+	// 大きなバッファを開いた直後の最初の問い合わせが、全文の送信を含む起動の時間で失敗しないようにする（#43 の裁定 1-b）。
+	// Timeout（0 以下なら [Config.SendTimeout]）より短いか 0 以下なら使わない。
+	// 稼働中の拡張機能への問い合わせには使わない。
+	StartTimeout time.Duration
 }
 
 // Query は、[Host.Send] で送った問い合わせである。
@@ -158,6 +163,10 @@ func (h *Host) send(id, method string, params any, opts SendOptions, defaultTime
 	e, err := h.lookupLocked(id)
 	if err == nil {
 		err = check(e)
+		starting := e.state == StateNotStarted || e.state == StateStarting || h.kickedLocked(e)
+		if err == nil && starting && opts.StartTimeout > timeout {
+			timeout = opts.StartTimeout
+		}
 	}
 	if err != nil {
 		h.mu.Unlock()
@@ -203,7 +212,12 @@ func (h *Host) ensureStartedLocked(e *extension) error {
 	case StateNotStarted:
 		h.startLocked(e)
 	case StateStarting, StateRunning:
-	case StateStopping, StateRestartWait, StateDisabled:
+	case StateRestartWait:
+		// 起動の契機 socket の拡張機能が、異常の後の待ち時間を過ぎて接続を待っているなら、接続を待たずに起動する（基本設計 6.2）。
+		if !h.kickLocked(e, true) {
+			return fmt.Errorf("%w: state %s", ErrUnavailable, e.state)
+		}
+	case StateStopping, StateDisabled:
 		return fmt.Errorf("%w: state %s", ErrUnavailable, e.state)
 	}
 	return nil
@@ -227,7 +241,12 @@ func (h *Host) waitRunning(ctx context.Context, id string) (*rpc.Conn, error) {
 			conn := e.run.conn
 			h.mu.Unlock()
 			return conn, nil
-		case StateStopping, StateRestartWait, StateDisabled:
+		case StateRestartWait:
+			if !h.kickedLocked(e) {
+				h.mu.Unlock()
+				return nil, fmt.Errorf("%w: state %s", ErrUnavailable, StateRestartWait)
+			}
+		case StateStopping, StateDisabled:
 			st := e.state
 			h.mu.Unlock()
 			return nil, fmt.Errorf("%w: state %s", ErrUnavailable, st)

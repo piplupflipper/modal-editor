@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,13 +120,32 @@ func specs(t *testing.T) []exthost.Spec {
 	return []exthost.Spec{{Manifest: m, Dir: filepath.Dir(extBin)}, {Manifest: diag, Dir: t.TempDir()}}
 }
 
+// syncBuffer は、複数の goroutine から書いてよい strings.Builder である。本体の記録を集めるのに使う。
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 // startEditor は、internal/editor のエディタを偽の端末で動かす。files を開き、テストの終わりに止める。
-// 本体が拡張機能へ渡す MCP のソケットのパスを一緒に返す。
-func startEditor(t *testing.T, workDir string, files ...string) (*fakeTerm, string) {
+// 本体が拡張機能へ渡す MCP のソケットのパスと、本体の記録（拡張機能の状態の変化を含む）を一緒に返す。
+func startEditor(t *testing.T, workDir string, files ...string) (*fakeTerm, string, *syncBuffer) {
 	t.Helper()
 	term := &fakeTerm{in: make(chan editor.TermEvent, 256)}
+	logs := &syncBuffer{}
 	e, err := editor.New(term, editor.Config{
-		Extensions: specs(t), WorkDir: workDir, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Extensions: specs(t), WorkDir: workDir, Logger: slog.New(slog.NewTextHandler(logs, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -157,25 +174,11 @@ func startEditor(t *testing.T, workDir string, files ...string) (*fakeTerm, stri
 			t.Errorf("Close = %v", err)
 		}
 	})
-	return term, e.MCPSocket()
+	return term, e.MCPSocket(), logs
 }
 
-// waitSocket は、path で接続を受け付けるようになるまで待つ。
-func waitSocket(t *testing.T, path string) {
-	t.Helper()
-	deadline := time.Now().Add(testTimeout)
-	for {
-		c, err := net.Dial("unix", path)
-		if err == nil {
-			_ = c.Close()
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s で待ち受けない: %v", path, err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
+// mcpStarting は、本体の記録のうち、MCP の拡張機能を起動し始めたことを表す部分である（exthost の状態の変化の記録）。
+const mcpStarting = "extension=mcp state=starting"
 
 // startBridge は、中継コマンドを子プロセスとして起動し、その標準入出力に話すクライアントを返す。
 // 返した関数は、標準入力を閉じ、中継コマンドが終了コード 0 で終わることを確かめる。
@@ -215,9 +218,10 @@ func startBridge(t *testing.T, socket string) (*mcpClient, func()) {
 }
 
 // 中継コマンドを通して、MCP のクライアントから全ツールを呼び、本体（internal/editor と exthost）の状態を読み、編集し、保存する。
-// MCP の拡張機能は、manifest.json の起動の契機（mcp.start）で本体が起動したものである。
+// MCP の拡張機能は、manifest.json の起動の契機 socket で、本体が最初の接続を受け付けたときに起動したものである（基本設計 6.2）。
+// 最初の接続より前には起動していない。
 //
-// req: FR-32, FR-33
+// req: FR-14, FR-32, FR-33
 func TestThroughBridge(t *testing.T) {
 	work := t.TempDir()
 	aPath := filepath.Join(work, "a.go")
@@ -238,25 +242,40 @@ func TestThroughBridge(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", rt)
 	t.Setenv(socketEnv, filepath.Join(rt, "stale"))
 
-	term, sock := startEditor(t, work, aPath)
+	term, sock, logs := startEditor(t, work, aPath)
 	if !strings.HasPrefix(sock, filepath.Join(rt, "modal-editor")+string(filepath.Separator)) {
 		t.Fatalf("ソケットのパス = %q, want under %s", sock, rt)
 	}
-	// mcp.start で MCP の拡張機能が起動し、本体が決めたパスで待ち受ける。
-	term.keys(`\m`)
-	waitSocket(t, sock)
+	// 本体は起動時から、決めたパスで待ち受けている。
 	fi, err := os.Stat(sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Errorf("ソケットの権限 = %v, want 0600", fi.Mode().Perm())
+	if fi.Mode()&os.ModeSocket == 0 || fi.Mode().Perm() != 0o600 {
+		t.Errorf("ソケットのファイル = %v, want socket 0600", fi.Mode())
+	}
+	// 接続が無い間は、MCP の拡張機能を起動しない（FR-14）。
+	// 診断の拡張機能（ファイルの種類 go で起動する）が稼働中になるまで待ち、その間に MCP の拡張機能が起動していないことを確かめる。
+	deadline := time.Now().Add(testTimeout)
+	for !strings.Contains(logs.String(), "extension=diagext state=running") {
+		if time.Now().After(deadline) {
+			t.Fatalf("診断の拡張機能が起動しない:\n%s", logs.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if strings.Contains(logs.String(), mcpStarting) {
+		t.Fatalf("接続の前に MCP の拡張機能が起動した:\n%s", logs.String())
 	}
 
+	// 最初の接続で、本体が MCP の拡張機能を起動し、受け付けた接続を引き継ぐ。
 	c, finish := startBridge(t, sock)
 	r := c.result("server/discover", withMeta(nil))
 	if r["resultType"] != "complete" {
 		t.Errorf("server/discover = %v", r)
+	}
+	if n := strings.Count(logs.String(), mcpStarting); n != 1 {
+		t.Errorf("MCP の拡張機能を %d 回起動した, want 1", n)
 	}
 
 	// list_buffers
@@ -300,7 +319,7 @@ func TestThroughBridge(t *testing.T) {
 			} `json:"diagnostics"`
 		} `json:"entries"`
 	}
-	deadline := time.Now().Add(testTimeout)
+	deadline = time.Now().Add(testTimeout)
 	for {
 		c.toolOK("get_diagnostics", map[string]any{"buffer": aID}, &diags)
 		if len(diags.Entries) > 0 {
@@ -430,7 +449,7 @@ func TestThroughBridge(t *testing.T) {
 	}
 	finish()
 
-	// 2 本目の接続: 2025-11-25 の版のクライアント。
+	// 2 本目の接続: 2025-11-25 の版のクライアント。本体から引き継いだ待ち受けで、稼働中の MCP の拡張機能が受け付ける。
 	c2, finish2 := startBridge(t, sock)
 	ir := c2.result("initialize", map[string]any{"protocolVersion": legacyVersion, "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "t", "version": "0"}})
 	if ir["protocolVersion"] != legacyVersion {
@@ -442,62 +461,42 @@ func TestThroughBridge(t *testing.T) {
 		t.Errorf("2025-11-25 の list_buffers = %v %s", isErr, text)
 	}
 	finish2()
+	if n := strings.Count(logs.String(), mcpStarting); n != 1 {
+		t.Errorf("MCP の拡張機能を %d 回起動した, want 1", n)
+	}
 }
 
-// 環境変数でソケットのパスを渡さないと待ち受けず、mcp.start は失敗する。本体には失敗の理由を知らせる。
-func TestStartWithoutSocket(t *testing.T) {
-	x := newExtension(func(string) string { return "" })
+// 本体から待ち受けを引き継がなかったときは、何も待ち受けず、mcp.start は失敗して理由を利用者へ知らせる。
+func TestStartWithoutInheritedSocket(t *testing.T) {
+	x := newExtension("", nil, nil, nil)
 	defer x.stop()
 	x.start()
 	if res := x.startCommand(); res.OK {
-		t.Error("ソケットのパスが無いのに mcp.start が成功した")
+		t.Error("待ち受けを引き継いでいないのに mcp.start が成功した")
 	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	if x.listenErr == nil || !strings.Contains(x.listenErr.Error(), socketEnv) {
+	if !errors.Is(x.listenErr, errNotInherited) {
 		t.Errorf("listenErr = %v", x.listenErr)
 	}
 }
 
-// 前回の起動で残ったソケットは消して待ち受け直し、他のプロセスが待ち受けているソケットとソケットでないファイルは消さない。
-func TestListenSocket(t *testing.T) {
-	dir, err := os.MkdirTemp("", "mcpl")
-	if err != nil {
-		t.Fatal(err)
+// 本体がソケットのパスを決められなかったときは、待ち受けず、MCP の拡張機能は socket の契機では起動しない。
+// mcp.start で起動すると、引き継げなかったことを利用者へ知らせる。
+func TestWithoutSocketPath(t *testing.T) {
+	long := filepath.Join(t.TempDir(), strings.Repeat("d", 100))
+	t.Setenv("XDG_RUNTIME_DIR", long)
+	t.Setenv("TMPDIR", long)
+	term, sock, logs := startEditor(t, t.TempDir())
+	if sock != "" {
+		t.Fatalf("ソケットのパス = %q, want empty", sock)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-
-	live := filepath.Join(dir, "live")
-	ln, err := listenSocket(live)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	if _, err = listenSocket(live); err == nil || !strings.Contains(err.Error(), "待ち受けています") {
-		t.Errorf("待ち受け中のソケット = %v", err)
-	}
-
-	stale := filepath.Join(dir, "stale")
-	old, err := net.Listen("unix", stale)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old.(*net.UnixListener).SetUnlinkOnClose(false)
-	_ = old.Close()
-	ln2, err := listenSocket(stale)
-	if err != nil {
-		t.Fatalf("残ったソケット = %v", err)
-	}
-	_ = ln2.Close()
-
-	file := filepath.Join(dir, "file")
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := listenSocket(file); err == nil {
-		t.Error("ソケットでないファイルの上で待ち受けた")
-	}
-	if _, err := os.Stat(file); err != nil {
-		t.Errorf("ソケットでないファイルを消した: %v", err)
+	term.keys(`\m`)
+	deadline := time.Now().Add(testTimeout)
+	for !strings.Contains(logs.String(), "extension=mcp state=running") {
+		if time.Now().After(deadline) {
+			t.Fatalf("mcp.start で起動しない:\n%s", logs.String())
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
