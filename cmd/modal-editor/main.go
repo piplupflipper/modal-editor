@@ -87,7 +87,8 @@ var errNotTerminal = errors.New("標準入力と標準出力が端末のとき�
 //     internal/editor と internal/exthost（拡張機能との接続の internal/rpc を含む）の goroutine は editor.Config.OnPanic で戻す
 //
 // Go の panic は他の goroutine の recover で捕まえられないので、戻すのは panic した goroutine 自身である。
-// 標準ライブラリの関数だけを呼ぶ goroutine（signal.NotifyContext の中のもの、exthost の子プロセスの回収の cmd.Wait）の panic と、
+// 標準ライブラリの関数だけを呼ぶ goroutine（signal.NotifyContext の中のもの、exthost の子プロセスの回収の cmd.Wait、
+// exthost の context.AfterFunc が取り消しの関数を呼ぶもの）の panic と、
 // SIGKILL で終わったときは戻せない。
 func edit(files []string, in, out *os.File, logPath string) (err error) {
 	logger, closeLog, err := openLog(logPath)

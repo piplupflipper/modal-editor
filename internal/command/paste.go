@@ -24,7 +24,8 @@ var pasteDelete = editcmd.Command{Kind: editcmd.KindOperator, Operator: editcmd.
 //   - ノーマルモード: カーソルが行の先頭（空の行を含む）なら i、それ以外なら a と同じ位置から入れ、
 //     <Esc> と同じくノーマルモードへ戻る（カーソルは入れた最後の文字）。
 //     回数、オペレーター、レジスターの指定などを打ちかけていれば、それを取り消し、貼り付けも捨てて失敗にする。
-//     Vim は回数とオペレーターでは同じく捨てるが、"a の後の貼り付けは入れる（レジスターの指定は無視する）。ここでは区別しない
+//     Vim は回数とオペレーターでは同じく捨てるが、"a の後の貼り付けは入れ（レジスターの指定は無視する）、
+//     r と f などの文字を待つコマンドの後は貼った最初の文字を引数に使う。ここでは区別しない（docs/vim-differences.md）
 //   - ビジュアルモード: 選択を消し、消した位置から入れて、ノーマルモードへ戻る。消したテキストは、1 行の中の文字単位の選択なら "-d、
 //     それ以外なら "1d と同じくレジスターに入れる（無名のレジスターも指す。1 行の中でも改行を含めば 1 にも入る）。
 //     Vim は 1 に入れるとき 2 にも同じテキストを入れる（1〜9 を 2 回ずらす）が、ここでは 1 回だけずらす。
@@ -33,8 +34,10 @@ var pasteDelete = editcmd.Command{Kind: editcmd.KindOperator, Operator: editcmd.
 //
 // ノーマルモードとビジュアルモードの貼り付けは、選択を消すことも含めてアンドゥの 1 単位にする。
 // ドットリピートには、どちらも a でテキストを入れる操作として記録する（Vim と同じ。ビジュアルモードでも . は消さずに a で入れる）。
-// マクロの記録中は、貼り付けと同じ結果になるキーの列を記録する。ノーマルモードは i か a、テキスト、<Esc>、
-// ビジュアルモードは c、テキスト、<Esc> である（Vim は貼り付けの印ごと記録する。行単位の選択の c は空の行を残すので、再生の結果が違う）。
+// マクロの記録中は、記録の時点の貼り付けに当たるキーの列を記録する。ノーマルモードは i か a（記録の時点のカーソルで選ぶ）、
+// テキスト、<Esc>、ビジュアルモードは c、テキスト、<Esc> である。打ちかけを取り消したときは、取り消しの <Esc> を記録する。
+// Vim は貼り付けの印ごと記録し、再生の時点で i か a を選び直すので、記録と再生でカーソルが行の先頭かどうかが違うと結果が違う。
+// 行単位の選択の c は空の行を残すので、ビジュアルモードの行単位の選択でも再生の結果が違う（docs/vim-differences.md）。
 func (s *State) Paste(text string) Result {
 	s.res = Result{}
 	text = pasteable(text)
@@ -57,7 +60,10 @@ func (s *State) Paste(text string) Result {
 		}
 	case ModeNormal, ModeVisual, ModeVisualLine:
 		if s.parser.Pending() {
-			s.runResults(s.parser.Feed(editcmd.Esc)) // 打ちかけた列を取り消す
+			// 打ちかけた列を取り消す。打ちかけたキーは Feed が記録済みなので、取り消しの <Esc> も記録し、
+			// 再生で後のキーに回数などが掛からないようにする（qa3 の後に貼って x を打つ記録は 3<Esc>x になる）。
+			s.record(editcmd.Esc)
+			s.runResults(s.parser.Feed(editcmd.Esc))
 			s.fail(failf("paste while a command is pending"))
 			return s.take()
 		}

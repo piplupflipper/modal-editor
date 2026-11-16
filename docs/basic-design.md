@@ -1077,7 +1077,7 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 Go の panic は、他の goroutine の recover で捕まえられないためである。
 `cmd/modal-editor` は、端末を戻す関数を、イベントループの goroutine では recover で、`internal/term` の goroutine では `term.Terminal.RestoreOnPanic` で、`internal/editor` と `internal/exthost` の goroutine では `editor.Config.OnPanic`（`exthost.Config.OnPanic`、拡張機能との接続は `rpc.WithPanicHook`）で呼ぶ。
 端末を戻す関数は何度呼んでもよく、どの goroutine からも呼べる。
-標準ライブラリの関数だけを呼ぶ goroutine（`signal.NotifyContext` の中のもの、子プロセスの回収の `cmd.Wait`）の panic と、本体が SIGKILL で終わったときは戻せない。
+標準ライブラリの関数だけを呼ぶ goroutine（`signal.NotifyContext` の中のもの、子プロセスの回収の `cmd.Wait`、`internal/exthost` の `context.AfterFunc` が取り消しの関数を呼ぶもの）の panic と、本体が SIGKILL で終わったときは戻せない。
 これらまで覆うには、親のプロセスが本体を子として起動し、終わった後に端末を戻す形が要るが、1 章の「本体のプロセス 1 個」を変えるので採らない。
 
 ## 9. 要件との対応

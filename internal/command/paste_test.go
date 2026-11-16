@@ -113,6 +113,21 @@ func TestPastePending(t *testing.T) {
 	}
 }
 
+// TestPastePendingRecording は、マクロの記録中に回数を打ちかけて貼ると、取り消しも記録し、再生で回数が後のキーに掛からないことを確かめる。
+// Vim 9.1 で abcdef、ghijkl の先頭から qa3 の後に XY を貼り、xq、j0@a と打つと、bcdef、hijkl になる（2026-11-16、tmux 3.4 の paste-buffer -p）。
+func TestPastePendingRecording(t *testing.T) {
+	s := setup(t, "|abcdef\nghijkl")
+	feedKeys(s, "qa3")
+	s.Paste("XY")
+	feedKeys(s, "xqj0@a")
+	if got, want := s.buf.Text(), "bcdef\nhijkl"; got != want {
+		t.Errorf("text = %q, want %q", got, want)
+	}
+	if got := s.Cursor().String(); got != "1:0" {
+		t.Errorf("cursor = %s, want 1:0", got)
+	}
+}
+
 // TestPasteCommandLine は、コマンドラインモードの貼り付けが、改行で確定せずに文字 '\r' として入ることを確かめる（Vim 9.1 は ^M と表示する）。
 func TestPasteCommandLine(t *testing.T) {
 	s := setup(t, "|abc")
