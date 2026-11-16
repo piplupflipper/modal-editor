@@ -167,7 +167,7 @@ func (h *Host) runOnce(e *extension, r *run, stop <-chan struct{}) (err error) {
 	if listener != nil {
 		extra = append([]*os.File{listener}, conns...)
 	}
-	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args, e.spec.Dir, h.cfg.Env, extra)
+	p, err := startProcess(e.spec.command(), e.spec.Manifest.Args, e.spec.Dir, h.cfg.Env, extra, memoryLimitBytes(h.cfg.MemoryLimitMB))
 	// 受け付けた接続は子プロセスへ複製したので、本体の側は閉じる。起動に失敗したときは接続が失われ、中継コマンドは終わる。
 	for _, f := range conns {
 		_ = f.Close()
@@ -585,7 +585,9 @@ type process struct {
 // env（"名前=値" の列。[Config.Env]）は、本体の環境の後、ext.EnvExtensionDir の前に足す。
 // extra は、子プロセスへファイル記述子 ext.SocketFDStart から引き継ぐファイルで、その数を ext.EnvSocketFDs で渡す（基本設計 6.2）。
 // extra が無ければ ext.EnvSocketFDs を空の値にする。
-func startProcess(path string, args []string, dir string, env []string, extra []*os.File) (p *process, err error) {
+// memLimit が 0 でなければ、起動した直後の子プロセスへ prlimit で RLIMIT_AS を memLimit バイトに掛ける（FR-20。[Config.MemoryLimitMB]）。
+// 掛けられなければ、子プロセスのグループを強制終了して誤りを返す（上限の無いまま動かさない）。
+func startProcess(path string, args []string, dir string, env []string, extra []*os.File, memLimit uint64) (p *process, err error) {
 	var opened []*os.File
 	defer func() {
 		if err != nil {
@@ -635,6 +637,15 @@ func startProcess(path string, args []string, dir string, env []string, extra []
 	_ = inR.Close()
 	_ = outW.Close()
 	_ = errW.Close()
+	// 子プロセスの回収（cmd.Wait）より前に掛けるので、pid は他のプロセスに使い回されていない。
+	// 子プロセスが既に終わっていても、回収するまではゾンビとして残り、prlimit は成功する。
+	if memLimit > 0 {
+		if err := limitAddressSpace(cmd.Process.Pid, memLimit); err != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("exthost: set RLIMIT_AS of %s: %w", path, err)
+		}
+	}
 
 	p = &process{cmd: cmd, stdin: inW, stdout: outR, stderr: errR, exited: make(chan struct{})}
 	go func() {
