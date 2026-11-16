@@ -39,7 +39,8 @@ var pasteEnd = []byte("\x1b[201~")
 //
 //   - 0x0d は <CR>、0x09 は <Tab>、0x08 と 0x7f は <BS>（internal/command のレジスターのキーの読み方と同じ）、
 //     0x00 は <C-@>、0x0a は <C-j>、その他の 0x01〜0x1a は <C-a>〜<C-z>、0x1c〜0x1f は <C-\>、<C-]>、<C-^>、<C-_>
-//   - ESC の後に 1 つのキーが続けば、そのキーに Alt を付ける（xterm の metaSendsEscape と同じ送り方）。ESC ESC は、1 つ目を <Esc> とする
+//   - ESC の後に CSI と SS3 の列でないキーが続けば、<Esc> とそのキーの 2 つにする（Vim と Neovim と同じ）。
+//     xterm の metaSendsEscape の Alt のキー（ESC と文字）は Alt にしない。Alt は CSI の修飾キーの引数でだけ付く
 //   - CSI（ESC [）と SS3（ESC O）の列は、矢印、Home、End、PageUp、PageDown、Delete、Shift-Tab、修飾キーの付いたそれらと、
 //     CSI u と CSI 27 ; 修飾 ; 文字 ~ の形の文字のキーを解読する。F キーと Insert は Unsupported にする。
 //     それ以外の列（マウス、フォーカスの通知など）は捨てる
@@ -66,7 +67,7 @@ func (d *Decoder) Feed(b []byte) []Decoded {
 func (d *Decoder) Pending() bool { return !d.paste && len(d.buf) > 0 }
 
 // Flush は、保留しているバイトを、続きが来ないものとして確定させ、キーを返す。
-// ESC の単独は <Esc>、ESC [ と ESC O は <A-[> と <A-O>（Alt を付けた文字）にする。途中で切れた UTF-8 は捨てる。
+// ESC の単独は <Esc>、途中で切れた ESC [ と ESC O の列は <Esc> と、続く文字にする。途中で切れた UTF-8 は捨てる。
 func (d *Decoder) Flush() []Decoded {
 	return d.decode(true)
 }
@@ -119,8 +120,9 @@ func (d *Decoder) one(out *[]Decoded, flush bool) int {
 			if !flush {
 				return 0
 			}
-			*out = append(*out, Decoded{Key: altKey(editcmd.Rune('['))})
-			return 2
+			// 時間切れ: ESC は単独の <Esc> とし、'[' と残りは次の周回で文字として読む。
+			*out = append(*out, Decoded{Key: editcmd.Esc})
+			return 1
 		}
 		switch kind {
 		case csiKey:
@@ -135,34 +137,23 @@ func (d *Decoder) one(out *[]Decoded, flush bool) int {
 			if !flush {
 				return 0
 			}
-			*out = append(*out, Decoded{Key: altKey(editcmd.Rune('O'))})
-			return 2
+			*out = append(*out, Decoded{Key: editcmd.Esc})
+			return 1
 		}
 		if dec, ok := ss3Key(b[2]); ok {
 			*out = append(*out, dec)
+			return 3
 		}
-		return 3
-	case esc:
+		// SS3 の列でなければ、<Esc> の直後に O と次のキーを打ったもの（インサートモードを抜けて O で行を開く）とする。
 		*out = append(*out, Decoded{Key: editcmd.Esc})
 		return 1
 	}
-	k, ok, n := plainKey(b[1:], flush)
-	switch {
-	case ok:
-		*out = append(*out, Decoded{Key: altKey(k)})
-		return 1 + n
-	case n == 0 && !flush:
-		return 0
-	}
-	// ESC の後が不正な UTF-8 なら、ESC は単独の <Esc> とし、不正なバイトは次の周回で捨てる。
+	// ESC の後に列でないキーが続いたら、<Esc> と、そのキーの 2 つにする（Vim と Neovim と同じ）。
+	// 本体は Alt の付いたキーを扱わないので、<A-x> にすると Esc もキーも失われる（ix<Esc>j を速く打つとインサートモードに残る）。
+	// tmux は、外側の端末から Esc を受けて escape-time（既定 500 ms）の間に届いたキーを ESC とキーの組で送るので、
+	// 人が <Esc> の直後に打ったキーもこの形で届く。
 	*out = append(*out, Decoded{Key: editcmd.Esc})
 	return 1
-}
-
-// altKey は、k に Alt を足して正規化したキーを返す。
-func altKey(k editcmd.Key) editcmd.Key {
-	k.Mod |= editcmd.ModAlt
-	return k.Normalize()
 }
 
 // ctrlKey は、Ctrl つきの文字 r のキーを返す。

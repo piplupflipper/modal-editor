@@ -186,6 +186,14 @@ func (v *vt) sgr(t *testing.T, params string) {
 			v.attr.Undercurl = true
 		case p == "7":
 			v.attr.Reverse = true
+		case strings.HasPrefix(p, "58:5:"):
+			v.attr.Sp = ui.Indexed(u8(strings.TrimPrefix(p, "58:5:")))
+		case strings.HasPrefix(p, "58:2::"):
+			c := strings.Split(strings.TrimPrefix(p, "58:2::"), ":")
+			if len(c) != 3 {
+				t.Fatalf("下線の色 %q", p)
+			}
+			v.attr.Sp = ui.RGB(u8(c[0]), u8(c[1]), u8(c[2]))
 		case n >= 30 && n <= 37:
 			v.attr.Fg = ui.Indexed(uint8(n - 30))
 		case n >= 90 && n <= 97:
@@ -198,8 +206,6 @@ func (v *vt) sgr(t *testing.T, params string) {
 			v.attr.Fg = color(&j)
 		case n == 48:
 			v.attr.Bg = color(&j)
-		case n == 58:
-			v.attr.Sp = color(&j)
 		default:
 			t.Fatalf("知らない SGR %q", params)
 		}

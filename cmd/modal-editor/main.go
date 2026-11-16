@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -74,10 +75,12 @@ var errNotTerminal = errors.New("標準入力と標準出力が端末のとき�
 // 端末は、次のどの終わり方でも元に戻す（基本設計 8 章）。
 //
 //   - :q などで Run が戻ったとき
-//   - SIGTERM、SIGHUP、SIGINT を受けたとき（Run の ctx を取り消し、Run が戻ってから戻す）
-//   - この goroutine（イベントループ）で panic したとき（戻してから panic を続ける）
+//   - SIGTERM、SIGHUP、SIGINT を受けたとき（Run の ctx を取り消し、Run が戻ってから戻す）。
+//     シグナルの受け付けは端末を開く前に始めるので、起動の途中（設定とファイルの読み込み）に受けても、
+//     既定の動作で終わらずに、読み込みを終えてから Run が直ちに戻り、端末を戻す
+//   - この goroutine（イベントループ）と、internal/term と terminal の goroutine で panic したとき（戻してから panic を続ける）
 //
-// 他の goroutine の panic は、Go では捕まえられないので、端末を戻せない（PR の未確認事項）。
+// それ以外の goroutine（internal/exthost など）の panic は、Go では他の goroutine から捕まえられないので、端末を戻せない。
 func edit(files []string, in, out *os.File, logPath string) (err error) {
 	logger, closeLog, err := openLog(logPath)
 	if err != nil {
@@ -85,6 +88,8 @@ func edit(files []string, in, out *os.File, logPath string) (err error) {
 	}
 	defer closeLog()
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	defer stop()
 	tm, err := term.Open(in, out, term.Options{})
 	if errors.Is(err, term.ErrNotTerminal) {
 		return errNotTerminal
@@ -94,7 +99,7 @@ func edit(files []string, in, out *os.File, logPath string) (err error) {
 	}
 	defer func() { _ = tm.Close() }() // Close は誤りを返さない
 	return guard(tm.Restore, func() error {
-		return runEditor(files, tm, logger)
+		return runEditor(ctx, files, tm, logger)
 	})
 }
 
@@ -117,7 +122,8 @@ func guard(restore func() error, f func() error) (err error) {
 
 // runEditor は、エディタを作って files を開き、Run が戻るまで動かす。
 // Run が戻ったら、端末を戻してから拡張機能を止める（editor.Editor.Close の doc の順序）。
-func runEditor(files []string, tm *term.Terminal, logger *slog.Logger) error {
+// ctx はシグナルで取り消される。起動の途中で取り消されていれば、Run は直ちに戻る。
+func runEditor(ctx context.Context, files []string, tm *term.Terminal, logger *slog.Logger) error {
 	ed, err := editor.New(newTerminal(tm), loadConfig(logger))
 	if err != nil {
 		return fmt.Errorf("エディタを作れない: %w", err)
@@ -130,8 +136,6 @@ func runEditor(files []string, tm *term.Terminal, logger *slog.Logger) error {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
-	defer stop()
 	runErr := ed.Run(ctx)
 	// 拡張機能の終了は数秒かかることがあるので、先に端末を戻す（editor.Editor.Close の doc）。
 	if err := tm.Restore(); err != nil {
@@ -177,17 +181,38 @@ func loadConfig(logger *slog.Logger) editor.Config {
 	for i, x := range exts {
 		specs[i] = exthost.Spec(x)
 	}
+	for i, p := range problems {
+		problems[i] = shortProblem(p)
+	}
 	host := exthost.Config{Logger: logger}
 	return editor.Config{
-		Keymap:       cfg.Keymap,
-		SyncTimeout:  cfg.SyncTimeout,
-		FileTypes:    cfg.FileTypes,
-		FixEndOfLine: cfg.FixEndOfLine,
-		Extensions:   specs,
-		Host:         host,
-		Logger:       logger,
-		Problems:     problems,
+		Keymap:           cfg.Keymap,
+		SyncTimeout:      cfg.SyncTimeout,
+		StartSyncTimeout: cfg.StartSyncTimeout,
+		FileTypes:        cfg.FileTypes,
+		FixEndOfLine:     cfg.FixEndOfLine,
+		Extensions:       specs,
+		Host:             host,
+		Logger:           logger,
+		Problems:         problems,
 	}
+}
+
+// shortProblem は、画面の 1 行に出す設定の誤りの、ファイルのパスを短くする。
+// 設定ファイルはファイル名だけ（config.jsonc）、宣言ファイルは拡張機能のディレクトリの名前とファイル名（line/manifest.json）にする。
+// 絶対パスのままだと、80 桁の端末では位置と内容がコマンドラインの行の幅で切れて見えない。
+// 置き場所は config.DefaultPath と config.ExtensionDirs で決まるので、名前だけで利用者が辿れる。
+func shortProblem(err error) error {
+	ce, ok := err.(*config.Error) //nolint:errorlint // 包んだ誤りは、包んだ文言を保つために短くしない
+	if !ok || ce.Path == "" {
+		return err
+	}
+	short := *ce
+	short.Path = filepath.Base(ce.Path)
+	if short.Path == config.ManifestFileName {
+		short.Path = filepath.Join(filepath.Base(filepath.Dir(ce.Path)), short.Path)
+	}
+	return &short
 }
 
 func closeEditor(ed *editor.Editor, logger *slog.Logger) {
@@ -221,6 +246,7 @@ func newTerminal(tm *term.Terminal) *terminal {
 	t := &terminal{Terminal: tm, events: make(chan editor.TermEvent)}
 	go func() {
 		defer close(t.events)
+		defer tm.RestoreOnPanic()
 		for ev := range tm.Input() {
 			t.events <- editor.TermEvent(ev)
 		}

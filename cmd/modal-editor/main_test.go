@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/piplupflipper/modal-editor/internal/config"
 )
 
 func TestRun(t *testing.T) {
@@ -63,6 +68,55 @@ func TestRunHelp(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "-version") {
 		t.Errorf("stderr に使い方が出力されていない: %q", stderr.String())
+	}
+}
+
+// TestLoadConfig は、設定ファイルの項目を editor.Config へ写し、誤りのパスを短くすることを確かめる。
+func TestLoadConfig(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(xdg, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(xdg, "data"))
+	dir := filepath.Join(xdg, "config", "modal-editor")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	text := `{
+  "keymap": { "normal": { "Q": ":q<CR>" } },
+  "fixendofline": false,
+  "fileTypes": { ".tmpl": "html" },
+  "extensions": { "syncTimeoutMs": 30, "startSyncTimeoutMs": 2500 },
+  "typo": 1,
+}`
+	if err := os.WriteFile(filepath.Join(dir, "config.jsonc"), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadConfig(slog.New(slog.DiscardHandler))
+	if cfg.StartSyncTimeout != 2500*time.Millisecond {
+		t.Errorf("StartSyncTimeout = %v, want 2.5s", cfg.StartSyncTimeout)
+	}
+	if cfg.SyncTimeout == nil || *cfg.SyncTimeout != 30*time.Millisecond {
+		t.Errorf("SyncTimeout = %v, want 30ms", cfg.SyncTimeout)
+	}
+	if cfg.FixEndOfLine == nil || *cfg.FixEndOfLine {
+		t.Errorf("FixEndOfLine = %v, want false", cfg.FixEndOfLine)
+	}
+	if cfg.Keymap["normal"]["Q"] != ":q<CR>" || cfg.FileTypes[".tmpl"] != "html" {
+		t.Errorf("Keymap = %v, FileTypes = %v", cfg.Keymap, cfg.FileTypes)
+	}
+	if len(cfg.Problems) != 1 || !strings.HasPrefix(cfg.Problems[0].Error(), "config.jsonc:6:") {
+		t.Errorf("Problems = %v, want config.jsonc:6: で始まる 1 件", cfg.Problems)
+	}
+}
+
+// TestShortProblem は、宣言ファイルの誤りを、拡張機能のディレクトリの名前とファイル名にすることを確かめる。
+func TestShortProblem(t *testing.T) {
+	err := shortProblem(&config.Error{Path: "/a/b/extensions/line/manifest.json", Line: 2, Column: 3, Msg: "x"})
+	if got := err.Error(); got != "line/manifest.json:2:3: x" {
+		t.Errorf("shortProblem = %q", got)
+	}
+	plain := errors.New("plain")
+	if got := shortProblem(plain); got.Error() != "plain" {
+		t.Error("config.Error でない誤りを変えた")
 	}
 }
 

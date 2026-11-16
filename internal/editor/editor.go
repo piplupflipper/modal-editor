@@ -274,7 +274,12 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		lg.Warn("設定の誤り", "err", w)
 	}
 	if len(warnings) > 0 {
-		e.message = ui.Message{Text: warnings[0].Error(), Level: ui.MessageError}
+		text := warnings[0].Error()
+		if n := len(warnings) - 1; n > 0 {
+			// 他にも誤りがあることを知らせる。全件はログ（Config.Logger）にある。
+			text = fmt.Sprintf("%s（他 %d 件）", text, n)
+		}
+		e.message = ui.Message{Text: text, Level: ui.MessageError}
 	}
 	return e, nil
 }

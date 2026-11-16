@@ -54,6 +54,9 @@ var ErrNotTerminal = errors.New("term: not a terminal")
 //
 // 入力は、Open が起こす goroutine が in から読んで解読し、Input のチャネルへ送る。
 // 端末の大きさの変化（SIGWINCH）も、同じチャネルへ Resize のイベントとして送る。
+// 一時停止（SIGTSTP）を受けたら、端末を戻してから SIGSTOP で止まり、再開（SIGCONT）で raw モードと代替画面に入り直して、
+// Resize のイベント（大きさは今の端末のもの）を送ってエディタに全体を描き直させる。
+// 一時停止を受けるのは、kill -TSTP など外から送られたときである。raw モードでは <C-z> はキーとして届き、シグナルにならない。
 // Draw と Size は、1 つの goroutine（エディタのイベントループ）から呼ぶ。
 // Restore は、どの goroutine からも何度でも呼べ、2 回目以降は何もしない。
 type Terminal struct {
@@ -65,15 +68,18 @@ type Terminal struct {
 	// mu は、out への書き込みを守る。Draw と Restore が別の goroutine から呼ばれても、制御シーケンスが混ざらないようにする。
 	mu       sync.Mutex
 	restored bool
-	painter  Painter
-	buf      bytes.Buffer
+	// suspended は、一時停止（SIGTSTP）のために端末を戻してあり、再開（SIGCONT）を待っていることを表す。
+	suspended bool
+	painter   Painter
+	buf       bytes.Buffer
 
 	events chan Event
 	stop   chan struct{}
 	// readerDone は、in を読む goroutine が終わると閉じる。
 	readerDone chan struct{}
 	closeOnce  sync.Once
-	winch      chan os.Signal
+	// winch は、SIGWINCH、SIGTSTP、SIGCONT を受ける。
+	winch chan os.Signal
 }
 
 // Open は、in を raw モードにし、out を代替画面に切り替えて、Terminal を返す。
@@ -108,13 +114,13 @@ func Open(in, out *os.File, opts Options) (*Terminal, error) {
 		events:     make(chan Event, 64),
 		stop:       make(chan struct{}),
 		readerDone: make(chan struct{}),
-		winch:      make(chan os.Signal, 1),
+		winch:      make(chan os.Signal, 4),
 	}
 	if _, err := out.WriteString(seqEnter); err != nil {
 		_ = xterm.Restore(inFd, state) // 元の誤りを返す
 		return nil, fmt.Errorf("term: write: %w", err)
 	}
-	signal.Notify(t.winch, syscall.SIGWINCH)
+	signal.Notify(t.winch, syscall.SIGWINCH, syscall.SIGTSTP, syscall.SIGCONT)
 	chunks := make(chan []byte, 16)
 	go t.read(chunks)
 	go t.loop(chunks)
@@ -140,7 +146,7 @@ func (t *Terminal) Size() (width, height int) {
 func (t *Terminal) Draw(s ui.Screen) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.restored {
+	if t.restored || t.suspended {
 		return nil
 	}
 	t.buf.Reset()
@@ -165,6 +171,9 @@ func (t *Terminal) Restore() error {
 		return nil
 	}
 	t.restored = true
+	if t.suspended {
+		return nil // 一時停止のときに戻してある
+	}
 	_, werr := t.out.WriteString(seqLeave)
 	rerr := xterm.Restore(t.inFd, t.state)
 	if rerr != nil {
@@ -174,6 +183,43 @@ func (t *Terminal) Restore() error {
 		return fmt.Errorf("term: write: %w", werr)
 	}
 	return nil
+}
+
+// suspend は、一時停止（SIGTSTP）の前に、端末を Open の前の状態に戻す。Restore と違い、resume で入り直せる。
+func (t *Terminal) suspend() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.restored || t.suspended {
+		return
+	}
+	t.suspended = true
+	_, _ = t.out.WriteString(seqLeave) // 書けなくても止まる
+	_ = xterm.Restore(t.inFd, t.state) // 戻せなくても止まる
+}
+
+// resume は、一時停止からの再開（SIGCONT）で、raw モードと代替画面に入り直し、次の Draw で全体を書き直させる。
+// suspend を通らない停止（外からの SIGSTOP）の後も、シェルが端末の設定を変えているかもしれないので入り直す。
+func (t *Terminal) resume() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.restored {
+		return
+	}
+	t.suspended = false
+	_, _ = xterm.MakeRaw(t.inFd)       // 入り直せなくても、描き直しは試みる
+	_, _ = t.out.WriteString(seqEnter) // 同上
+	t.painter.Invalidate()
+}
+
+// RestoreOnPanic は、goroutine の始めに defer で呼ぶ（defer t.RestoreOnPanic()）。
+// その goroutine が panic したら、端末を戻してから同じ値で panic を続ける（基本設計 8 章）。
+// Go の panic は他の goroutine の recover で捕まえられないので、端末を使う間に動く goroutine はそれぞれこれを置く。
+// panic していなければ何もしない。
+func (t *Terminal) RestoreOnPanic() {
+	if p := recover(); p != nil {
+		_ = t.Restore() // panic を続けるので、戻す誤りは捨てる
+		panic(p)
+	}
 }
 
 // Close は、入力の読み取りとリサイズの監視を止め、Input のチャネルを閉じる。端末は戻さない（Restore を先に呼ぶ）。
@@ -207,6 +253,7 @@ func fdOf(f *os.File) (int, error) {
 func (t *Terminal) read(chunks chan<- []byte) {
 	defer close(t.readerDone)
 	defer close(chunks)
+	defer t.RestoreOnPanic()
 	buf := make([]byte, 4096)
 	for {
 		n, err := t.in.Read(buf)
@@ -227,6 +274,7 @@ func (t *Terminal) read(chunks chan<- []byte) {
 // ESC で始まる列の続きを EscTimeout だけ待ち、届かなければ保留を確定させる。
 func (t *Terminal) loop(chunks <-chan []byte) {
 	defer close(t.events)
+	defer t.RestoreOnPanic()
 	var dec Decoder
 	timer := time.NewTimer(time.Hour)
 	timer.Stop()
@@ -245,7 +293,18 @@ func (t *Terminal) loop(chunks <-chan []byte) {
 			ds = dec.Feed(b)
 		case <-timeout:
 			ds = dec.Flush()
-		case <-t.winch:
+		case sig := <-t.winch:
+			switch sig {
+			case syscall.SIGTSTP:
+				// 端末を戻してから自分を止める。SIGSTOP は捕まえられないので、そのまま止まる。
+				// 再開（SIGCONT）は、このチャネルへ届いてから resume する。
+				t.suspend()
+				_ = syscall.Kill(os.Getpid(), syscall.SIGSTOP) // 止まれなければ、そのまま続ける
+				continue
+			case syscall.SIGCONT:
+				t.resume()
+			}
+			// 大きさの変化と再開の後は、リサイズのイベントでエディタに描き直させる。
 			w, h := t.Size()
 			if !t.emit(Event{Resize: true, Width: w, Height: h}) {
 				return

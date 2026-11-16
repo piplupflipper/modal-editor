@@ -68,8 +68,15 @@ func TestDecodeSequences(t *testing.T) {
 		{"tmux: C-Home", "\x1b[1;5H", "<C-Home>"},
 		{"tmux: C-S-Left", "\x1b[1;6D", "<C-S-Left>"},
 		{"tmux: BTab", "\x1b[Z", "<S-Tab>"},
-		{"tmux: M-a", "\x1ba", "<A-a>"},
-		{"tmux: M-C-a", "\x1b\x01", "<C-A-a>"},
+		// tmux の M-a は ESC と文字で届く。本体は Alt を扱わないので、Vim と同じく <Esc> と文字の 2 つにする。
+		{"tmux: M-a は Esc と a", "\x1ba", "<Esc>a"},
+		{"tmux: M-C-a は Esc と C-a", "\x1b\x01", "<Esc><C-a>"},
+		// <Esc> の直後に打ったキー（tmux の escape-time の間に届くと ESC とキーの組になる）。PR #111 のレビューの入力。
+		{"インサートモードの x<Esc>j", "x\x1bj", "x<Esc>j"},
+		{"ノーマルモードの <Esc>x", "\x1bx", "<Esc>x"},
+		{"インサートモードの y<Esc>:", "y\x1b:", "y<Esc>:"},
+		{"<Esc>O と続くキー（SS3 の列でない）", "\x1bOh", "<Esc>Oh"},
+		{"ESC と不正な UTF-8 は Esc", "\x1b\xff", "<Esc>"},
 
 		{"xterm: Home と End（通常のカーソルキーのモード）", "\x1b[H\x1b[F", "<Home><End>"},
 		{"xterm: 矢印（アプリケーションのカーソルキーのモード）", "\x1bOA\x1bOB\x1bOC\x1bOD", "<Up><Down><Right><Left>"},
@@ -84,9 +91,9 @@ func TestDecodeSequences(t *testing.T) {
 		{"xterm: modifyOtherKeys の C-S-a", "\x1b[27;6;65~", "<C-S-a>"},
 		{"VTE: rxvt 形式の Home と End", "\x1b[7~\x1b[8~", "<Home><End>"},
 		{"VTE: テンキーの Enter", "\x1bOM", "<CR>"},
-		{"VTE: M-x と M-X", "\x1bx\x1bX", "<A-x><A-X>"},
-		{"VTE: M-あ", "\x1bあ", "<A-あ>"},
-		{"VTE: M-BS", "\x1b\x7f", "<A-BS>"},
+		{"VTE: M-x と M-X は Esc と文字", "\x1bx\x1bX", "<Esc>x<Esc>X"},
+		{"VTE: M-あ は Esc とあ", "\x1bあ", "<Esc>あ"},
+		{"VTE: M-BS は Esc と BS", "\x1b\x7f", "<Esc><BS>"},
 
 		{"CSI u: C-a", "\x1b[97;5u", "<C-a>"},
 		{"CSI u: S-a は A", "\x1b[97;2u", "A"},
@@ -150,11 +157,10 @@ func TestDecodePending(t *testing.T) {
 		want string // Flush の結果
 	}{
 		{"ESC の単独は Esc", "\x1b", "<Esc>"},
-		{"ESC [ は A-[", "\x1b[", "<A-[>"},
-		{"ESC O は A-O", "\x1bO", "<A-O>"},
-		{"途中の CSI は A-[ と残りの文字", "\x1b[1;5", "<A-[>1;5"},
+		{"ESC [ は Esc と [", "\x1b[", "<Esc>["},
+		{"ESC O は Esc と O", "\x1bO", "<Esc>O"},
+		{"途中の CSI は Esc と残りの文字", "\x1b[1;5", "<Esc>[1;5"},
 		{"途中の UTF-8 は捨てる", "\xe3\x81", ""},
-		{"ESC と途中の UTF-8 は Esc", "\x1b\xe3", "<Esc>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

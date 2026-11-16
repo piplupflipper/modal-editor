@@ -150,6 +150,39 @@ func TestTerminalPTY(t *testing.T) {
 	}
 }
 
+// TestRestoreOnPanic は、RestoreOnPanic を defer した関数が panic すると、端末を戻してから同じ値で panic を続けることを確かめる。
+// 実際の goroutine で panic するとテストのプロセスが終わるので、同じ goroutine の関数で確かめる。
+func TestRestoreOnPanic(t *testing.T) {
+	master, tty := ptytest.Open(t, 80, 24)
+	ptytest.StartCapture(master)
+	before := ptytest.Termios(t, tty)
+	tm, err := Open(tty, tty, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tm.Close() })
+	func() {
+		defer tm.RestoreOnPanic() // panic していなければ何もしない
+	}()
+	if ptytest.Termios(t, tty) == before {
+		t.Fatal("panic していないのに端末が戻った")
+	}
+	var got any
+	func() {
+		defer func() { got = recover() }()
+		func() {
+			defer tm.RestoreOnPanic()
+			panic("boom")
+		}()
+	}()
+	if got != "boom" {
+		t.Errorf("recover() = %v, want boom", got)
+	}
+	if ptytest.Termios(t, tty) != before {
+		t.Error("panic の後に端末が戻っていない")
+	}
+}
+
 // TestOpenNotTerminal は、端末でないファイルでは ErrNotTerminal を返し、何も書かないことを確かめる。
 func TestOpenNotTerminal(t *testing.T) {
 	r, w, err := os.Pipe()

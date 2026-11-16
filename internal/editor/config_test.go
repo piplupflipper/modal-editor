@@ -42,7 +42,8 @@ func TestConfigProblems(t *testing.T) {
 		Problems: []error{errors.New("config.jsonc:3:5: 未知の項目 foo"), errors.New("2 件目")},
 		Keymap:   map[string]map[string]string{"normal": {"<Foo>": "x"}},
 	})
-	if got := h.message(); got != "config.jsonc:3:5: 未知の項目 foo" {
+	// 2 件目と、キーマップの誤り（<Foo>）の 2 件を、件数で知らせる。
+	if got := h.message(); got != "config.jsonc:3:5: 未知の項目 foo（他 2 件）" {
 		t.Errorf("message = %q", got)
 	}
 }

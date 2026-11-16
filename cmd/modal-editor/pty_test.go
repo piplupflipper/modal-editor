@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,7 +125,7 @@ func TestEditInPTY(t *testing.T) {
 
 	p.write(t, "ihello あ")
 	p.out.WaitForString(t, "INSERT")
-	// ESC の単独は、続きを待つ時間（50 ms）の後に Esc になる。:wq を続けて送ると <A-:> と読まれるので、間を空ける。
+	// ESC の単独は、続きを待つ時間（50 ms）の後に Esc になる（続けて送る形は TestEscThenKeyInPTY が確かめる）。
 	p.write(t, "\x1b")
 	p.out.WaitFor(t, "ノーマルモードの表示", func(out string) bool {
 		return strings.Contains(out[strings.LastIndex(out, "INSERT"):], "NORMAL")
@@ -141,6 +142,107 @@ func TestEditInPTY(t *testing.T) {
 		t.Errorf("保存した内容 = %q, want %q", got, "hello あ\n")
 	}
 	p.checkRestored(t, before)
+}
+
+// TestEscThenKeyInPTY は、<Esc> の直後のキーが 1 回の読み取りで届いても、<Esc> とそのキーとして処理することを確かめる
+// （Vim と Neovim と同じ。PR #111 のレビューの必須 1）。tmux は、escape-time の間に届いたキーを ESC とキーの組で送る。
+func TestEscThenKeyInPTY(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(path, []byte("abc\ndef\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := startEditor(t, path)
+	before := ptytest.Termios(t, p.tty)
+	p.out.WaitForString(t, "a.txt")
+	// ix<Esc>j でノーマルモードへ戻って 2 行目へ動き、iZ<Esc>: で戻ってから :wq する。全体を 1 回で書く。
+	p.write(t, "ix\x1bjiZ\x1b:wq\r")
+	if err := p.wait(t); err != nil {
+		t.Fatalf("エディタの終了 = %v。出力: %q", err, p.out.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "xabc\nZdef\n" {
+		t.Errorf("保存した内容 = %q, want %q", got, "xabc\nZdef\n")
+	}
+	p.checkRestored(t, before)
+}
+
+// TestSignalWhileLoadingInPTY は、大きいファイルを開いている途中に SIGTERM を受けても、端末を戻して終わることを確かめる
+// （PR #111 のレビューの必須 2）。シグナルの受け付けは端末を開く前に始める。
+func TestSignalWhileLoadingInPTY(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "big.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("0123456789 abcdefghij あいうえお\n", 1_000_000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := startEditor(t, path)
+	before := ptytest.Termios(t, p.tty)
+	// 端末を代替画面に切り替えた直後（ファイルを読む前か途中）に送る。
+	p.out.WaitForString(t, "\x1b[?1049h")
+	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.wait(t); err == nil {
+		t.Error("シグナルで終わったのに終了コードが 0")
+	}
+	p.checkRestored(t, before)
+	if !strings.Contains(p.out.String(), "シグナルを受けて終了した") {
+		t.Errorf("終了の理由が出ていない: %q", p.out.String())
+	}
+}
+
+// TestSuspendResumeInPTY は、SIGTSTP で端末を戻してから止まり、SIGCONT で raw モードに入り直して全体を描き直すことを確かめる。
+func TestSuspendResumeInPTY(t *testing.T) {
+	p := startEditor(t)
+	before := ptytest.Termios(t, p.tty)
+	p.out.WaitForString(t, "[No Name]")
+	if err := p.cmd.Process.Signal(syscall.SIGTSTP); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, p.cmd.Process.Pid, 'T')
+	if got := ptytest.Termios(t, p.tty); got != before {
+		t.Errorf("止まっている間の端末の設定が戻っていない:\n before %+v\n got    %+v", before, got)
+	}
+	mark := len(p.out.String())
+	if !strings.Contains(p.out.String(), "\x1b[?1049l") {
+		t.Error("止まる前に代替画面から戻っていない")
+	}
+	if err := p.cmd.Process.Signal(syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	p.out.WaitFor(t, "再開の後の描き直し", func(out string) bool {
+		rest := out[mark:]
+		return strings.Contains(rest, "\x1b[?1049h") && strings.Contains(rest, "\x1b[2J") && strings.Contains(rest, "[No Name]")
+	})
+	if raw := ptytest.Termios(t, p.tty); raw.Lflag&(unix.ICANON|unix.ECHO) != 0 {
+		t.Errorf("再開の後に raw モードでない: lflag=%#x", raw.Lflag)
+	}
+	p.write(t, ":q\r")
+	if err := p.wait(t); err != nil {
+		t.Fatalf("エディタの終了 = %v", err)
+	}
+	p.checkRestored(t, before)
+}
+
+// waitState は、プロセス pid の状態（/proc/<pid>/stat の 3 つ目の欄）が state になるまで待つ。
+func waitState(t *testing.T, pid int, state byte) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 2 つ目の欄（実行ファイルの名前）は括弧で囲まれ、空白を含みうるので、最後の ')' の後を読む。
+		if i := strings.LastIndexByte(string(b), ')'); i >= 0 && i+2 < len(b) && b[i+2] == state {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("プロセスの状態が %c にならない: %s", state, b)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // TestConfigInPTY は、設定ファイルを読んで editor へ渡すことを確かめる。

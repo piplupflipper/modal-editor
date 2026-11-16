@@ -215,22 +215,40 @@ func writeSGR(buf *bytes.Buffer, a ui.Attr) {
 	}
 	writeColor(buf, a.Fg, 30, 90, 38)
 	writeColor(buf, a.Bg, 40, 100, 48)
-	if a.Sp != ui.ColorDefault {
-		writeColor(buf, a.Sp, -1, -1, 58)
-	}
+	writeUnderlineColor(buf, a.Sp)
 	buf.WriteByte('m')
+}
+
+// writeUnderlineColor は、下線と波線の色（SGR 58）の引数を、':' で区切った下位の引数の形（58:5:n、58:2::r:g:b）で書く。
+// ';' で区切ると、58 を知らない端末が続く 5 や 2 や色の値を、点滅や薄い表示などの別の SGR として読むおそれがある。
+// ':' の形は、ITU-T T.416 の下位の引数の書き方である（PR #111 のレビューの推奨 9）。
+// どの端末がこの形を解釈し、知らない端末が引数を 1 つとして捨てるかは、端末ごとに確かめていない。
+func writeUnderlineColor(buf *bytes.Buffer, c ui.Color) {
+	if n, ok := c.Index(); ok {
+		buf.WriteString(";58:5:")
+		buf.WriteString(strconv.Itoa(int(n)))
+		return
+	}
+	if r, g, b, ok := c.RGB(); ok {
+		buf.WriteString(";58:2::")
+		buf.WriteString(strconv.Itoa(int(r)))
+		buf.WriteByte(':')
+		buf.WriteString(strconv.Itoa(int(g)))
+		buf.WriteByte(':')
+		buf.WriteString(strconv.Itoa(int(b)))
+	}
 }
 
 // writeColor は、色 c の SGR の引数を書く。
 // 16 色の番号は base（0〜7）と bright（8〜15）の短い形にし、それ以外の番号は ext;5;n、24 ビット色は ext;2;r;g;b にする。
-// base が負なら、16 色の番号も ext;5;n で書く（下線の色の 58 には短い形が無い）。
+// 文字と背景の色の 38 と 48 は ';' の形で書く（下線の色は writeUnderlineColor が ':' の形で書く）。
 func writeColor(buf *bytes.Buffer, c ui.Color, base, bright, ext int) {
 	if n, ok := c.Index(); ok {
 		switch {
-		case base >= 0 && n < 8:
+		case n < 8:
 			buf.WriteByte(';')
 			buf.WriteString(strconv.Itoa(base + int(n)))
-		case base >= 0 && n < 16:
+		case n < 16:
 			buf.WriteByte(';')
 			buf.WriteString(strconv.Itoa(bright + int(n) - 8))
 		default:
