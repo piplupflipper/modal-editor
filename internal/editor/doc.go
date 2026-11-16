@@ -35,7 +35,7 @@
 // Run の ctx が終わったら、待ちの途中でもやめて戻る。
 //
 // 拡張機能のコマンド（contributes.commands）は、キーのほかに、コマンドラインから ID で呼べる（:acp.prompt 説明して）。
-// ID の後の引数の文字列は、command/execute の args に {"text":"..."} で渡す（commandArgs。基本設計 5.3）。
+// ID の後の引数の文字列は、command/execute の args に {"text":"..."} で渡す（commandArgs。基本設計 6.7）。
 //
 // 再生中の command/execute の結果の open が別のバッファへ移したら、マクロの残りのキーは移った先のバッファで続ける
 // （command.ErrBufferSwitched と command.State.ContinueReplay）。

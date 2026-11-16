@@ -56,6 +56,16 @@ func TestExtCommandLine(t *testing.T) {
 		t.Errorf("u: text = %q", got)
 	}
 
+	// 同じコマンドラインの前のコマンドの編集と合わせて、u 1 回で戻る（Vim 9.1 の :s/a/X/|Dup y と同じ）。
+	feedKeys(s, ":s/a/X/|dup.line y<CR>")
+	if got := s.buf.Text(); got != "Xb\nXb\ncd" {
+		t.Errorf(":s|dup.line: text = %q", got)
+	}
+	feedKeys(s, "u")
+	if got := s.buf.Text(); got != "ab\ncd" {
+		t.Errorf(":s|dup.line の後の u: text = %q", got)
+	}
+
 	ext.calls, ext.replays = nil, nil
 	feedKeys(s, "qq:dup.line x<CR>q@q")
 	if want := []string{"action dup.line x", "action dup.line x"}; !slices.Equal(ext.calls, want) {

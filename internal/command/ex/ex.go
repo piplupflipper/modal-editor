@@ -22,7 +22,7 @@
 //	:<コマンドの ID> [引数]  拡張機能のコマンドを実行する Action の ActionExtCommand を返す（State.ExtCommand。例: :acp.prompt 説明して）
 //
 // 拡張機能のコマンドは、ID と完全に一致する名前だけで呼べ、本体のコマンドの名前か省略形と同じ ID は本体のコマンドを優先する。
-// 引数は行末までの文字列で、"|" で区切らない。範囲と "!" は取らない。
+// 引数は行末までの文字列で、"|" で区切らない。範囲と "!" は取らず、:w などの動作を返すコマンドの後には置けない（E319）。
 //
 // :w、:wq、:x の範囲は、バッファ全体（:%w、:1,$w）だけを受け付け、一部の行（:2,3w）は E319 にする。
 // Action は書き出す行の範囲を持たないので、一部の行の書き出しには対応していない。
@@ -427,7 +427,10 @@ func extCommandName(src string) string {
 //
 // 名前は省略できず、ID と完全に一致したときだけ拡張機能のコマンドとする。
 // 本体のコマンドの名前か省略形と同じ ID（"w"、"write"、"s" など）は、本体のコマンドを優先する。
-// 範囲と "!" は取らず、付ければ E481 と E477 にする。:g の cmd の中では E319 にする。
+// 範囲と "!" は取らず、付ければ E481 と E477 にする（ビジュアルモードの : が入れる '<,'> も E481。Vim の -range なしと同じ）。
+// :g の cmd の中と、同じ行の前のコマンドが動作（Result.Actions。:w|acp.prompt の :w）を積んだ後は E319 にする。
+// 動作は呼び出し側が Execute の後に行うので、後に置いた拡張機能のコマンドが先に動き、:w が拡張機能の編集の後の内容を書き出すためである。
+// バッファの中で済むコマンド（:s/a/b/|acp.prompt）の後には置ける。
 // 引数は、ID の後の空白を除いた行末までで、"|" を区切りとしない（Vim の -bar を付けない利用者定義のコマンドと同じ）。
 //
 // req: FR-08, FR-11
@@ -447,6 +450,10 @@ func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) 
 	switch {
 	case c.inGlobal:
 		return true, errAt(namePos, codeNotAvailable, ":global の中では使えません: %s", id)
+	case len(c.actions) > 0:
+		// 前のコマンドの動作（:w の書き出しなど）は、呼び出し側が Execute の後に行う。
+		// 拡張機能のコマンドの問い合わせはそれより先に行われるので、Vim の左から右の順を保てない。
+		return true, errAt(namePos, codeNotAvailable, ":w などの後には拡張機能のコマンドを置けません: %s", id)
 	case r.count > 0:
 		return true, errAt(r.pos, codeNoRange, "範囲は使えません")
 	}

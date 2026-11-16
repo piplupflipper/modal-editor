@@ -2,8 +2,7 @@ package editor
 
 import (
 	"encoding/json"
-	"io"
-	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 )
 
@@ -42,28 +40,57 @@ func TestExtCommandLine(t *testing.T) {
 	if msg := h.message(); !strings.HasPrefix(msg, "E492") {
 		t.Errorf("知らない ID: message = %q", msg)
 	}
+
+	// :w の後には置けない（E319）。置けば :w が拡張機能の編集の後の内容を書き出すためである。
+	// Vim の :w|<誤りのコマンド> と同じく、誤りの前の :w は行う。拡張機能のコマンドは呼ばないので、書き出すのは元の内容である。
+	h.keys(":w|fake.upper<CR>")
+	h.settle()
+	if got := h.text(); got != "abc\ndef" {
+		t.Errorf(":w|fake.upper: text = %q", got)
+	}
+	if disk, err := os.ReadFile(filepath.Join(dir, "a.txt")); err != nil || string(disk) != "abc\ndef\n" {
+		t.Errorf(":w|fake.upper: disk = %q, %v", disk, err)
+	}
+	// :s のようにバッファの中で済むコマンドの後には置け、両方の編集が u 1 回で戻る（Vim 9.1 の :s/a/X/|Dup y と同じ）。
+	h.keys(":s/b/X/|fake.upper<CR>")
+	h.settle()
+	if got := h.text(); got != "AXC\ndef" {
+		t.Errorf(":s|fake.upper: text = %q", got)
+	}
+	h.keys("u")
+	h.settle()
+	if got := h.text(); got != "abc\ndef" {
+		t.Errorf(":s|fake.upper の後の u: text = %q", got)
+	}
+
+	// 拡張機能が無効なら、exthost の内部の文言ではなく、日本語の 1 行で知らせる。
+	if err := h.e.host.Disable("fake"); err != nil {
+		t.Fatal(err)
+	}
+	h.eventually("無効", func() bool { st, _ := h.e.host.State("fake"); return st == exthost.StateDisabled })
+	h.keys(":fake.echo x<CR>")
+	h.settle()
+	if want := "拡張機能 fake の fake.echo は使えません: 拡張機能が動いていません（無効か、異常終了の後の再起動の待ち）"; h.message() != want {
+		t.Errorf("無効: message = %q, want %q", h.message(), want)
+	}
 }
 
-// 期限 0 の結果の破棄の知らせは、同じ拡張機能の同じ操作が続けば、行を増やさずに回数を書き添える。
-// 別の操作か、知らせが他のメッセージで消えた後は、1 回目から数え直す。
-//
-// req: FR-18
-func TestNoteDiscard(t *testing.T) {
-	e := &Editor{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	slow := editcmd.Ref{Extension: "fake", ID: "fake.slow"}
-	e.noteDiscard(slow)
-	e.noteDiscard(slow)
-	if want := "拡張機能 fake の fake.slow の結果を破棄しました（問い合わせの後にバッファかカーソルが変わったため）（2 回）"; e.message.Text != want {
-		t.Errorf("message = %q, want %q", e.message.Text, want)
+// 2 つの拡張機能が同じ ID のコマンドを宣言していたら、先の拡張機能のものを呼び、設定の誤りとして返す。
+func TestBuildExCommandsDuplicate(t *testing.T) {
+	spec := func(id string, cmds ...string) exthost.Spec {
+		var cs []ext.Contribution
+		for _, c := range cmds {
+			cs = append(cs, ext.Contribution{ID: c})
+		}
+		return exthost.Spec{Manifest: ext.Manifest{ID: id, Contributes: ext.Contributes{Commands: cs}}}
 	}
-	e.noteDiscard(editcmd.Ref{Extension: "fake", ID: "fake.line"})
-	if strings.Contains(e.message.Text, "回）") {
-		t.Errorf("別の操作で数え直していない: %q", e.message.Text)
+	cmds, errs := buildExCommands([]exthost.Spec{spec("a", "x.run", "a.only"), spec("b", "x.run", "b.only")})
+	want := map[string]string{"x.run": "a", "a.only": "a", "b.only": "b"}
+	if !maps.Equal(cmds, want) {
+		t.Errorf("cmds = %v, want %v", cmds, want)
 	}
-	e.message = noMessage
-	e.noteDiscard(slow)
-	if strings.Contains(e.message.Text, "回）") {
-		t.Errorf("消えた後に数え直していない: %q", e.message.Text)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "拡張機能 b のコマンド x.run は拡張機能 a のものと重なる") {
+		t.Errorf("errs = %v", errs)
 	}
 }
 

@@ -180,10 +180,8 @@ type Editor struct {
 	pendingOpen []openRequest
 
 	message ui.Message
-	// lastDiscard は、期限 0 の結果を破棄したことを直近に知らせたメッセージである（showDiscarded）。
-	lastDiscard *discardNotice
-	popup       *popupState
-	choices     []*exthost.ChoiceAskRequest
+	popup   *popupState
+	choices []*exthost.ChoiceAskRequest
 	// confirm は、表示中の Ex の確認の問いと、問いを出したバッファである。
 	confirm   *ex.Confirm
 	confirmBS *bufferState
