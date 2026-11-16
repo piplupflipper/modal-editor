@@ -11,7 +11,7 @@ import (
 // req: FR-41
 func TestRemapper(t *testing.T) {
 	r, errs := newRemapper(map[string]map[string]string{
-		"normal": {"ab": "X", "abc": "Y", "Q": "ab", "<Foo>": "x"},
+		"normal": {"ab": "X", "abc": "Y", "Q": "ab", "<Foo>": "x", "<F5>": "dd", "<Insert>": "i"},
 		"nomode": {"a": "b"},
 	})
 	if len(errs) != 2 {
@@ -32,6 +32,9 @@ func TestRemapper(t *testing.T) {
 		{"Q", "ab", ""},
 		{"zz", "zz", ""},
 		{"a", "", "a"},
+		// F キーと Insert は本体の既定の割り当てが無く、利用者のキーマップで使う（#112）。
+		{"<F5>", "dd", ""},
+		{"<Insert>", "i", ""},
 	}
 	for _, tt := range tests {
 		if got := feed(tt.in); got != tt.want {

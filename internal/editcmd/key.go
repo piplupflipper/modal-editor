@@ -31,9 +31,31 @@ const (
 	CodeEnd
 	CodePageUp
 	CodePageDown
+	CodeInsert
+	// CodeF1 は F1 キーである。F2 から F{MaxFunctionKey} までは CodeF1 に続く値で、FunctionKey で引く。
+	CodeF1
 )
 
-// codeNames は、特殊キーの表記（<Esc> の Esc の部分）である。
+// MaxFunctionKey は、キーの種類を持つ F キーの最大の番号である。
+// 端末の解読（internal/term）が読む xterm と VTE の F キーの範囲（F1〜F20）に合わせる。
+const MaxFunctionKey = 20
+
+// FunctionKey は、n 番の F キー（F1 なら 1）の種類を返す。n が 1 から MaxFunctionKey の範囲になければ ok は false である。
+func FunctionKey(n int) (c Code, ok bool) {
+	if n < 1 || n > MaxFunctionKey {
+		return 0, false
+	}
+	return CodeF1 + Code(n-1), true
+}
+
+func init() {
+	for n := 1; n <= MaxFunctionKey; n++ {
+		c, _ := FunctionKey(n)
+		codeNames[c] = fmt.Sprintf("F%d", n)
+	}
+}
+
+// codeNames は、特殊キーの表記（<Esc> の Esc の部分）である。F キーの名前（F1〜F20）は init で足す。
 // ParseKeys と Key.String がこの表を共有する。
 var codeNames = map[Code]string{
 	CodeEsc:       "Esc",
@@ -49,6 +71,7 @@ var codeNames = map[Code]string{
 	CodeEnd:       "End",
 	CodePageUp:    "PageUp",
 	CodePageDown:  "PageDown",
+	CodeInsert:    "Insert",
 }
 
 // runeNames は、文字のキーのうち <...> で書く名前である（Vim と同じ）。

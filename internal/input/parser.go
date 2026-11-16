@@ -379,7 +379,7 @@ func charArg(k editcmd.Key) (rune, bool) {
 	case editcmd.CodeTab:
 		return '\t', true
 	case editcmd.CodeEsc, editcmd.CodeBackspace, editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
-		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown:
+		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1:
 	}
 	return 0, false
 }

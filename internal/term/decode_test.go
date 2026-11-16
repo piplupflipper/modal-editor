@@ -9,7 +9,6 @@ import (
 )
 
 // decodeAll は、in を 1 回で Feed し、保留が残れば Flush した結果を、キーの表記で返す。
-// Unsupported のキーは "{F1}" の形で書く。
 func decodeAll(in string) string {
 	var d Decoder
 	out := d.Feed([]byte(in))
@@ -22,10 +21,6 @@ func decodeAll(in string) string {
 func decodedString(ds []Decoded) string {
 	var b strings.Builder
 	for _, x := range ds {
-		if x.Unsupported != "" {
-			b.WriteString("{" + x.Unsupported + "}")
-			continue
-		}
 		b.WriteString(x.Key.String())
 	}
 	return b.String()
@@ -59,9 +54,9 @@ func TestDecodeSequences(t *testing.T) {
 		{"tmux: Home と End", "\x1b[1~\x1b[4~", "<Home><End>"},
 		{"tmux: PageUp と PageDown", "\x1b[5~\x1b[6~", "<PageUp><PageDown>"},
 		{"tmux: Delete", "\x1b[3~", "<Del>"},
-		{"tmux: Insert", "\x1b[2~", "{Insert}"},
-		{"tmux: F1", "\x1bOP", "{F1}"},
-		{"tmux: F5 と F12", "\x1b[15~\x1b[24~", "{F5}{F12}"},
+		{"tmux: Insert", "\x1b[2~", "<Insert>"},
+		{"tmux: F1", "\x1bOP", "<F1>"},
+		{"tmux: F5 と F12", "\x1b[15~\x1b[24~", "<F5><F12>"},
 		{"tmux: C-Up", "\x1b[1;5A", "<C-Up>"},
 		{"tmux: S-Left", "\x1b[1;2D", "<S-Left>"},
 		{"tmux: M-Right", "\x1b[1;3C", "<A-Right>"},
@@ -81,9 +76,11 @@ func TestDecodeSequences(t *testing.T) {
 		{"xterm: Home と End（通常のカーソルキーのモード）", "\x1b[H\x1b[F", "<Home><End>"},
 		{"xterm: 矢印（アプリケーションのカーソルキーのモード）", "\x1bOA\x1bOB\x1bOC\x1bOD", "<Up><Down><Right><Left>"},
 		{"xterm: Home と End（アプリケーションのモード）", "\x1bOH\x1bOF", "<Home><End>"},
-		{"xterm: F1〜F4", "\x1bOP\x1bOQ\x1bOR\x1bOS", "{F1}{F2}{F3}{F4}"},
-		{"xterm: 修飾キーつきの F1", "\x1b[1;5P", "{F1}"},
-		{"xterm: F6〜F10", "\x1b[17~\x1b[18~\x1b[19~\x1b[20~\x1b[21~", "{F6}{F7}{F8}{F9}{F10}"},
+		{"xterm: F1〜F4", "\x1bOP\x1bOQ\x1bOR\x1bOS", "<F1><F2><F3><F4>"},
+		{"xterm: 修飾キーつきの F1", "\x1b[1;5P", "<C-F1>"},
+		{"xterm: F6〜F10", "\x1b[17~\x1b[18~\x1b[19~\x1b[20~\x1b[21~", "<F6><F7><F8><F9><F10>"},
+		{"xterm: F13〜F20", "\x1b[25~\x1b[26~\x1b[28~\x1b[29~\x1b[31~\x1b[32~\x1b[33~\x1b[34~", "<F13><F14><F15><F16><F17><F18><F19><F20>"},
+		{"xterm: S-F5 と C-Insert", "\x1b[15;2~\x1b[2;5~", "<S-F5><C-Insert>"},
 		{"xterm: C-Delete", "\x1b[3;5~", "<C-Del>"},
 		{"xterm: S-PageUp", "\x1b[5;2~", "<S-PageUp>"},
 		{"xterm: Meta は Alt", "\x1b[1;9A", "<A-Up>"},

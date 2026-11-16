@@ -56,6 +56,20 @@ func (e *Editor) frame() *ui.Frame {
 	return f
 }
 
+// viewport は、描画の表示領域（ui.Renderer の縦のスクロールの位置）を、command.State のページ単位のスクロール
+// （<PageUp>、<PageDown>）へ渡す口である（command.Viewport）。
+type viewport struct{ r *ui.Renderer }
+
+// Top は、表示領域の最初の行を返す。
+func (v viewport) Top() int { return v.r.Top() }
+
+// Rows は、表示領域の行数を返す。ui.Renderer は画面の下の 2 行をステータス行とコマンドラインの行に使う。
+// 画面の大きさがまだ届いていないとき（0 行）も、1 行として扱う。
+func (v viewport) Rows() int { return max(v.r.Height-2, 1) }
+
+// SetTop は、表示領域の最初の行を変える。横のスクロールの位置は変えない。
+func (v viewport) SetTop(top int) { v.r.SetScroll(top, v.r.Left()) }
+
 // render は、画面を描いて端末へ出す。
 func (e *Editor) render() {
 	if e.renderer.Width <= 0 || e.renderer.Height <= 0 {

@@ -129,7 +129,6 @@ func Open(in, out *os.File, opts Options) (*Terminal, error) {
 
 // Input は、キーとリサイズのイベントを届いた順に送るチャネルを返す。
 // 入力が終わる（in の読み取りの誤り、Close）と閉じる。
-// 解読できても editcmd.Key に対応しないキー（F キーなど。Decoded.Unsupported）は送らない。
 func (t *Terminal) Input() <-chan Event { return t.events }
 
 // Size は、端末の現在の列数と行数を返す。取れなければ 80 列 24 行を返す。
@@ -327,9 +326,6 @@ func (t *Terminal) loop(chunks <-chan []byte) {
 // send は、解読したキーを events へ送る。Close で止められたら false を返す。
 func (t *Terminal) send(ds []Decoded) bool {
 	for _, d := range ds {
-		if d.Unsupported != "" {
-			continue
-		}
 		if !t.emit(Event{Key: d.Key}) {
 			return false
 		}

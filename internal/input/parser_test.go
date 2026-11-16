@@ -66,6 +66,18 @@ func TestParserBuiltin(t *testing.T) {
 		{"<< の < は文字", "<<", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("dedent"), Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
+		{"3<Down> は 3j", "3<Down>", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindMotion, Count: 3, CountGiven: true, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("down")},
+		})}},
+		{"d<End> は d$", "d<End>", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("delete"),
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("line-end")},
+		})}},
+		{"2<PageDown>", "2<PageDown>", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 2, CountGiven: true, Action: builtin("page-down"),
+		})}},
+		{"オペレーターの後の <PageUp> は誤り", "d<PageUp>", []editcmd.Result{invalid}},
+		{"<F1> と <Insert> は既定で何もしない", "<F1><Insert>", []editcmd.Result{invalid, invalid}},
 		{"fx", "fx", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("find-forward"), Char: 'x'},
 		})}},
