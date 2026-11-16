@@ -2,7 +2,7 @@
 //
 // 次の 3 つの部分から成る。
 //
-//   - Decoder: 端末から読んだバイト列を、キー（editcmd.Key）に解読する。端末を使わずに試せる
+//   - Decoder: 端末から読んだバイト列を、キー（editcmd.Key）と貼り付けたテキスト（bracketed paste）に解読する。端末を使わずに試せる
 //   - Painter: ui の格子（ui.Screen）を、前回の格子と比べて変わったセルだけを書く制御シーケンスにする。端末を使わずに試せる
 //   - Terminal: tty を raw モードにし、代替画面と bracketed paste を有効にして、Decoder と Painter で読み書きする。
 //     終わるときに、端末を元の状態に戻す

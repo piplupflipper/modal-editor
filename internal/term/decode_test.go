@@ -1,11 +1,10 @@
 package term
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // decodeAll は、in を 1 回で Feed し、保留が残れば Flush した結果を、キーの表記で返す。
@@ -18,9 +17,14 @@ func decodeAll(in string) string {
 	return decodedString(out)
 }
 
+// decodedString は、解読した列をキーの表記にする。貼り付けは [paste "テキスト"] と書く。
 func decodedString(ds []Decoded) string {
 	var b strings.Builder
 	for _, x := range ds {
+		if x.Paste != "" {
+			fmt.Fprintf(&b, "[paste %q]", x.Paste)
+			continue
+		}
 		b.WriteString(x.Key.String())
 	}
 	return b.String()
@@ -105,10 +109,15 @@ func TestDecodeSequences(t *testing.T) {
 		{"CSI の途中の制御文字は壊れた列として捨てる", "\x1b[1\ra", "<CR>a"},
 		{"不正な UTF-8 は捨てる", "a\xffb\xc3", "ab"},
 
-		{"bracketed paste", "\x1b[200~a\x1bb\x1b[201~c", "abc"},
-		{"bracketed paste の改行", "\x1b[200~a\r\nb\rc\nd\x1b[201~", "a<CR>b<CR>c<CR>d"},
-		{"bracketed paste の Tab と制御文字", "\x1b[200~\ta\x03\x1b[201~", "<Tab>a"},
-		{"bracketed paste の UTF-8", "\x1b[200~日本\x1b[201~", "日本"},
+		{"bracketed paste", "\x1b[200~a\x1bb\x1b[201~c", `[paste "ab"]c`},
+		{"bracketed paste の中身はキーにしない", "\x1b[200~dd:q\x1b[201~", `[paste "dd:q"]`},
+		{"bracketed paste の改行", "\x1b[200~a\r\nb\rc\nd\r\r\n\x1b[201~", `[paste "a\nb\nc\nd\n\n"]`},
+		{"bracketed paste の Tab と制御文字", "\x1b[200~\ta\x03\x7f\x1b[201~", `[paste "\ta"]`},
+		{"bracketed paste の UTF-8", "\x1b[200~日本\x1b[201~", `[paste "日本"]`},
+		{"bracketed paste の不正な UTF-8", "\x1b[200~a\xffb\x1b[201~", `[paste "ab"]`},
+		{"空の bracketed paste は送らない", "\x1b[200~\x1b[201~a", "a"},
+		{"制御文字だけの bracketed paste は送らない", "\x1b[200~\x03\x1b[201~a", "a"},
+		{"続けた bracketed paste", "\x1b[200~a\x1b[201~\x1b[200~b\x1b[201~", `[paste "a"][paste "b"]`},
 		{"bracketed paste の終わりの印の単独は捨てる", "\x1b[201~a", "a"},
 	}
 	for _, tt := range tests {
@@ -188,8 +197,23 @@ func TestDecodePasteNoTimeout(t *testing.T) {
 	}
 	got = append(got, d.Feed([]byte("[201"))...)
 	got = append(got, d.Feed([]byte("~:"))...)
-	if s := decodedString(got); s != "ab:" {
-		t.Errorf("got %q, want %q", s, "ab:")
+	if s, want := decodedString(got), `[paste "ab"]:`; s != want {
+		t.Errorf("got %q, want %q", s, want)
+	}
+}
+
+// TestDecodePasteFlush は、終わりの印が来ないまま入力が終わった（Flush）ら、ここまでのテキストを貼り付けとして送ることを確かめる。
+func TestDecodePasteFlush(t *testing.T) {
+	var d Decoder
+	got := d.Feed([]byte("\x1b[200~a\r\nb\x1b[20"))
+	if len(got) != 0 {
+		t.Fatalf("終わりの印の前に %q を送った", decodedString(got))
+	}
+	if s, want := decodedString(d.Flush()), `[paste "a\nb[20"]`; s != want {
+		t.Errorf("Flush() = %q, want %q", s, want)
+	}
+	if s := decodedString(d.Feed([]byte("x"))); s != "x" {
+		t.Errorf("Flush の後の Feed = %q, want %q（貼り付けの状態を抜ける）", s, "x")
 	}
 }
 
@@ -198,18 +222,16 @@ func TestDecodeLongPaste(t *testing.T) {
 	body := strings.Repeat("あいう\r\n", 2000)
 	in := "\x1b[200~" + body + "\x1b[201~"
 	var d Decoder
-	var keys []editcmd.Key
+	var got []Decoded
 	for chunk := range slices.Chunk([]byte(in), 7) {
-		for _, x := range d.Feed(chunk) {
-			keys = append(keys, x.Key)
-		}
+		got = append(got, d.Feed(chunk)...)
 		if len(d.buf) > len(pasteEnd) {
 			t.Fatalf("保留が %d バイト", len(d.buf))
 		}
 	}
-	want := strings.Repeat("あいう<CR>", 2000)
-	if got := editcmd.KeysString(keys); got != want {
-		t.Errorf("貼り付けの結果が違う（長さ %d, want %d）", len(got), len(want))
+	want := strings.Repeat("あいう\n", 2000)
+	if len(got) != 1 || got[0].Paste != want {
+		t.Errorf("貼り付けの結果が違う（%d 件, want 長さ %d の 1 件）", len(got), len(want))
 	}
 }
 

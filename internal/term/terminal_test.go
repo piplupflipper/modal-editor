@@ -85,7 +85,9 @@ func TestTerminalPTY(t *testing.T) {
 	wantKeys(t, tm, "<Down>")
 
 	write("\x1b[200~x\x1by\r\n\x1b[201~")
-	wantKeys(t, tm, "xy<CR>")
+	if ev := nextEvent(t, tm); ev.Paste != "xy\n" {
+		t.Errorf("貼り付けのイベント = %+v, want Paste %q", ev, "xy\n")
+	}
 
 	ptytest.SetSize(t, master, 100, 30)
 	// テストのプロセスは pty の前面のプロセスグループではないので、SIGWINCH を自分へ送る。

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,12 +21,38 @@ import (
 // 偽の端末の結合のテストは、テストの実行ファイル自身を子プロセスとして起動し、main を動かす（go build を待たないため）。
 const envRunMain = "MODAL_EDITOR_TEST_RUN_MAIN"
 
+// envPanicOnStderr は、エディタとして起動したテストの実行ファイルで、拡張機能の標準エラー出力にこの値の行が来たら、
+// それを記録するロガーの中で panic させる環境変数である。拡張機能の goroutine の panic で端末が戻ることを確かめるのに使う（#114）。
+const envPanicOnStderr = "MODAL_EDITOR_TEST_PANIC_ON_STDERR"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(envRunMain) == "1" {
+		if marker := os.Getenv(envPanicOnStderr); marker != "" {
+			wrapLogHandler = func(h slog.Handler) slog.Handler { return panicHandler{Handler: h, marker: marker} }
+		}
 		main()
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// panicHandler は、拡張機能の標準エラー出力の記録（exthost の "extension stderr"）の行が marker なら panic するロガーである。
+// exthost は、標準エラー出力を、拡張機能ごとの goroutine で読んで記録する。
+type panicHandler struct {
+	slog.Handler
+	marker string
+}
+
+func (h panicHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h panicHandler) Handle(ctx context.Context, r slog.Record) error {
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "line" && a.Value.String() == h.marker {
+			panic("テストが起こした panic: " + h.marker)
+		}
+		return true
+	})
+	return h.Handler.Handle(ctx, r)
 }
 
 // editorProc は、偽の端末の上で起動したエディタのプロセスである。
@@ -56,10 +84,17 @@ func startEditorWithConfig(t *testing.T, configText string, args ...string) *edi
 			t.Fatal(err)
 		}
 	}
+	return startEditorIn(t, xdg, nil, args...)
+}
+
+// startEditorIn は、XDG_CONFIG_HOME と XDG_DATA_HOME を xdg の下の config と data にし、環境変数 env を足して、エディタを起動する。
+func startEditorIn(t *testing.T, xdg string, env []string, args ...string) *editorProc {
+	t.Helper()
 	master, tty := ptytest.Open(t, 80, 24)
 	cmd := exec.Command(os.Args[0], args...) //nolint:gosec // テストの実行ファイル自身をエディタとして起動する
 	cmd.Env = append(os.Environ(), envRunMain+"=1",
 		"XDG_CONFIG_HOME="+filepath.Join(xdg, "config"), "XDG_DATA_HOME="+filepath.Join(xdg, "data"))
+	cmd.Env = append(cmd.Env, env...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
 	// 新しいセッションを作り、tty を制御端末にする。端末の大きさを変えると、カーネルがエディタへ SIGWINCH を送る。
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
@@ -187,9 +222,8 @@ func TestSignalWhileLoadingInPTY(t *testing.T) {
 		t.Error("シグナルで終わったのに終了コードが 0")
 	}
 	p.checkRestored(t, before)
-	if !strings.Contains(p.out.String(), "シグナルを受けて終了した") {
-		t.Errorf("終了の理由が出ていない: %q", p.out.String())
-	}
+	// 終了の理由は終わる前に書かれているが、Capture の読み取りが遅れることがあるので待つ（#116）。
+	p.out.WaitForString(t, "シグナルを受けて終了した")
 }
 
 // TestSuspendResumeInPTY は、SIGTSTP で端末を戻してから止まり、SIGCONT で raw モードに入り直して全体を描き直すことを確かめる。
@@ -204,10 +238,12 @@ func TestSuspendResumeInPTY(t *testing.T) {
 	if got := ptytest.Termios(t, p.tty); got != before {
 		t.Errorf("止まっている間の端末の設定が戻っていない:\n before %+v\n got    %+v", before, got)
 	}
+	// エディタは代替画面から戻る列を書いてから止まるので、止まった時点で列は pty に書かれている。
+	// ただし、テストの側が master から読む goroutine（Capture）は遅れることがあるので、読み終えるまで待つ。
+	// 直ちに確かめていたときは、CPU に負荷をかけると 200 回に 1 回ほど、列が 5 ms ほど遅れて読まれて落ちた（#116）。
+	// 止まっている間はエディタが書かないので、待って届いた列は止まる前に書いたものである。
+	p.out.WaitForString(t, "\x1b[?1049l")
 	mark := len(p.out.String())
-	if !strings.Contains(p.out.String(), "\x1b[?1049l") {
-		t.Error("止まる前に代替画面から戻っていない")
-	}
 	if err := p.cmd.Process.Signal(syscall.SIGCONT); err != nil {
 		t.Fatal(err)
 	}
@@ -309,9 +345,7 @@ func TestSignalRestoresTerminal(t *testing.T) {
 				t.Error("シグナルで終わったのに終了コードが 0")
 			}
 			p.checkRestored(t, before)
-			if !strings.Contains(p.out.String(), "シグナルを受けて終了した") {
-				t.Errorf("終了の理由が出ていない: %q", p.out.String())
-			}
+			p.out.WaitForString(t, "シグナルを受けて終了した") // Capture の読み取りの遅れを待つ（#116）
 		})
 	}
 }

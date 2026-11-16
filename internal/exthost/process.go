@@ -70,6 +70,7 @@ func (r *run) fail(err error) {
 // req: NFR-03
 func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 	defer h.wg.Done()
+	defer h.recoverPanic()
 	id := e.spec.Manifest.ID
 	for {
 		err := h.runOnce(e, r, stop)
@@ -178,10 +179,11 @@ func (h *Host) runOnce(e *extension, r *run, stop <-chan struct{}) (err error) {
 	stderrDone := make(chan struct{})
 	go func() {
 		defer close(stderrDone)
+		defer h.recoverPanic()
 		h.logStderr(id, p.stderr)
 	}()
 
-	conn := rpc.NewConn(p.stdout, p.stdin, h.handler(e, r))
+	conn := rpc.NewConn(p.stdout, p.stdin, h.handler(e, r), h.rpcOptions()...)
 	h.mu.Lock()
 	r.conn = conn
 	h.mu.Unlock()

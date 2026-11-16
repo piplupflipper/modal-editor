@@ -34,8 +34,10 @@ const (
 
 // Event は、端末からのイベント 1 件である。internal/editor の TermEvent と同じ形で、型の変換で渡せる。
 type Event struct {
-	// Key は、押されたキーである。Resize が true なら読まない。
+	// Key は、押されたキーである。Resize が true か Paste が空でなければ読まない。
 	Key editcmd.Key
+	// Paste は、bracketed paste で貼り付けたテキスト（Decoded.Paste）である。空でなければ、このイベントは貼り付けである。
+	Paste string
 	// Resize は、端末の大きさが Width と Height に変わったことを表す。
 	Resize        bool
 	Width, Height int
@@ -127,7 +129,7 @@ func Open(in, out *os.File, opts Options) (*Terminal, error) {
 	return t, nil
 }
 
-// Input は、キーとリサイズのイベントを届いた順に送るチャネルを返す。
+// Input は、キー、貼り付け、リサイズのイベントを届いた順に送るチャネルを返す。
 // 入力が終わる（in の読み取りの誤り、Close）と閉じる。
 func (t *Terminal) Input() <-chan Event { return t.events }
 
@@ -323,10 +325,10 @@ func (t *Terminal) loop(chunks <-chan []byte) {
 	}
 }
 
-// send は、解読したキーを events へ送る。Close で止められたら false を返す。
+// send は、解読したキーと貼り付けを events へ送る。Close で止められたら false を返す。
 func (t *Terminal) send(ds []Decoded) bool {
 	for _, d := range ds {
-		if !t.emit(Event{Key: d.Key}) {
+		if !t.emit(Event{Key: d.Key, Paste: d.Paste}) {
 			return false
 		}
 	}

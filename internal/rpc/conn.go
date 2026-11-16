@@ -80,6 +80,26 @@ type options struct {
 	cancelMethod   string
 	maxMessageSize int
 	maxOutboxBytes int
+	onPanic        func()
+}
+
+// WithPanicHook は、接続の goroutine（読み取りと書き込み。読み取りの goroutine はハンドラーも呼ぶ）が panic したときに、
+// その goroutine の上で f を呼んでから、同じ値で panic を続けさせる。panic を止めはしない。
+// 本体が、どの goroutine の panic でも端末を元に戻してから終わるために使う（基本設計 8 章、#114）。
+// f は、どの goroutine からも、何度呼ばれてもよいものにする。nil なら何もしない（既定）。
+func WithPanicHook(f func()) Option {
+	return func(o *options) { o.onPanic = f }
+}
+
+// recoverPanic は、goroutine の始めに defer で呼ぶ。panic していれば、WithPanicHook の f を呼んでから panic を続ける。
+func (c *Conn) recoverPanic() {
+	if c.opts.onPanic == nil {
+		return
+	}
+	if p := recover(); p != nil {
+		c.opts.onPanic()
+		panic(p)
+	}
 }
 
 // WithCancelMethod は、取り消しの通知のメソッド名を変える。既定は [CancelMethod] である。
@@ -391,6 +411,7 @@ func (c *Conn) Err() error {
 
 // readLoop は、接続が終わるまでメッセージを読み、応答は待っている Future へ、リクエストと通知は Handler へ渡す。
 func (c *Conn) readLoop() {
+	defer c.recoverPanic()
 	for {
 		data, err := ReadMessage(c.br, c.opts.maxMessageSize)
 		if err != nil {
@@ -555,6 +576,7 @@ func (c *Conn) write(data []byte) error {
 // writeLoop は、接続が終わるまで、送信の列に積まれたメッセージを積んだ順に書く。
 // 書き込みが失敗したら接続を終わらせる。列が空になったら、Flush で待っている呼び出しに知らせる。
 func (c *Conn) writeLoop() {
+	defer c.recoverPanic()
 	for {
 		select {
 		case <-c.wake:
