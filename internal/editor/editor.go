@@ -601,10 +601,12 @@ func (e *Editor) syncFinalNewline(bs *bufferState) {
 	}
 }
 
-// switchTo は、カーソルのあるバッファを bs にする。レジスターは引き継ぐ（Vim と同じく、レジスターはバッファをまたいで 1 組）。
+// switchTo は、カーソルのあるバッファを bs にする。レジスターと直前の検索のパターンは引き継ぐ
+// （Vim と同じく、どちらもバッファをまたいで 1 組）。
 func (e *Editor) switchTo(bs *bufferState) {
 	if e.cur != nil && e.cur != bs {
 		*bs.state.Registers() = *e.cur.state.Registers()
+		bs.state.SetLastSearch(e.cur.state.LastSearch())
 	}
 	e.cur = bs
 }

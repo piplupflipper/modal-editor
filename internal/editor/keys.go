@@ -7,6 +7,7 @@ import (
 
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // keyInput は、端末から届いた入力 1 件である。paste が空でなければ貼り付けで、key は読まない。
@@ -214,6 +215,14 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 		e.commitChange(bs, ch)
 	}
 	e.trackDeferred(bs, res.Deferred)
+	if res.Message.Text != "" {
+		// 検索したパターンと、検索の折り返しの警告。後に続く動作と失敗の知らせで上書きされる。
+		level := ui.MessageInfo
+		if res.Message.Warning {
+			level = ui.MessageWarning
+		}
+		e.message = ui.Message{Text: res.Message.Text, Level: level}
+	}
 	switched := errors.Is(res.Err, command.ErrBufferSwitched)
 	// Ex コマンドの動作（:w など）を先に行い、操作の失敗はその後に知らせる。
 	// ex は誤りのコマンドで止まるので、動作はどれも誤りより左のコマンドのものである。

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"cmp"
 	"errors"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -149,6 +150,9 @@ func (s *State) resolveMotion(t editcmd.Target, cmd editcmd.Command, op target.O
 	if res.Find.Char != 0 && t.Ref.ID != "find-repeat" && t.Ref.ID != "find-repeat-reverse" {
 		s.lastFind = res.Find
 	}
+	if t.Ref.Builtin() && searchMotionIDs[t.Ref.ID] {
+		return res, s.searchResult(t, res, err)
+	}
 	if errors.Is(err, target.ErrNoTarget) {
 		return res, failf("%v", err)
 	}
@@ -192,5 +196,6 @@ func (s *State) request(cmd editcmd.Command, op target.Operator) target.Request 
 		Columns:    s.Columns,
 		Last:       s.lastFind,
 		Operator:   op,
+		Search:     target.Search{Pattern: cmp.Or(cmd.Target.Pattern, s.Ex.LastPattern), Backward: s.searchBackward},
 	}
 }

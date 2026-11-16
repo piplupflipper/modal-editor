@@ -155,6 +155,8 @@ type Frame struct {
 	Selection Selection
 	// CommandLine は、コマンドラインモードで入力中の文字列（先頭の ":" を除く）である。
 	CommandLine string
+	// CommandLineType は、コマンドラインの行の先頭に出す文字である（Ex コマンドは ':'、検索は '/' か '?'）。0 なら ':' にする。
+	CommandLineType rune
 	// OperatorPending は、オペレーターの後でモーションを待っているかどうかである。カーソルを下線の形にする。
 	OperatorPending bool
 	// Recording は、記録中のマクロのレジスターの名前である。0 なら記録していない。

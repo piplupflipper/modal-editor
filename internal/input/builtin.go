@@ -52,6 +52,14 @@ var (
 		{keys: "%", id: "match-pair"},
 		{keys: "{", id: "paragraph-prev"},
 		{keys: "}", id: "paragraph-next"},
+		// 検索。/ と ? は、実行の側（internal/command）がコマンドラインでパターンを受け取ってから移る。
+		// n と N は直前の検索を繰り返し、* と # はカーソルの位置の単語を検索する。
+		{keys: "/", id: "search-forward"},
+		{keys: "?", id: "search-backward"},
+		{keys: "n", id: "search-next"},
+		{keys: "N", id: "search-prev"},
+		{keys: "*", id: "search-word-forward"},
+		{keys: "#", id: "search-word-backward"},
 		// 矢印キーと Home、End は、Vim 9.1 の既定（'whichwrap' に < > が無い）と同じく h、j、k、l、0、$ と同じ働きにする。
 		// 修飾キーの付いたもの（<S-Right> の w、<C-Home> の gg など）は登録しない。
 		{keys: "<Left>", id: "left"},
