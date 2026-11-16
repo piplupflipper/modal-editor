@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/tailscale/hujson"
 
@@ -42,20 +43,21 @@ func DefaultPath() (string, error) {
 }
 
 // ExtensionDirs は、拡張機能を探すディレクトリ（仮）を、優先する順に返す。
-// executable は本体の実行ファイルのパス（os.Executable の結果）で、空なら 1 つ目を省く。
+// executable は本体の実行ファイルのパス（os.Executable の結果）で、空なら 2 つ目を省く。
 //
-//  1. executable と同じディレクトリの extensions（make dist の配置）
-//  2. $XDG_DATA_HOME/modal-editor/extensions。XDG_DATA_HOME が空か相対パスなら $HOME/.local/share を使い、
+//  1. $XDG_DATA_HOME/modal-editor/extensions（利用者の拡張機能）。XDG_DATA_HOME が空か相対パスなら $HOME/.local/share を使い、
 //     どちらも決まらなければ省く
+//  2. executable と同じディレクトリの extensions（同梱の拡張機能。make dist の配置）
 //
 // 同じ ID の拡張機能が複数のディレクトリにあれば、LoadExtensions は先のディレクトリのものを使う。
+// 利用者のディレクトリを先にするのは、同梱の拡張機能を利用者が同じ ID のもので置き換えられるようにするためである（Vim の runtimepath と同じ考え方）。
 func ExtensionDirs(executable string) []string {
 	var dirs []string
-	if executable != "" {
-		dirs = append(dirs, filepath.Join(filepath.Dir(executable), "extensions"))
-	}
 	if base, err := xdgDir("XDG_DATA_HOME", filepath.Join(".local", "share")); err == nil {
 		dirs = append(dirs, filepath.Join(base, appName, "extensions"))
+	}
+	if executable != "" {
+		dirs = append(dirs, filepath.Join(filepath.Dir(executable), "extensions"))
 	}
 	return dirs
 }
@@ -90,7 +92,7 @@ func LoadManifest(path string) (m ext.Manifest, warnings []error, err error) {
 	if err != nil {
 		return m, nil, &Error{Path: path, Msg: "宣言ファイルを読めない: " + err.Error()}
 	}
-	s := &source{path: path, data: data}
+	s := newSource(path, data)
 	root, err := s.parseJSONC()
 	if err != nil {
 		return m, nil, err
@@ -108,7 +110,7 @@ func LoadManifest(path string) (m ext.Manifest, warnings []error, err error) {
 	if err := json.Unmarshal(s.std, &m); err != nil {
 		var te *json.UnmarshalTypeError
 		if errors.As(err, &te) {
-			return ext.Manifest{}, warnings, s.at(int(te.Offset), "宣言ファイルの %s の型が違う（%s に %s は入らない）", te.Field, te.Type, te.Value)
+			return ext.Manifest{}, warnings, s.at(typeErrorOffset(&root, te), "宣言ファイルの %s の型が違う（%s に %s は入らない）", te.Field, te.Type, te.Value)
 		}
 		return ext.Manifest{}, warnings, &Error{Path: path, Msg: "宣言ファイルを読めない: " + err.Error()}
 	}
@@ -120,6 +122,22 @@ func LoadManifest(path string) (m ext.Manifest, warnings []error, err error) {
 		return ext.Manifest{}, warnings, &Error{Path: path, Msg: "宣言ファイルの誤り: " + verr.Error()}
 	}
 	return m, warnings, nil
+}
+
+// typeErrorOffset は、型の違う値の先頭の位置を返す。
+// encoding/json の Offset は値を読み終えた位置なので、te.Field（"activation.0.on" の形）を JSON Pointer に直して構文木から引く。
+// 引けなければ Offset を使う。
+func typeErrorOffset(root *hujson.Value, te *json.UnmarshalTypeError) int {
+	if te.Field != "" {
+		ptr := ""
+		for f := range strings.SplitSeq(te.Field, ".") {
+			ptr += "/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(f)
+		}
+		if v := root.Find(ptr); v != nil {
+			return v.StartOffset
+		}
+	}
+	return int(te.Offset)
 }
 
 // LoadExtensions は、dirs の各ディレクトリの直下の <名前>/manifest.json を宣言ファイルとして読み、

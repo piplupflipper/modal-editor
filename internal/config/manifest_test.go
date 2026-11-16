@@ -86,14 +86,19 @@ func TestLoadManifestRepository(t *testing.T) {
 func TestLoadManifestErrors(t *testing.T) {
 	cases := []struct {
 		name, src string
-		// line は誤りの行で、0 なら位置を問わない。
-		line int
-		msg  string
+		// line と col は誤りの位置で、line が 0 なら位置を問わない。型の違いは値の先頭を指す。
+		line, col int
+		msg       string
 	}{
-		{"構文", "{\n  \"id\": \"a\"\n  \"command\": \"x\"\n}", 3, "JSONC として読めない"},
-		{"最上位が配列", "[]", 1, "最上位はオブジェクト"},
-		{"型の違い", "{\n  \"id\": \"a\",\n  \"command\": 1,\n  \"activation\": []\n}", 3, "command の型が違う"},
-		{"検査の誤り", `{"id": "a", "command": "x", "activation": []}`, 0, "宣言ファイルの誤り"},
+		{"構文", "{\n  \"id\": \"a\"\n  \"command\": \"x\"\n}", 3, 3, "JSONC として読めない"},
+		{"最上位が配列", "[]", 1, 1, "最上位はオブジェクト"},
+		{"型の違い", "{\n  \"id\": \"a\",\n  \"command\": 1,\n  \"activation\": []\n}", 3, 14, "command の型が違う"},
+		{"文字列の型の違い", "{\n  \"id\": \"a\",\n  \"saveHook\": \"yes-please\",\n}", 3, 15, "saveHook の型が違う"},
+		{"複数行の値の型の違い", "{\n  \"id\": \"a\",\n  \"args\": {\n    \"x\": 1\n  }\n}", 3, 11, "args の型が違う"},
+		{"入れ子の型の違い", "{\n  \"activation\": [\n    { \"on\": 1 },\n  ]\n}", 3, 13, "activation.0.on の型が違う"},
+		{"BOM の後の型の違い", "\xef\xbb\xbf{\"id\": 1}", 1, 8, "id の型が違う"},
+		{"検査の誤り", `{"id": "a", "command": "x", "activation": []}`, 0, 0, "宣言ファイルの誤り"},
+		{"空のファイル", "", 1, 1, "JSONC として読めない"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -103,8 +108,8 @@ func TestLoadManifestErrors(t *testing.T) {
 			if !errors.As(err, &pr) {
 				t.Fatalf("err = %v, want *Error", err)
 			}
-			if (c.line != 0 && pr.Line != c.line) || !strings.Contains(pr.Msg, c.msg) || pr.Path != p {
-				t.Errorf("err = %v, want %d 行目に %q", err, c.line, c.msg)
+			if (c.line != 0 && (pr.Line != c.line || pr.Column != c.col)) || !strings.Contains(pr.Msg, c.msg) || pr.Path != p {
+				t.Errorf("err = %v, want %d:%d に %q", err, c.line, c.col, c.msg)
 			}
 		})
 	}

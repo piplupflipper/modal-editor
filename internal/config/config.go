@@ -17,8 +17,9 @@
 // 設定ファイルの置き場所と、本体が拡張機能を探す規則は、要件定義 7 章で未決なので、仮に次のとおりにする（基本設計 7 章）。
 //
 //   - 設定ファイル: $XDG_CONFIG_HOME/modal-editor/config.jsonc。XDG_CONFIG_HOME が空か相対パスなら ~/.config を使う（DefaultPath）
-//   - 拡張機能: 本体の実行ファイルの隣の extensions/<名前>/ と、$XDG_DATA_HOME/modal-editor/extensions/<名前>/。
-//     XDG_DATA_HOME が空か相対パスなら ~/.local/share を使う（ExtensionDirs）。各ディレクトリの manifest.json を宣言ファイルとして読む
+//   - 拡張機能: $XDG_DATA_HOME/modal-editor/extensions/<名前>/（利用者）と、本体の実行ファイルの隣の extensions/<名前>/（同梱）。
+//     XDG_DATA_HOME が空か相対パスなら ~/.local/share を使う（ExtensionDirs）。各ディレクトリの manifest.json を宣言ファイルとして読み、
+//     同じ ID なら利用者のものを使う
 package config
 
 import (
@@ -43,6 +44,7 @@ import (
 //
 //	{
 //	  "keymap": { "normal": { "<Space>w": ":w<CR>" } },
+//	  "fixendofline": true,
 //	  "fileTypes": { ".tmpl": "html", "Justfile": "make" },
 //	  "extensions": {
 //	    "syncTimeoutMs": 50,
@@ -59,8 +61,13 @@ type Config struct {
 	// SyncTimeout は extensions.syncTimeoutMs の値で、editor.Config.SyncTimeout にそのまま渡す。
 	// 項目が無いか誤りなら nil（editor の既定値）。0 は「待たない」（FR-18）。
 	SyncTimeout *time.Duration
-	// MemoryLimitMB は extensions.memoryLimitMb の値（MB）で、0 は「上限なし」である。
-	// 本体はまだ拡張機能のメモリの上限を適用しないので、読むだけで渡す先が無い。
+	// FixEndOfLine は fixendofline の値で、書き出すときに末尾の改行を補うかどうかである（基本設計 4.1。Vim の 'fixendofline'）。
+	// 項目が無いか誤りなら nil で、既定の有効（true）として扱う。
+	// editor.Config にはまだ対応する項目が無いので、呼び出し側が buffer.Buffer.SetFixEndOfLine へ写す。
+	FixEndOfLine *bool
+	// MemoryLimitMB は extensions.memoryLimitMb の値（MB）で、0 は「上限なし」である（FR-20）。
+	// 基本設計 7 章のとおり、拡張機能の子プロセスの RLIMIT_AS として設定する値である。
+	// exthost.Config にはまだ対応する項目が無いので、読むだけで、適用は別の issue で行う。
 	MemoryLimitMB int64
 	// FileTypes は fileTypes の値で、editor.Config.FileTypes にそのまま渡す（基本設計 6.7 のファイルの種類の対応表）。
 	// キーは拡張子（".md"）かファイル名（"Makefile"）、値はファイルの種類の名前である。
@@ -109,11 +116,16 @@ func Load(path string) (Config, []error) {
 // 誤りのある項目（型の違い、範囲外の値、読めないキーの表記、未知の項目）は Config に入れず、
 // 位置と内容を *Error で返す。誤りのある項目があっても、他の項目は読む。
 // 未知の項目は、綴りの誤りに気づけるように誤りとして知らせ、値は無視する。
+// 空のファイルと、空白とコメントだけのファイル（設定を全部コメントにしたもの）は、{} と同じに扱う。
+// 先頭の UTF-8 の BOM は読み飛ばし、位置は BOM の後から数える。
 //
 // req: FR-40
 func Parse(path string, data []byte) (Config, []error) {
 	var cfg Config
-	s := &source{path: path, data: data}
+	s := newSource(path, data)
+	if s.onlyExtra() {
+		return cfg, nil
+	}
 	root, err := s.parseJSONC()
 	if err != nil {
 		return cfg, []error{err}
@@ -127,6 +139,10 @@ func Parse(path string, data []byte) (Config, []error) {
 		switch m.name {
 		case "keymap":
 			cfg.Keymap = s.keymap(m.value)
+		case "fixendofline":
+			if b, ok := s.boolean(m.value, "fixendofline"); ok {
+				cfg.FixEndOfLine = &b
+			}
 		case "fileTypes":
 			cfg.FileTypes = s.fileTypes(m.value)
 		case "extensions":

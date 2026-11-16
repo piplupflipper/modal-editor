@@ -94,6 +94,68 @@ func TestParseJSONC(t *testing.T) {
 }
 
 // syncTimeoutMs の 0 は「待たない」で、項目が無いときの nil（既定値）と区別する。
+func TestParseFixEndOfLine(t *testing.T) {
+	cases := []struct {
+		src  string
+		want *bool
+		errs int
+	}{
+		{`{"fixendofline": false}`, new(false), 0},
+		{`{"fixendofline": true}`, new(true), 0},
+		{`{}`, nil, 0},
+		{`{"fixendofline": "no"}`, nil, 1},
+	}
+	for _, c := range cases {
+		cfg, errs := Parse("c", []byte(c.src))
+		if len(errs) != c.errs || !reflect.DeepEqual(cfg.FixEndOfLine, c.want) {
+			t.Errorf("%s: FixEndOfLine = %v, errs = %v; want %v, 誤り %d 件", c.src, cfg.FixEndOfLine, errs, c.want, c.errs)
+		}
+	}
+	_, errs := Parse("c", []byte(`{"fixendofline": 0}`))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{{1, 18, "fixendofline は true か false にする"}})
+}
+
+// 空のファイル、空白とコメントだけのファイル、BOM 付きのファイルは誤りにしない。
+//
+// req: FR-40
+func TestParseEmptyAndBOM(t *testing.T) {
+	for _, src := range []string{"", "\n  \n", "// {\n//   \"keymap\": {}\n// }\n", "/* {} */", "// 改行なし", "\xef\xbb\xbf", "\xef\xbb\xbf// x\n"} {
+		cfg, errs := Parse("c", []byte(src))
+		if len(errs) != 0 || !reflect.DeepEqual(cfg, Config{}) {
+			t.Errorf("%q: cfg = %+v, errs = %v; want ゼロ値で誤りなし", src, cfg, errs)
+		}
+	}
+	// 閉じていないブロックコメントは構文の誤りのまま。
+	if _, errs := Parse("c", []byte("/* {}")); len(errs) != 1 {
+		t.Errorf("閉じていないコメント: errs = %v, want 1 件", errs)
+	}
+	// BOM の後の内容は読み、位置は BOM の後から数える。
+	cfg, errs := Parse("c", []byte("\xef\xbb\xbf{\"keymap\": {\"normal\": {\"Y\": \"y$\"}}, \"x\": 1}"))
+	if cfg.Keymap["normal"]["Y"] != "y$" {
+		t.Errorf("Keymap = %v", cfg.Keymap)
+	}
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{{1, 37, "未知の項目 x"}})
+}
+
+// 誤りの位置は、コメントを含む元のファイルで数える（複数行のコメントと多バイトのコメントの後）。
+func TestParsePositionAfterComments(t *testing.T) {
+	src := "{\n  /* c\n  c */ \"keymap\": 1,\n  // あいう\n  /* え */ \"extensions\": { /* お */ \"syncTimeoutMs\": -1 },\n}"
+	_, errs := Parse("c", []byte(src))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{
+		{3, 18, "keymap はオブジェクトにする"},
+		{5, 56, "extensions.syncTimeoutMs は 0 以上"},
+	})
+}
+
 func TestParseSyncTimeoutZero(t *testing.T) {
 	cfg, errs := Parse("c", []byte(`{"extensions": {"syncTimeoutMs": 0}}`))
 	if len(errs) != 0 || cfg.SyncTimeout == nil || *cfg.SyncTimeout != 0 {
@@ -283,7 +345,8 @@ func TestExtensionDirs(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "/x/data")
 	t.Setenv("HOME", "/home/u")
 	got := ExtensionDirs("/opt/me/modal-editor")
-	want := []string{"/opt/me/extensions", "/x/data/modal-editor/extensions"}
+	// 利用者のディレクトリを、同梱のディレクトリより先にする。
+	want := []string{"/x/data/modal-editor/extensions", "/opt/me/extensions"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ExtensionDirs = %v, want %v", got, want)
 	}

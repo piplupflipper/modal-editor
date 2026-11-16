@@ -44,6 +44,23 @@ type source struct {
 	problems []error
 }
 
+// bom は、UTF-8 の BOM である。
+var bom = []byte("\xef\xbb\xbf")
+
+// newSource は、path の内容 data を読む source を作る。先頭の BOM は除く。
+func newSource(path string, data []byte) *source {
+	return &source{path: path, data: bytes.TrimPrefix(data, bom)}
+}
+
+// onlyExtra は、data が空か、空白とコメントだけかを返す。
+// 後ろに改行と {} を足して読み、{} が data の後ろから始まっていれば、data は値を含まない。
+// 閉じていないブロックコメントは {} を飲み込むので、構文の誤りのまま残る。
+func (s *source) onlyExtra() bool {
+	probe := append(bytes.Clone(s.data), "\n{}"...)
+	v, err := hujson.Parse(probe)
+	return err == nil && v.StartOffset > len(s.data)
+}
+
 // parseJSONC は、data を JSONC として構文木にし、標準の JSON（std）を作る。
 // 構文の誤りは、hujson が返す行と列を付けた Error で返す。
 func (s *source) parseJSONC() (hujson.Value, error) {
@@ -169,6 +186,15 @@ func (s *source) str(v *hujson.Value, path string) (string, bool) {
 	}
 	s.report(v.StartOffset, "%s は文字列にする", path)
 	return "", false
+}
+
+// boolean は、v が真偽値ならそれを返す。そうでなければ誤りを記録して false を返す。
+func (s *source) boolean(v *hujson.Value, path string) (val, ok bool) {
+	if l, isLit := v.Value.(hujson.Literal); isLit && (l.Kind() == 't' || l.Kind() == 'f') {
+		return l.Bool(), true
+	}
+	s.report(v.StartOffset, "%s は true か false にする", path)
+	return false, false
 }
 
 // nonNegInt は、v が 0 以上 limit 以下の整数ならそれを返す。そうでなければ誤りを記録して false を返す。
