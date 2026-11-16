@@ -168,6 +168,13 @@ var (
 		{keys: "<C-w>z", id: "output-close", modes: MapNormal},
 		{keys: "<C-w><PageUp>", id: "output-scroll-up", modes: MapNormal},
 		{keys: "<C-w><PageDown>", id: "output-scroll-down", modes: MapNormal},
+		// ジャンプリスト（Vim の CTRL-O と CTRL-I）と、裏のバッファへの切り替え（CTRL-^）。
+		// 端末は CTRL-I を Tab と同じ 0x09 で送り、internal/term は <Tab> に読むので、<Tab> も CTRL-I にする（Vim と同じ）。
+		// <C-i> は、CTRL-I を区別して送る端末（CSI u）のための登録である。
+		{keys: "<C-o>", id: "jump-older", modes: MapNormal},
+		{keys: "<Tab>", id: "jump-newer", modes: MapNormal},
+		{keys: "<C-i>", id: "jump-newer", modes: MapNormal},
+		{keys: "<C-^>", id: "alternate-buffer", modes: MapNormal},
 	}
 )
 

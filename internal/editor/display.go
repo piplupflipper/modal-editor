@@ -67,6 +67,7 @@ func (e *Editor) commitChange(bs *bufferState, ch buffer.Change) {
 	for id, ss := range bs.signs {
 		bs.signs[id] = shiftSigns(ss, ch.Edits)
 	}
+	e.shiftJumps(bs, ch)
 	bs.history = append(bs.history, ch)
 	if n := len(bs.history); n > maxHistory {
 		bs.history = append([]buffer.Change(nil), bs.history[n-maxHistory:]...)

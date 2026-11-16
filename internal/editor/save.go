@@ -15,10 +15,54 @@ import (
 
 // 画面に出す誤り（Vim のエラー番号を先頭に付ける）。
 var (
-	errNoFileName  = errors.New("E32: ファイル名がありません")
-	errFileExists  = errors.New("E13: ファイルが存在します (! を付けると上書きします)")
-	errOtherBuffer = errors.New("E162: 他のバッファに保存していない変更があります (! を付けると破棄します)")
+	errNoFileName = errors.New("E32: ファイル名がありません")
+	errFileExists = errors.New("E13: ファイルが存在します (! を付けると上書きします)")
+	errNoWrite    = errors.New("E37: 最後の変更が保存されていません（! を付けると変更を捨てます）")
 )
+
+// checkOthersSaved は、bs 以外に未保存の変更のあるバッファがあれば、最初のものへ移り、名前を入れた E162 を返す
+// （Vim 9.1 の :q と :qa が、未保存のバッファへ移って知らせるのと同じ）。
+func (e *Editor) checkOthersSaved(bs *bufferState) error {
+	for _, o := range e.bufs {
+		if o != bs && o.buf.Modified() {
+			e.enter(o)
+			return fmt.Errorf("E162: バッファ \"%s\" の変更は保存されていません (! を付けると破棄します)", e.bufferName(o))
+		}
+	}
+	return nil
+}
+
+// writeAll は、:wa を行う。未保存の変更のあるバッファを、番号の順に保存の流れ（save）で書き出す。
+// 名前の無いバッファは書き出さずに E141 にし、他のバッファは書き出す（Vim 9.1 と同じ）。最初の誤りを返す。
+// force が false なら、:w と同じく外で変わったファイルを確かめ（writeConflict）、変わっていれば errChangedOnDisk を返す。
+//
+// req: FR-08
+func (e *Editor) writeAll(force bool) error {
+	var first error
+	for _, o := range e.bufs {
+		if !o.buf.Modified() {
+			continue
+		}
+		var err error
+		switch {
+		case o.path == "":
+			err = fmt.Errorf("E141: バッファ %d にファイル名がありません", o.id)
+		case !force && writeConflict(o) != nil:
+			// :w と同じく、外で変わったファイルへは書き込むかを問う（errChangedOnDisk なら runActions が問い、y なら ! を付けて
+			// :wa をやり直す。書き出し済みのバッファは変更が無いので、やり直しでは書かない）。
+			err = writeConflict(o)
+			if errors.Is(err, errChangedOnDisk) {
+				return err
+			}
+		default:
+			err = e.save(o, o.path, false)
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return first
+}
 
 // displayName は、バッファの名前（パス、無ければ "[No Name]"）を返す。
 func displayName(bs *bufferState) string {
@@ -35,14 +79,27 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 		return e.write(bs, a)
 	case ex.ActionQuit:
 		if !a.Force {
-			for _, o := range e.bufs {
-				if o != bs && o.buf.Modified() {
-					return errOtherBuffer
-				}
+			if err := e.checkOthersSaved(bs); err != nil {
+				return err
 			}
 		}
 		e.quit = true
 		return nil
+	case ex.ActionQuitAll:
+		if !a.Force {
+			if bs.buf.Modified() {
+				return errNoWrite
+			}
+			if err := e.checkOthersSaved(bs); err != nil {
+				return err
+			}
+		}
+		e.quit = true
+		return nil
+	case ex.ActionWriteAll:
+		return e.writeAll(a.Force)
+	case ex.ActionBufferDelete:
+		return e.deleteBuffer(bs, a)
 	case ex.ActionEdit:
 		return e.edit(bs, a)
 	case ex.ActionOutput:
@@ -50,6 +107,14 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 	case ex.ActionCheckTime:
 		e.checkTime()
 		return nil
+	case ex.ActionBuffer:
+		return e.bufferAction(bs, a)
+	case ex.ActionJumpList:
+		e.message = infoMessage(e.jumpListText())
+		return nil
+	case ex.ActionJump:
+		// command.State が Navigator で行うので、Result.Actions には入らない。来たら内部の誤りである。
+		return errors.New("内部の誤り: ジャンプリストの移動が本体の動作として渡された")
 	case ex.ActionExtCommand:
 		// command.State が問い合わせるので、Result.Actions には入らない。来たら内部の誤りである。
 		return fmt.Errorf("内部の誤り: 拡張機能のコマンド %s が本体の動作として渡された", a.Command)
@@ -157,6 +222,8 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 	if bs.path == "" {
 		return errNoFileName
 	}
+	// Vim 9.1 と同じく、:e の読み直しもジャンプとして記録する。
+	e.markJumpAt(bs, bs.state.Cursor())
 	return e.reloadFile(bs)
 }
 

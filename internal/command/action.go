@@ -63,6 +63,9 @@ func init() {
 		"output-close":       actOutput(ex.OutputClose),
 		"output-scroll-up":   actOutput(ex.OutputScrollUp),
 		"output-scroll-down": actOutput(ex.OutputScrollDown),
+		"jump-older":         actJump(-1),
+		"jump-newer":         actJump(1),
+		"alternate-buffer":   actAlternate,
 	}
 }
 

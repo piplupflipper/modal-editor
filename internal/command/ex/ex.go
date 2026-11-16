@@ -22,6 +22,19 @@
 //	:<コマンドの ID> [引数]  拡張機能のコマンドを実行する Action の ActionExtCommand を返す（State.ExtCommand。例: :acp.prompt 説明して）
 //	:out[put] [名前]     出力の欄を開く（名前の欄に切り替える）Action の ActionOutput を返す。Vim に無い本体のコマンド（名前は仮）
 //	:outc[lose]          出力の欄を閉じる Action の ActionOutput を返す。Vim に無い本体のコマンド（名前は仮）
+//	:ls[!]、:buffers[!]   開いているバッファの一覧を出す Action の ActionBuffer（BufferList）を返す
+//	:b[uffer][!] [N|名前]  そのバッファへ移る ActionBuffer（BufferGo）を返す。未保存の変更の確認は呼び出し側が行う
+//	:bn[ext][!] [N]      N 個先のバッファへ移る ActionBuffer（BufferNext）を返す
+//	:bp[revious][!] [N]  N 個前のバッファへ移る ActionBuffer（BufferPrev）を返す。:bN[ext] も同じ
+//	:ju[mps]             ジャンプリストを出す Action の ActionJumpList を返す
+//	:wa[ll][!]           未保存のバッファをすべて書き出す ActionWriteAll を返す
+//	:qa[ll][!]           エディタを閉じる ActionQuitAll を返す。未保存のバッファの確認は呼び出し側が行う
+//	:wqa[ll][!]、:xa[ll][!]  ActionWriteAll と ActionQuitAll を返す
+//	:bd[elete][!] [N|名前]  バッファを閉じる ActionBufferDelete を返す。未保存の変更の確認は呼び出し側が行う
+//
+// :b、:bn、:bp の番号と回数は引数でだけ書け、Vim の範囲で書く形（:2b、:3bn）は E481 にする。
+// :b、:bn、:bp、:e は、移った先のバッファでは "|" の後のコマンドを続けない。後のコマンドは移る前のバッファで実行する
+// （動作は呼び出し側が Execute の後に行うため）。
 //
 // 拡張機能のコマンドは、ID と完全に一致する名前だけで呼べ、本体のコマンドの名前か省略形と同じ ID は本体のコマンドを優先する。
 // 引数は行末までの文字列で、"|" で区切らない。範囲と "!" は取らず、:w などの動作を返すコマンドの後には置けない（E319）。
@@ -99,6 +112,40 @@ const (
 	// ActionCheckTime は、開いているバッファのファイルが外で変わっていないかを確かめる動作（:checktime）である（基本設計 6.7）。
 	// バッファを読み書きしないので、範囲も引数も持たない。
 	ActionCheckTime
+	// ActionBuffer は、開いているバッファの一覧を出す、またはカーソルのあるバッファを切り替える動作である（:ls、:b、:bn、:bp、<C-^>）。
+	// Buffer に操作を、Count に回数かバッファの番号を、Text にバッファの名前を、Force に "!" を入れる。
+	// 番号と名前からバッファを探すのは、バッファの一覧を持つ呼び出し側である。
+	ActionBuffer
+	// ActionJump は、ジャンプリストを Count だけ進める（負なら戻る）動作である（<C-o>、<C-i>）。
+	// キーの操作だけが使い、Ex コマンドからは返さない。
+	ActionJump
+	// ActionJumpList は、ジャンプリストを出す動作である（:jumps）。
+	ActionJumpList
+	// ActionWriteAll は、未保存の変更のあるバッファをすべて書き出す動作である（:wa、:wqa、:xa）。
+	ActionWriteAll
+	// ActionQuitAll は、エディタを閉じる動作である（:qa、:wqa、:xa）。Force が false なら、
+	// 呼び出し側は未保存の変更のあるバッファがあれば終わらずに、そのバッファへ移って知らせる。
+	ActionQuitAll
+	// ActionBufferDelete は、バッファを閉じる動作である（:bd）。Count にバッファの番号（0 ならカーソルのあるバッファ）を、
+	// Text に名前を、Force に "!" を入れる。
+	ActionBufferDelete
+)
+
+// BufferOp は、ActionBuffer の操作である。
+type BufferOp int
+
+// バッファの操作。
+const (
+	// BufferList は、開いているバッファの一覧を出す（:ls、:buffers）。
+	BufferList BufferOp = iota
+	// BufferGo は、Count の番号か Text の名前のバッファへ移る（:b）。どちらも無ければ移らない。
+	BufferGo
+	// BufferNext と BufferPrev は、番号の順に Count 個先か前のバッファへ移る。端では反対の端へ回る（:bn、:bp、:bN）。
+	BufferNext
+	BufferPrev
+	// BufferAlternate は、裏のバッファ（直前にカーソルのあったバッファ）へ移る（<C-^>）。
+	// Count が 0 より大きければ、その番号のバッファへ移る（N<C-^>）。
+	BufferAlternate
 )
 
 // OutputOp は、ActionOutput の操作である。
@@ -131,10 +178,14 @@ type Action struct {
 	Command   string
 	// Text は、ActionExtCommand で、コマンドの ID の後の空白を除いた、行末までの引数の文字列である。
 	// "|" と '"' も引数に含める（Vim の -bar を付けない利用者定義のコマンドと同じ）。引数が無ければ空である。
-	// ActionOutput では、開く欄の名前である。
+	// ActionOutput では、開く欄の名前である。ActionBuffer では、:b の引数のバッファの名前である。
 	Text string
 	// Output は、ActionOutput の操作である。
 	Output OutputOp
+	// Buffer は、ActionBuffer の操作である。
+	Buffer BufferOp
+	// Count は、ActionBuffer の回数かバッファの番号（BufferOp の doc）と、ActionJump の進める数である。
+	Count int
 }
 
 // Deletion は、:d が消した行の記録である。
@@ -212,6 +263,10 @@ type Result struct {
 	// Confirm は、続きを実行する前に利用者の確認が要るときに nil でない。このとき Execute は E493 の *Error も返す。
 	// 確認が得られたら Confirm.Resume で続きを実行する。
 	Confirm *Confirm
+	// Jumped は、ジャンプに当たるコマンド（置き換えた :s、印を付けた行のある :g と :v、:d）を実行したかである。
+	// 呼び出し側は、Execute を呼ぶ前のカーソルの位置をジャンプリストに記録する（Vim 9.1 の setpcmark と同じ）。
+	// :g の cmd の中のコマンドは、:g の 1 回のほかには記録しない（Vim の global_busy の間と同じ）。
+	Jumped bool
 }
 
 // Confirm は、Ex コマンドの続きを実行する前に、利用者に確認を求めることを表す。
@@ -284,6 +339,15 @@ type execCtx struct {
 	swapBackwards bool
 	// confirm は、確認を求めて止めたときの続きである。
 	confirm *Confirm
+	// jumped は、ジャンプに当たるコマンドを実行したかである（Result.Jumped）。
+	jumped bool
+}
+
+// markJump は、ジャンプに当たるコマンドを実行したことを記録する。:g の cmd の中では記録しない。
+func (c *execCtx) markJump() {
+	if !c.inGlobal {
+		c.jumped = true
+	}
 }
 
 // lineReplace は、start 行目（0 始まり）から old 行を、new 行で置き換えたことを表す。
@@ -292,7 +356,7 @@ type lineReplace struct {
 }
 
 func (c *execCtx) res() Result {
-	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions, Confirm: c.confirm}
+	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions, Confirm: c.confirm, Jumped: c.jumped}
 }
 
 // setCursor は、カーソルを line 行目（0 始まり）へ移し、列の置き方を記録する。

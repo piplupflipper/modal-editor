@@ -716,7 +716,7 @@ func TestExtensionEditLineState(t *testing.T) {
 	h.e.do(func() {
 		b := buffer.New("y")
 		b.SetFixEndOfLine(false)
-		h.e.newBuffer(b, filepath.Join(dir, "b.txt"), "")
+		h.e.switchTo(h.e.newBuffer(b, filepath.Join(dir, "b.txt"), ""))
 	})
 	h.keys(`\o`)
 	h.eventually("fake.endofline", func() bool { return h.e.message.Text == "fake.endofline applied=false v0 err=<nil>" })
@@ -753,7 +753,7 @@ func TestFinalNewlineToExtension(t *testing.T) {
 	h.e.do(func() {
 		b := buffer.New("x")
 		b.SetFixEndOfLine(false)
-		h.e.newBuffer(b, filepath.Join(dir, "b.txt"), "")
+		h.e.switchTo(h.e.newBuffer(b, filepath.Join(dir, "b.txt"), ""))
 	})
 	h.keys(`\e`)
 	h.eventually("b.txt の finalNewline", func() bool { return h.e.message.Text == "b2 finalNewline=false" })

@@ -150,11 +150,15 @@ func (s *State) resolveMotion(t editcmd.Target, cmd editcmd.Command, op target.O
 	if res.Find.Char != 0 && t.Ref.ID != "find-repeat" && t.Ref.ID != "find-repeat-reverse" {
 		s.lastFind = res.Find
 	}
-	if t.Ref.Builtin() && searchMotionIDs[t.Ref.ID] {
-		return res, s.searchResult(t, res, err)
+	switch {
+	case t.Ref.Builtin() && searchMotionIDs[t.Ref.ID]:
+		err = s.searchResult(t, res, err)
+	case errors.Is(err, target.ErrNoTarget):
+		err = failf("%v", err)
 	}
-	if errors.Is(err, target.ErrNoTarget) {
-		return res, failf("%v", err)
+	if err == nil && t.Ref.Builtin() && jumpMotions[t.Ref.ID] {
+		// 移る前のカーソルをジャンプリストに記録する（Vim 9.1 の setpcmark）。オペレーターの対象（dG）でも記録する。
+		s.markJump()
 	}
 	return res, err
 }

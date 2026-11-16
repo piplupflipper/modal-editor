@@ -99,6 +99,11 @@ func (s *State) applyExResult(res ex.Result, err error) {
 	if res.Confirm != nil {
 		s.res.Confirm = res.Confirm
 	}
+	if res.Jumped {
+		// 実行する前のカーソルの位置を記録する（Vim の setpcmark は編集の前に働く）。
+		// Ex コマンドの変更を Result に入れる前に記録するので、呼び出し側は記録した位置をその変更でずらす（:d が消した行の中の位置など）。
+		s.markJump()
+	}
 	s.res.Changes = append(s.res.Changes, res.Changes...)
 	var extCmds []ex.Action
 	for _, a := range res.Actions {

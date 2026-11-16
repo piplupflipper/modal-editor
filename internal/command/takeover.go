@@ -1,0 +1,29 @@
+package command
+
+// TakeOver は、カーソルのあるバッファが prev の State からこの State へ移るときに、Vim でエディタ全体に 1 つの状態を引き継ぐ。
+// 呼び出し側（internal/editor）は、バッファを切り替えるたびと、バッファの State を作り直すたびに呼ぶ。
+//
+// 引き継ぐのは、レジスター、直前の検索（n、N）、直前の :s（:s//~/ と ~）、直前の f、F、t、T（;、,）、
+// ドットリピートの値、@: のコマンドライン、@@ のレジスター、マクロの記録である。
+// マクロを記録している途中なら、prev の記録を止めずにこの State へ移し、この State で続ける（qa:bn<CR>jq は、
+// :bn の前後のキーをまとめて a に記録する。Vim 9.1 と同じ）。prev は記録していない状態に戻す。
+//
+// req: FR-05, FR-06
+func (s *State) TakeOver(prev *State) {
+	if prev == nil || prev == s {
+		return
+	}
+	s.registers = prev.registers
+	s.Ex.LastPattern, s.searchBackward = prev.Ex.LastPattern, prev.searchBackward
+	s.Ex.LastSubstitute = prev.Ex.LastSubstitute
+	s.lastFind = prev.lastFind
+	s.dot, s.dotVisual = prev.dot, prev.dotVisual
+	s.lastCmd = prev.lastCmd
+	s.lastPlayed = prev.lastPlayed
+	s.recording, s.recorded = prev.recording, prev.recorded
+	s.parser.SetRecording(s.recording != 0)
+	if prev.recording != 0 {
+		prev.recording, prev.recorded = 0, nil
+		prev.parser.SetRecording(false)
+	}
+}
