@@ -1,0 +1,267 @@
+# 設定と標準の拡張機能の使い方
+
+設定ファイルの書き方と、配布物に入っている標準の拡張機能の使い方を書く。
+本体の起動と基本の操作は [README](../README.md) の「使い方」にある。
+
+この文書の手順は、2026-11-16 に `make dist` で作った配布物の本体を tmux 3.4 の中で起動し、上から順にたどって確かめた。
+外部のプログラムは、gopls v0.24.0、Delve 1.27.2、opencode 1.19.4（`opencode acp`）、Claude Code 2.1.325 を使った。
+設定の項目の名前とコマンドの名前は、どれも仮である（基本設計 7 章、6.7）。
+
+## 配布物の本体を起動する
+
+標準の拡張機能は、`make dist` が作る配布物の本体からだけ使える。
+`make build` の `bin/modal-editor` は宣言ファイルを読まないので、標準の拡張機能が動かない（README の「使い方」）。
+
+```sh
+make dist
+dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor main.go
+```
+
+配布物のディレクトリは、本体、MCP の中継コマンド（`modal-editor-mcp-bridge`）、スクリプトの拡張機能を動かす実行ファイル（`modal-editor-ext-script`）と、標準の拡張機能ごとのディレクトリ（`extensions/<ID>/`）からなる。
+本体は、自分の実行ファイルの隣の `extensions/` から宣言ファイルを探す（`internal/config` の `ExtensionDirs`）。
+
+## 設定ファイル
+
+設定ファイルは `$XDG_CONFIG_HOME/modal-editor/config.jsonc` に置く。
+`XDG_CONFIG_HOME` が空なら `~/.config/modal-editor/config.jsonc` である。
+ファイルは JSONC（コメントと末尾のカンマを許す JSON）で書く。
+ファイルが無ければ、すべての項目が既定値になる。
+設定を変えたら、本体を起動し直す。
+
+次の例は、LSP と DAP のコマンドをキーに割り当て、ACP のエージェントに opencode を使う設定である。
+この文書の以降の節は、この設定で確かめた。
+
+```jsonc
+{
+  // 拡張機能のコマンドは、Ex コマンドと同じく : で呼べる
+  "keymap": {
+    "normal": {
+      "<Space>d": ":lsp.definition<CR>",
+      "<Space>h": ":lsp.hover<CR>",
+      "<Space>f": ":lsp.format<CR>",
+      "<Space>b": ":dap.toggleBreakpoint<CR>",
+      "<Space>c": ":dap.continue<CR>",
+      "<Space>n": ":dap.next<CR>",
+    },
+  },
+  "extensions": {
+    "settings": {
+      "acp": {
+        "agent": { "command": "opencode", "args": ["acp"] },
+      },
+    },
+  },
+}
+```
+
+`keymap` は、モードの名前から、キーの列とその展開先の対応である。
+モードの名前は `normal`、`visual`、`insert`、`commandLine` で、この文書が確かめたのは `normal` だけである。
+展開先には、Vim の `:map` の右辺と同じくキーの列を書く。
+`":lsp.hover<CR>"` は、`:` でコマンドラインに入り、`lsp.hover` を打って `<CR>` で実行するキーの列である。
+
+`extensions.settings` は、拡張機能の ID から、その拡張機能に渡す設定への対応である。
+中身は拡張機能ごとに違い、それぞれの設定の型の doc にある（[標準の拡張機能](#標準の拡張機能)の各節）。
+
+設定ファイルの他の項目（`fixendofline`、`fileTypes`、`extensions.syncTimeoutMs` など）は `go doc ./internal/config Config` にある。
+設定に誤りがあると、起動後にコマンドラインの行へ位置と内容を出し、誤りのある項目だけを既定値にする。
+
+## 拡張機能のコマンドを呼ぶ
+
+拡張機能のコマンドは、コマンドラインで `:` の後にコマンドの ID を打って呼ぶ（`:lsp.hover`、`:dap.start`）。
+ID の後に空白を挟んで書いた文字列は、引数としてコマンドに渡る（`:acp.prompt この関数を説明して`）。
+キーに割り当てるときは、[設定ファイル](#設定ファイル)の例のとおり `keymap` に書く。
+
+## 出力の欄
+
+デバッグ対象の出力やエージェントの返答のように、拡張機能が後から書き足すテキストは、画面の下に開く出力の欄に出る。
+欄は拡張機能ごとに名前を持つ（DAP は `dap`、ACP は `acp`）。
+欄を開いていなければ、書き足されても画面には出ない。
+
+| コマンド、キー | 動作 |
+|---|---|
+| `:output [名前]`（`:out`） | 欄を開く。名前を省くと、最後に書き足された欄を出す |
+| `:outclose`（`:outc`） | 欄を閉じる |
+| `<C-w>P` | 閉じていれば欄を開き、開いていれば次の欄に切り替える |
+| `<C-w>z` | 欄を閉じる |
+| `<C-w><PageUp>`、`<C-w><PageDown>` | 欄を上と下へスクロールする |
+
+欄の下の行に、`[出力] dap` のように欄の名前が出る。
+`:output` の後には、`|` で拡張機能のコマンドを続けられる（`:output|acp.prompt ...`）。
+欄の動作の詳細は基本設計 6.7 の「表示のデータ」にある。
+
+## 標準の拡張機能
+
+配布物に入っている標準の拡張機能は次のとおりである。
+「起動の契機」は、本体が拡張機能のプロセスを起動するきっかけで、宣言ファイル（`extensions/<ID>/manifest.json`）の `activation` に書いてある。
+
+| ID | 機能 | 起動の契機 | コマンド、キー | 別に要るもの |
+|---|---|---|---|---|
+| `treesitter` | 構文ハイライト（Go、JSON） | Go か JSON のファイルを開いたとき | なし | なし |
+| `line` | 行のテキストオブジェクト | `il`、`al` を打ったとき | `il`、`al` | なし |
+| `lsp` | 診断、定義へ移動、ホバー、整形 | Go のファイルを開いたとき | `:lsp.definition`、`:lsp.hover`、`:lsp.format` | PATH の `gopls` |
+| `dap` | デバッグ | コマンドを呼んだとき | `:dap.start`、`:dap.stop`、`:dap.toggleBreakpoint`、`:dap.continue`、`:dap.next`、`:dap.stepIn`、`:dap.stepOut` | PATH の `dlv` |
+| `acp` | コーディングエージェントとの対話（ACP のクライアント） | コマンドを呼んだとき | `:acp.prompt`、`:acp.cancel` | ACP で話すエージェントと、その設定 |
+| `mcp` | エディタの状態と編集を MCP のツールとして提供する | MCP のクライアントが最初に接続したとき | `:mcp.start` | MCP のクライアント |
+
+### tree-sitter による構文ハイライト
+
+Go と JSON のファイルを開くと、予約語、型、文字列、数値などに色が付く。
+編集すると、その場で色が付け直される。
+設定は要らない。
+
+### 行のテキストオブジェクト
+
+`il` はカーソルの行から行頭と行末の空白を除いた範囲、`al` は行全体（行末の改行を含めない）を指すテキストオブジェクトである。
+`dil` で行の中身を消し、行そのものは残す。
+
+### LSP
+
+Go のファイルを開くと、gopls を子プロセスとして起動する。
+gopls は PATH から探す。
+設定は要らない。
+
+| 操作 | 結果 |
+|---|---|
+| 編集して誤りを作る | 行の左に `E`、誤りの箇所に下線が出る。カーソルをその行に置くと、最下行に `E compiler: declared and not used: y` のように内容が出る |
+| `:lsp.hover` | カーソルの位置の識別子の説明をポップアップで出す。`<Esc>` で閉じる |
+| `:lsp.definition` | 定義へ移動する。別のファイル（標準ライブラリの `fmt/print.go` など）の定義なら、そのファイルを開く。元のファイルへ戻るには `:e <パス>` を打つ |
+| `:lsp.format` | バッファを整形する。`u` で整形の前に戻せる |
+| `:w` | 書き出す前に整形する |
+
+言語サーバーを変える、保存の前の整形をやめるといった設定は、`extensions.settings.lsp` に書く。
+項目は `go doc -u ./cmd/modal-editor-ext-lsp settings` と `serverConfig` にある。
+
+### DAP によるデバッグ
+
+デバッグアダプターは、既定で Delve（`dlv dap`）を使う。
+`dlv` は PATH から探す。
+設定は要らない。
+
+1. 止めたい行で `:dap.toggleBreakpoint` を打つ。行の左に `B` が出る。もう一度打つと消える
+2. `:dap.start` を打つ。デバッグを始めたバッファのファイルのあるディレクトリのパッケージをビルドして実行し、ブレークポイントで止まる。止まった行の左に `=>` が出て、最下行に「停止した（breakpoint）」が出る
+3. `:dap.next`、`:dap.stepIn`、`:dap.stepOut` で 1 行ずつ進む。`=>` とカーソルが止まった位置へ移る
+4. `:dap.continue` で続ける。デバッグ対象が終わると「デバッグを終了した」が出る
+5. 途中でやめるときは `:dap.stop` を打つ
+
+デバッグ対象の標準出力（`fmt.Println` の出力など）と Delve の出力は、`dap` の欄に出る（`:output dap`）。
+デバッグが失敗したときの理由も、この欄で読む。
+
+デバッグアダプターや launch の引数を変える設定は、`extensions.settings.dap` に書く。
+項目と例は `go doc -u ./cmd/modal-editor-ext-dap settings` にある。
+
+### ACP のエージェント
+
+ACP（Agent Client Protocol）で話すコーディングエージェントを子プロセスとして起動し、プロンプトを送る。
+エージェントには既定が無いので、`extensions.settings.acp.agent` に起動のコマンドを書く（[設定ファイル](#設定ファイル)の例）。
+`agent` には `command`、`args`、`env` を書ける（`go doc -u ./cmd/modal-editor-ext-acp settings`）。
+書かずに `:acp.prompt` を打つと、「エージェントが設定されていない（設定の agent.command に書く）」と出る。
+この `agent.command` は、設定ファイルの `extensions.settings.acp.agent.command` のことである。
+
+| 操作 | 結果 |
+|---|---|
+| `:acp.prompt <プロンプト>` | プロンプトを送る。最初の 1 回でエージェントを起動する |
+| `:acp.cancel` | 処理中のプロンプトを取り消す。`acp` の欄に `[cancelled]` が出る |
+
+返答は `acp` の欄に書き足され、欄を開いていなければ画面に出ない。
+欄を開いてから送るときは、`:output|acp.prompt notes.txt の2行目の内容をそのまま答えて` のように続けて打つ。
+欄には、送ったプロンプト（`> ` で始まる行）、エージェントが使ったツールの要約（`[tool]` で始まる行）、返答、終わりの印（`[end_turn]`）が順に出る。
+
+### MCP のサーバー
+
+MCP（Model Context Protocol）のクライアント（Claude Code などのコーディングエージェント）から、起動中のエディタのバッファを読み書きできる。
+ツールの一覧は `go doc ./cmd/modal-editor-ext-mcp` と基本設計 6.2 にある。
+
+本体は、起動時から Unix ドメインソケットで MCP のクライアントの接続を待つ。
+ソケットのパスは起動ごとに変わる。
+`:mcp.start` を打つと、最下行にパスが出る。
+
+```text
+MCP のサーバーは /tmp/modal-editor-2518129-2071416057/mcp.sock で接続を待っています
+```
+
+パスは `$XDG_RUNTIME_DIR/modal-editor/` の下に作り、そこに作れないときは一時ディレクトリ（`TMPDIR` か `/tmp`）の下に作る（`internal/exthost` の `NewMCPSocket`）。
+上の例は、`XDG_RUNTIME_DIR` が長くてソケットのパスの上限を超えたので、`/tmp` の下に作ったものである。
+
+MCP のクライアントには、配布物の中継コマンド `modal-editor-mcp-bridge` を、標準入出力で話す MCP のサーバーとして登録する。
+中継コマンドの `--socket` に、`:mcp.start` が出したパスを渡す。
+Claude Code では、次の JSON を `--mcp-config` に渡して確かめた。
+
+```json
+{
+  "mcpServers": {
+    "modal-editor": {
+      "type": "stdio",
+      "command": "/path/to/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor-mcp-bridge",
+      "args": ["--socket", "/tmp/modal-editor-2518129-2071416057/mcp.sock"]
+    }
+  }
+}
+```
+
+```sh
+echo 'modal-editor の MCP ツールで notes.txt の 1 行目の先頭に "MCP: " を挿入して' |
+  claude -p --mcp-config mcp.json \
+    --allowedTools mcp__modal-editor__list_buffers mcp__modal-editor__edit_buffer
+```
+
+`--allowedTools` で、使わせる MCP のツールを許可しておく。
+`--allowedTools` は後に続く引数をすべて値として取るので、プロンプトは引数でなく標準入力で渡す（引数で渡すと「Input must be provided either through stdin or as a prompt argument」で失敗した）。
+Claude Code が `edit_buffer` のツールを呼ぶと、エディタの画面のバッファが変わる。
+ディスクのファイルは変わらないので、エディタで `:w` を打って保存する。
+ソケットのパスはエディタを起動し直すと変わるので、そのたびに `--socket` を書き換える。
+
+## スクリプトの拡張機能
+
+Go のソースファイル 1 つを、コンパイルせずに拡張機能として動かせる。
+配布物の `modal-editor-ext-script` が、Go のインタープリター yaegi でスクリプトを実行する。
+
+`$XDG_DATA_HOME/modal-editor/extensions/<ID>/`（`XDG_DATA_HOME` が空なら `~/.local/share/modal-editor/extensions/<ID>/`）に、宣言ファイルとスクリプトを置く。
+次の例は、カーソルの行の前に `// hello` の行を入れるコマンド `hello.insert` である。
+
+`extensions/hello/manifest.json`:
+
+```json
+{
+  "id": "hello",
+  "command": "/path/to/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor-ext-script",
+  "args": ["hello.go"],
+  "activation": [{ "on": "command", "id": "hello.insert" }],
+  "contributes": { "commands": [{ "id": "hello.insert" }] }
+}
+```
+
+`extensions/hello/hello.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/ext/server"
+)
+
+func main() {
+	s := server.New()
+	s.Command("hello.insert", insert)
+	if err := s.Run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// insert は、カーソルの行の前に "// hello" の行を入れる。
+func insert(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+	pos := ext.Position{Line: p.Cursor.Line, Byte: 0}
+	edit := ext.Edit{Range: ext.Range{Start: pos, End: pos}, Text: "// hello\n"}
+	return ext.CommandExecuteResult{OK: true, Transaction: &ext.Transaction{Edits: []ext.Edit{edit}}}, nil
+}
+```
+
+本体を起動し直して `:hello.insert` を打つと、カーソルの行の前に `// hello` が入る。
+
+`command` には、配布物の `modal-editor-ext-script` の絶対パスを書く。
+配布物の場所を書かずに指す方法は未決である（基本設計 10 章）。
+`args` の相対パスは、宣言ファイルのディレクトリから解決される。
+モーション、テキストオブジェクト、オペレーターの足し方と、yaegi の制限は `go doc ./cmd/modal-editor-ext-script` にある。
