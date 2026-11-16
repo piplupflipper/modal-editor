@@ -34,13 +34,31 @@ func clearSplit(g *Grid, row, x0, x1 int) {
 	}
 }
 
+// stripCodeFences は、Markdown の本文から、コードの囲みの行（行頭の 3 つまでの空白の後に ``` か ~~~ が続く行。
+// CommonMark の fenced code block の開きと閉じ）を除き、囲みの中身の行は残す（#151）。
+// gopls のホバーは、宣言を ```go の囲みに入れて返すので、囲みの行がそのまま窓に出ていた。
+// 囲みの開きと閉じの対応は追わない。4 つ以上の ` で開いた囲みの中の ``` の行も除くが、ホバーの本文の宣言の囲みでは使われないと見て、簡単な方を選んだ。
+func stripCodeFences(s string) string {
+	lines := strings.Split(s, "\n")
+	out := lines[:0:0]
+	for _, l := range lines {
+		t := strings.TrimLeft(l, " ")
+		if len(l)-len(t) <= 3 && (strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")) {
+			continue
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
+}
+
 // drawPopup は、popup/show の本文を、カーソルの近くに浮かべて描く（基本設計 6.7）。
 //
 // 窓は、カーソルの文字の列から始まり、カーソルの下の行に置く。下に収まらず、上の方が広ければ上の行に置く。
 // バッファの表示領域の中だけに描き、ステータス行と出力の欄には重ねない。
 // 幅は popupMaxWidth 列と画面の幅の小さい方を上限に、本文の最も長い行に合わせ、左右に 1 列の余白を置く。
 // 長い行は折り返す。行が popupMaxRows 行と置ける行数に収まらなければ、最後の行に残りの行数を書く。
-// Markdown は整形せず、そのまま出す（6.7 の format は、整形するかを ui が決めてよいとしている）。
+// Markdown は、呼び出し側（Render）がコードの囲みの行だけを除き（stripCodeFences）、他の記法は整形せずに出す
+// （6.7 の format は、整形するかを ui が決めてよいとしている）。
 func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol int) {
 	lines := textLines(text)
 	maxW := min(r.Width, popupMaxWidth)
@@ -160,14 +178,16 @@ func (r *Renderer) wrapText(s string, width int) []string {
 }
 
 // drawChoice は、選択肢の問いを、画面の下から上へ広げて描き、カーソルの位置を返す（基本設計 6.7）。
-// 最後の行に選び方の案内（ChoicePrompt）を描き、その上に問いの文の行と、選択肢を 1 つずつ "[番号] ラベル" の行で描く。
+// 最後の行に選び方の案内（ChoicePrompt。続けて届いた問いなら前に "問い 2: "）を描き、その上に知らせの行（Choice.Note）と
+// 問いの文の行と、選択肢を 1 つずつ "[番号] ラベル" の行で描く。
 // 長い行は折り返す。改行を含むメッセージ（drawMessageLines）と違って画面の半分で止めず、案内の行を除く画面の全体まで広げる。
 // 収まらなければ、選択肢を残すために問いの文の行を先に減らし（最低 1 行）、それでも収まらなければ選択肢の行を減らす。
 // 減らした側の最後の行には、省いた行数を書く。カーソルは案内の末尾（幅に収まらなければ最後の列）に置く。
 func (r *Renderer) drawChoice(g *Grid, theme Theme, c *Choice) Cursor {
 	a := theme.attr(StyleMessageInfo)
 	var title, items []string
-	for _, l := range textLines(c.Title) {
+	// 知らせの行は問いの文の前に置き、問いの文と同じく減らす（上の行から残すので、知らせが先に残る）。
+	for _, l := range slices.Concat(textLines(c.Note), textLines(c.Title)) {
 		title = append(title, r.wrapText(l, r.Width)...)
 	}
 	for i, l := range c.Labels {
@@ -204,6 +224,10 @@ func (r *Renderer) drawChoice(g *Grid, theme Theme, c *Choice) Cursor {
 	}
 	row := r.Height - 1
 	blankRow(row)
-	end := r.drawText(g, row, 0, r.Width, ChoicePrompt(len(c.Labels)), a)
+	prompt := ChoicePrompt(len(c.Labels))
+	if c.Index > 0 {
+		prompt = fmt.Sprintf("問い %d: %s", c.Index, prompt)
+	}
+	end := r.drawText(g, row, 0, r.Width, prompt, a)
 	return Cursor{Row: row, Col: min(end, max(r.Width-1, 0)), Shape: CursorBlock, Visible: r.Width > 0}
 }

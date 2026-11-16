@@ -146,6 +146,7 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		e.choiceKey(k)
 		return
 	}
+	e.endChoices()
 	if e.hitEnter() && (k == editcmd.Special(editcmd.CodeEnter) || k == editcmd.Rune(' ')) {
 		// Vim の hit-enter の問いと同じく、<CR> と <Space> はメッセージを消すだけで、コマンドとしては使わない。
 		// 他のキーは、メッセージを消してからコマンドとして使う。
@@ -166,12 +167,17 @@ func (e *Editor) handleKey(k editcmd.Key) {
 
 // handlePaste は、端末から貼り付けたテキストを、カーソルのあるバッファへ入れる（#114）。
 // 貼り付けはキーマップを通さない（Vim と同じ）。キーマップの接頭辞を待っていれば、時間切れと同じく先に確定させて実行する。
-// 確認の問いと choice/ask の問いを出している間の貼り付けは、答えにせずに捨てる。
+// 確認の問いと choice/ask の問いを出している間の貼り付けは、答えにせずに捨てる。choice/ask の問いでは、捨てたことを数えて出す（#151）。
 func (e *Editor) handlePaste(text string) {
 	e.popup = nil
-	if e.asking() || e.activeChoice() != nil {
+	if e.asking() {
 		return
 	}
+	if e.activeChoice() != nil {
+		e.dropChoiceInput()
+		return
+	}
+	e.endChoices()
 	e.message = noMessage
 	for _, k := range e.remap.flush() {
 		if !e.feedKey(k) {

@@ -30,6 +30,8 @@ type popupState struct {
 	bs     *bufferState
 	cursor buffer.Position
 	text   string
+	// markdown は、本文の形式が markdown かどうかである（popup/show の format）。整形は ui が行う（ui.Frame.PopupMarkdown）。
+	markdown bool
 }
 
 var noMessage = ui.Message{}

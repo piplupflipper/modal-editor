@@ -159,6 +159,28 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.ask3 は、choice/ask の問いを 3 つ続けて送り、それぞれの結果を出力の欄 ask に書き足す（#151）。
+		// 3 つ目は 1 つ目と 2 つ目より後に届くように、少し待ってから送る。
+		s.Command("fake.ask3", func(context.Context, *server.Buffer, *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			for i := range 3 {
+				go func() {
+					time.Sleep(time.Duration(i) * 30 * time.Millisecond)
+					r, err := s.AskChoice(hostCtx, ext.ChoiceAskParams{Title: "どれ?", Choices: []ext.Choice{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
+					_ = s.AppendOutput("ask", fmt.Sprintf("selected=%s cancelled=%v err=%v\n", r.Selected, r.Cancelled, err))
+				}()
+			}
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
+		// fake.askseq は、choice/ask の問いを 3 つ、前の問いの答えを受け取ってから次を送る（opencode 1.19.4 の権限の問いと同じ順。#151）。
+		s.Command("fake.askseq", func(context.Context, *server.Buffer, *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			go func() {
+				for range 3 {
+					r, err := s.AskChoice(hostCtx, ext.ChoiceAskParams{Title: "どれ?", Choices: []ext.Choice{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
+					_ = s.AppendOutput("ask", fmt.Sprintf("selected=%s cancelled=%v err=%v\n", r.Selected, r.Cancelled, err))
+				}
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.Command("fake.state", func(_ context.Context, _ *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			go func() {
 				st, err := s.EditorState(hostCtx)
@@ -267,7 +289,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.save", `\w`),
-					contrib("fake.bufs", `\b`),
+					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
 				},
 			},
 		},

@@ -161,7 +161,11 @@ func (r *Renderer) Render(f *Frame) Screen {
 		d.drawLine(i, n)
 	}
 	if f.Popup != "" && rows > 0 {
-		r.drawPopup(g, theme, f.Popup, cur.line-r.top, r.textLeft()+cur.col-r.left)
+		text := f.Popup
+		if f.PopupMarkdown {
+			text = stripCodeFences(text)
+		}
+		r.drawPopup(g, theme, text, cur.line-r.top, r.textLeft()+cur.col-r.left)
 	}
 	screen := Screen{Grid: g, Cursor: Cursor{
 		Row: cur.line - r.top, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,

@@ -84,7 +84,7 @@ func TestOutputPaneInPTY(t *testing.T) {
 
 // TestChoiceInPTY は、ACP の拡張機能とテスト用のエージェントを実際に起動し、80 列の端末で、
 // エージェントの権限の確認の問い（choice/ask）の文と選択肢と取り消し方が、行に分けて見えることを確かめる（#144）。
-// 番号のキーで選ぶと、選んだ選択肢がエージェントへ返る。
+// 番号のキーで選ぶと、選んだ選択肢がエージェントへ返り、答えを受け付けたことがメッセージの行に出る（#151）。
 //
 // req: FR-34
 func TestChoiceInPTY(t *testing.T) {
@@ -103,6 +103,8 @@ func TestChoiceInPTY(t *testing.T) {
 	}
 	p.write(t, "1")
 	p.out.WaitForString(t, `"optionId":"allow-once"`)
+	// 答えを受け付けたことを、メッセージの行に 1 行で出す（#151）。
+	p.out.WaitForString(t, "問いに「Allow")
 	p.write(t, ":q\r")
 	if err := p.wait(t); err != nil {
 		t.Fatalf("エディタの終了 = %v。出力: %q", err, p.out.String())
