@@ -2,7 +2,6 @@
 
 Vim のキーバインドを持つ、ターミナル用のモーダルエディタ（仮称）。
 本体は端末で動く。
-設定ファイルと拡張機能の宣言ファイルの読み込みは未実装なので、本体から拡張機能はまだ起動しない。
 
 - 要件定義: [docs/requirements.md](docs/requirements.md)
 - 基本設計: [docs/basic-design.md](docs/basic-design.md)
@@ -32,6 +31,8 @@ bin/modal-editor --log ed.log a.go # ログを ed.log に追記する（既定�
 ```
 
 標準入力と標準出力が端末のときだけ起動する。
+起動時に、設定ファイル（`$XDG_CONFIG_HOME/modal-editor/config.jsonc`）と、拡張機能の宣言ファイル（`$XDG_DATA_HOME/modal-editor/extensions/<名前>/manifest.json` と、本体の隣の `extensions/<名前>/manifest.json`）を読む。
+置き場所と項目は仮で、`go doc ./internal/config` にある。設定の誤りは、起動後にコマンドラインの行へ位置と内容を 1 行で出す。
 端末は xterm の制御シーケンスで制御する（代替画面、bracketed paste、24 ビット色、カーソルの形）。terminfo は読まない。
 実際の端末で動きを確かめたのは、2026-11-16 時点で tmux 3.4 の中だけである。
 F キーと Insert キーは、キーの型（`internal/editcmd`）に対応する種類が無いので、押しても何もしない。

@@ -16,7 +16,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/piplupflipper/modal-editor/internal/config"
 	"github.com/piplupflipper/modal-editor/internal/editor"
+	"github.com/piplupflipper/modal-editor/internal/exthost"
 	"github.com/piplupflipper/modal-editor/internal/term"
 	"github.com/piplupflipper/modal-editor/internal/version"
 )
@@ -116,7 +118,7 @@ func guard(restore func() error, f func() error) (err error) {
 // runEditor は、エディタを作って files を開き、Run が戻るまで動かす。
 // Run が戻ったら、端末を戻してから拡張機能を止める（editor.Editor.Close の doc の順序）。
 func runEditor(files []string, tm *term.Terminal, logger *slog.Logger) error {
-	ed, err := editor.New(newTerminal(tm), editor.Config{Logger: logger})
+	ed, err := editor.New(newTerminal(tm), loadConfig(logger))
 	if err != nil {
 		return fmt.Errorf("エディタを作れない: %w", err)
 	}
@@ -146,6 +148,46 @@ func runEditor(files []string, tm *term.Terminal, logger *slog.Logger) error {
 		return fmt.Errorf("シグナルを受けて終了した: %w", context.Cause(ctx))
 	}
 	return runErr
+}
+
+// loadConfig は、設定ファイルと拡張機能の宣言ファイルを internal/config で読み、editor.Config に写す。
+// 置き場所は config.DefaultPath と config.ExtensionDirs（どちらも仮）に従う。
+// 誤り（位置と内容）は editor.Config.Problems に入れ、エディタが起動後に最初の 1 件を知らせる（基本設計 8 章）。
+// 誤りのある項目は config が既定値のままにするので、誤りがあっても起動する。
+//
+// 設定の extensions.memoryLimitMb（FR-20）は、exthost.Config に渡す項目がまだ無いので、読むだけで使わない（#107）。
+func loadConfig(logger *slog.Logger) editor.Config {
+	var problems []error
+	var cfg config.Config
+	if path, err := config.DefaultPath(); err != nil {
+		problems = append(problems, fmt.Errorf("設定ファイルの場所を決められない: %w", err))
+	} else {
+		var errs []error
+		cfg, errs = config.Load(path)
+		problems = append(problems, errs...)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		logger.Warn("実行ファイルのパスを決められないので、同梱の拡張機能を探さない", "err", err)
+		exe = ""
+	}
+	exts, errs := config.LoadExtensions(config.ExtensionDirs(exe), cfg)
+	problems = append(problems, errs...)
+	specs := make([]exthost.Spec, len(exts))
+	for i, x := range exts {
+		specs[i] = exthost.Spec(x)
+	}
+	host := exthost.Config{Logger: logger}
+	return editor.Config{
+		Keymap:       cfg.Keymap,
+		SyncTimeout:  cfg.SyncTimeout,
+		FileTypes:    cfg.FileTypes,
+		FixEndOfLine: cfg.FixEndOfLine,
+		Extensions:   specs,
+		Host:         host,
+		Logger:       logger,
+		Problems:     problems,
+	}
 }
 
 func closeEditor(ed *editor.Editor, logger *slog.Logger) {

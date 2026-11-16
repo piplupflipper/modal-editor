@@ -36,11 +36,29 @@ type editorProc struct {
 }
 
 // startEditor は、偽の端末（80 列 24 行）を制御端末にして、エディタを args で起動する。
+// 利用者の設定と拡張機能を読まないように、XDG_CONFIG_HOME と XDG_DATA_HOME を空のディレクトリにする。
 func startEditor(t *testing.T, args ...string) *editorProc {
 	t.Helper()
+	return startEditorWithConfig(t, "", args...)
+}
+
+// startEditorWithConfig は、設定ファイルの内容を configText にして、エディタを起動する。空なら設定ファイルを置かない。
+func startEditorWithConfig(t *testing.T, configText string, args ...string) *editorProc {
+	t.Helper()
+	xdg := t.TempDir()
+	if configText != "" {
+		dir := filepath.Join(xdg, "config", "modal-editor")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.jsonc"), []byte(configText), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	master, tty := ptytest.Open(t, 80, 24)
 	cmd := exec.Command(os.Args[0], args...) //nolint:gosec // テストの実行ファイル自身をエディタとして起動する
-	cmd.Env = append(os.Environ(), envRunMain+"=1")
+	cmd.Env = append(os.Environ(), envRunMain+"=1",
+		"XDG_CONFIG_HOME="+filepath.Join(xdg, "config"), "XDG_DATA_HOME="+filepath.Join(xdg, "data"))
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
 	// 新しいセッションを作り、tty を制御端末にする。端末の大きさを変えると、カーネルがエディタへ SIGWINCH を送る。
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
@@ -121,6 +139,38 @@ func TestEditInPTY(t *testing.T) {
 	}
 	if string(got) != "hello あ\n" {
 		t.Errorf("保存した内容 = %q, want %q", got, "hello あ\n")
+	}
+	p.checkRestored(t, before)
+}
+
+// TestConfigInPTY は、設定ファイルを読んで editor へ渡すことを確かめる。
+// 誤りのある項目は起動後のメッセージで位置と内容を知らせ（基本設計 8 章）、他の項目（keymap、fixendofline）は使う。
+func TestConfigInPTY(t *testing.T) {
+	// 末尾に改行の無い既存のファイル。新しいファイルは、Vim の 'endofline' と同じく改行を付けて書くので使わない。
+	path := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := startEditorWithConfig(t, `{
+  // コメントを書ける（JSONC）
+  "keymap": { "normal": { "Q": "ihi<Esc>" } },
+  "fixendofline": false,
+  "unknownItem": 1,
+}`, path)
+	before := ptytest.Termios(t, p.tty)
+	p.out.WaitForString(t, "config.jsonc:5:")
+	p.write(t, "Q")
+	p.out.WaitForString(t, "[+]")
+	p.write(t, ":wq\r")
+	if err := p.wait(t); err != nil {
+		t.Fatalf("エディタの終了 = %v。出力: %q", err, p.out.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hix" {
+		t.Errorf("保存した内容 = %q, want %q（keymap と fixendofline: false）", got, "hix")
 	}
 	p.checkRestored(t, before)
 }
