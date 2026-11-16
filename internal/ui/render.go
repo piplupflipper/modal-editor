@@ -145,6 +145,9 @@ func (r *Renderer) Render(f *Frame) Screen {
 		}
 		d.drawLine(i, n)
 	}
+	if f.Popup != "" && rows > 0 {
+		r.drawPopup(g, theme, f.Popup, cur.line-r.top, r.textLeft()+cur.col-r.left)
+	}
 	screen := Screen{Grid: g, Cursor: Cursor{
 		Row: cur.line - r.top, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,
 		Visible: rows > 0 && r.textWidth() > 0,
@@ -557,12 +560,9 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool
 		end := r.drawText(g, row, 0, r.Width, s, Attr{})
 		return Cursor{Row: row, Col: min(end, max(r.Width-1, 0)), Shape: CursorBar, Visible: r.Width > 0}, true
 	}
-	msg := f.Message.Text
-	if msg == "" {
+	lines := textLines(f.Message.Text)
+	if len(lines) == 0 {
 		return Cursor{}, false
-	}
-	if i := strings.IndexByte(msg, '\n'); i >= 0 {
-		msg = msg[:i]
 	}
 	style := StyleMessageInfo
 	switch f.Message.Level {
@@ -572,6 +572,10 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool
 	case MessageError:
 		style = StyleMessageError
 	}
-	r.drawText(g, row, 0, r.Width, msg, theme.attr(style))
+	if len(lines) > 1 {
+		r.drawMessageLines(g, lines, theme.attr(style))
+		return Cursor{}, false
+	}
+	r.drawText(g, row, 0, r.Width, lines[0], theme.attr(style))
 	return Cursor{}, false
 }

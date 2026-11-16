@@ -91,7 +91,8 @@ const (
 
 // Message は、コマンドラインの行に出すメッセージである。Text が空ならメッセージを出さない。
 type Message struct {
-	// Text は本文である。改行を含むときは最初の行だけを出す。
+	// Text は本文である。改行を含むときは、コマンドラインの行から上へ行を広げて出す（Vim のメッセージの行が広がるのと同じ）。
+	// 広げるのは画面の半分までで、収まらない行は省いたことを最後の行に書く。
 	Text  string
 	Level MessageLevel
 }
@@ -158,4 +159,7 @@ type Frame struct {
 	Signs []Sign
 	// Output は、開いている出力の欄である。nil なら欄を開いていない。
 	Output *Output
+	// Popup は、カーソルの近くに浮かべて出すテキスト（popup/show の本文）である。空なら出さない。
+	// カーソルの下の行に、下に収まらなければ上の行に、バッファの表示領域の上に重ねて出す。行は折り返す。
+	Popup string
 }

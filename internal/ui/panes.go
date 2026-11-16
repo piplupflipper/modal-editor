@@ -215,28 +215,39 @@ func (r *Renderer) drawOutput(g *Grid, theme Theme, o *Output, row0 int) {
 // タブの幅は、行の先頭からの列で決まるので、折り返した位置の列（or.col）から数え続ける。
 // 制御文字（デバッグ対象の出力の端末のエスケープシーケンスなど）は、バッファと同じく ^[ の形で出し、端末へそのまま送らない。
 func (r *Renderer) drawSegment(g *Grid, row int, s string, or outputRow, special Attr) {
+	r.drawSegmentAt(g, row, 0, r.Width, s, or, Attr{}, special)
+}
+
+// drawSegmentAt は、折り返した 1 行を、画面の row 行目の x0 列から、x0+width 列の手前までに属性 base で描く。
+// special は、^[ の形で出す文字の属性で、base の上に重ねる。
+func (r *Renderer) drawSegmentAt(g *Grid, row, x0, width int, s string, or outputRow, base, special Attr) {
 	tabStop := tabStopOr(r.TabStop)
 	col := or.col
+	put := func(x int, c Cell) {
+		if x >= 0 && x < width {
+			g.set(row, x0+x, c)
+		}
+	}
 	for off := or.start; off < or.end; {
 		gl := nextGlyph(s, off, col, tabStop)
 		x := gl.col - or.col
 		switch gl.kind {
 		case glyphTab:
 			for i := range gl.width {
-				g.set(row, x+i, blank(Attr{}))
+				put(x+i, blank(base))
 			}
 		case glyphSpecial:
 			for i := range len(gl.text) {
-				g.set(row, x+i, Cell{Text: gl.text[i : i+1], Width: 1, Attr: special})
+				put(x+i, Cell{Text: gl.text[i : i+1], Width: 1, Attr: base.Over(special)})
 			}
 		case glyphText:
-			if gl.width == 2 && x+1 >= r.Width {
-				g.set(row, x, Cell{Text: ">", Width: 1})
+			if gl.width == 2 && x+1 >= width {
+				put(x, Cell{Text: ">", Width: 1, Attr: base})
 				break
 			}
-			g.set(row, x, Cell{Text: gl.text, Width: gl.width})
+			put(x, Cell{Text: gl.text, Width: gl.width, Attr: base})
 			if gl.width == 2 {
-				g.set(row, x+1, Cell{Width: 0})
+				put(x+1, Cell{Width: 0, Attr: base})
 			}
 		}
 		col += gl.width

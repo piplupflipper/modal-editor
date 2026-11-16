@@ -168,7 +168,9 @@ func (e *Editor) applyExternal(bs *bufferState, tx buffer.Transaction) (buffer.C
 }
 
 // showPopup は、popup/show を、カーソルのあるバッファで、バージョン番号が現在と一致する場合だけ表示する。
-// ui に浮かぶ窓の描き方がまだ無いので、コマンドラインの行に最初の行を出す（仮）。
+// 本文は、ui がカーソルの近くに浮かべて描く（ui.Frame.Popup）。
+//
+// req: FR-30
 func (e *Editor) showPopup(p ext.PopupShowParams) {
 	bs := e.cur
 	if bs.id != p.Buffer || uint64(p.Version) != bs.buf.Version() {
