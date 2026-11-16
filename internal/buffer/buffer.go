@@ -96,6 +96,12 @@ type step struct {
 
 	cursor    Position
 	hasCursor bool
+
+	// eolSet は、この単位が末尾の改行の記録（eol）も変えたことを表す（ApplyReload）。
+	// アンドゥで eolBefore に、リドゥで eolAfter に戻す。
+	eolSet    bool
+	eolBefore bool
+	eolAfter  bool
 }
 
 // New は、text を内容とするバッファを、バージョン番号 0 で作る。
@@ -366,6 +372,35 @@ func (b *Buffer) Apply(tx Transaction) (Change, error) {
 	return b.commit(edits), nil
 }
 
+// ApplyReload は、ファイルを読み直したときの変更（Vim の :e）を、アンドゥの 1 単位として適用する。
+// Apply と同じく tx を適用し、加えて末尾の改行の記録（HasTrailingNewline）を eol にする。
+// 末尾の改行の記録の変更も同じ単位に記録するので、アンドゥで読み直す前の記録へ、リドゥで eol へ戻る（Vim 9.1 で、
+// 末尾の改行の有無が違うファイルを読み直した後の u と同じ）。
+//
+// tx.Edits が空でも、末尾の改行の記録が変わるなら、編集の無い単位を記録してバージョン番号を 1 増やす。
+// 編集も記録の変化も無ければ、Apply と同じく何もしない。
+// 開いているアンドゥのグループは閉じる（読み直しを利用者の編集の単位にまとめない）。
+func (b *Buffer) ApplyReload(tx Transaction, eol bool) (Change, error) {
+	if tx.BaseVersion != b.version {
+		return Change{}, fmt.Errorf("%w: base %d, current %d", ErrVersionMismatch, tx.BaseVersion, b.version)
+	}
+	if len(tx.Edits) == 0 && eol == b.eol {
+		return Change{Before: b.version, After: b.version}, nil
+	}
+	b.closeUndoGroup()
+	edits := slices.Clone(tx.Edits)
+	inverse, err := b.applyAll(edits)
+	if err != nil {
+		return Change{}, err
+	}
+	b.record(edits, inverse)
+	s := &b.undo[len(b.undo)-1]
+	s.eolSet, s.eolBefore, s.eolAfter = true, b.eol, eol
+	b.eol = eol
+	b.redo = nil
+	return b.commit(edits), nil
+}
+
 // record は、適用した編集をアンドゥの履歴に記録する。
 // グループの中の 2 回目以降なら末尾の単位にまとめ、まとめた単位には新しい id を付ける。
 // id を付け直すのは、まとめる前の状態で MarkSaved した場合に、まとめた後を変更ありと判定するためである。
@@ -468,6 +503,9 @@ func (b *Buffer) Undo() (Change, bool) {
 	undoEdits := slices.Clone(s.inverse)
 	slices.Reverse(undoEdits)
 	b.applyTracked(undoEdits, s)
+	if s.eolSet {
+		b.eol = s.eolBefore
+	}
 	b.redo = append(b.redo, s)
 	return b.commit(undoEdits), true
 }
@@ -487,6 +525,9 @@ func (b *Buffer) Redo() (Change, bool) {
 	s := b.redo[len(b.redo)-1]
 	b.redo = b.redo[:len(b.redo)-1]
 	b.applyTracked(s.edits, s)
+	if s.eolSet {
+		b.eol = s.eolAfter
+	}
 	b.undo = append(b.undo, s)
 	return b.commit(s.edits), true
 }

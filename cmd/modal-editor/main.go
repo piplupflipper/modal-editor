@@ -199,7 +199,17 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		problems[i] = shortProblem(p)
 	}
 	host := exthost.Config{Logger: logger, MemoryLimitMB: cfg.MemoryLimitMB}
+	// 設定ファイルの checkIntervalMs の 0 は「定期的に確かめない」で、editor.Config.CheckInterval では負の値に当たる。
+	var interval time.Duration
+	if d := cfg.CheckInterval; d != nil {
+		interval = *d
+		if interval == 0 {
+			interval = -1
+		}
+	}
 	return editor.Config{
+		AutoRead:         cfg.AutoRead,
+		CheckInterval:    interval,
 		Keymap:           cfg.Keymap,
 		SyncTimeout:      cfg.SyncTimeout,
 		StartSyncTimeout: cfg.StartSyncTimeout,

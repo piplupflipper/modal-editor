@@ -167,6 +167,15 @@ type Editor struct {
 	inspect   chan func()
 	// decoDone は、別の goroutine で作り終えた構文の色の表を、イベントループへ渡す（rebuildDecorations）。
 	decoDone chan decoBuilt
+	// checkDone は、別の goroutine で確かめた外での変更の結果を、イベントループへ渡す（startCheck）。
+	checkDone chan []fileResult
+	// checking は、外での変更を別の goroutine で確かめている途中かである。
+	checking bool
+	// checkAsk は、確かめている途中の結果で、W11〜W13 を問ってよいか（:checktime が求めた確認か）である。
+	checkAsk bool
+	// extRan は、直前のキーの処理で拡張機能のコマンド（command/execute）を実行したかである。
+	// 実行した後は、記録した外での変更の問いを出してよい時点である（afterKey）。
+	extRan bool
 	// stop は、Run が戻ると閉じる。イベントループへ渡す先の無くなった goroutine を終わらせる。
 	stop chan struct{}
 
@@ -233,6 +242,9 @@ type bufferState struct {
 	disk fileStamp
 	// seen は、外での変更を最後に確かめた時点のファイルの状態である。同じ変更を何度も知らせないために使う（Vim の b_mtime に当たる）。
 	seen fileStamp
+	// notice は、定期的な確認で見つけ、まだ問うていない外での変更の問い（W11〜W13 の文）である。空なら無い。
+	// 問いは打鍵の途中に割り込まないよう、安全な時点（askNotice）まで出さない。読み込み、書き出し、読み直しで消える（setDisk）。
+	notice string
 }
 
 // New は、エディタを作る。拡張機能は起動しない（FR-14、NFR-04）。バッファは Open で開き、開かなければ Run が空のバッファを作る。
@@ -292,6 +304,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		inputDone: make(chan struct{}),
 		inspect:   make(chan func()),
 		decoDone:  make(chan decoBuilt),
+		checkDone: make(chan []fileResult),
 		outputs:   map[outputKey][]string{},
 		nextID:    1,
 	}
@@ -486,7 +499,12 @@ func (e *Editor) Run(ctx context.Context) error {
 		case r := <-e.decoDone:
 			e.decorationsBuilt(r)
 		case <-checkC:
-			if !e.checkFiles() {
+			if e.idle() {
+				e.startCheck(false)
+			}
+			continue // 確かめ始めただけで、画面は変わらない
+		case rs := <-e.checkDone:
+			if !e.applyCheck(rs) {
 				continue // 何も変わらなければ描き直さない
 			}
 		}

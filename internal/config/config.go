@@ -45,6 +45,8 @@ import (
 //	{
 //	  "keymap": { "normal": { "<Space>w": ":w<CR>" } },
 //	  "fixendofline": true,
+//	  "autoread": true,
+//	  "checkIntervalMs": 1000,
 //	  "fileTypes": { ".tmpl": "html", "Justfile": "make" },
 //	  "extensions": {
 //	    "syncTimeoutMs": 50,
@@ -70,6 +72,12 @@ type Config struct {
 	// 項目が無いか誤りなら nil で、既定の有効（true）として扱う。
 	// editor.Config にはまだ対応する項目が無いので、呼び出し側が buffer.Buffer.SetFixEndOfLine へ写す。
 	FixEndOfLine *bool
+	// AutoRead は autoread の値で、未変更のバッファのファイルが外で変わったときに問わずに読み直すかどうかである
+	// （基本設計 6.7 の外での変更の確認。Vim の 'autoread'）。項目が無いか誤りなら nil で、editor の既定（有効）を使う。
+	AutoRead *bool
+	// CheckInterval は checkIntervalMs の値で、開いているバッファのファイルが外で変わっていないかを確かめる間隔である（基本設計 6.7）。
+	// 項目が無いか誤りなら nil で、editor の既定（editor.DefaultCheckInterval）を使う。0 は「定期的に確かめない」である。
+	CheckInterval *time.Duration
 	// MemoryLimitMB は extensions.memoryLimitMb の値（MiB）で、0 は「上限なし」である（FR-20）。
 	// 基本設計 7 章のとおり、拡張機能の子プロセスの RLIMIT_AS として設定する値で、
 	// 呼び出し側（cmd/modal-editor）が exthost.Config.MemoryLimitMB にそのまま写す。
@@ -147,6 +155,15 @@ func Parse(path string, data []byte) (Config, []error) {
 		case "fixendofline":
 			if b, ok := s.boolean(m.value, "fixendofline"); ok {
 				cfg.FixEndOfLine = &b
+			}
+		case "autoread":
+			if b, ok := s.boolean(m.value, "autoread"); ok {
+				cfg.AutoRead = &b
+			}
+		case "checkIntervalMs":
+			if n, ok := s.nonNegInt(m.value, "checkIntervalMs", maxSyncTimeoutMs); ok {
+				d := time.Duration(n) * time.Millisecond
+				cfg.CheckInterval = &d
 			}
 		case "fileTypes":
 			cfg.FileTypes = s.fileTypes(m.value)

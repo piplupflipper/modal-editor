@@ -94,6 +94,11 @@ func (e *Editor) afterKey() {
 	} else {
 		e.stopKeyTimer()
 	}
+	if e.extRan {
+		// 拡張機能のコマンドの後は、記録した外での変更の問いを出してよい時点である（askNotice）。
+		e.extRan = false
+		e.askNotice()
+	}
 }
 
 func (e *Editor) armKeyTimer() {

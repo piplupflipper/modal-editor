@@ -122,6 +122,29 @@ func TestParseFixEndOfLine(t *testing.T) {
 	}{{1, 18, "fixendofline は true か false にする"}})
 }
 
+// autoread と checkIntervalMs は、項目が無いときの nil（editor の既定値）と、書いた値を区別する（#143）。
+// checkIntervalMs の 0 は「定期的に確かめない」である。
+func TestParseExternalChange(t *testing.T) {
+	ms := func(n int) *time.Duration { d := time.Duration(n) * time.Millisecond; return &d }
+	cases := []struct {
+		src      string
+		autoRead *bool
+		interval *time.Duration
+		errs     int
+	}{
+		{`{}`, nil, nil, 0},
+		{`{"autoread": false, "checkIntervalMs": 0}`, new(false), ms(0), 0},
+		{`{"autoread": true, "checkIntervalMs": 250}`, new(true), ms(250), 0},
+		{`{"autoread": 1, "checkIntervalMs": -1}`, nil, nil, 2},
+	}
+	for _, c := range cases {
+		cfg, errs := Parse("c", []byte(c.src))
+		if len(errs) != c.errs || !reflect.DeepEqual(cfg.AutoRead, c.autoRead) || !reflect.DeepEqual(cfg.CheckInterval, c.interval) {
+			t.Errorf("%s: AutoRead = %v, CheckInterval = %v, errs = %v", c.src, cfg.AutoRead, cfg.CheckInterval, errs)
+		}
+	}
+}
+
 // 空のファイル、空白とコメントだけのファイル、BOM 付きのファイルは誤りにしない。
 //
 // req: FR-40

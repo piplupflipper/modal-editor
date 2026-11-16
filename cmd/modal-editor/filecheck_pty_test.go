@@ -26,8 +26,8 @@ func writeExternal(t *testing.T, path, text string) {
 }
 
 // TestExternalChangeInPTY は、偽の端末の上で、外でのファイルの変更の扱いを確かめる（#143）。
-// 未変更のバッファは問わずに読み直し（既定の autoread）、変更のあるバッファでは W12 を問い、
-// その後の :w は書き込むかを問い、y で書く。
+// 未変更のバッファは問わずに読み直し（既定の autoread）、変更のあるバッファでは W12 を警告で知らせ、
+// その後に打ったキーを問いの答えに取らず、:w は書き込むかを問い、y で書く。
 func TestExternalChangeInPTY(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.txt")
 	if err := os.WriteFile(path, []byte("a\n"), 0o600); err != nil {
@@ -46,7 +46,12 @@ func TestExternalChangeInPTY(t *testing.T) {
 	p.out.WaitForString(t, "[+]")
 	writeExternal(t, path, "Q\n")
 	p.out.WaitForString(t, "W12:")
-	p.write(t, "o:w\r")
+	// 定期的な確認は W12 を警告で知らせるだけで問わないので、続けて打つ odd text は行を開いて書くコマンドになる
+	// （PR #149 のレビューの再現。問いを出していれば o が OK の答えになり、dd が行を消していた）。
+	// 描画は差分なので "dd text" が続けて出るとは限らない。結果は保存した内容で確かめる。
+	p.write(t, "odd text\x1b")
+	p.out.WaitForString(t, "INSERT")
+	p.write(t, ":w\r")
 	// 描画は前の画面との差分なので、問いの文が続けて出るとは限らない。末尾の "(y/n)?" だけを見る。
 	// y で書けていなければ、続く :q は E37 で失敗し、エディタは終わらない。
 	p.out.WaitForString(t, "(y/n)?")
@@ -58,7 +63,7 @@ func TestExternalChangeInPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "gent\n"; string(got) != want {
+	if want := "gent\ndd text\n"; string(got) != want {
 		t.Errorf("保存した内容 = %q, want %q", got, want)
 	}
 	p.checkRestored(t, before)

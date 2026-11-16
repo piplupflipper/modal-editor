@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -49,8 +50,10 @@ func (s fileStamp) differs(o fileStamp) bool {
 }
 
 // setDisk は、バッファとファイルの内容が一致した時点（読み込み、書き出し、読み直し）のファイルの状態を記録する。
+// 記録していた外での変更の問い（notice）は、もう当たらないので消す。
 func (bs *bufferState) setDisk(st fileStamp) {
 	bs.disk, bs.seen = st, st
+	bs.notice = ""
 }
 
 // prompt は、本体が出す問い（:w の上書きの確認、W11〜W13）である。問いの間は、Ex の確認の問い（Editor.confirm）と同じく、
@@ -156,99 +159,186 @@ func (e *Editor) autoRead() bool {
 	return e.cfg.AutoRead == nil || *e.cfg.AutoRead
 }
 
-// checkFiles は、開いているバッファのファイルが外で変わっていないかを確かめる（基本設計 6.7 の外での変更の確認）。
-// Vim の :checktime と同じ扱いを、キー入力が無い間も定期的に行う。
-//
-// 利用者が入力している途中（ノーマルモード以外、キーの解釈の途中、処理していないキーがある）と、問いを出している間は確かめない。
+// idle は、利用者が入力の途中でなく、外での変更を確かめて結果を反映してよいかを返す。
+// ノーマルモードで、キーの解釈の途中でも利用者のキーマップの接頭辞の途中でもなく、処理していないキーが無く、
+// 問い（Ex の確認、本体の問い、choice/ask、hit-enter）を出していないときである。
 // 編集中の行がその場で置き換わったり、問いが入力の途中に割り込んだりしないためである。
-// 問いを出したら、残りのバッファは次の機会に確かめる。
-// 外での変更を見つけたら（画面を描き直す要があれば）true を返す。
-func (e *Editor) checkFiles() bool {
+func (e *Editor) idle() bool {
 	st := e.cur.state
-	if e.asking() || e.activeChoice() != nil || !e.keys.empty() || e.remap.pendingKeys() ||
-		st.Mode() != command.ModeNormal || st.Pending() {
-		return false
-	}
-	found := false
-	for _, bs := range e.bufs {
-		if bs.path == "" {
-			continue
-		}
-		if e.checkFile(bs) {
-			found = true
-		}
-		if e.prompt != nil {
-			break
-		}
-	}
-	return found
+	return !e.asking() && e.activeChoice() == nil && !e.hitEnter() && e.keys.empty() && !e.remap.pendingKeys() &&
+		st.Mode() == command.ModeNormal && !st.Pending()
 }
 
-// checkFile は、バッファ bs のファイルが、最後に確かめた後に外で変わっていれば、Vim と同じく次のように扱う。
+// fileResult は、別の goroutine で確かめた、1 つのバッファのファイルの状態である（startCheck）。
+type fileResult struct {
+	// bs は、結果を返す先のバッファである。確かめる goroutine は読まない（見分けるためだけに持つ）。
+	bs *bufferState
+	// path と seen は、確かめ始めた時点のバッファのパスと、最後に確かめた状態である。結果を反映する時点で違えば捨てる。
+	path string
+	seen fileStamp
+	now  fileStamp
+	// b は、ファイルが変わっていて、あったときに読んだ内容である。readErr は読めなかった理由である。
+	b       *buffer.Buffer
+	readErr error
+}
+
+// startCheck は、開いているバッファのファイルが外で変わっていないかを、別の goroutine で確かめ始める（基本設計 2.1、6.7）。
+// 結果は checkDone からイベントループへ届き、applyCheck が反映する。
+// stat とファイルの読み込みをイベントループで行わないのは、大きなファイルの読み込みと、止まりうるファイルシステムの stat で
+// キー入力の処理を待たせないためである。
+// ask が true なら（:checktime）、結果の問いをその場で出す。確かめている途中なら、新しく始めずに ask だけを引き継ぐ。
+func (e *Editor) startCheck(ask bool) {
+	if e.checking {
+		e.checkAsk = e.checkAsk || ask
+		return
+	}
+	var jobs []fileResult
+	for _, bs := range e.bufs {
+		if bs.path != "" {
+			jobs = append(jobs, fileResult{bs: bs, path: bs.path, seen: bs.seen})
+		}
+	}
+	if len(jobs) == 0 {
+		return
+	}
+	e.checking, e.checkAsk = true, ask
+	done, stop := e.checkDone, e.stop
+	go func() {
+		defer e.recoverPanic()
+		for i := range jobs {
+			j := &jobs[i]
+			now, err := statFile(j.path)
+			if err != nil {
+				// 状態を得られなければ、変わっていないものとして扱う。
+				now = j.seen
+			}
+			j.now = now
+			if now.exists && now.differs(j.seen) {
+				j.b, j.readErr = buffer.ReadFile(j.path)
+			}
+		}
+		select {
+		case done <- jobs:
+		case <-stop:
+		}
+	}()
+}
+
+// applyCheck は、別の goroutine で確かめた結果を反映する。画面を描き直す要があれば true を返す。
+// 反映する時点で利用者が入力の途中なら（idle でない）、何もせずに捨てる。最後に確かめた状態を更新しないので、次の確認でまた見つかる。
+// 確かめている間にバッファが読み直されたり、書き出されたり、閉じられたりしたら、そのバッファの結果は捨てる。
+func (e *Editor) applyCheck(rs []fileResult) bool {
+	e.checking = false
+	ask := e.checkAsk
+	e.checkAsk = false
+	if !e.idle() {
+		return false
+	}
+	changed := false
+	for _, r := range rs {
+		if !slices.Contains(e.bufs, r.bs) || r.bs.path != r.path || r.bs.seen.differs(r.seen) || !r.now.differs(r.seen) {
+			continue
+		}
+		e.checkFile(r)
+		changed = true
+	}
+	if ask && e.askNotice() {
+		changed = true
+	}
+	return changed
+}
+
+// checkFile は、バッファのファイルが、最後に確かめた後に外で変わっていた結果 r を、Vim と同じく次のように扱う。
 //   - 消えた: E211 の警告を出す
 //   - 未変更のバッファで、ファイルの中身がバッファと同じ: 何も出さず、読み込んだときの状態を更新する
 //   - 未変更のバッファで、autoread が有効: 読み直す（:e と同じくアンドゥで戻れる）
-//   - それ以外: W11（未変更のバッファ）、W12（変更のあるバッファ）、W13（読み込んだときに無かったファイル）の問いを出す
+//   - それ以外: W11（未変更のバッファ）、W12（変更のあるバッファ）、W13（読み込んだときに無かったファイル）の問いを記録し、
+//     警告のメッセージで知らせる。問いは安全な時点（askNotice）で出す
 //
 // 一度知らせた変更は、ファイルがまた変わるまで知らせない（Vim と同じ）。ただし問いで読み込まなかった変更は、
 // :w の確認（writeConflict）では変わったままに扱う（Vim 9.1 で、W11 に OK と答えた後の :w は警告を出す）。
 //
-// 変更を見つけたら true を返す。
-//
 // req: FR-08
-func (e *Editor) checkFile(bs *bufferState) bool {
-	now, err := statFile(bs.path)
-	if err != nil || !now.differs(bs.seen) {
-		return false
-	}
+func (e *Editor) checkFile(r fileResult) {
+	bs, now := r.bs, r.now
 	bs.seen = now
 	name := e.shortName(bs)
 	if !now.exists {
 		e.message = ui.Message{Text: fmt.Sprintf("E211: ファイル \"%s\" はもう存在しません", name), Level: ui.MessageWarning}
-		return true
+		return
 	}
 	if !bs.buf.Modified() {
-		b, err := buffer.ReadFile(bs.path)
-		if err != nil {
-			e.showError(fmt.Errorf("%s を読めません: %w", name, err))
-			return true
+		if r.readErr != nil {
+			e.showError(fmt.Errorf("%s を読めません: %w", name, r.readErr))
+			return
 		}
-		if sameContent(bs.buf, b) {
+		if sameContent(bs.buf, r.b) {
 			bs.disk = now
-			return true
+			return
 		}
 		if e.autoRead() {
-			e.reload(bs, b)
-			bs.disk = now
+			r.b.SetFixEndOfLine(bs.buf.FixEndOfLine())
+			e.reload(bs, r.b)
+			bs.setDisk(now)
 			e.message = infoMessage(fmt.Sprintf("\"%s\" は外で変更されたので読み直しました", name))
-			return true
+			return
 		}
 	}
-	var text string
 	switch {
 	case bs.buf.Modified():
-		text = fmt.Sprintf("W12: 警告: ファイル \"%s\" が変更され、バッファも変更されています", name)
+		bs.notice = fmt.Sprintf("W12: 警告: ファイル \"%s\" が変更され、バッファも変更されています", name)
 	case !bs.disk.exists:
-		text = fmt.Sprintf("W13: 警告: 編集を始めた後にファイル \"%s\" が作成されました", name)
+		bs.notice = fmt.Sprintf("W13: 警告: 編集を始めた後にファイル \"%s\" が作成されました", name)
 	default:
-		text = fmt.Sprintf("W11: 警告: 編集を始めた後にファイル \"%s\" が変更されました", name)
+		bs.notice = fmt.Sprintf("W11: 警告: 編集を始めた後にファイル \"%s\" が変更されました", name)
 	}
-	e.prompt = &prompt{
-		text: text + " [O]K, (L)oad File:",
-		answer: func(k editcmd.Key) bool {
-			switch k {
-			case editcmd.Rune('l'), editcmd.Rune('L'):
-				if err := e.reloadFile(bs); err != nil {
-					e.showError(err)
+	e.message = ui.Message{Text: bs.notice + " (:checktime で確かめる)", Level: ui.MessageWarning}
+}
+
+// askNotice は、記録した外での変更の問い（W11〜W13）を、出してよい時点（idle）なら 1 つ出す。出したら true を返す。
+// 出してよい時点は、:checktime の後と、拡張機能のコマンドの後である（Vim が問いを出す :checktime とシェルのコマンドの後に当たる）。
+// 定期的な確認の時点では出さない。利用者がノーマルモードのコマンドを打っている途中に割り込み、
+// 続くキー（o や l）を答えとして取ってしまうためである（PR #149 のレビュー）。
+// :w の前は、書き込むかの問い（askWrite）が同じ変更を問うので、ここでは出さない。
+func (e *Editor) askNotice() bool {
+	if !e.idle() {
+		return false
+	}
+	for _, bs := range e.bufs {
+		if bs.notice == "" {
+			continue
+		}
+		text := bs.notice
+		bs.notice = ""
+		e.prompt = &prompt{
+			text: text + " [O]K, (L)oad File:",
+			answer: func(k editcmd.Key) bool {
+				switch k {
+				case editcmd.Rune('l'), editcmd.Rune('L'), editcmd.Rune('a'), editcmd.Rune('A'):
+					// a（Vim の Load File (a)nd Options）は、読み直すオプションが無いので l と同じにする。
+					if err := e.reloadFile(bs); err != nil {
+						e.showError(err)
+					}
+				case editcmd.Rune('o'), editcmd.Rune('O'), editcmd.Esc, editcmd.Special(editcmd.CodeEnter):
+				default:
+					return false
 				}
-			case editcmd.Rune('o'), editcmd.Rune('O'), editcmd.Esc, editcmd.Special(editcmd.CodeEnter):
-			default:
-				return false
-			}
-			return true
-		},
+				return true
+			},
+		}
+		return true
 	}
-	return true
+	return false
+}
+
+// checkTime は、:checktime を行う。記録した問いがあれば出し、無ければ外での変更をすぐに確かめ、見つけた問いを出す。
+//
+// req: FR-08
+func (e *Editor) checkTime() {
+	if e.askNotice() {
+		return
+	}
+	e.startCheck(true)
 }
 
 // shortName は、問いと警告に出すバッファの名前を返す。作業ディレクトリの下のファイルなら相対パスにする。
@@ -261,8 +351,17 @@ func (e *Editor) shortName(bs *bufferState) string {
 }
 
 // sameContent は、バッファ a と b の内容（書き出したときのファイルの中身を決めるもの）が同じかを返す。
+// 全文の文字列を作らずに、行ごとに比べる。
 func sameContent(a, b *buffer.Buffer) bool {
-	return a.Text() == b.Text() && a.HasTrailingNewline() == b.HasTrailingNewline() && a.NoLines() == b.NoLines()
+	if a.LineCount() != b.LineCount() || a.HasTrailingNewline() != b.HasTrailingNewline() || a.NoLines() != b.NoLines() {
+		return false
+	}
+	for i := range a.LineCount() {
+		if a.Line(i) != b.Line(i) {
+			return false
+		}
+	}
+	return true
 }
 
 // reloadFile は、バッファ bs をファイルから読み直す（:e、:e!、W11〜W13 の問いの (L)oad File）。

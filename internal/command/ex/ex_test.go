@@ -556,6 +556,8 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":w !cmd は未対応", cmdline: "w !ls", wantCode: "E319"},
 		{name: ":q", cmdline: "q", want: []Action{{Kind: ActionQuit}}},
 		{name: ":quit", cmdline: "quit", want: []Action{{Kind: ActionQuit}}},
+		{name: ":checktime", modified: true, cmdline: "checktime", want: []Action{{Kind: ActionCheckTime}}},
+		{name: ":checkt", cmdline: "checkt", want: []Action{{Kind: ActionCheckTime}}},
 		{name: ":q で未保存の変更", modified: true, cmdline: "q", wantCode: "E37"},
 		{name: ":q!", modified: true, cmdline: "q!", want: []Action{{Kind: ActionQuit, Force: true}}},
 		{name: ":q の余分な文字", cmdline: "q foo", wantCode: "E488"},
