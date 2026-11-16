@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/command/target"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
@@ -78,6 +79,51 @@ type ActionQuery struct {
 	CountGiven bool
 	Char       rune
 	Register   rune
+	// Text は、コマンドラインから呼んだとき（:acp.prompt 説明して）の、コマンドの ID の後の引数の文字列である。
+	// キーから呼んだときと、引数を書かなかったときは空である。
+	Text string
+}
+
+// extCommand は、コマンドラインから呼んだ拡張機能のコマンド a（ex.ActionExtCommand）を問い合わせ、返った編集を適用する。
+// 返った編集は、コマンドライン 1 回分とは別の、アンドゥの 1 単位にする。
+// Vim の Ex コマンドと同じく、ドットリピートには記録しない（マクロに記録したコマンドラインのキーは、再生で同じく呼ぶ）。
+// 回数は渡さない（0。省略）。
+//
+// req: FR-11
+func (s *State) extCommand(a ex.Action) error {
+	if s.Extensions == nil {
+		return ErrNoExtensions
+	}
+	ref := editcmd.Ref{Extension: a.Extension, ID: a.Command}
+	tx, err := s.Extensions.Action(ref, s.buf, ActionQuery{Cursor: s.cursor, Text: a.Text}, s.queryInfo())
+	if err != nil {
+		return err
+	}
+	if len(tx.Edits) > 0 {
+		s.buf.BeginUndoGroup()
+		err = s.applyTx(tx)
+		s.buf.EndUndoGroup()
+		if err != nil {
+			return err
+		}
+	}
+	s.setCursorNormal(s.cursor)
+	return nil
+}
+
+// runExtCommand は、extCommand を実行し、失敗を結果に記録する。
+// 拡張機能が結果を保留した（ErrDeferred）場合は、run と同じく、再生中でなければ Result.Deferred に記録する。
+func (s *State) runExtCommand(a ex.Action) {
+	d := Deferred{Version: s.buf.Version(), Cursor: s.cursor, mode: s.mode, anchor: s.visual.anchor, want: s.want, exCommand: &a}
+	err := s.extCommand(a)
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrDeferred) && !s.Replaying() && s.res.Deferred == nil:
+		s.cursor, s.want = d.Cursor, d.want
+		s.res.Deferred = &d
+	default:
+		s.fail(err)
+	}
 }
 
 // resolveMotion は、モーションを本体の表か拡張機能で解決する。f、F、t、T の検索は、失敗しても ; と , のために記録する。

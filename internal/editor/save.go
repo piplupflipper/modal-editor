@@ -45,6 +45,8 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 		return nil
 	case ex.ActionEdit:
 		return e.edit(bs, a)
+	case ex.ActionExtCommand:
+		// command.State が問い合わせるので、Result.Actions には入らない。
 	}
 	return fmt.Errorf("未知の動作 %d", a.Kind)
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -183,11 +184,11 @@ func (d *debugger) newServer() *server.Server {
 	s.OnBufferChange(d.onBufferChange)
 	s.OnBufferClose(d.onBufferClose)
 	s.OnBufferDidSave(d.onBufferDidSave)
-	s.Command(cmdStart, d.start)
-	s.Command(cmdStop, d.stop)
-	s.Command(cmdToggleBreakpoint, d.toggleBreakpoint)
+	s.Command(cmdStart, d.noArgs(cmdStart, d.start))
+	s.Command(cmdStop, d.noArgs(cmdStop, d.stop))
+	s.Command(cmdToggleBreakpoint, d.noArgs(cmdToggleBreakpoint, d.toggleBreakpoint))
 	for _, id := range []string{cmdContinue, cmdNext, cmdStepIn, cmdStepOut} {
-		s.Command(id, d.resume)
+		s.Command(id, d.noArgs(id, d.resume))
 	}
 	s.OnShutdown(func(context.Context, *server.ShutdownEvent) { d.shutdown() })
 	return s
@@ -236,6 +237,30 @@ func (d *debugger) showError(text string) {
 func (d *debugger) fail(text string) (ext.CommandExecuteResult, error) {
 	d.showError(text)
 	return ext.CommandExecuteResult{OK: false}, nil
+}
+
+// commandArgs は、command/execute の args のうち、コマンドラインから呼んだときの引数の文字列 {"text":"..."} である
+// （ext の package の doc。仮）。キーで呼んだときの {"char":"x"} は読まない。
+type commandArgs struct {
+	Text string `json:"text"`
+}
+
+// noArgs は、引数を取らないコマンドのハンドラー h を包む。
+// コマンドラインから引数を付けて呼んだ（:dap.continue foo）ら、h を呼ばずに、引数を取らないことを知らせて失敗させる。
+// 引数の形は ACP の拡張機能（acp.prompt の {"text":"..."}）と揃える。
+func (d *debugger) noArgs(id string, h server.CommandHandler) server.CommandHandler {
+	return func(ctx context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+		var a commandArgs
+		if len(p.Args) > 0 {
+			if err := json.Unmarshal(p.Args, &a); err != nil {
+				return d.fail(fmt.Sprintf("%s: 引数を読めない: %v", id, err))
+			}
+		}
+		if strings.TrimSpace(a.Text) != "" {
+			return d.fail(id + ": 引数を取らない")
+		}
+		return h(ctx, b, p)
+	}
 }
 
 // appendOutput は、デバッグ対象の出力を output/append の dap の欄へ書き足す（基本設計 6.4）。

@@ -76,7 +76,14 @@ func (s *State) applyExResult(res ex.Result, err error) {
 		s.res.Confirm = res.Confirm
 	}
 	s.res.Changes = append(s.res.Changes, res.Changes...)
-	s.res.Actions = append(s.res.Actions, res.Actions...)
+	var extCmds []ex.Action
+	for _, a := range res.Actions {
+		if a.Kind == ex.ActionExtCommand {
+			extCmds = append(extCmds, a)
+			continue
+		}
+		s.res.Actions = append(s.res.Actions, a)
+	}
 	for _, d := range res.Deletions {
 		s.registers.delete(d.Register, Register{Text: strings.Join(d.Lines, "\n"), Linewise: true}, false, false)
 	}
@@ -92,6 +99,12 @@ func (s *State) applyExResult(res ex.Result, err error) {
 	}
 	if err != nil {
 		s.fail(err)
+	}
+	// 拡張機能のコマンド（ex.ActionExtCommand）は、呼び出し側へ返さずにここで問い合わせる。
+	// キーから呼んだ拡張機能の操作と同じく、期限の扱い（FR-17、FR-18）と再生中の待ち（FR-19）を通すためである。
+	// 引数が行末までを取るので、コマンドラインの最後のコマンドであり、同じ行の :w などの動作（Result.Actions）より先に問い合わせる。
+	for _, a := range extCmds {
+		s.runExtCommand(a)
 	}
 }
 

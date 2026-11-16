@@ -272,6 +272,11 @@ func TestDeferred(t *testing.T) {
 	if got := h.e.cur.state.Cursor().Line; got != 2 {
 		t.Errorf("cursor line = %d", got)
 	}
+	// 破棄したことは、メッセージの行に 1 行で知らせる。
+	want := "拡張機能 fake の fake.slow の結果を破棄しました"
+	if msg := h.message(); !strings.HasPrefix(msg, want) {
+		t.Errorf("message = %q, want prefix %q", msg, want)
+	}
 }
 
 // マクロとドットリピートの再生中は、期限 0 の設定でも前の操作の完了を待ち、応答が無ければその位置で止める。
@@ -548,7 +553,7 @@ func TestDeferredDuringPending(t *testing.T) {
 	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(0)}, "a.txt")
 	h.keys("disd")
 	h.settle()
-	time.Sleep(2 * slowDelay)
+	h.eventually("破棄の知らせ", func() bool { return strings.Contains(h.e.message.Text, "fake.slow の結果を破棄しました") })
 	h.keys("w")
 	h.settle()
 	if got := h.text(); got != "def\nghi" {

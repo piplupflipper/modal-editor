@@ -19,6 +19,10 @@
 //	:[range]v[global]/pat/cmd
 //	:[range]d[elete] [x] [count]
 //	:[range]             範囲の最後の行へ移る（:3 など）。行数を超えた行番号は最後の行に丸める
+//	:<コマンドの ID> [引数]  拡張機能のコマンドを実行する Action の ActionExtCommand を返す（State.ExtCommand。例: :acp.prompt 説明して）
+//
+// 拡張機能のコマンドは、ID と完全に一致する名前だけで呼べ、本体のコマンドの名前か省略形と同じ ID は本体のコマンドを優先する。
+// 引数は行末までの文字列で、"|" で区切らない。範囲と "!" は取らない。
 //
 // :w、:wq、:x の範囲は、バッファ全体（:%w、:1,$w）だけを受け付け、一部の行（:2,3w）は E319 にする。
 // Action は書き出す行の範囲を持たないので、一部の行の書き出しには対応していない。
@@ -81,6 +85,10 @@ const (
 	ActionQuit
 	// ActionEdit は、ファイルを開く動作である。File が空なら、編集中のファイルを読み直す。
 	ActionEdit
+	// ActionExtCommand は、拡張機能のコマンド（宣言ファイルの contributes.commands）を実行する動作である。
+	// Extension と Command にコマンドを、Text に引数の文字列を入れる。
+	// internal/command の State は、この動作を呼び出し側へ返さずに、自分で拡張機能へ問い合わせる（基本設計 5.4 の期限の扱いを通すため）。
+	ActionExtCommand
 )
 
 // Action は、Ex コマンドが呼び出し側へ求めるエディタの動作である。
@@ -92,6 +100,12 @@ type Action struct {
 	// Force は、コマンドに "!" が付いていたかどうかである。
 	// ActionWrite では既存のファイルや読み取り専用のファイルへの上書き、ActionQuit と ActionEdit では未保存の変更の破棄を表す。
 	Force bool
+	// Extension と Command は、ActionExtCommand で、コマンドを宣言した拡張機能の ID と、コマンドの ID である。
+	Extension string
+	Command   string
+	// Text は、ActionExtCommand で、コマンドの ID の後の空白を除いた、行末までの引数の文字列である。
+	// "|" と '"' も引数に含める（Vim の -bar を付けない利用者定義のコマンドと同じ）。引数が無ければ空である。
+	Text string
 }
 
 // Deletion は、:d が消した行の記録である。
@@ -136,6 +150,9 @@ type State struct {
 	// Mark は、マークの名前（'a の a、'< の <）を行（0 始まり）に解決する。
 	// nil か、ok が false を返したときは、そのマークのアドレスを E20 にする。
 	Mark func(name rune) (line int, ok bool)
+	// ExtCommand は、コマンドの ID が拡張機能のコマンド（宣言ファイルの contributes.commands）であれば、
+	// それを宣言した拡張機能の ID と true を返す。nil なら、拡張機能のコマンドは呼べない（E492 にする）。
+	ExtCommand func(id string) (extension string, ok bool)
 }
 
 // Substitution は、:s の 1 回分のパターン、置換の文字列、フラグである。
@@ -314,6 +331,10 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 		return "", 0, false, nil
 	}
 
+	if done, err := c.runExtCommand(s, r); done || err != nil {
+		return "", 0, false, err
+	}
+
 	namePos := s.pos()
 	name := s.letters()
 	if name == "" {
@@ -390,6 +411,52 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 		return "", 0, false, err
 	}
 	return inv.next, inv.nextPos, inv.hasNext, nil
+}
+
+// extCommandName は、拡張機能のコマンドの ID として読む、コマンド名の位置から続く文字列を返す。
+// 空白、"|"、"!" の手前までである。ID が空白を含むコマンドは、コマンドラインからは呼べない。
+func extCommandName(src string) string {
+	if i := strings.IndexAny(src, " \t|!"); i >= 0 {
+		return src[:i]
+	}
+	return src
+}
+
+// runExtCommand は、s の位置のコマンド名が拡張機能のコマンドなら、ActionExtCommand を返す動作として記録し、done を true で返す。
+// 拡張機能のコマンドでなければ、何も読まずに done を false で返す。
+//
+// 名前は省略できず、ID と完全に一致したときだけ拡張機能のコマンドとする。
+// 本体のコマンドの名前か省略形と同じ ID（"w"、"write"、"s" など）は、本体のコマンドを優先する。
+// 範囲と "!" は取らず、付ければ E481 と E477 にする。:g の cmd の中では E319 にする。
+// 引数は、ID の後の空白を除いた行末までで、"|" を区切りとしない（Vim の -bar を付けない利用者定義のコマンドと同じ）。
+//
+// req: FR-08, FR-11
+func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) {
+	if c.st.ExtCommand == nil {
+		return false, nil
+	}
+	namePos := s.pos()
+	id := extCommandName(s.rest())
+	if id == "" || lookup(id) != nil {
+		return false, nil
+	}
+	extID, ok := c.st.ExtCommand(id)
+	if !ok {
+		return false, nil
+	}
+	switch {
+	case c.inGlobal:
+		return true, errAt(namePos, codeNotAvailable, ":global の中では使えません: %s", id)
+	case r.count > 0:
+		return true, errAt(r.pos, codeNoRange, "範囲は使えません")
+	}
+	s.i += len(id)
+	if s.peek() == '!' {
+		return true, errAt(s.pos(), codeNoBang, "! は使えません")
+	}
+	s.skipBlanks()
+	c.actions = append(c.actions, Action{Kind: ActionExtCommand, Extension: extID, Command: id, Text: s.rest()})
+	return true, nil
 }
 
 // addrKindAt は、範囲から始まるコマンドライン src のコマンドが、範囲のアドレスで何を数えるかを返す。

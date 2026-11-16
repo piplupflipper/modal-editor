@@ -136,7 +136,7 @@ func (c *client) newServer() *server.Server {
 	s.OnBufferOpen(c.onBufferOpen)
 	s.OnBufferClose(c.onBufferClose)
 	s.Command(cmdPrompt, c.prompt)
-	s.Command(cmdCancel, c.cancel)
+	s.Command(cmdCancel, c.noArgs(cmdCancel, c.cancel))
 	s.OnShutdown(func(context.Context, *server.ShutdownEvent) { c.stop() })
 	return s
 }
@@ -243,8 +243,27 @@ func (c *client) appendLocked(text string) {
 }
 
 // promptArgs は、acp.prompt の command/execute の args である（基本設計 6.5。仮）。
+// 本体は、コマンドラインの :acp.prompt の後の引数の文字列を Text に入れて送る（ext の package の doc）。
 type promptArgs struct {
 	Text string `json:"text"`
+}
+
+// noArgs は、引数を取らないコマンド（acp.cancel）のハンドラー h を包む。
+// コマンドラインから引数を付けて呼んだ（:acp.cancel foo）ら、h を呼ばずに、引数を取らないことを知らせて失敗させる。
+// DAP の拡張機能の引数を取らないコマンドと同じ扱いである。
+func (c *client) noArgs(id string, h server.CommandHandler) server.CommandHandler {
+	return func(ctx context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+		var a promptArgs
+		if len(p.Args) > 0 {
+			if err := json.Unmarshal(p.Args, &a); err != nil {
+				return c.fail(fmt.Sprintf("%s: 引数を読めない: %v", id, err))
+			}
+		}
+		if strings.TrimSpace(a.Text) != "" {
+			return c.fail(id + ": 引数を取らない")
+		}
+		return h(ctx, b, p)
+	}
 }
 
 // prompt は、acp.prompt のハンドラーである。受け付けたことだけを ok で返し、エージェントの起動とプロンプトの送信は別の goroutine で行う。

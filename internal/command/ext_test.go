@@ -72,7 +72,11 @@ func (f *fakeExt) Operator(ref editcmd.Ref, b *buffer.Buffer, q OperatorQuery, i
 }
 
 func (f *fakeExt) Action(ref editcmd.Ref, b *buffer.Buffer, q ActionQuery, info QueryInfo) (buffer.Transaction, error) {
-	f.calls = append(f.calls, "action "+ref.ID)
+	call := "action " + ref.ID
+	if q.Text != "" {
+		call += " " + q.Text
+	}
+	f.calls = append(f.calls, call)
 	f.replays = append(f.replays, info.Replaying)
 	if f.deferring && !info.Replaying {
 		return buffer.Transaction{}, ErrDeferred

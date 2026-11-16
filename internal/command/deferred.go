@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
@@ -26,6 +27,8 @@ type Deferred struct {
 	mode   Mode
 	anchor buffer.Position
 	want   int
+	// exCommand は、コマンドラインから呼んだ拡張機能のコマンドを保留したときの動作である。このとき Command は使わない。
+	exCommand *ex.Action
 }
 
 // ApplyDeferred は、保留した操作 d を、届いた結果で実行し直す（FR-18、基本設計 5.4 の「期限が 0」）。
@@ -66,6 +69,10 @@ func (s *State) ApplyDeferred(d Deferred, ext Extensions) Result {
 	saved := s.Extensions
 	s.Extensions = ext
 	defer func() { s.Extensions = saved }()
-	s.run(d.Command)
+	if d.exCommand != nil {
+		s.runExtCommand(*d.exCommand)
+	} else {
+		s.run(d.Command)
+	}
 	return s.take()
 }
