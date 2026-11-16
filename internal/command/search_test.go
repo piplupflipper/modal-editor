@@ -3,6 +3,7 @@ package command
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
@@ -181,6 +182,36 @@ func TestSearchErrors(t *testing.T) {
 			}
 			if got := s.LastSearch().Pattern; got != tc.pattern {
 				t.Errorf("pattern = %q, want %q", got, tc.pattern)
+			}
+		})
+	}
+}
+
+// Vim の書き方の正規表現（\<、\|、\v など）が見つからずに E486 になったら、Go の regexp の文法で書く旨を添える。
+// Vim の書き方を含まない E486 と、"\\" の後の文字には添えない。
+//
+// req: FR-09
+func TestSearchVimStyleHint(t *testing.T) {
+	for _, tc := range []struct {
+		keys string
+		hint bool
+	}{
+		{`/bar\><CR>`, true},
+		{`/b\|e<CR>`, true},
+		{`/\v(b|e)<CR>`, true},
+		{`/\(z\)<CR>`, true},
+		{`/zz<CR>`, false},
+		{`/\\|z<CR>`, false},
+	} {
+		t.Run(tc.keys, func(t *testing.T) {
+			s := setup(t, "|foo bar\nabc def")
+			rs := feedKeys(s, tc.keys)
+			var ee *ex.Error
+			if err := rs[len(rs)-1].Err; !errors.As(err, &ee) || ee.Code != "E486" {
+				t.Fatalf("err = %v", err)
+			}
+			if got := strings.Contains(ee.Msg, "Go の regexp（RE2）"); got != tc.hint {
+				t.Errorf("msg = %q, hint = %v", ee.Msg, got)
 			}
 		})
 	}

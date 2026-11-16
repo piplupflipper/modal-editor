@@ -2,6 +2,7 @@ package command
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/command/target"
@@ -106,6 +107,27 @@ func (s *State) finishSearch(text string) {
 	s.run(cmd)
 }
 
+// vimStyleSeqs は、Vim の正規表現では特別な意味を持つが、Go の regexp（RE2）では文字そのもの（\v は垂直タブ）に一致する
+// "\" の組である。これを含むパターンが見つからなかったら、Vim の書き方で打った見込みがあるので、E486 に vimStyleHint を添える。
+var vimStyleSeqs = []string{`\<`, `\>`, `\|`, `\(`, `\)`, `\{`, `\+`, `\=`, `\v`}
+
+// vimStyleHint は、Vim の書き方の見込みがあるパターンの E486 に添える案内である。対応の全体は docs/vim-differences.md にある。
+const vimStyleHint = `（正規表現は Go の regexp（RE2）の文法で書きます。例: \<foo\> は \bfoo\b、a\|b は a|b、\(a\) は (a)）`
+
+// vimStyle は、パターンが vimStyleSeqs のどれかを含むかを返す。"\\" の組は飛ばす。
+func vimStyle(pat string) bool {
+	for i := 0; i+1 < len(pat); i++ {
+		if pat[i] != '\\' {
+			continue
+		}
+		if slices.Contains(vimStyleSeqs, pat[i:i+2]) {
+			return true
+		}
+		i++
+	}
+	return false
+}
+
 // searchResult は、検索のモーション t の結果 res と誤り err を、State に反映する。
 //   - / ? * # は、見つからなかった場合も含めて、検索したパターンと向きを直前の検索として記録する（Vim と同じ）。
 //     パターンは Ex と共有するので、/foo の後の :s//x/ は foo を置き換える
@@ -120,7 +142,11 @@ func (s *State) searchResult(t editcmd.Target, res target.Result, err error) err
 	switch {
 	case err == nil:
 	case errors.Is(err, target.ErrPatternNotFound):
-		return &ex.Error{Code: "E486", Msg: "パターンが見つかりません: " + res.Search.Pattern}
+		msg := "パターンが見つかりません: " + res.Search.Pattern
+		if vimStyle(res.Search.Pattern) {
+			msg += vimStyleHint
+		}
+		return &ex.Error{Code: "E486", Msg: msg}
 	case errors.Is(err, target.ErrNoPattern):
 		return &ex.Error{Code: "E35", Msg: "直前の正規表現がありません"}
 	case errors.Is(err, target.ErrNoString):
