@@ -82,6 +82,45 @@ func TestOutputPaneInPTY(t *testing.T) {
 	p.checkRestored(t, before)
 }
 
+// TestChoiceInPTY は、ACP の拡張機能とテスト用のエージェントを実際に起動し、80 列の端末で、
+// エージェントの権限の確認の問い（choice/ask）の文と選択肢と取り消し方が、行に分けて見えることを確かめる（#144）。
+// 番号のキーで選ぶと、選んだ選択肢がエージェントへ返る。
+//
+// req: FR-34
+func TestChoiceInPTY(t *testing.T) {
+	xdg := t.TempDir()
+	installExtension(t, xdg, "acp")
+	agent := filepath.Join(t.TempDir(), "fakeagent")
+	goBuild(t, agent, "./"+filepath.ToSlash(filepath.Join("..", "modal-editor-ext-acp", "testdata", "fakeagent")))
+	writeConfig(t, xdg, `{ "extensions": { "settings": { "acp": { "agent": { "command": `+strconv.Quote(agent)+` } } } } }`)
+	p := startEditorIn(t, xdg, nil, filepath.Join(t.TempDir(), "a.txt"))
+	before := ptytest.Termios(t, p.tty)
+	p.out.WaitForString(t, "a.txt")
+	p.write(t, `:output|acp.prompt {"op":"permission"}`+"\r")
+	// 24 行の画面の下から、問いの文（21 行目）、選択肢（22、23 行目）、選び方の案内（24 行目）の順に出る。
+	for _, re := range choiceRowRes {
+		p.out.WaitFor(t, re.String(), func(out string) bool { return re.MatchString(out) })
+	}
+	p.write(t, "1")
+	p.out.WaitForString(t, `"optionId":"allow-once"`)
+	p.write(t, ":q\r")
+	if err := p.wait(t); err != nil {
+		t.Fatalf("エディタの終了 = %v。出力: %q", err, p.out.String())
+	}
+	p.checkRestored(t, before)
+}
+
+// choiceRowRes は、TestChoiceInPTY の問いの各行の先頭（CUP の 行;1H）に描かれた語に一致する。色を付ける列（SGR）が間に入ってよい。
+var choiceRowRes = []*regexp.Regexp{
+	regexp.MustCompile(`\x1b\[21;1H(\x1b\[[0-9;]*m)*エージェントが権限を求めている:`),
+	regexp.MustCompile(`\x1b\[22;1H(\x1b\[[0-9;]*m)*\[1\]`),
+	regexp.MustCompile(`\x1b\[23;1H(\x1b\[[0-9;]*m)*\[2\]`),
+	regexp.MustCompile(`\x1b\[24;1H(\x1b\[[0-9;]*m)*1〜2`),
+	regexp.MustCompile(`Allow`),
+	regexp.MustCompile(`Reject`),
+	regexp.MustCompile(`<Esc>`),
+}
+
 var (
 	// outputTitleRe は、欄の名前の行の " [出力] " の後（23 行目の 9 列目）に "acp" を描いた出力に一致する。色を付ける列（SGR）が間に入ってよい。
 	outputTitleRe = regexp.MustCompile(`\x1b\[23;9H(\x1b\[[0-9;]*m)*acp`)

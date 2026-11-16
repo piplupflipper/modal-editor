@@ -34,6 +34,28 @@ func TestGoldenMessageLines(t *testing.T) {
 	}))
 }
 
+// 選択肢の問いは、問いの文と選択肢を 1 つずつ行に分けて下から上へ広げ、最後の行の選び方の案内の末尾にカーソルを置く。
+// 長い行は折り返す。画面の半分を超えても広げ、収まらなければ問いの文を先に減らし、それでも収まらなければ選択肢を減らす。
+// コマンドラインモードとメッセージより先に出す（#144）。
+func TestGoldenChoice(t *testing.T) {
+	b := buffer.New("x\n")
+	r := &Renderer{Width: 40, Height: 8, Theme: testTheme()}
+	two := []string{"Allow once", "Reject"}
+	golden(t, "choice", renderSteps(r, []step{
+		{"2 つの選択肢", Frame{Text: b, Choice: &Choice{Title: "エージェントが権限を求めている: Edit main.go", Labels: two}}},
+		{"画面の半分を超える", Frame{Text: b, Choice: &Choice{Title: "どれ?", Labels: []string{"a", "b", "c", "d", "e"}}}},
+		{"問いの文を減らす", Frame{Text: b, Choice: &Choice{Title: "1\n2\n3\n4\n5", Labels: []string{"a", "b", "c", "d"}}}},
+		{"選択肢を減らす", Frame{Text: b, Choice: &Choice{Title: "t", Labels: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}, Omitted: 3}}},
+		{"ラベルの改行と長いラベル", Frame{Text: b, Choice: &Choice{Title: "t", Labels: []string{"two\nlines", strings.Repeat("long ", 10)}}}},
+		{"コマンドラインモードとメッセージより先に出す", Frame{Text: b, Mode: ModeCommandLine, CommandLine: "w", Message: Message{Text: "m"}, Choice: &Choice{Title: "t", Labels: []string{"only"}}}},
+		{"選択肢が無い", Frame{Text: b, Choice: &Choice{Title: "t"}}},
+	}))
+	narrow := &Renderer{Width: 20, Height: 1, Theme: testTheme()}
+	golden(t, "choice-narrow", renderSteps(narrow, []step{
+		{"案内の行だけ", Frame{Text: b, Choice: &Choice{Title: "t", Labels: two}}},
+	}))
+}
+
 // HitEnter なら、改行を含むメッセージの下の最後の行に hit-enter の問いを出し、カーソルを問いの末尾に置く。
 // 問いの行は画面の半分に数えない。1 行のメッセージには問いを出さない。幅に収まらない問いは右の端で切り、カーソルは最後の列に置く（#135）。
 func TestGoldenHitEnter(t *testing.T) {

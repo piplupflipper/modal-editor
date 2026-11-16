@@ -596,11 +596,15 @@ func (r *Renderer) position(lineCount int) string {
 	return fmt.Sprintf("%d%%", above*100/(above+below))
 }
 
-// drawCommandLine は、最後の行にコマンドラインかメッセージを描く。
+// drawCommandLine は、最後の行にコマンドラインかメッセージを描く。選択肢の問い（Frame.Choice）があれば、どちらより先に問いを描く。
 // コマンドラインモードでは ":" と入力中の文字列を出し、カーソル（縦線）を ok が true で返す。
 // 入力中の文字列が幅に収まらなければ、末尾が見えるように先頭の側を隠す。
 func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool) {
 	row := r.Height - 1
+	if f.Choice != nil {
+		// 選択肢の問いの間のキーは問いへの答えにする（internal/editor）ので、コマンドラインモードでも問いを出す。
+		return r.drawChoice(g, theme, f.Choice), true
+	}
 	if f.Mode == ModeCommandLine {
 		s := ":" + f.CommandLine
 		tabStop := tabStopOr(r.TabStop)

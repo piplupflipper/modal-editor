@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -433,8 +434,12 @@ func TestChoiceAndState(t *testing.T) {
 	h.keys(`\a`)
 	h.eventually("問い", func() bool { return h.e.activeChoice() != nil })
 	h.settle()
-	if scr := h.term.screen(); !strings.Contains(scr, "どれ?") {
-		t.Errorf("問いが描かれない:\n%s", scr)
+	// 問いの文と選択肢は行に分け、最後の行に選び方の案内を出す（#144）。
+	scr := h.term.screen()
+	for _, want := range []string{"どれ?", "[1] A", "[2] B", "1〜2 で選ぶか <Esc> で取り消し"} {
+		if !slices.ContainsFunc(strings.Split(scr, "\n"), func(l string) bool { return strings.TrimRight(l, " ") == want }) {
+			t.Errorf("%q の行が描かれない:\n%s", want, scr)
+		}
 	}
 	h.keys("x2")
 	h.eventually("選んだ結果", func() bool { return strings.HasPrefix(h.e.message.Text, "selected=b") })
@@ -443,6 +448,22 @@ func TestChoiceAndState(t *testing.T) {
 	}
 	h.keys(`l\s`)
 	h.eventually("editor/state", func() bool { return h.e.message.Text == "mode=normal cursor=0:1 buffers=1 err=<nil>" })
+}
+
+// 番号のキーは 1〜9 なので、選択肢は最初の 9 つを出し、残りは数だけを出す（#144）。
+func TestUIChoice(t *testing.T) {
+	var chs []ext.Choice
+	for i := range 11 {
+		chs = append(chs, ext.Choice{ID: fmt.Sprint(i), Label: fmt.Sprint("L", i)})
+	}
+	c := uiChoice(&exthost.ChoiceAskRequest{Params: ext.ChoiceAskParams{Title: "t", Choices: chs}})
+	if c.Title != "t" || len(c.Labels) != 9 || c.Labels[8] != "L8" || c.Omitted != 2 {
+		t.Errorf("uiChoice = %+v", c)
+	}
+	c = uiChoice(&exthost.ChoiceAskRequest{Params: ext.ChoiceAskParams{Title: "t", Choices: chs[:2]}})
+	if len(c.Labels) != 2 || c.Omitted != 0 {
+		t.Errorf("uiChoice(2) = %+v", c)
+	}
 }
 
 // 逆順の範囲の確認は、問いを出し、y で続ける。
