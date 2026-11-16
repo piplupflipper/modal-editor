@@ -401,6 +401,47 @@ func TestW12(t *testing.T) {
 	}
 }
 
+// 外での変更の記録と問いは、バッファごとに持つ。隠れたバッファ（#142）の変更も記録し、カーソルのあるバッファを切り替えた後の
+// :checktime の問いでそのバッファを読み直し、カーソルのあるバッファは読み直さない。:wa は :w と同じく外で変わったファイルへ書き込むかを問う。
+//
+// req: FR-08
+func TestNoticePerBuffer(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n"})
+	pa, pb := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt")
+	h := start(t, Config{WorkDir: dir, CheckInterval: 10 * time.Millisecond}, "a.txt", "b.txt", "a.txt")
+	h.keys("x:b! 2<CR>x")
+	h.settle()
+	writeExternal(t, pb, "B\n")
+	h.eventually("b.txt の W12 の記録", func() bool { return strings.HasPrefix(h.e.findBuffer(2).notice, "W12") })
+	h.keys(":b! 1<CR>:checktime<CR>")
+	h.settle()
+	if p := h.promptText(); !strings.HasPrefix(p, "W12") || !strings.Contains(p, "b.txt") {
+		t.Fatalf(":checktime の問い = %q", p)
+	}
+	h.keys("l")
+	h.settle()
+	h.e.do(func() {
+		a, b := h.e.findBuffer(1), h.e.findBuffer(2)
+		if h.e.cur != a || a.buf.Text() != "" || b.buf.Text() != "B" || a.notice != "" || b.notice != "" {
+			t.Errorf("(L)oad File の後: cur=%d a=%q b=%q notice=%q,%q", h.e.cur.id, a.buf.Text(), b.buf.Text(), a.notice, b.notice)
+		}
+	})
+	// a.txt も外で変えると、:wa は書き込むかを問い、y で書き出す。
+	h.keys(":b! 2<CR>x:b! 1<CR>")
+	writeExternal(t, pa, "A\n")
+	h.eventually("a.txt の W12 の記録", func() bool { return strings.HasPrefix(h.e.findBuffer(1).notice, "W12") })
+	h.keys(":wa<CR>")
+	h.settle()
+	if p := h.promptText(); !strings.HasPrefix(p, "警告") {
+		t.Fatalf(":wa が問わない: %q", p)
+	}
+	h.keys("y")
+	h.settle()
+	if a, b := readFile(t, pa), readFile(t, pb); a != "\n" || b != "\n" {
+		t.Errorf(":wa の後: a.txt = %q, b.txt = %q", a, b)
+	}
+}
+
 // 記録した問いは、拡張機能のコマンドの後に出す（Vim がシェルのコマンドの後に確かめるのと同じ時点）。
 // Vim の (a)（Load File and Options）は l と同じく読み直す。
 //

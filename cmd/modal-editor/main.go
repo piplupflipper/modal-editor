@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
@@ -143,11 +144,16 @@ func runEditor(ctx context.Context, files []string, tm *term.Terminal, logger *s
 	if err != nil {
 		return fmt.Errorf("エディタを作れない: %w", err)
 	}
-	// Vim と同じく、最初のファイルをカーソルのあるバッファにする。Open は開いたバッファへ移るので、後ろから開く。
-	for i := len(files) - 1; i >= 0; i-- {
-		if err := ed.Open(files[i]); err != nil {
+	// Vim と同じく、引数の順にバッファの番号（:ls、:b N）を付け、最初のファイルをカーソルのあるバッファにする。
+	// Open は開いたバッファへ移るので、最後に最初のファイルをもう一度開いて移る（開いているファイルは開き直さない）。
+	order := files
+	if len(files) > 1 {
+		order = append(slices.Clone(files), files[0])
+	}
+	for _, f := range order {
+		if err := ed.Open(f); err != nil {
 			closeEditor(ed, logger)
-			return fmt.Errorf("%s を開けない: %w", files[i], err)
+			return fmt.Errorf("%s を開けない: %w", f, err)
 		}
 	}
 

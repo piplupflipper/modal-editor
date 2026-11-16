@@ -591,6 +591,32 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":ou は短すぎる", cmdline: "ou", wantCode: "E492"},
 		{name: ":2output は範囲を取らない", cmdline: "2output", wantCode: "E481"},
 		{name: ":output|q", cmdline: "output dap|q", want: []Action{{Kind: ActionOutput, Output: OutputOpen, Text: "dap"}, {Kind: ActionQuit}}},
+		{name: ":ls", cmdline: "ls", want: []Action{{Kind: ActionBuffer, Buffer: BufferList}}},
+		{name: ":buffers!", cmdline: "buffers!", want: []Action{{Kind: ActionBuffer, Buffer: BufferList}}},
+		{name: ":ls の余分な文字", cmdline: "ls x", wantCode: "E488"},
+		{name: ":b は未保存の変更を呼び出し側が確かめる", modified: true, cmdline: "b 2", want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Count: 2}}},
+		{name: ":bu は :buffer", cmdline: "bu3", want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Count: 3}}},
+		{name: ":buffer! 名前", cmdline: `buffer! a\ b.txt`, want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Text: "a b.txt", Force: true}}},
+		{name: ":b 引数なし", cmdline: "b", want: []Action{{Kind: ActionBuffer, Buffer: BufferGo}}},
+		{name: ":b 1 2 は E488", cmdline: "b 1 2", wantCode: "E488"},
+		{name: ":3b は範囲を取らない", cmdline: "3b", wantCode: "E481"},
+		{name: ":bn", cmdline: "bn", want: []Action{{Kind: ActionBuffer, Buffer: BufferNext, Count: 1}}},
+		{name: ":bnext! 3", cmdline: "bnext! 3", want: []Action{{Kind: ActionBuffer, Buffer: BufferNext, Count: 3, Force: true}}},
+		{name: ":bN", cmdline: "bN", want: []Action{{Kind: ActionBuffer, Buffer: BufferPrev, Count: 1}}},
+		{name: ":bp 2|q", cmdline: "bp 2|q", want: []Action{{Kind: ActionBuffer, Buffer: BufferPrev, Count: 2}, {Kind: ActionQuit}}},
+		{name: ":bn 0 は E939", cmdline: "bn 0", wantCode: "E939"},
+		{name: ":bn x は E488", cmdline: "bn x", wantCode: "E488"},
+		{name: ":ju", cmdline: "ju", want: []Action{{Kind: ActionJumpList}}},
+		{name: ":wa", modified: true, cmdline: "wa", want: []Action{{Kind: ActionWriteAll}}},
+		{name: ":qa は未保存の変更を呼び出し側が確かめる", modified: true, cmdline: "qa", want: []Action{{Kind: ActionQuitAll}}},
+		{name: ":qa!", cmdline: "qall!", want: []Action{{Kind: ActionQuitAll, Force: true}}},
+		{name: ":wqa", cmdline: "wqa", want: []Action{{Kind: ActionWriteAll}, {Kind: ActionQuitAll}}},
+		{name: ":xa!", cmdline: "xa!", want: []Action{{Kind: ActionWriteAll, Force: true}, {Kind: ActionQuitAll, Force: true}}},
+		{name: ":wq は :wqa にならない", cmdline: "wq", want: []Action{{Kind: ActionWrite}, {Kind: ActionQuit}}},
+		{name: ":bd", cmdline: "bd", want: []Action{{Kind: ActionBufferDelete}}},
+		{name: ":bdelete! 3", cmdline: "bdelete! 3", want: []Action{{Kind: ActionBufferDelete, Count: 3, Force: true}}},
+		{name: ":bd 名前", cmdline: "bd a.txt", want: []Action{{Kind: ActionBufferDelete, Text: "a.txt"}}},
+		{name: ":jumps の余分な文字", cmdline: "jumps 1", wantCode: "E488"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -606,6 +632,36 @@ func TestExecuteActions(t *testing.T) {
 			}
 			if err == nil && !reflect.DeepEqual(res.Actions, tt.want) {
 				t.Errorf("actions = %+v, want %+v", res.Actions, tt.want)
+			}
+		})
+	}
+}
+
+// ジャンプに当たるコマンド（一致のあった :s、印の付いた行のある :g と :v、:d）は Result.Jumped を立てる。
+// どれが当たるかは、手元の Vim 9.1 で getjumplist() を読んで確かめた（2026-11-16）。
+//
+// req: FR-08
+func TestExecuteJumped(t *testing.T) {
+	tests := []struct {
+		cmdline string
+		want    bool
+	}{
+		{"s/a/x/", true},
+		{"s/zzz/x/e", false},
+		{"s/zzz/x/", false},
+		{"g/b/d", true},
+		{"g/zzz/d", false},
+		{"v/./d", false},
+		{"2d", true},
+		{"9d", false},
+		{"3", false},
+		{"w", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmdline, func(t *testing.T) {
+			res, _ := Execute(buffer.New("a\nb\nc\n"), nil, 0, tt.cmdline)
+			if res.Jumped != tt.want {
+				t.Errorf("Jumped = %v, want %v", res.Jumped, tt.want)
 			}
 		})
 	}

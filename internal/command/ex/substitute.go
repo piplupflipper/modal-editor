@@ -123,6 +123,8 @@ func runSubstitute(c *execCtx, inv *invocation) error {
 		}
 		return errAt(patPos, codeNotFound, "パターンが見つかりません: %s", c.st.LastPattern)
 	}
+	// 一致があれば、Vim 9.1 と同じくジャンプとして記録する（置き換えた後のテキストが同じでも記録する）。
+	c.markJump()
 	if len(edits) > 0 {
 		if err = c.apply(edits...); err != nil {
 			return err
@@ -250,6 +252,8 @@ func runGlobal(c *execCtx, inv *invocation) error {
 		return errAt(patPos, codeNotFound, "パターンが見つかりません: %s", c.st.LastPattern)
 	}
 
+	// 印を付けた行があれば、Vim 9.1 と同じくジャンプとして記録する（cmd の中のコマンドは記録しない）。
+	c.markJump()
 	c.inGlobal = true
 	defer func() { c.inGlobal = false }()
 	for i, m := range marks {

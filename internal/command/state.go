@@ -124,6 +124,8 @@ type State struct {
 	// Viewport は、画面のバッファの表示領域である。ページ単位のスクロール（<PageUp>、<PageDown>）が読み書きする。
 	// nil なら、ページ単位のスクロールは失敗する。
 	Viewport Viewport
+	// Navigator は、ジャンプリストとバッファの切り替えの口である。nil なら、ジャンプを記録せず、<C-o>、<C-i>、<C-^> は失敗する。
+	Navigator Navigator
 
 	buf    *buffer.Buffer
 	cursor buffer.Position

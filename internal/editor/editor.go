@@ -155,6 +155,12 @@ type Editor struct {
 	bufs   []*bufferState
 	cur    *bufferState
 	nextID ext.BufferID
+	// alt は、裏のバッファ（直前にカーソルのあったバッファ。<C-^> の移り先、:ls の #）である。無ければ nil。
+	alt *bufferState
+	// jumps と jumpIdx は、ジャンプリストと、<C-o> と <C-i> が次に読む位置である（buffers.go）。
+	// jumpIdx が len(jumps) なら、末尾の次（最後のジャンプの後に <C-o> をまだ打っていない）を指す。
+	jumps   []jumpEntry
+	jumpIdx int
 
 	keys      *keyQueue
 	interrupt atomic.Bool
@@ -433,8 +439,11 @@ func (e *Editor) MCPSocket() string { return e.cfg.MCPSocket }
 // Open は、path のファイルを開き、カーソルのあるバッファにする。
 // ファイルが無ければ、そのパスの空のバッファを作る（Vim の :e newfile と同じ）。
 // 既に開いているファイルなら、そのバッファへ移る。
+// 起動の引数のファイルを開くためのもので、ジャンプリストと裏のバッファ（<C-^> の移り先）には記録しない
+// （Vim が引数のファイルを開いたときと同じ）。バッファの番号は、開いた順に 1 から付ける。
 func (e *Editor) Open(path string) error {
 	_, err := e.openFile(path, true)
+	e.jumps, e.jumpIdx, e.alt = nil, 0, nil
 	return err
 }
 
@@ -599,7 +608,8 @@ func (e *Editor) do(f func()) {
 	<-done
 }
 
-// newBuffer は、バッファを開いた状態に加え、exthost へ知らせ、カーソルのあるバッファにする。
+// newBuffer は、バッファを開いた状態に加え、exthost へ知らせる。カーソルのあるバッファがまだ無ければ、そのバッファにする。
+// 他のバッファがあるときは移らない（移るのは呼び出し側が enter か switchTo で行う）。
 // exthost は、fileType の契機を宣言した未起動の拡張機能をここで初めて起動する（FR-14）。
 //
 // req: FR-14
@@ -617,7 +627,9 @@ func (e *Editor) newBuffer(b *buffer.Buffer, path, fileType string) *bufferState
 	e.nextID++
 	e.initState(bs)
 	e.bufs = append(e.bufs, bs)
-	e.switchTo(bs)
+	if e.cur == nil {
+		e.cur = bs
+	}
 	return bs
 }
 
@@ -629,6 +641,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Columns = e.renderer.Columns()
 	bs.state.Viewport = viewport{r: e.renderer}
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
+	bs.state.Navigator = navigator{e: e, bs: bs}
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Interrupted = e.interrupt.Load
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
@@ -655,12 +668,11 @@ func (e *Editor) syncFinalNewline(bs *bufferState) {
 	}
 }
 
-// switchTo は、カーソルのあるバッファを bs にする。レジスターと直前の検索のパターンは引き継ぐ
-// （Vim と同じく、どちらもバッファをまたいで 1 組）。
+// switchTo は、カーソルのあるバッファを bs にする。レジスター、直前の検索、ドットリピート、マクロの記録などの
+// Vim でエディタ全体に 1 つの状態は引き継ぐ（command.State.TakeOver）。
 func (e *Editor) switchTo(bs *bufferState) {
 	if e.cur != nil && e.cur != bs {
-		*bs.state.Registers() = *e.cur.state.Registers()
-		bs.state.SetLastSearch(e.cur.state.LastSearch())
+		bs.state.TakeOver(e.cur.state)
 	}
 	e.cur = bs
 }
@@ -683,13 +695,16 @@ func (e *Editor) absPath(path string) string {
 	return filepath.Join(e.cfg.WorkDir, path)
 }
 
-// openFile は、path のファイルを開く。既に開いていればそのバッファを返す。focus が true ならカーソルのあるバッファにする。
+// openFile は、path のファイルを開く。既に開いていればそのバッファを返す。
+// focus が true ならカーソルのあるバッファにし、移る前の位置をジャンプリストに足す（enter）。
+// focus が true で、カーソルのあるバッファが起動したときの空の名前の無いバッファ（reusable）なら、
+// 新しい番号を作らずにそのバッファを開いたファイルのものにする（Vim と同じく、:ls に [No Name] を残さない）。
 func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	abs := e.absPath(path)
 	for _, bs := range e.bufs {
 		if bs.path == abs {
 			if focus {
-				e.switchTo(bs)
+				e.enter(bs)
 			}
 			return bs, nil
 		}
@@ -707,12 +722,45 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	// :e での読み直し（reload）は、元のバッファの設定を引き継ぐので、ここで設定するのは開くときだけである。
 	b.SetFixEndOfLine(e.fixEOL)
 	prev := e.cur
+	if focus && reusable(prev) {
+		// Vim 9.1 と同じく、移る前の位置（1 行目）をジャンプリストに足す。番号が同じなので、開いたファイルの 1 行目を指す。
+		e.markJumpAt(prev, prev.state.Cursor())
+		prev.path, prev.fileType = abs, e.detectFileType(abs)
+		e.replaceBuffer(prev, b)
+		prev.setDisk(st)
+		return prev, nil
+	}
 	bs := e.newBuffer(b, abs, e.detectFileType(abs))
 	bs.setDisk(st)
-	if !focus && prev != nil {
-		e.cur = prev
+	if focus {
+		e.enter(bs)
 	}
 	return bs, nil
+}
+
+// reusable は、bs が、別のファイルを開くときにそのファイルのバッファとして使い直せる、名前の無い空のバッファかを返す。
+// 名前が無く、変更が無く、テキストが空のバッファである（Vim が起動したときのバッファを :e で使い直すのと同じ）。
+func reusable(bs *bufferState) bool {
+	return bs != nil && bs.path == "" && !bs.buf.Modified() && bs.buf.LineCount() == 1 && bs.buf.Line(0) == ""
+}
+
+// replaceBuffer は、バッファ bs の内容を b に置き換える。番号は変えず、拡張機能へは同じ番号で buffer/close と buffer/open を送り直す。
+// バージョン番号は b のもの（読み込んだばかりなら 0）から数え直し、アンドゥの履歴と、診断と印と色は消す。
+// エディタ全体に 1 つの状態（command.State.TakeOver）とカーソルの位置は引き継ぐ。bs.path と bs.fileType は、呼ぶ前に新しい値にしておく。
+func (e *Editor) replaceBuffer(bs *bufferState, b *buffer.Buffer) {
+	if err := e.host.CloseBuffer(bs.id); err != nil {
+		e.log.Error("buffer/close を送れない", "err", err)
+	}
+	old := bs.state
+	bs.buf = b
+	bs.history = nil
+	bs.decorations = map[string]decorationSet{}
+	bs.decoView = nil
+	bs.diagnostics = map[string][]ext.Diagnostic{}
+	bs.signs = map[string][]ext.Sign{}
+	e.initState(bs)
+	bs.state.TakeOver(old)
+	bs.state.SetCursor(old.Cursor())
 }
 
 // detectFileType は、ファイル名と拡張子から、ファイルの種類を判定する（基本設計 6.7 のファイルの種類の判定）。

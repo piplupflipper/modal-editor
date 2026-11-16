@@ -38,6 +38,7 @@ const (
 	codeNotFound         = "E486" // パターンが見つからない
 	codeNotEditorCommand = "E492" // コマンドではない
 	codeBackwardsRange   = "E493" // 逆順の範囲
+	codePositiveCount    = "E939" // 回数が 1 以上でない
 )
 
 // CodeNoWrite は、未保存の変更があるので :q や :e を実行できないことを表すエラー番号である。

@@ -250,27 +250,36 @@ func (e *Editor) editorOpen(p ext.EditorOpenParams) (*bufferState, bool, error) 
 		return nil, false, invalidParams("%v", err)
 	}
 	var bs *bufferState
+	prev, reused := e.cur, false
 	if p.Buffer != nil {
 		bs = e.findBuffer(*p.Buffer)
 		if bs == nil {
 			return nil, false, invalidParams("unknown buffer %d", *p.Buffer)
 		}
 	} else {
+		// 起動したときの名前の無い空のバッファから移るなら、:e と同じくその番号を使い直す（openFile の focus）。
+		// 入力の途中のバッファからは移さないので、使い直さない。
+		mode := e.cur.state.Mode()
+		reuse := p.Focus && reusable(e.cur) && mode != command.ModeInsert && mode != command.ModeCommandLine
 		var err error
-		bs, err = e.openFile(p.Path, false)
+		bs, err = e.openFile(p.Path, reuse)
 		if err != nil {
 			return nil, false, err
 		}
+		reused = reuse && bs == prev
 	}
+	// カーソルのあるバッファの中の移動は、ジャンプとして記録する（定義へ移動の後の <C-o> で戻れるように）。
+	// 別のバッファへ移るときと、使い直したときは、openFile か enter が移る前の位置を記録するので、移った先のバッファの中の移動は記録しない。
+	jump := prev == bs && !reused
 	if p.Focus && e.cur != bs {
 		if e.cur.state.Mode() == command.ModeInsert || e.cur.state.Mode() == command.ModeCommandLine {
 			// 入力の途中のバッファからは移さない。開くことと、そのバッファのカーソルを動かすことだけを行う。
 			e.message = infoMessage(fmt.Sprintf("%s を開きました", displayName(bs)))
 		} else {
-			e.switchTo(bs)
+			e.enter(bs)
 		}
 	}
-	return bs, e.moveCursor(bs, p), nil
+	return bs, e.moveCursor(bs, p, jump), nil
 }
 
 // bufferSaveRequest は、buffer/save を処理する。利用者の保存と同じ保存の流れを通る（基本設計 6.7）。

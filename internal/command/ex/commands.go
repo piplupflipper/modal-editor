@@ -75,6 +75,121 @@ func init() {
 		{name: "output", min: 3, rng: rangeNone, run: runOutput},
 		{name: "outclose", min: 4, rng: rangeNone, run: runOutClose},
 		{name: "checktime", min: 6, rng: rangeNone, run: runCheckTime},
+		// バッファの一覧と切り替え。"buffer" を "buffers" より前に置き、:bu などの省略形を :buffer にする（Vim と同じ）。
+		{name: "buffer", min: 1, bang: true, rng: rangeNone, run: runBuffer},
+		{name: "bnext", min: 2, bang: true, rng: rangeNone, run: runBufferStep(BufferNext)},
+		{name: "bNext", min: 2, bang: true, rng: rangeNone, run: runBufferStep(BufferPrev)},
+		{name: "bprevious", min: 2, bang: true, rng: rangeNone, run: runBufferStep(BufferPrev)},
+		{name: "buffers", min: 7, bang: true, rng: rangeNone, run: runBufferList},
+		{name: "ls", min: 2, bang: true, rng: rangeNone, run: runBufferList},
+		{name: "jumps", min: 2, rng: rangeNone, run: runJumps},
+		{name: "wall", min: 2, bang: true, rng: rangeNone, run: runAll(true, false)},
+		{name: "qall", min: 2, bang: true, rng: rangeNone, run: runAll(false, true)},
+		{name: "wqall", min: 3, bang: true, rng: rangeNone, run: runAll(true, true)},
+		{name: "xall", min: 2, bang: true, rng: rangeNone, run: runAll(true, true)},
+		{name: "bdelete", min: 2, bang: true, rng: rangeNone, run: runBufferDelete},
+	}
+}
+
+// runAll は、:wa、:qa、:wqa、:xa を実行する関数を返す。write なら ActionWriteAll を、quit なら ActionQuitAll を返す。
+// 書き出すのは未保存の変更のあるバッファだけで、:wqa と :xa は同じ動作になる（Vim 9.1 と同じ）。
+func runAll(write, quit bool) func(c *execCtx, inv *invocation) error {
+	// req: FR-08
+	return func(c *execCtx, inv *invocation) error {
+		if err := noArg(inv); err != nil {
+			return err
+		}
+		if write {
+			c.actions = append(c.actions, Action{Kind: ActionWriteAll, Force: inv.bang})
+		}
+		if quit {
+			c.actions = append(c.actions, Action{Kind: ActionQuitAll, Force: inv.bang})
+		}
+		return nil
+	}
+}
+
+// runBufferDelete は :bd[elete][!] [N|名前] を実行する。引数の読み方は :b と同じで、省くとカーソルのあるバッファを閉じる。
+//
+// req: FR-08
+func runBufferDelete(c *execCtx, inv *invocation) error {
+	if err := runBuffer(c, inv); err != nil {
+		return err
+	}
+	a := &c.actions[len(c.actions)-1]
+	a.Kind, a.Buffer = ActionBufferDelete, 0
+	return nil
+}
+
+// runJumps は :jumps を実行する。一覧は、ジャンプリストを持つ呼び出し側が作る。
+//
+// req: FR-08
+func runJumps(c *execCtx, inv *invocation) error {
+	if err := noArg(inv); err != nil {
+		return err
+	}
+	c.actions = append(c.actions, Action{Kind: ActionJumpList})
+	return nil
+}
+
+// runBufferList は :ls と :buffers を実行する。一覧は、バッファを持つ呼び出し側が作る。
+// "!" は Vim では一覧に載せないバッファも出す指定だが、一覧に載せないバッファは無いので、付けても同じ一覧を出す。
+//
+// req: FR-08
+func runBufferList(c *execCtx, inv *invocation) error {
+	if err := noArg(inv); err != nil {
+		return err
+	}
+	c.actions = append(c.actions, Action{Kind: ActionBuffer, Buffer: BufferList})
+	return nil
+}
+
+// runBuffer は :b[uffer][!] [N|名前] を実行する。引数が数字なら番号、そうでなければ名前として、ActionBuffer の BufferGo を返す。
+// 番号の後に文字が続けば E488 にする（:b 1 2。Vim 9.1 と同じ）。
+// 番号と名前からバッファを探すこと、未保存の変更の確認（"!" が無ければ E37）は、呼び出し側が行う。
+// Vim の範囲で番号を書く形（:2b）は使えず、E481 にする。
+//
+// req: FR-08
+func runBuffer(c *execCtx, inv *invocation) error {
+	arg := strings.TrimSpace(inv.arg)
+	a := Action{Kind: ActionBuffer, Buffer: BufferGo, Force: inv.bang}
+	if arg != "" && isDigit(arg[0]) {
+		s := &scanner{src: inv.arg, base: inv.argPos}
+		s.skipBlanks()
+		n, _ := s.number()
+		s.skipBlanks()
+		if !s.eof() {
+			return errAt(s.pos(), codeTrailing, "余分な文字があります: %s", s.rest())
+		}
+		a.Count = n
+	} else {
+		a.Text = strings.ReplaceAll(arg, `\ `, " ")
+	}
+	c.actions = append(c.actions, a)
+	return nil
+}
+
+// runBufferStep は、:bn[ext][!] [N] と :bp[revious][!] [N]（:bN[ext]）を実行する関数を返す。
+// 回数は引数で書き、省くと 1 である。Vim の範囲で回数を書く形（:2bn）は使えず、E481 にする。
+func runBufferStep(op BufferOp) func(c *execCtx, inv *invocation) error {
+	// req: FR-08
+	return func(c *execCtx, inv *invocation) error {
+		n := 1
+		if strings.TrimSpace(inv.arg) != "" {
+			s := &scanner{src: inv.arg, base: inv.argPos}
+			s.skipBlanks()
+			v, ok := s.number()
+			s.skipBlanks()
+			if !ok || !s.eof() {
+				return errAt(s.pos(), codeTrailing, "余分な文字があります: %s", s.rest())
+			}
+			if v <= 0 {
+				return errAt(inv.argPos, codePositiveCount, "回数は 1 以上にします")
+			}
+			n = v
+		}
+		c.actions = append(c.actions, Action{Kind: ActionBuffer, Buffer: op, Count: n, Force: inv.bang})
+		return nil
 	}
 }
 
@@ -277,6 +392,8 @@ func runDelete(c *execCtx, inv *invocation) error {
 		return errAt(s.pos(), codeTrailing, "余分な文字があります: %s", s.rest())
 	}
 
+	// Vim 9.1 の ex_operators と同じく、ジャンプとして記録する（:g の中では記録しない）。
+	c.markJump()
 	if c.b.NoLines() {
 		// Vim 9.1 と同じく、行の無いバッファの :d は、レジスターを変えずに何もせず終える（dd と同じ。command の opDelete）。
 		return nil

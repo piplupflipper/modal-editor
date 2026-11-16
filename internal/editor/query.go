@@ -500,7 +500,7 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 func (e *Editor) openFromCommand(extID string, bs *bufferState, p ext.EditorOpenParams, replaying bool) error {
 	same := (p.Buffer != nil && *p.Buffer == bs.id) || (p.Path != "" && p.Path == bs.path)
 	if same && (!p.Focus || e.cur == bs) {
-		e.moveCursor(bs, p)
+		e.moveCursor(bs, p, e.cur == bs)
 		return nil
 	}
 	if !replaying || !p.Focus {
@@ -517,12 +517,16 @@ func (e *Editor) openFromCommand(extID string, bs *bufferState, p ext.EditorOpen
 }
 
 // moveCursor は、editor/open の Position と Version に従って bs のカーソルを動かし、動かしたかを返す。
-func (e *Editor) moveCursor(bs *bufferState, p ext.EditorOpenParams) bool {
+// jump が true なら、動かす前の位置をジャンプリストに足す（Vim でタグや定義へ移るときと同じ）。
+func (e *Editor) moveCursor(bs *bufferState, p ext.EditorOpenParams, jump bool) bool {
 	if p.Position == nil {
 		return false
 	}
 	if p.Version != nil && uint64(*p.Version) != bs.buf.Version() {
 		return false
+	}
+	if jump {
+		e.markJumpAt(bs, bs.state.Cursor())
 	}
 	bs.state.SetCursor(fromExtPos(*p.Position))
 	return true

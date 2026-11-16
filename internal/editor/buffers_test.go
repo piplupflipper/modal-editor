@@ -1,0 +1,480 @@
+package editor
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/command"
+)
+
+// numberedLines は、"<prefix> 1 foo" から "<prefix> n foo" までの n 行を返す。
+func numberedLines(prefix string, n int, suffix string) string {
+	var sb strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&sb, "%s %d%s\n", prefix, i, suffix)
+	}
+	return sb.String()
+}
+
+// jumpList は、Vim 9.1 の getjumplist() と同じく、整理（cleanupJumps）した後のジャンプリストを "名前:行.列" の列で返す。
+// 行は 1 始まり、列は 0 始まりのバイト位置で、Vim の getjumplist() の lnum と col に当たる。
+// カーソルの位置も同じ形で返す。イベントループの goroutine で呼ぶ。
+func (e *Editor) jumpList() (list string, idx int, cur string) {
+	e.cleanupJumps()
+	pos := func(bs *bufferState, p buffer.Position) string {
+		return fmt.Sprintf("%s:%d.%d", e.bufferName(bs), p.Line+1, p.Byte)
+	}
+	items := make([]string, 0, len(e.jumps))
+	for _, j := range e.jumps {
+		items = append(items, pos(e.findBuffer(j.buf), j.pos))
+	}
+	return strings.Join(items, " "), e.jumpIdx, pos(e.cur, e.cur.state.Cursor())
+}
+
+// 1 つのバッファの中のジャンプリスト。期待値は、手元の Vim 9.1 で、30 行のファイルの 1 行目の先頭から
+// :normal でキーを打ち、getjumplist() とカーソルを読んで得た（vim -Nu NONE -i NONE -n --not-a-term。2026-11-16）。
+func TestJumpListVim(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": numberedLines("line", 30, " foo")})
+	a := func(lines ...string) string {
+		for i, l := range lines {
+			lines[i] = "a.txt:" + l
+		}
+		return strings.Join(lines, " ")
+	}
+	tests := []struct {
+		keys string
+		list string
+		idx  int
+		cur  string
+	}{
+		{"G", a("1.0"), 1, "30.0"},
+		{"gg", a("1.0"), 1, "1.0"},
+		{"5G", a("1.0"), 1, "5.0"},
+		{"jjjgg", a("4.0"), 1, "1.0"},
+		{"Ggg", a("1.0", "30.0"), 2, "1.0"},
+		{"GggG", a("30.0", "1.0"), 2, "30.0"},
+		{"/line 7<CR>", a("1.0"), 1, "7.0"},
+		{"/line 7<CR>n", a("1.0", "7.0"), 2, "7.0"},
+		{"*", a("1.0"), 1, "2.0"},
+		{"%", "", 0, "1.0"},
+		{"}", a("1.0"), 1, "30.10"},
+		{":5<CR>", "", 0, "5.0"},
+		{":5<CR>:s/foo/bar/<CR>", a("5.0"), 1, "5.0"},
+		{":10s/foo/bar/<CR>", a("1.0"), 1, "10.0"},
+		{":g/line 2/s/foo/x/<CR>", a("1.0"), 1, "29.0"},
+		{":10d<CR>", a("1.0"), 1, "10.0"},
+		{"5GdG", a("1.0", "5.0"), 2, "4.0"},
+		{"d/line 7<CR>", a("1.0"), 1, "1.0"},
+		{"yG", a("1.0"), 1, "1.0"},
+		{"vG<Esc>", a("1.0"), 1, "30.0"},
+		{"G<C-o>", a("1.0", "30.0"), 0, "1.0"},
+		{"G<C-o><Tab>", a("1.0", "30.0"), 1, "30.0"},
+		{"G<C-o><Tab><Tab>", a("1.0", "30.0"), 1, "30.0"},
+		{"5G10G<C-o><C-o>", a("1.0", "5.0", "10.0"), 0, "1.0"},
+		{"5G10G<C-o><C-o><Tab>", a("1.0", "5.0", "10.0"), 1, "5.0"},
+		{"5G10G2<C-o>", a("1.0", "5.0", "10.0"), 0, "1.0"},
+		{"5G10G3<C-o>", a("1.0", "5.0"), 2, "10.0"},
+		{"5G10G15G<C-o><C-o>20G", a("1.0", "10.0", "15.0", "5.0"), 4, "20.0"},
+		{"5G10G<C-o>jj<C-o>", a("1.0", "5.0", "10.0"), 0, "1.0"},
+		{"5G10G5G", a("1.0", "5.0", "10.0"), 3, "5.0"},
+		{"5G10G5G<C-o>", a("1.0", "10.0", "5.0"), 1, "10.0"},
+		{"lllG<C-o>", a("1.3", "30.0"), 0, "1.3"},
+		{"<C-o>", "", 0, "1.0"},
+		{"G<Tab>", a("1.0"), 1, "30.0"},
+		{"5G<C-o><C-o>", a("1.0", "5.0"), 0, "1.0"},
+		// 行の削除と挿入に合わせて行をずらし、消した行の中の項目は消した範囲の最初の行へ寄せる。
+		{"10G20G1G3dd", a("1.0", "7.0", "17.0"), 3, "1.0"},
+		{"10G20G9G3dd", a("1.0", "9.0", "17.0"), 3, "9.0"},
+		{"10G20G1GOnew<Esc>", a("2.0", "11.0", "21.0"), 3, "1.2"},
+		// 3 行目の 3 文字目（jjll）から。
+		{"jjll:g/zzz/d<CR>", "", 0, "3.2"},
+		{"jjll:g/line 2/d<CR>", a("2.2"), 1, "19.0"},
+		{"jjll:v/line/d<CR>", "", 0, "3.2"},
+		{"jjll:5,6s/zzz/x/e<CR>", "", 0, "3.2"},
+		{"jjll:d<CR>", a("3.2"), 1, "3.0"},
+		{"jjll:50d<CR>", "", 0, "3.2"},
+		{"jjll/zzz<CR>", "", 0, "3.2"},
+		{"jjll{", a("3.2"), 1, "1.0"},
+		{"jjll20%", a("3.2"), 1, "6.0"},
+		{"jjlldgg", a("1.2"), 1, "1.0"},
+		{"jjlld}", a("3.2"), 1, "3.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.keys, func(t *testing.T) {
+			h := start(t, Config{WorkDir: dir}, "a.txt")
+			h.keys(tt.keys)
+			h.settle()
+			h.e.do(func() {
+				list, idx, cur := h.e.jumpList()
+				if list != tt.list || idx != tt.idx || cur != "a.txt:"+tt.cur {
+					t.Errorf("jumps = [%s] idx=%d cur=%s, want [%s] idx=%d cur=a.txt:%s", list, idx, cur, tt.list, tt.idx, tt.cur)
+				}
+			})
+		})
+	}
+}
+
+// バッファの切り替え（:e、:b、:bn、:bp、<C-^>）と、バッファをまたぐジャンプリスト。
+// 期待値は、手元の Vim 9.1 で同じ順にキーを打って得た（2026-11-16）。:ls の印は、バッファを閉じずに持つ（隠れたバッファの h）点だけが違う。
+//
+// req: FR-08
+func TestBufferSwitchVim(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"a.txt": numberedLines("line", 30, " foo"),
+		"b.txt": numberedLines("bline", 10, ""),
+		"c.txt": numberedLines("cline", 10, ""),
+	})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	steps := []struct {
+		keys string
+		list string // 空なら確かめない
+		cur  string
+		alt  string
+		msg  string // メッセージに含まれる文字列。空なら確かめない
+	}{
+		{keys: "5G:e b.txt<CR>", list: "a.txt:1.0 a.txt:5.0", cur: "b.txt:1.0", alt: "a.txt"},
+		{keys: "3G:e c.txt<CR>", list: "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", cur: "c.txt:1.0", alt: "b.txt"},
+		{keys: "jj:b1<CR>", list: "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0 c.txt:3.0", cur: "a.txt:5.0", alt: "c.txt"},
+		{keys: ":bn<CR>", list: "a.txt:1.0 b.txt:1.0 b.txt:3.0 c.txt:3.0 a.txt:5.0", cur: "b.txt:3.0", alt: "a.txt"},
+		{keys: ":bn<CR>", list: "a.txt:1.0 b.txt:1.0 c.txt:3.0 a.txt:5.0 b.txt:3.0", cur: "c.txt:3.0", alt: "b.txt"},
+		{keys: ":bn<CR>", list: "a.txt:1.0 b.txt:1.0 a.txt:5.0 b.txt:3.0 c.txt:3.0", cur: "a.txt:5.0", alt: "c.txt"},
+		{keys: ":bp<CR>", list: "a.txt:1.0 b.txt:1.0 b.txt:3.0 c.txt:3.0 a.txt:5.0", cur: "c.txt:3.0", alt: "a.txt"},
+		{keys: ":bn 2<CR>", list: "a.txt:1.0 b.txt:1.0 b.txt:3.0 a.txt:5.0 c.txt:3.0", cur: "b.txt:3.0", alt: "c.txt"},
+		{keys: ":bN<CR>", list: "a.txt:1.0 b.txt:1.0 a.txt:5.0 c.txt:3.0 b.txt:3.0", cur: "a.txt:5.0", alt: "b.txt"},
+		{keys: "<C-^>", list: "a.txt:1.0 b.txt:1.0 c.txt:3.0 b.txt:3.0 a.txt:5.0", cur: "b.txt:3.0", alt: "a.txt"},
+		{keys: "<C-^>", list: "a.txt:1.0 b.txt:1.0 c.txt:3.0 a.txt:5.0 b.txt:3.0", cur: "a.txt:5.0", alt: "b.txt"},
+		{keys: "3<C-^>", list: "a.txt:1.0 b.txt:1.0 c.txt:3.0 b.txt:3.0 a.txt:5.0", cur: "c.txt:3.0", alt: "a.txt"},
+		// 同じバッファへの切り替えは何もしない。
+		{keys: "3<C-^>:b3<CR>:b<CR>", list: "a.txt:1.0 b.txt:1.0 c.txt:3.0 b.txt:3.0 a.txt:5.0", cur: "c.txt:3.0", alt: "a.txt"},
+		// :e の読み直しもジャンプとして記録する。
+		{keys: ":e<CR>", list: "a.txt:1.0 b.txt:1.0 b.txt:3.0 a.txt:5.0 c.txt:3.0", cur: "c.txt:3.0", alt: "a.txt"},
+		{keys: ":ls<CR>", cur: "c.txt:3.0", alt: "a.txt", msg: strings.Join([]string{
+			`  1 #h   "a.txt"                        line 5`,
+			`  2  h   "b.txt"                        line 3`,
+			`  3 %a   "c.txt"                        line 3`,
+		}, "\n")},
+		{keys: "<CR>:b 9<CR>", cur: "c.txt:3.0", alt: "a.txt", msg: "E86"},
+		{keys: "9<C-^>", cur: "c.txt:3.0", alt: "a.txt", msg: "E92"},
+		{keys: ":b b.t<CR>", cur: "b.txt:3.0", alt: "c.txt"},
+		{keys: ":b txt<CR>", cur: "b.txt:3.0", alt: "c.txt", msg: "E93"},
+		{keys: ":b zz<CR>", cur: "b.txt:3.0", alt: "c.txt", msg: "E94"},
+		{keys: ":b a.txt<CR>", list: "a.txt:1.0 b.txt:1.0 a.txt:5.0 c.txt:3.0 b.txt:3.0", cur: "a.txt:5.0", alt: "b.txt"},
+		{keys: ":b 1 2<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: "E488"},
+		{keys: ":3b<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: "E481"},
+		// 未保存の変更があれば移らない。! を付けると、変更を残したまま移る。
+		{keys: "ix<Esc>:bn<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: "E37"},
+		{keys: "<C-^>", cur: "a.txt:5.0", alt: "b.txt", msg: "E37"},
+		{keys: ":bn!<CR>", list: "a.txt:1.0 b.txt:1.0 c.txt:3.0 b.txt:3.0 a.txt:5.0", cur: "b.txt:3.0", alt: "a.txt"},
+		{keys: ":ls<CR>", cur: "b.txt:3.0", alt: "a.txt", msg: strings.Join([]string{
+			`  1 #h + "a.txt"                        line 5`,
+			`  2 %a   "b.txt"                        line 3`,
+			`  3  h   "c.txt"                        line 3`,
+		}, "\n")},
+		// Vim 9.1 と同じく、未保存のバッファの名前を出してそのバッファへ移る。
+		{keys: "<CR>:q<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: `E162: バッファ "a.txt" の変更は保存されていません`},
+		{keys: ":qa<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: "E37"},
+	}
+	for _, st := range steps {
+		h.keys(st.keys)
+		h.settle()
+		h.e.do(func() {
+			list, _, cur := h.e.jumpList()
+			if st.list != "" && list != st.list {
+				t.Errorf("%s: jumps = [%s], want [%s]", st.keys, list, st.list)
+			}
+			if cur != st.cur {
+				t.Errorf("%s: cur = %s, want %s", st.keys, cur, st.cur)
+			}
+			alt := ""
+			if h.e.alt != nil {
+				alt = h.e.bufferName(h.e.alt)
+			}
+			if alt != st.alt {
+				t.Errorf("%s: alt = %s, want %s", st.keys, alt, st.alt)
+			}
+			if st.msg != "" && !strings.Contains(h.e.message.Text, st.msg) {
+				t.Errorf("%s: message = %q, want it to contain %q", st.keys, h.e.message.Text, st.msg)
+			}
+		})
+	}
+}
+
+// <C-o> と <C-i> は、バッファをまたいで戻り、進む。移る前のバッファに未保存の変更があれば、Vim 9.1 と同じく E37 で移らない。
+func TestJumpAcrossBuffers(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": numberedLines("line", 30, " foo"), "b.txt": numberedLines("bline", 10, "")})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	steps := []struct {
+		keys, list string
+		idx        int
+		cur, msg   string
+	}{
+		{"5G:e b.txt<CR>3G", "a.txt:1.0 a.txt:5.0 b.txt:1.0", 3, "b.txt:3.0", ""},
+		{"<C-o>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 2, "b.txt:1.0", ""},
+		{"<C-o>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 1, "a.txt:5.0", ""},
+		{"<Tab>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 2, "b.txt:1.0", ""},
+		{"<Tab>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 3, "b.txt:3.0", ""},
+		{"ix<Esc><C-o><C-o>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 1, "b.txt:1.0", "E37"},
+	}
+	for _, st := range steps {
+		h.keys(st.keys)
+		h.settle()
+		h.e.do(func() {
+			list, idx, cur := h.e.jumpList()
+			if list != st.list || idx != st.idx || cur != st.cur {
+				t.Errorf("%s: jumps = [%s] idx=%d cur=%s, want [%s] idx=%d cur=%s", st.keys, list, idx, cur, st.list, st.idx, st.cur)
+			}
+			if st.msg != "" && !strings.Contains(h.e.message.Text, st.msg) {
+				t.Errorf("%s: message = %q, want it to contain %q", st.keys, h.e.message.Text, st.msg)
+			}
+		})
+	}
+}
+
+// マクロの中の <C-o> は、その場で動く。別のバッファへ移ったら、マクロの残りは移った先のバッファで続く。
+//
+// req: FR-05
+func TestJumpInMacro(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\na2\na3\n", "b.txt": "b1\nb2\nb3\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	// レジスターの "\x0f" は <C-o> である（Vim と同じ）。
+	h.e.do(func() { h.e.cur.state.Registers().Set('q', command.Register{Text: "Gx\x0fx"}) })
+	h.keys("@q")
+	h.settle()
+	if got := h.text(); got != "1\na2\n3" {
+		t.Errorf("Gx<C-o>x: text = %q", got)
+	}
+	h.keys(":w<CR>:e b.txt<CR>")
+	h.e.do(func() { h.e.cur.state.Registers().Set('q', command.Register{Text: "\x0fx"}) })
+	h.keys("@q")
+	h.settle()
+	h.e.do(func() {
+		for _, bs := range h.e.bufs {
+			// <C-o> で a.txt の 1 行目（"1"）へ戻り、x はそこで消す。
+			want := map[string]string{"a.txt": "\na2\n3", "b.txt": "b1\nb2\nb3"}[filepath.Base(bs.path)]
+			if got := bs.buf.Text(); got != want {
+				t.Errorf("%s: text = %q, want %q", filepath.Base(bs.path), got, want)
+			}
+		}
+	})
+}
+
+// :jumps の一覧は、Vim 9.1 と同じ形で出す。期待値は、tmux の上の Vim 9.1 で同じキーを打って得た（2026-11-16）。
+//
+// req: FR-08
+func TestJumpsCommandVim(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": numberedLines("line", 30, " foo"), "b.txt": numberedLines("bline", 10, "")})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	for _, st := range []struct{ keys, want string }{
+		{"lll5G:e b.txt<CR>3G:jumps<CR>", " jump line  col file/text\n   3     1    3 a.txt\n   2     5    0 a.txt\n   1     1    0 bline 1\n>"},
+		{"<CR><C-o><C-o>:jumps<CR>", " jump line  col file/text\n   1     1    3 line 1 foo\n>  0     5    0 line 5 foo\n   1     1    0 b.txt\n   2     3    0 b.txt"},
+	} {
+		h.keys(st.keys)
+		h.settle()
+		if got := h.message(); got != st.want {
+			t.Errorf("%s: :jumps = %q, want %q", st.keys, got, st.want)
+		}
+	}
+}
+
+// マクロの記録、ドットリピート、;、@:、@@ は、Vim 9.1 と同じくバッファの切り替えをまたいで引き継ぐ（PR #150 のレビューの必須 1）。
+//
+// req: FR-05, FR-06
+func TestEditorWideStateAcrossBuffers(t *testing.T) {
+	files := map[string]string{"a.txt": "ah1\na2\na3\n", "b.txt": "one\ntwo\nthree\n"}
+	type check func(t *testing.T, e *Editor)
+	cur := func(want string) check {
+		return func(t *testing.T, e *Editor) {
+			if _, _, got := e.jumpList(); got != want {
+				t.Errorf("cur = %s, want %s", got, want)
+			}
+		}
+	}
+	tests := []struct {
+		keys  string
+		check check
+	}{
+		// :bn の前後のキーをまとめて a に記録し、記録は 1 つだけ生きる。
+		{"qa:bn<CR>jq", func(t *testing.T, e *Editor) {
+			if r, _ := e.cur.state.Registers().Get('a'); r.Text != ":bn\rj" {
+				got := r.Text
+				t.Errorf(`"a = %q, want ":bn\rj"`, got)
+			}
+			for _, bs := range e.bufs {
+				if r := bs.state.Recording(); r != 0 {
+					t.Errorf("%s: recording %c", e.bufferName(bs), r)
+				}
+			}
+		}},
+		{"dd:w<CR>:bn<CR>.", func(t *testing.T, e *Editor) {
+			if got := e.cur.buf.Text(); got != "two\nthree" {
+				t.Errorf("b.txt = %q", got)
+			}
+		}},
+		{"fh:bn<CR>3G;", cur("b.txt:3.1")},
+		{":2<CR>:bn<CR>@:", cur("a.txt:2.0")},
+		{"qbjq@b:bn<CR>@@", cur("b.txt:2.0")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.keys, func(t *testing.T) {
+			h := start(t, Config{WorkDir: writeFiles(t, files)}, "a.txt", "b.txt", "a.txt")
+			h.keys(tt.keys)
+			h.settle()
+			h.e.do(func() { tt.check(t, h.e) })
+		})
+	}
+}
+
+// :wa、:qa、:wqa、:xa、:bd。
+//
+// req: FR-08
+func TestWriteAllQuitAllDelete(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\n", "b.txt": "b1\n", "c.txt": "c1\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt", "b.txt", "c.txt", "a.txt")
+	h.keys(`\b`)
+	h.eventually("拡張機能の起動", func() bool { return strings.HasPrefix(h.e.message.Text, "bufs:") })
+	steps := []struct{ keys, cur, msg string }{
+		{"x:bn!<CR>x:bn!<CR>", "c.txt:1.0", ""},
+		{":qa<CR>", "a.txt:1.0", `E162: バッファ "a.txt"`},
+		// :bd は未保存の変更があれば E89 で閉じず、! で捨てて閉じる。閉じた後は裏のバッファ（c.txt）へ移る。
+		{":bd<CR>", "a.txt:1.0", "E89"},
+		{":bd!<CR>", "c.txt:1.0", ""},
+		{":bd 9<CR>", "c.txt:1.0", "E86"},
+		{":wa<CR>", "c.txt:1.0", ""},
+	}
+	for _, st := range steps {
+		h.keys(st.keys)
+		h.settle()
+		h.e.do(func() {
+			if _, _, cur := h.e.jumpList(); cur != st.cur {
+				t.Errorf("%s: cur = %s, want %s", st.keys, cur, st.cur)
+			}
+			if !strings.Contains(h.e.message.Text, st.msg) {
+				t.Errorf("%s: message = %q, want it to contain %q", st.keys, h.e.message.Text, st.msg)
+			}
+		})
+	}
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	if a, b := read("a.txt"), read("b.txt"); a != "a1\n" || b != "1\n" {
+		t.Errorf(":bd! と :wa の後: a.txt = %q（変更を捨てる）, b.txt = %q（書き出す）", a, b)
+	}
+	h.e.do(func() {
+		if got := h.e.bufferList(); strings.Contains(got, "a.txt") {
+			t.Errorf(":bd の後の :ls = %q", got)
+		}
+	})
+	h.keys(`\b`)
+	h.eventually("buffer/close", func() bool { return strings.Contains(h.e.message.Text, "close 1") })
+	// 最後のバッファを閉じると、名前の無い空のバッファを作る。
+	h.keys(":bd<CR>:bd<CR>")
+	h.settle()
+	h.e.do(func() {
+		if got := h.e.bufferList(); got != `  4 %a   "[No Name]"                    line 1` {
+			t.Errorf("最後のバッファを閉じた後の :ls = %q", got)
+		}
+	})
+	h.keys("ix<Esc>:wqa<CR>")
+	h.settle()
+	if got := h.message(); !strings.Contains(got, "E141") {
+		t.Errorf(":wqa の名前の無いバッファ: message = %q", got)
+	}
+	h.keys(":qa!<CR>")
+	select {
+	case err := <-h.done:
+		h.done <- err
+	case <-time.After(5 * time.Second):
+		t.Error(":qa! で終わらない")
+	}
+}
+
+// 最後の行より後ろを指すジャンプの項目へは、Vim 9.1 と同じく E19 で移らない。
+func TestJumpInvalidLine(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": numberedLines("line", 30, " foo")})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	h.keys("25GdG<C-o>")
+	h.settle()
+	h.e.do(func() {
+		if !strings.Contains(h.e.message.Text, "E19") {
+			t.Errorf("message = %q", h.e.message.Text)
+		}
+		if list, idx, cur := h.e.jumpList(); list != "a.txt:1.0 a.txt:25.0 a.txt:24.0" || idx != 1 || cur != "a.txt:24.0" {
+			t.Errorf("jumps = [%s] idx=%d cur=%s", list, idx, cur)
+		}
+	})
+}
+
+// 拡張機能の editor/open は、起動したときの名前の無い空のバッファから開くとき、:e と同じくその番号を使い直す。
+func TestExtensionOpenReusesNoName(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\n"})
+	h := start(t, Config{WorkDir: dir})
+	h.e.do(func() {
+		if _, _, err := h.e.editorOpen(ext.EditorOpenParams{Path: filepath.Join(dir, "a.txt"), Focus: true}); err != nil {
+			t.Fatal(err)
+		}
+		if got := h.e.bufferList(); got != `  1 %a   "a.txt"                        line 1` {
+			t.Errorf(":ls = %q", got)
+		}
+	})
+}
+
+// 拡張機能の editor/open による移動（定義へ移動）は、ジャンプとして記録し、<C-o> で戻れる。
+// 別のバッファへ移ったときは、移る前の位置だけを記録する。
+func TestJumpFromExtensionOpen(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\na2\na3\n", "b.txt": "b1\nb2\nb3\nb4\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt", "b.txt")
+	// b.txt の 3 行目から、fake.goto で a.txt の 2 行目へ移る。
+	h.keys(`jj\g`)
+	h.eventually("a.txt へ移る", func() bool { return h.e.cur.path == filepath.Join(dir, "a.txt") })
+	h.e.do(func() {
+		if list, idx, cur := h.e.jumpList(); list != "b.txt:3.0" || idx != 1 || cur != "a.txt:2.0" {
+			t.Errorf("fake.goto の後: jumps = [%s] idx=%d cur=%s", list, idx, cur)
+		}
+	})
+	h.keys("<C-o>")
+	h.settle()
+	h.e.do(func() {
+		if list, idx, cur := h.e.jumpList(); list != "b.txt:3.0 a.txt:2.0" || idx != 0 || cur != "b.txt:3.0" {
+			t.Errorf("<C-o> の後: jumps = [%s] idx=%d cur=%s", list, idx, cur)
+		}
+	})
+	// 同じバッファの中の移動（fake.jump は * を入れて次の行へ移る）。
+	h.keys(`k\j`)
+	h.eventually("fake.jump の移動", func() bool { return h.e.cur.state.Cursor().Line == 2 && strings.HasPrefix(h.e.cur.buf.Line(1), "*") })
+	h.keys("<C-o>")
+	h.settle()
+	h.e.do(func() {
+		if _, _, cur := h.e.jumpList(); cur != "b.txt:2.0" {
+			t.Errorf("fake.jump の後の <C-o>: cur = %s, want b.txt:2.0", cur)
+		}
+	})
+}
+
+// バッファの切り替えでは、拡張機能へ buffer/open も buffer/close も送り直さない。
+// 起動したときの空の名前の無いバッファで :e すると、同じ番号で buffer/close と buffer/open を送り、そのファイルのバッファにする。
+//
+// req: FR-16
+func TestBufferSwitchNotifications(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\n", "b.txt": "b1\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)})
+	h.keys(`\b`)
+	h.eventually("拡張機能の起動", func() bool { return h.e.message.Text == "bufs: open 1 ." })
+	h.keys(`:e a.txt<CR>:e b.txt<CR>:b1<CR><C-^>:bn<CR>:bp<CR>G<C-o>\b`)
+	want := "bufs: open 1 ., close 1, open 1 a.txt, open 2 b.txt"
+	h.eventually("切り替えの後の記録", func() bool { return h.e.message.Text == want })
+	h.e.do(func() {
+		if got := h.e.bufferList(); !strings.Contains(got, `  1 %a   "a.txt"`) || !strings.Contains(got, `  2 #h   "b.txt"`) || strings.Contains(got, "No Name") {
+			t.Errorf(":ls = %q", got)
+		}
+	})
+}

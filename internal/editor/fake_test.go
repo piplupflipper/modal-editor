@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -59,6 +60,7 @@ func runFakeExt(mode string) int {
 	hostCtx := context.Background()
 	var mu sync.Mutex
 	opened := map[ext.BufferID]bool{}
+	var bufLog []string
 	switch mode {
 	case fakeMain:
 		s.TextObject("fake.line", func(_ context.Context, b *server.Buffer, p *ext.TextObjectResolveParams) (ext.TextObjectResolveResult, error) {
@@ -197,15 +199,24 @@ func runFakeExt(mode string) int {
 			}
 			return ext.CommandExecuteResult{OK: true, Open: &ext.EditorOpenParams{Buffer: &other, Position: &ext.Position{Line: 1}, Focus: true}}, nil
 		})
+		// fake.bufs は、届いた buffer/open と buffer/close の記録を、届いた順に表示する。
+		s.Command("fake.bufs", func(context.Context, *server.Buffer, *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			_ = s.ShowMessage(ext.MessageInfo, "bufs: "+strings.Join(bufLog, ", "))
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.OnBufferOpen(func(_ context.Context, ev *server.BufferOpenEvent) {
 			mu.Lock()
 			defer mu.Unlock()
 			opened[ev.Buffer.ID()] = true
+			bufLog = append(bufLog, fmt.Sprintf("open %d %s", ev.Buffer.ID(), filepath.Base(ev.Buffer.Path())))
 		})
 		s.OnBufferClose(func(_ context.Context, ev *server.BufferCloseEvent) {
 			mu.Lock()
 			defer mu.Unlock()
 			delete(opened, ev.Buffer)
+			bufLog = append(bufLog, fmt.Sprintf("close %d", ev.Buffer))
 		})
 		s.BufferWillSave(func(_ context.Context, b *server.Buffer, _ *ext.BufferWillSaveParams) (ext.BufferWillSaveResult, error) {
 			for i := range b.LineCount() {
@@ -256,6 +267,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.save", `\w`),
+					contrib("fake.bufs", `\b`),
 				},
 			},
 		},
