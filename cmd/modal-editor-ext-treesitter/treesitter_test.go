@@ -520,6 +520,16 @@ func TestManifest(t *testing.T) {
 	if !slices.Equal(patterns, want) {
 		t.Errorf("filetype patterns = %v, want %v", patterns, want)
 	}
+	var ids, wantIDs []string
+	for _, c := range m.Contributes.TextObjects {
+		ids = append(ids, c.ID)
+	}
+	for _, s := range textObjectSpecs {
+		wantIDs = append(wantIDs, s.id)
+	}
+	if !slices.Equal(ids, wantIDs) {
+		t.Errorf("contributes.textObjects = %v, want %v", ids, wantIDs)
+	}
 }
 
 // pointAt は、src の中のバイト位置 off の行と列を、document を使わずに数える（検証用の参照実装）。

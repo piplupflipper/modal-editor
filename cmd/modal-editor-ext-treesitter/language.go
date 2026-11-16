@@ -11,9 +11,9 @@ import (
 	sitterjson "github.com/tree-sitter/tree-sitter-json/bindings/go"
 )
 
-// queryFS は、各文法の公式のハイライトのクエリである。
+// queryFS は、各文法の公式のハイライトのクエリ（highlights.scm）と、このリポジトリで書いたテキストオブジェクトのクエリ（textobjects.scm）である。
 //
-//go:embed queries/*/highlights.scm
+//go:embed queries/*/*.scm
 var queryFS embed.FS
 
 // languageSpec は、1 つの言語の文法とクエリの組である。
@@ -24,27 +24,37 @@ type languageSpec struct {
 	language func() unsafe.Pointer
 	// query は、queryFS の中のハイライトのクエリのパスである。
 	query string
+	// objects は、queryFS の中のテキストオブジェクトのクエリのパスである。空なら、この言語はテキストオブジェクトを持たない。
+	objects string
 }
 
 // languages は、対応する言語の一覧である。
 // 言語を足すときは、ここと宣言ファイル（manifest.json）の activation と queries/ の下のクエリを足す。
+// JSON は、関数、型、引数に当たる構文を持たないので、テキストオブジェクトを持たない。
 var languages = []languageSpec{
-	{fileType: "go", language: sittergo.Language, query: "queries/go/highlights.scm"},
+	{fileType: "go", language: sittergo.Language, query: "queries/go/highlights.scm", objects: "queries/go/textobjects.scm"},
 	{fileType: "json", language: sitterjson.Language, query: "queries/json/highlights.scm"},
 }
 
 // language は、1 つの言語の解析の道具をまとめたものである。
 // 構文木はバッファごとに持つが、パーサーとクエリは同じ言語のバッファで共有する。
-// パーサーは同時に 1 つの解析にしか使えないので、language はメッセージを処理する 1 つの goroutine からだけ使う。
+// parser は同時に 1 つの解析にしか使えないので、解析の goroutine（highlighter.work）からだけ使う。
+// テキストオブジェクトの問い合わせは、別のパーサー（textObjects.parsers）を使う。
+// クエリは作った後に変えず、使うたびに QueryCursor を作るので、query は解析の goroutine が、objects は問い合わせの goroutine が使う。
 type language struct {
 	fileType string
+	grammar  *sitter.Language
 	parser   *sitter.Parser
 	query    *sitter.Query
 	// styles は、クエリのキャプチャの番号から、色の種類への対応である。色を付けないキャプチャは noStyle である。
 	styles []styleID
+	// objects は、テキストオブジェクトのクエリである。持たない言語では nil である。
+	objects *sitter.Query
+	// objectCaptures は、objects のキャプチャの番号から、対象と部分への対応である。
+	objectCaptures []objectCapture
 }
 
-// newLanguage は、spec の文法でパーサーを作り、ハイライトのクエリを解釈する。
+// newLanguage は、spec の文法でパーサーを作り、ハイライトとテキストオブジェクトのクエリを解釈する。
 func newLanguage(spec languageSpec) (*language, error) {
 	src, err := queryFS.ReadFile(spec.query)
 	if err != nil {
@@ -52,7 +62,7 @@ func newLanguage(spec languageSpec) (*language, error) {
 	}
 	lang := sitter.NewLanguage(spec.language())
 	parser := sitter.NewParser()
-	if err := parser.SetLanguage(lang); err != nil {
+	if err = parser.SetLanguage(lang); err != nil {
 		parser.Close()
 		return nil, fmt.Errorf("%s: %w", spec.fileType, err)
 	}
@@ -66,11 +76,32 @@ func newLanguage(spec languageSpec) (*language, error) {
 	for i, n := range names {
 		styles[i] = styleFor(n)
 	}
-	return &language{fileType: spec.fileType, parser: parser, query: query, styles: styles}, nil
+	l := &language{fileType: spec.fileType, grammar: lang, parser: parser, query: query, styles: styles}
+	if spec.objects == "" {
+		return l, nil
+	}
+	src, err = queryFS.ReadFile(spec.objects)
+	if err != nil {
+		l.close()
+		return nil, fmt.Errorf("%s: %w", spec.fileType, err)
+	}
+	objects, qerr := sitter.NewQuery(lang, string(src))
+	if qerr != nil {
+		l.close()
+		return nil, fmt.Errorf("%s: %s: %s", spec.fileType, spec.objects, qerr.Error())
+	}
+	l.objects = objects
+	for _, n := range objects.CaptureNames() {
+		l.objectCaptures = append(l.objectCaptures, parseObjectCapture(n))
+	}
+	return l, nil
 }
 
 // close は、パーサーとクエリの C のメモリを解放する。
 func (l *language) close() {
+	if l.objects != nil {
+		l.objects.Close()
+	}
 	l.query.Close()
 	l.parser.Close()
 }

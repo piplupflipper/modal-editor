@@ -1,4 +1,5 @@
-// Command modal-editor-ext-treesitter は、tree-sitter で構文を解析し、色を付ける範囲の一覧を本体へ送る拡張機能である（基本設計 6.1）。
+// Command modal-editor-ext-treesitter は、tree-sitter で構文を解析し、色を付ける範囲の一覧を本体へ送り、
+// 構文に沿ったテキストオブジェクト（関数、型、引数）に答える拡張機能である（基本設計 6.1）。
 //
 // 本体（internal/exthost）が、文法を持つ種類のファイルを開いたときに子プロセスとして起動する（宣言ファイル manifest.json の filetype の契機）。
 // 標準入出力で JSON-RPC のメッセージをやり取りするので、ログは標準エラー出力へ書く。
@@ -13,12 +14,17 @@
 // 解析の間に溜まった差分はまとめて 1 回で解析し直し、途中のバージョンの一覧は送らない（highlighter の doc）。
 // 一覧が大きすぎるバッファ（maxDecorationSetBytes）には色を付けない。
 //
+// テキストオブジェクト（af、if、ac、ic、aa、ia）は、textObject/resolve に答える（textobject.go）。
+// 解析の goroutine が最後に解析した構文木の複製を使い、問い合わせのバージョンの構文木が無ければ、
+// 問い合わせの goroutine で全文から解析する。どちらもメッセージを処理する goroutine の上では行わない。
+//
 // 対応する言語は Go（ファイルの種類 "go"）と JSON（"json"）で、表は languages にある。
 // 文法は公式の Go のモジュール（github.com/tree-sitter/tree-sitter-go など）を cgo で一緒にコンパイルする。
 // cgo を使うのはこの実行ファイルだけで、本体は cgo を使わない（NFR-02）。
 //
 // ハイライトのクエリは、各文法の公式の queries/highlights.scm を queries/ の下に写して埋め込む。
 // キャプチャ名から decoration/set の色の種類の名前への対応は styleFor にある。
+// テキストオブジェクトのクエリ（queries/<言語>/textobjects.scm）は、このリポジトリで書いたものである。
 package main
 
 import (

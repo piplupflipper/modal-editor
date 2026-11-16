@@ -59,6 +59,10 @@ type highlighter struct {
 	stop    chan struct{}
 	done    chan struct{} // 解析の goroutine が終わったら閉じる。start の前は nil
 
+	// trees は、解析の goroutine が解析した構文木の複製を、テキストオブジェクトの問い合わせ（objects）へ渡す。
+	trees   *treeStore
+	objects *textObjects
+
 	// 以下は解析の goroutine だけが触る。
 	docs map[ext.BufferID]*document
 	// warned は、一覧が大きすぎることを知らせたバッファの集合である。
@@ -90,6 +94,8 @@ func newHighlighter() (*highlighter, error) {
 		}
 		h.langs[spec.fileType] = l
 	}
+	h.trees = newTreeStore()
+	h.objects = newTextObjects(h.langs, h.trees)
 	return h, nil
 }
 
@@ -100,6 +106,12 @@ func (h *highlighter) close() {
 		close(h.stop)
 		<-h.done
 		h.done = nil
+	}
+	if h.objects != nil {
+		h.objects.close()
+	}
+	if h.trees != nil {
+		h.trees.close()
 	}
 	for _, d := range h.docs {
 		d.close()
@@ -118,6 +130,7 @@ func (h *highlighter) server() *server.Server {
 	s.OnBufferOpen(func(_ context.Context, e *server.BufferOpenEvent) { h.open(e.Buffer) })
 	s.OnBufferChange(func(_ context.Context, e *server.BufferChangeEvent) { h.change(e) })
 	s.OnBufferClose(func(_ context.Context, e *server.BufferCloseEvent) { h.closeBuffer(e.Buffer) })
+	h.objects.register(s)
 	h.send = s.SetDecorations
 	h.notify = s.ShowMessage
 	h.done = make(chan struct{})
@@ -216,6 +229,7 @@ func (h *highlighter) process(id ext.BufferID, j *job) {
 			delete(h.docs, id)
 		}
 		delete(h.warned, id)
+		h.trees.drop(id)
 		if j.clear {
 			h.publish(id, j.version, []ext.Decoration{})
 		}
@@ -243,6 +257,7 @@ func (h *highlighter) process(id ext.BufferID, j *job) {
 			d.reset(j.latest.Text())
 		}
 	}
+	h.trees.put(id, j.version, d.lang, d.tree.Clone())
 	decs := d.decorations()
 	if h.superseded(id) {
 		return

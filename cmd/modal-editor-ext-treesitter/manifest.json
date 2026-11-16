@@ -4,5 +4,15 @@
   "activation": [
     { "on": "filetype", "pattern": "go" },
     { "on": "filetype", "pattern": "json" }
-  ]
+  ],
+  "contributes": {
+    "textObjects": [
+      { "id": "treesitter.function.around", "keys": "af" },
+      { "id": "treesitter.function.inner", "keys": "if" },
+      { "id": "treesitter.class.around", "keys": "ac" },
+      { "id": "treesitter.class.inner", "keys": "ic" },
+      { "id": "treesitter.parameter.around", "keys": "aa" },
+      { "id": "treesitter.parameter.inner", "keys": "ia" }
+    ]
+  }
 }
