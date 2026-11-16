@@ -38,9 +38,10 @@ type Screen struct {
 
 // Renderer は、Frame から画面の格子を作る。
 //
-// 画面は上から、バッファの表示領域（Height-2 行）、ステータス行（1 行）、コマンドラインの行（1 行）に分ける。
-// バッファの表示領域の左には、印と行番号を置く欄（GutterWidth 列）を空けられる。欄の中身は今は空白で、後から足す。
-// バッファの行は折り返さず、長い行は横にスクロールして表示する（Vim の 'nowrap'）。
+// 画面は上から、バッファの表示領域、ステータス行（1 行）、コマンドラインの行（1 行）に分ける。
+// 出力の欄（Frame.Output）を開いていれば、ステータス行とコマンドラインの行の間に、欄の中身と欄の名前の行を置く（Vim の :copen の窓と同じ並び）。
+// バッファの表示領域の左には、印の列（印か診断があるときだけ 2 列）を置く（layout）。GutterWidth で列を空けておくこともできる。
+// バッファの行は折り返さず、長い行は横にスクロールして表示する（Vim の 'nowrap'）。出力の欄の行は折り返す。
 //
 // Renderer は、縦と横のスクロールの位置を、描画をまたいで持つ。
 // スクロールの位置は表示のための状態で、編集の状態（バッファ、カーソル、モード）は持たず、変更もしない。
@@ -52,11 +53,15 @@ type Renderer struct {
 	TabStop int
 	// Theme は、色の種類の名前から属性への対応である。nil なら DefaultTheme を使う。
 	Theme Theme
-	// GutterWidth は、バッファの表示領域の左に空ける欄（印、行番号）の列数である。テキストはその右から描く。
+	// GutterWidth は、バッファの表示領域の左に必ず空ける欄（印、行番号）の列数である。テキストはその右から描く。
+	// 印か診断があれば、少なくとも印の列の 2 列を空ける。
 	GutterWidth int
 
 	top  int // 表示領域の最初の行の番号（0 から数える）
 	left int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
+
+	// gutter と outRows は、直前の Render（layout）で決めた、左の欄の列数と出力の欄の中身の行数である。
+	gutter, outRows int
 }
 
 // Top は、表示領域の最初の行の番号（0 から数える）を返す。
@@ -77,13 +82,17 @@ func (r *Renderer) Columns() Columns {
 }
 
 // textRows は、バッファの表示領域の行数を返す。
+// 出力の欄を開いていれば、欄の中身と欄の名前の行の分だけ減る。
 func (r *Renderer) textRows() int {
+	if r.outRows > 0 {
+		return max(r.Height-3-r.outRows, 0)
+	}
 	return max(r.Height-2, 0)
 }
 
 // textLeft は、バッファのテキストを描く最初の画面の列を返す。
 func (r *Renderer) textLeft() int {
-	return min(max(r.GutterWidth, 0), max(r.Width, 0))
+	return min(max(r.gutter, r.GutterWidth, 0), max(r.Width, 0))
 }
 
 // textWidth は、バッファのテキストを描く列数を返す。
@@ -117,17 +126,22 @@ func (r *Renderer) Render(f *Frame) Screen {
 		text = emptyText{}
 	}
 	g := NewGrid(r.Width, r.Height)
+	r.layout(f)
 	cur := r.placeCursor(text, f)
 	r.scroll(text.LineCount(), cur)
 
 	rows := r.textRows()
 	d := drawer{r: r, g: g, theme: theme, text: text, f: f, cur: cur}
 	d.collectSpans(rows)
+	signs := d.signsByLine(rows)
 	for i := range rows {
 		n := r.top + i
 		if n >= text.LineCount() {
 			g.set(i, 0, Cell{Text: "~", Width: 1, Attr: theme.attr(StyleNonText)})
 			continue
+		}
+		if signs != nil {
+			d.drawSign(i, signs[i])
 		}
 		d.drawLine(i, n)
 	}
@@ -142,7 +156,10 @@ func (r *Renderer) Render(f *Frame) Screen {
 		screen.Cursor.Shape = CursorUnderline
 	}
 	if r.Height >= 2 {
-		r.drawStatus(g, theme, text, f, cur)
+		r.drawStatus(g, theme, text, f, cur, rows)
+	}
+	if r.outRows > 0 {
+		r.drawOutput(g, theme, f.Output, rows+1)
 	}
 	if r.Height >= 1 {
 		if c, ok := r.drawCommandLine(g, theme, f); ok {
@@ -467,14 +484,13 @@ func (r *Renderer) drawText(g *Grid, row, col, limit int, s string, a Attr) int 
 	return col
 }
 
-// drawStatus は、下から 2 行目にステータス行を描く。
+// drawStatus は、row 行目（バッファの表示領域のすぐ下）にステータス行を描く。
 //
 // 左にモードとバッファの名前と変更の有無（[+]）を、右にマクロの記録中の表示と、カーソルの位置と、表示している範囲の位置を出す。
 // カーソルの位置は Vim のルーラーと同じく「行,バイトの列-表示の列」で、2 つの列が同じなら表示の列を省き、空の行では "0-1" と出す。
 // 範囲の位置は Vim と同じく All、Top、Bot、または上に隠れた行の割合である。
 // 幅が足りなければ、左の部分を右の端で切る。
-func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cursorPlace) {
-	row := r.Height - 2
+func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cursorPlace, row int) {
 	a := theme.attr(StyleStatusLine)
 	for c := range r.Width {
 		g.set(row, c, blank(a))

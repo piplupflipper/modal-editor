@@ -72,7 +72,25 @@ func init() {
 		{name: "global", min: 1, bang: true, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal},
 		{name: "vglobal", min: 1, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal},
 		{name: "delete", min: 1, rng: rangeCurrent, inGlobal: true, run: runDelete},
+		{name: "output", min: 3, rng: rangeNone, run: runOutput},
+		{name: "outclose", min: 4, rng: rangeNone, run: runOutClose},
 	}
+}
+
+// runOutput は :output [名前] を実行する。出力の欄を開き、名前があればその欄に切り替える（基本設計 6.7）。
+// 名前の解決（欄があるか）は、欄を持つ呼び出し側が行う。
+func runOutput(c *execCtx, inv *invocation) error {
+	c.actions = append(c.actions, Action{Kind: ActionOutput, Output: OutputOpen, Text: strings.TrimSpace(inv.arg)})
+	return nil
+}
+
+// runOutClose は :outclose を実行する。出力の欄を閉じる。
+func runOutClose(c *execCtx, inv *invocation) error {
+	if err := noArg(inv); err != nil {
+		return err
+	}
+	c.actions = append(c.actions, Action{Kind: ActionOutput, Output: OutputClose})
+	return nil
 }
 
 // lookup は、名前（省略形を含む）に当たるコマンドを返す。無ければ nil を返す。

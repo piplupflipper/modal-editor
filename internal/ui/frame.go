@@ -96,6 +96,35 @@ type Message struct {
 	Level MessageLevel
 }
 
+// SignKind は、行の印の種類である。値は sign/set の kind と同じ文字列である（基本設計 6.7）。
+type SignKind string
+
+// 行の印の種類。
+const (
+	SignBreakpoint           SignKind = "breakpoint"
+	SignBreakpointUnverified SignKind = "breakpointUnverified"
+	SignExecutionPoint       SignKind = "executionPoint"
+)
+
+// Sign は、印の列に出す 1 つの印である（sign/set の 1 要素）。
+type Sign struct {
+	// Line は、0 から数えた行の番号である。
+	Line int
+	// Kind は、印の種類である。知らない種類は描かない。
+	Kind SignKind
+}
+
+// Output は、画面の下に開いた出力の欄である（output/append。基本設計 6.7）。
+type Output struct {
+	// Title は、欄の下の行に出す欄の名前である。
+	Title string
+	// Lines は、欄のテキストを行に分けたものである。描画は読むだけで変更しない。
+	Lines []string
+	// Bottom は、欄の最後の行に出す行の次の番号（Lines の添字）である。負なら最後の行まで出す（末尾に追従する）。
+	// Bottom の手前の行で欄が埋まらなければ、先頭の行から欄が埋まるまで出す。
+	Bottom int
+}
+
 // Frame は、1 回の描画の入力である。
 // internal/editor が、internal/command の State と、拡張機能から受け取った表示のデータから詰める。
 // 描画は Frame を読むだけで、どの欄も変更しない。
@@ -120,6 +149,10 @@ type Frame struct {
 	Message Message
 	// Decorations は、構文の色の範囲を行ごとに分けたもの（NewDecorations で作る）である。nil なら色を付けない。
 	Decorations *Decorations
-	// Diagnostics は、診断の範囲の一覧である。構文の色の上に重ねる。
+	// Diagnostics は、診断の範囲の一覧である。構文の色の上に重ねる。範囲の始まりの行には、印の列に診断の印も出す。
 	Diagnostics []Diagnostic
+	// Signs は、行の印の一覧である。1 つの行に複数の印（診断の印を含む）があれば、優先順位の最も高いものだけを出す（基本設計 6.7。順位は signMarks の doc）。
+	Signs []Sign
+	// Output は、開いている出力の欄である。nil なら欄を開いていない。
+	Output *Output
 }

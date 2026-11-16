@@ -33,6 +33,16 @@ const (
 	StyleDiagnosticWarning = "diagnostic.warning"
 	StyleDiagnosticInfo    = "diagnostic.info"
 	StyleDiagnosticHint    = "diagnostic.hint"
+	// StyleStatusLineNC は、出力の欄の下の行（カーソルの無い窓のステータス行。Vim の StatusLineNC）である。
+	StyleStatusLineNC = "statuslinenc"
+	// StyleSign... は、印の列の印である。名前は "sign." と印の種類をつないだもの。診断の印は "sign.diagnostic." と重要度をつなぐ。
+	StyleSignBreakpoint           = "sign.breakpoint"
+	StyleSignBreakpointUnverified = "sign.breakpointUnverified"
+	StyleSignExecutionPoint       = "sign.executionPoint"
+	StyleSignDiagnosticError      = "sign.diagnostic.error"
+	StyleSignDiagnosticWarning    = "sign.diagnostic.warning"
+	StyleSignDiagnosticInfo       = "sign.diagnostic.info"
+	StyleSignDiagnosticHint       = "sign.diagnostic.hint"
 )
 
 // Theme は、色の種類の名前から属性への対応である。
@@ -63,6 +73,15 @@ func DefaultTheme() Theme {
 		StyleDiagnosticWarning: {Undercurl: true, Sp: Indexed(11)},
 		StyleDiagnosticInfo:    {Underline: true, Sp: Indexed(12)},
 		StyleDiagnosticHint:    {Underline: true, Sp: Indexed(8)},
+
+		StyleStatusLineNC:             {Reverse: true},
+		StyleSignBreakpoint:           {Fg: Indexed(9), Bold: true},
+		StyleSignBreakpointUnverified: {Fg: Indexed(8)},
+		StyleSignExecutionPoint:       {Fg: Indexed(11), Bold: true},
+		StyleSignDiagnosticError:      {Fg: Indexed(9)},
+		StyleSignDiagnosticWarning:    {Fg: Indexed(11)},
+		StyleSignDiagnosticInfo:       {Fg: Indexed(12)},
+		StyleSignDiagnosticHint:       {Fg: Indexed(8)},
 	}
 }
 

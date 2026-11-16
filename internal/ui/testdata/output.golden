@@ -1,0 +1,68 @@
+## 末尾に追従
+size 12x10 cursor 0,0 block
+   |x           |
+   |y           |
+   |~           |
+fg |n...........|
+   |~           |
+fg |n...........|
+   | N 1,1  All |
+fx |SSSSSSSSSSSS|
+   |全角の幅を折|
+   |り返す      |
+   |^[[0m       |
+fg |xx..........|
+   | [出  10/10 |
+fx |vvvvvvvvvvvv|
+   |            |
+
+## 上へ戻す
+size 12x10 cursor 0,0 block
+   |x           |
+   |y           |
+   |~           |
+fg |n...........|
+   |~           |
+fg |n...........|
+   | N 1,1  All |
+fx |SSSSSSSSSSSS|
+   |a           |
+   |bbbb        |
+   |ccccccc     |
+   | [出力 3/10 |
+fx |vvvvvvvvvvvv|
+   |            |
+
+## 先頭より上へは戻らない
+size 12x10 cursor 0,0 block
+   |x           |
+   |y           |
+   |~           |
+fg |n...........|
+   |~           |
+fg |n...........|
+   | N 1,1  All |
+fx |SSSSSSSSSSSS|
+   |a           |
+   |bbbb        |
+   |ccccccc     |
+   | [出力 3/10 |
+fx |vvvvvvvvvvvv|
+   |            |
+
+## 空の欄
+size 12x10 cursor 0,0 block
+   |x           |
+   |y           |
+   |~           |
+fg |n...........|
+   |~           |
+fg |n...........|
+   | N 1,1  All |
+fx |SSSSSSSSSSSS|
+   |            |
+   |            |
+   |            |
+   | [出力] 0/0 |
+fx |vvvvvvvvvvvv|
+   |            |

@@ -1,0 +1,40 @@
+## 印と診断
+size 12x7 cursor 1,3 block
+   |B l0        |
+fg |EE..........|
+fx |  ~         |
+   |=>l1        |
+fg |kk..........|
+   |b l2        |
+   |  l3        |
+   |W l4        |
+fg |WW..........|
+fx |   _        |
+   | N 2,2  Top |
+fx |SSSSSSSSSSSS|
+   |            |
+
+## 下へスクロール
+size 12x7 cursor 4,2 block
+   |  l3        |
+   |W l4        |
+fg |WW..........|
+fx |   _        |
+   |  l5        |
+   |  l6        |
+   |B l7        |
+fg |EE..........|
+   | N 8,1  Bot |
+fx |SSSSSSSSSSSS|
+   |            |
+
+## 印が無ければ列を出さない
+size 12x7 cursor 4,0 block
+   |l3          |
+   |l4          |
+   |l5          |
+   |l6          |
+   |l7          |
+   | N 8,1  Bot |
+fx |SSSSSSSSSSSS|
+   |            |

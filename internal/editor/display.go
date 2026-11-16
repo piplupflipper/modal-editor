@@ -1,12 +1,15 @@
 package editor
 
 import (
+	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
@@ -354,9 +357,15 @@ func (e *Editor) clearExtension(extID string) {
 }
 
 // appendOutput は、出力の欄へテキストを書き足す。行数が上限を超えたら古い行から捨てる。
+// 書き足した欄を、名前を指定せずに開いた欄（outputView.key が空）に出す欄にする。
+// 上へスクロールして見ている欄の行を捨てたら、見ている位置が同じ行を指し続けるように番号をずらす。
 func (e *Editor) appendOutput(extID string, p ext.OutputAppendParams) {
 	key := outputKey{ext: extID, channel: p.Channel}
-	lines := e.outputs[key]
+	lines, ok := e.outputs[key]
+	if !ok {
+		e.outputOrder = append(e.outputOrder, key)
+	}
+	e.outputLast = key
 	parts := strings.Split(p.Text, "\n")
 	if n := len(lines); n > 0 {
 		lines[n-1] += parts[0]
@@ -364,9 +373,131 @@ func (e *Editor) appendOutput(extID string, p ext.OutputAppendParams) {
 	}
 	lines = append(lines, parts...)
 	if n := len(lines); n > maxOutputLines {
-		lines = append([]string(nil), lines[n-maxOutputLines:]...)
+		dropped := n - maxOutputLines
+		lines = append([]string(nil), lines[dropped:]...)
+		if v := e.outView; v != nil && v.bottom >= 0 && e.shownOutput() == key {
+			v.bottom = max(v.bottom-dropped, 0)
+		}
 	}
 	e.outputs[key] = lines
+}
+
+// outputView は、開いている出力の欄の表示の状態である。
+type outputView struct {
+	// key は、利用者が名前で選んだ欄である。空なら、最後に書き足された欄を出す。
+	key outputKey
+	// bottom は、ui.Output.Bottom（欄の最後の行に出す行の次の番号）である。負なら末尾に追従する。
+	bottom int
+}
+
+// shownOutput は、開いている欄に出す欄を返す。欄を開いていないか、出す欄がまだ無ければ空である。
+func (e *Editor) shownOutput() outputKey {
+	if e.outView == nil {
+		return outputKey{}
+	}
+	if e.outView.key != (outputKey{}) {
+		return e.outView.key
+	}
+	return e.outputLast
+}
+
+// outputTitle は、欄の名前を返す。拡張機能の ID と欄の名前が同じなら（acp の acp）欄の名前だけ、違えば "拡張機能/欄" にする。
+// :output の引数には、どちらの形も書ける（findOutput）。
+func outputTitle(k outputKey) string {
+	if k == (outputKey{}) {
+		return "(まだ出力はありません)"
+	}
+	if k.ext == k.channel {
+		return k.channel
+	}
+	return k.ext + "/" + k.channel
+}
+
+// findOutput は、:output の引数の名前の欄を返す。名前は欄の名前か "拡張機能/欄" である。
+// 欄の名前が同じ欄が複数の拡張機能にあれば、先に書き足された欄を返す。
+func (e *Editor) findOutput(name string) (outputKey, bool) {
+	for _, k := range e.outputOrder {
+		if k.channel == name || k.ext+"/"+k.channel == name {
+			return k, true
+		}
+	}
+	return outputKey{}, false
+}
+
+// outputAction は、出力の欄の動作（:output、:outclose、<C-w>P などのキー。ex.ActionOutput）を行う（基本設計 6.7）。
+//
+// 欄はバッファではなく、カーソルは入らない。読むためのスクロールは <C-w>u と <C-w>d で、欄の高さの半分ずつ動かす。
+// 下の端までスクロールすると、また末尾に追従する。
+// DAP のデバッグ対象の出力（6.4）と ACP のエージェントの返答（6.5）は、この欄で読む。
+//
+// req: FR-31, FR-34
+func (e *Editor) outputAction(a ex.Action) error {
+	switch a.Output {
+	case ex.OutputOpen:
+		v := &outputView{bottom: -1}
+		if a.Text != "" {
+			k, ok := e.findOutput(a.Text)
+			if !ok {
+				return fmt.Errorf("出力の欄 %s はありません", a.Text)
+			}
+			v.key = k
+		}
+		e.outView = v
+	case ex.OutputClose:
+		e.outView = nil
+	case ex.OutputNext:
+		if e.outView == nil {
+			e.outView = &outputView{bottom: -1}
+			return nil
+		}
+		cur := e.shownOutput()
+		next := cur
+		if i := slices.Index(e.outputOrder, cur); i >= 0 {
+			next = e.outputOrder[(i+1)%len(e.outputOrder)]
+		}
+		e.outView = &outputView{key: next, bottom: -1}
+	case ex.OutputScrollUp, ex.OutputScrollDown:
+		v := e.outView
+		rows := e.renderer.OutputRows()
+		if v == nil || rows == 0 {
+			return nil
+		}
+		n := len(e.outputs[e.shownOutput()])
+		if n > 0 && e.outputs[e.shownOutput()][n-1] == "" {
+			n-- // 描画と同じく、改行で終わった後の空の行は数えない
+		}
+		cur := v.bottom
+		if cur < 0 || cur > n {
+			cur = n
+		}
+		half := max(rows/2, 1)
+		if a.Output == ex.OutputScrollUp {
+			v.bottom = max(cur-half, min(rows, n))
+		} else if v.bottom = cur + half; v.bottom >= n {
+			v.bottom = -1
+		}
+	}
+	return nil
+}
+
+// uiOutput は、開いている出力の欄を描画の形にする。欄を開いていなければ nil である。
+func (e *Editor) uiOutput() *ui.Output {
+	if e.outView == nil {
+		return nil
+	}
+	k := e.shownOutput()
+	return &ui.Output{Title: outputTitle(k), Lines: e.outputs[k], Bottom: e.outView.bottom}
+}
+
+// uiSigns は、バッファの行の印を描画の形にする。1 つの行の印の優先順位は ui が決める。
+func (bs *bufferState) uiSigns() []ui.Sign {
+	var out []ui.Sign
+	for _, id := range slices.Sorted(maps.Keys(bs.signs)) {
+		for _, s := range bs.signs[id] {
+			out = append(out, ui.Sign{Line: s.Line, Kind: ui.SignKind(s.Kind)})
+		}
+	}
+	return out
 }
 
 // uiDiagnostics は、バッファの診断を描画の形にする。

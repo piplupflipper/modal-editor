@@ -186,6 +186,12 @@ type Editor struct {
 	confirm   *ex.Confirm
 	confirmBS *bufferState
 	outputs   map[outputKey][]string
+	// outputOrder は、出力の欄を、最初に書き足された順に並べたものである（<C-w>P で切り替える順）。
+	outputOrder []outputKey
+	// outputLast は、最後に書き足された欄である。
+	outputLast outputKey
+	// outView は、開いている出力の欄である。nil なら閉じている。
+	outView *outputView
 
 	quit bool
 }

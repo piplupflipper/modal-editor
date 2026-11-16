@@ -582,6 +582,13 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":e foo|q", cmdline: "e foo|q", want: []Action{{Kind: ActionEdit, File: "foo"}, {Kind: ActionQuit}}},
 		{name: "ファイル名の \\|", cmdline: `w a\|b`, want: []Action{{Kind: ActionWrite, File: "a|b"}}},
 		{name: ":q|q の余分な文字", cmdline: "q x|q", wantCode: "E488"},
+		{name: ":output", cmdline: "output", want: []Action{{Kind: ActionOutput, Output: OutputOpen}}},
+		{name: ":out acp", cmdline: "out  acp ", want: []Action{{Kind: ActionOutput, Output: OutputOpen, Text: "acp"}}},
+		{name: ":outc", cmdline: "outc", want: []Action{{Kind: ActionOutput, Output: OutputClose}}},
+		{name: ":outclose の余分な文字", cmdline: "outclose x", wantCode: "E488"},
+		{name: ":ou は短すぎる", cmdline: "ou", wantCode: "E492"},
+		{name: ":2output は範囲を取らない", cmdline: "2output", wantCode: "E481"},
+		{name: ":output|q", cmdline: "output dap|q", want: []Action{{Kind: ActionOutput, Output: OutputOpen, Text: "dap"}, {Kind: ActionQuit}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

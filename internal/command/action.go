@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
@@ -58,6 +59,10 @@ func init() {
 		"visual-swap":        actVisualSwap,
 		"page-down":          actPage(true),
 		"page-up":            actPage(false),
+		"output-next":        actOutput(ex.OutputNext),
+		"output-close":       actOutput(ex.OutputClose),
+		"output-scroll-up":   actOutput(ex.OutputScrollUp),
+		"output-scroll-down": actOutput(ex.OutputScrollDown),
 	}
 }
 

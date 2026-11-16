@@ -37,6 +37,8 @@ func (e *Editor) frame() *ui.Frame {
 		Message:     e.message,
 		Decorations: bs.decoView,
 		Diagnostics: bs.uiDiagnostics(),
+		Signs:       bs.uiSigns(),
+		Output:      e.uiOutput(),
 	}
 	f.OperatorPending = st.Mode() == command.ModeNormal && st.Pending()
 	if start, end, linewise, ok := st.Selection(); ok {
@@ -63,9 +65,9 @@ type viewport struct{ r *ui.Renderer }
 // Top は、表示領域の最初の行を返す。
 func (v viewport) Top() int { return v.r.Top() }
 
-// Rows は、表示領域の行数を返す。ui.Renderer は画面の下の 2 行をステータス行とコマンドラインの行に使う。
+// Rows は、表示領域の行数を返す。直前の描画で、ステータス行とコマンドラインの行と出力の欄を除いた行数である。
 // 画面の大きさがまだ届いていないとき（0 行）も、1 行として扱う。
-func (v viewport) Rows() int { return max(v.r.Height-2, 1) }
+func (v viewport) Rows() int { return max(v.r.TextRows(), 1) }
 
 // SetTop は、表示領域の最初の行を変える。横のスクロールの位置は変えない。
 func (v viewport) SetTop(top int) { v.r.SetScroll(top, v.r.Left()) }
