@@ -567,6 +567,66 @@ func (e *Editor) uiOutput() *ui.Output {
 	return &ui.Output{Title: outputTitle(k), Lines: e.outputs[k], Bottom: e.outView.bottom, Skip: e.outView.skip}
 }
 
+// severityRank は、診断の重要度の順位である。大きいほど重い。
+var severityRank = map[ext.DiagnosticSeverity]int{
+	ext.SeverityError: 4, ext.SeverityWarning: 3, ext.SeverityInfo: 2, ext.SeverityHint: 1,
+}
+
+// cursorDiagnostic は、カーソルの行の診断の本文を、メッセージの行に出す形で返す。無ければ ok が false である。
+//
+// 診断の本文（diagnostic/set の message）は、下線と印だけでは読めないので、カーソルをその行へ動かしたときに
+// メッセージの行へ出す（Vim の ALE や Neovim の vim.diagnostic.open_float に当たる表示。名前は仮。#132）。
+// 行に複数の診断があれば、カーソルの位置を範囲に含むものを先に、その中で重いものを選ぶ。
+// 本文は "E gopls: 本文" の形で、先頭の文字は印の列の表記と同じ重要度の頭文字である。
+//
+// req: FR-30
+func (bs *bufferState) cursorDiagnostic(cur ext.Position) (ui.Message, bool) {
+	var best *ext.Diagnostic
+	bestKey := [2]int{}
+	for _, id := range slices.Sorted(maps.Keys(bs.diagnostics)) {
+		for i := range bs.diagnostics[id] {
+			d := &bs.diagnostics[id][i]
+			s, e := d.Range.Start, d.Range.End
+			if e.Line < s.Line || (e.Line == s.Line && e.Byte < s.Byte) {
+				s, e = e, s
+			}
+			if cur.Line < s.Line || cur.Line > e.Line {
+				continue
+			}
+			covers := 0
+			afterStart := cur.Line > s.Line || cur.Byte >= s.Byte
+			beforeEnd := cur.Line < e.Line || cur.Byte < e.Byte || (s == e && cur.Byte == e.Byte)
+			if afterStart && beforeEnd {
+				covers = 1
+			}
+			key := [2]int{covers, severityRank[d.Severity]}
+			if best == nil || key[0] > bestKey[0] || (key[0] == bestKey[0] && key[1] > bestKey[1]) {
+				best, bestKey = d, key
+			}
+		}
+	}
+	if best == nil {
+		return ui.Message{}, false
+	}
+	// 本文の空白の並び（改行と、続く行の頭のタブを含む）は、空白 1 つに詰めて 1 行にする。gopls の型検査の診断は
+	// "not enough arguments in call to f\n\thave ()\n\twant (int)" のように改行を含み、そのまま出すと
+	// メッセージの行が上へ広がり、カーソルを動かすたびにステータス行とカーソルの行を覆う（PR #134 のレビュー）。
+	text := strings.Join(strings.Fields(best.Message), " ")
+	if best.Source != "" {
+		text = best.Source + ": " + text
+	}
+	sev := strings.ToUpper(string(best.Severity))
+	if sev != "" {
+		text = sev[:1] + " " + text
+	}
+	level := ui.MessageInfo
+	if severityRank[best.Severity] >= severityRank[ext.SeverityWarning] {
+		// error も警告の色にする。カーソルを動かすたびに出る表示なので、操作の失敗（赤の背景）と見分ける。
+		level = ui.MessageWarning
+	}
+	return ui.Message{Text: text, Level: level}, true
+}
+
 // uiSigns は、バッファの行の印を描画の形にする。1 つの行の印の優先順位は ui が決める。
 func (bs *bufferState) uiSigns() []ui.Sign {
 	var out []ui.Sign

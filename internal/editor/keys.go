@@ -209,18 +209,25 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 	}
 	e.trackDeferred(bs, res.Deferred)
 	switched := errors.Is(res.Err, command.ErrBufferSwitched)
-	switch {
-	case res.Confirm != nil:
-		// Err は確認を求めた E493 なので知らせず、問いを出す（render）。
-		e.confirm, e.confirmBS = res.Confirm, bs
-	case res.Err != nil && !switched:
-		e.reportError(res.Err)
-	}
+	// Ex コマンドの動作（:w など）を先に行い、操作の失敗はその後に知らせる。
+	// ex は誤りのコマンドで止まるので、動作はどれも誤りより左のコマンドのものである。
+	// 先に知らせると、:w|foo の E492 が :w の「書き込みました」に上書きされて見えない（Vim は :w の後に E492 を出す）。
+	// 動作が失敗したら、そこで止めてその誤りを知らせ、右のコマンドの誤りは知らせない（Vim は :w が失敗すると右を実行しない）。
+	actionFailed := false
 	for _, a := range res.Actions {
 		if err := e.doAction(bs, a); err != nil {
 			e.showError(err)
+			actionFailed = true
 			break
 		}
+	}
+	switch {
+	case res.Confirm != nil && !actionFailed:
+		// Err は確認を求めた E493 なので知らせず、問いを出す（render）。
+		// 左の動作が失敗したら問いを出さない（:w! dir|3,1d。Vim 9.1 は :w が失敗すると右のコマンドを実行しない）。
+		e.confirm, e.confirmBS = res.Confirm, bs
+	case res.Err != nil && !switched && !actionFailed:
+		e.reportError(res.Err)
 	}
 	e.doPendingOpens()
 	if switched {

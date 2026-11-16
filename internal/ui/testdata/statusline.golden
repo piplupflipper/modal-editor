@@ -48,10 +48,10 @@ size 24x4 cursor 0,0 block
    |hello                   |
    |~                       |
 fg |n.......................|
-   | NORMAL  [No N 1,1  All |
-fx |SSSSSSSSSSSSSSSSSSSSSSSS|
    |E37: 変更が保存されてい |
 fg |EEEEEEEEEEEEEEEEEEEEEEE.|
+   |2 行目                  |
+fg |EEEEEE..................|
 
 ## 空の行のルーラー
 size 24x4 cursor 0,0 block

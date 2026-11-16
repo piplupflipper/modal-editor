@@ -22,7 +22,9 @@ func uiMode(m command.Mode) ui.Mode {
 }
 
 // frame は、カーソルのあるバッファの状態と表示のデータから、描画の入力を作る。
-// コマンドラインの行には、確認の問い、選択肢の問い、ポップアップ、メッセージの順に、最初にあるものを出す。
+// コマンドラインの行には、確認の問い、選択肢の問い、メッセージの順に、最初にあるものを出す。
+// 問いが無ければ、ポップアップをカーソルの近くに浮かべる。問いもポップアップもメッセージも無く、ノーマルモードで
+// キーの列の途中でなければ、カーソルの行の診断の本文をメッセージの行に出す（cursorDiagnostic）。
 func (e *Editor) frame() *ui.Frame {
 	bs := e.cur
 	st := bs.state
@@ -53,7 +55,12 @@ func (e *Editor) frame() *ui.Frame {
 	case e.activeChoice() != nil:
 		f.Message = ui.Message{Text: choicePrompt(e.choices[0]), Level: ui.MessageInfo}
 	case e.popup != nil:
-		f.Message = infoMessage(e.popup.text)
+		f.Popup = e.popup.text
+	case f.Message.Text == "" && st.Mode() == command.ModeNormal && !st.Pending():
+		// 他に出すものが無ければ、カーソルの行の診断の本文を出す。
+		if m, ok := bs.cursorDiagnostic(toExtPos(st.Cursor())); ok {
+			f.Message = m
+		}
 	}
 	return f
 }
