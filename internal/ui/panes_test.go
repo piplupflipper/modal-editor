@@ -54,6 +54,7 @@ func TestGoldenOutput(t *testing.T) {
 		{"末尾に追従", Frame{Text: b, Output: &Output{Title: "acp", Lines: lines, Bottom: -1}}},
 		{"上へ戻す", Frame{Text: b, Output: &Output{Title: "acp", Lines: lines, Bottom: 3}}},
 		{"先頭より上へは戻らない", Frame{Text: b, Output: &Output{Title: "acp", Lines: lines, Bottom: 0}}},
+		{"折り返した行の途中で止める（Skip）", Frame{Text: b, Output: &Output{Title: "acp", Lines: lines, Bottom: 9, Skip: 1}}},
 		{"空の欄", Frame{Text: b, Output: &Output{Title: "dap"}}},
 	}))
 	if r.OutputRows() != 3 || r.TextRows() != 4 {

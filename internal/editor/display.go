@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -368,26 +369,107 @@ func (e *Editor) appendOutput(extID string, p ext.OutputAppendParams) {
 	e.outputLast = key
 	parts := strings.Split(p.Text, "\n")
 	if n := len(lines); n > 0 {
-		lines[n-1] += parts[0]
-		parts = parts[1:]
+		last := lines[n-1] + parts[0]
+		lines = lines[:n-1]
+		parts[0] = last
 	}
-	lines = append(lines, parts...)
+	for _, part := range parts {
+		lines = append(lines, splitLongLine(part)...)
+	}
 	if n := len(lines); n > maxOutputLines {
 		dropped := n - maxOutputLines
 		lines = append([]string(nil), lines[dropped:]...)
 		if v := e.outView; v != nil && v.bottom >= 0 && e.shownOutput() == key {
-			v.bottom = max(v.bottom-dropped, 0)
+			if v.bottom -= dropped; v.bottom <= 0 {
+				v.bottom, v.skip = 0, 0 // 見ていた行が捨てられた。欄は先頭の行から出す
+			}
 		}
 	}
 	e.outputs[key] = lines
 }
 
+// splitLongLine は、s を maxOutputLineBytes バイト以下の行に分ける。分ける位置は UTF-8 の文字の境目にする。
+// 改行の無い出力で 1 行が際限なく伸び、描画のたびの折り返しが重くなるのを避ける（NFR-03）。
+func splitLongLine(s string) []string {
+	var out []string
+	for len(s) > maxOutputLineBytes {
+		i := maxOutputLineBytes
+		for i > 0 && !utf8.RuneStart(s[i]) {
+			i--
+		}
+		if i == 0 {
+			i = maxOutputLineBytes // 文字の境目が無い（不正な UTF-8）なら、バイトの数で分ける
+		}
+		out = append(out, s[:i])
+		s = s[i:]
+	}
+	return append(out, s)
+}
+
 // outputView は、開いている出力の欄の表示の状態である。
 type outputView struct {
-	// key は、利用者が名前で選んだ欄である。空なら、最後に書き足された欄を出す。
+	// key は、利用者が名前で選んだ欄（または上へスクロールした時点の欄）である。空なら、最後に書き足された欄を出す。
 	key outputKey
-	// bottom は、ui.Output.Bottom（欄の最後の行に出す行の次の番号）である。負なら末尾に追従する。
-	bottom int
+	// bottom と skip は、ui.Output.Bottom と Skip である。欄の下の端は、bottom の手前の行を折り返した画面の行の、
+	// 下から skip 行を除いたところにある。bottom が負なら末尾に追従する。
+	// skip は、bottom の手前の行の画面の行数より小さく保つ（normalize）。行を書き足しても、見ている位置が動かない。
+	bottom, skip int
+}
+
+// shownLines は、開いている欄の行を、描画と同じく改行で終わった後の空の行を除いて返す。
+func (e *Editor) shownLines() []string {
+	lines := e.outputs[e.shownOutput()]
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	return lines
+}
+
+// scrollOutput は、開いている欄を、画面の行で delta 行だけ動かす（正は上、負は下）。
+// 画面の行は ui.Renderer.OutputLineRows で、直前の描画の幅で折り返して数えるので、長い行の途中でも止まり、先頭の行まで戻れる。
+// 上の端より上へは動かさず、下の端まで戻したら末尾に追従する。
+func (e *Editor) scrollOutput(delta, rows int) {
+	v := e.outView
+	lines := e.shownLines()
+	n := len(lines)
+	if v.bottom < 0 || v.bottom > n {
+		v.bottom, v.skip = n, 0
+	}
+	rowsOf := func(i int) int { return e.renderer.OutputLineRows(lines[i]) }
+	v.skip += delta
+	// 下へ: skip が負なら、bottom を下の行へ進める。
+	for v.skip < 0 {
+		if v.bottom >= n {
+			v.bottom, v.skip = -1, 0
+			return
+		}
+		v.bottom++
+		v.skip += rowsOf(v.bottom - 1)
+	}
+	// 上へ: skip を bottom の手前の行の画面の行数より小さくする。
+	for v.bottom > 0 && v.skip >= rowsOf(v.bottom-1) {
+		v.skip -= rowsOf(v.bottom - 1)
+		v.bottom--
+	}
+	// 欄の上の端が先頭の行の 1 行目より上へ出るなら、欄の上の端が先頭の行の 1 行目に来る位置（先頭から rows 行目が下の端）へ寄せる。
+	above := 0 // bottom の手前の行の画面の行数の合計（rows+skip に達したら数えるのをやめる）
+	for i := v.bottom - 1; i >= 0 && above < rows+v.skip; i-- {
+		above += rowsOf(i)
+	}
+	if above < rows+v.skip {
+		acc := 0
+		v.bottom, v.skip = -1, 0
+		for i := range n {
+			acc += rowsOf(i)
+			if acc >= rows {
+				v.bottom, v.skip = i+1, acc-rows
+				break
+			}
+		}
+	}
+	if v.bottom >= n && v.skip == 0 {
+		v.bottom = -1
+	}
 }
 
 // shownOutput は、開いている欄に出す欄を返す。欄を開いていないか、出す欄がまだ無ければ空である。
@@ -426,8 +508,9 @@ func (e *Editor) findOutput(name string) (outputKey, bool) {
 
 // outputAction は、出力の欄の動作（:output、:outclose、<C-w>P などのキー。ex.ActionOutput）を行う（基本設計 6.7）。
 //
-// 欄はバッファではなく、カーソルは入らない。読むためのスクロールは <C-w>u と <C-w>d で、欄の高さの半分ずつ動かす。
-// 下の端までスクロールすると、また末尾に追従する。
+// 欄はバッファではなく、カーソルは入らない。読むためのスクロールは <C-w><PageUp> と <C-w><PageDown> で、
+// 欄の高さの半分の画面の行ずつ動かす（scrollOutput）。下の端までスクロールすると、また末尾に追従する。
+// 名前を省いて開いた欄は、上へスクロールした時点の欄に固定する。
 // DAP のデバッグ対象の出力（6.4）と ACP のエージェントの返答（6.5）は、この欄で読む。
 //
 // req: FR-31, FR-34
@@ -462,20 +545,15 @@ func (e *Editor) outputAction(a ex.Action) error {
 		if v == nil || rows == 0 {
 			return nil
 		}
-		n := len(e.outputs[e.shownOutput()])
-		if n > 0 && e.outputs[e.shownOutput()][n-1] == "" {
-			n-- // 描画と同じく、改行で終わった後の空の行は数えない
-		}
-		cur := v.bottom
-		if cur < 0 || cur > n {
-			cur = n
+		if v.key == (outputKey{}) {
+			// 名前を省いて開いた欄は、読み返している間に別の欄へ書き足されても替えないように、今の欄に固定する。
+			v.key = e.shownOutput()
 		}
 		half := max(rows/2, 1)
-		if a.Output == ex.OutputScrollUp {
-			v.bottom = max(cur-half, min(rows, n))
-		} else if v.bottom = cur + half; v.bottom >= n {
-			v.bottom = -1
+		if a.Output == ex.OutputScrollDown {
+			half = -half
 		}
+		e.scrollOutput(half, rows)
 	}
 	return nil
 }
@@ -486,7 +564,7 @@ func (e *Editor) uiOutput() *ui.Output {
 		return nil
 	}
 	k := e.shownOutput()
-	return &ui.Output{Title: outputTitle(k), Lines: e.outputs[k], Bottom: e.outView.bottom}
+	return &ui.Output{Title: outputTitle(k), Lines: e.outputs[k], Bottom: e.outView.bottom, Skip: e.outView.skip}
 }
 
 // uiSigns は、バッファの行の印を描画の形にする。1 つの行の印の優先順位は ui が決める。

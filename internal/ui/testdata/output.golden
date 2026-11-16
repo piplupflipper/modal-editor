@@ -50,6 +50,23 @@ fx |SSSSSSSSSSSS|
 fx |vvvvvvvvvvvv|
    |            |
 
+## 折り返した行の途中で止める（Skip）
+size 12x10 cursor 0,0 block
+   |x           |
+   |y           |
+   |~           |
+fg |n...........|
+   |~           |
+fg |n...........|
+   | N 1,1  All |
+fx |SSSSSSSSSSSS|
+   |hhhhhhhhhhhh|
+   |hhhhhhhhhh  |
+   |全角の幅を折|
+   | [出力 9/10 |
+fx |vvvvvvvvvvvv|
+   |            |
+
 ## 空の欄
 size 12x10 cursor 0,0 block
    |x           |

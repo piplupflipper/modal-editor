@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // trimmedScreen は、描いた画面の各行の末尾の空白を除いて改行でつないだものを返す。
@@ -80,24 +82,29 @@ func TestOutputScroll(t *testing.T) {
 		t.Fatalf("OutputRows = %d", rows)
 	}
 	half := max(rows/2, 1)
-	h.keys("<C-w>u")
+	h.keys("<C-w><PageUp>")
 	h.settle()
 	h.e.do(func() {
 		if got := h.e.outView.bottom; got != 20-half {
-			t.Errorf("<C-w>u の後の bottom = %d, want %d", got, 20-half)
+			t.Errorf("<C-w><PageUp> の後の bottom = %d, want %d", got, 20-half)
 		}
 		h.e.appendOutput("acp", ext.OutputAppendParams{Channel: "acp", Text: "line20\n"})
 		if got := h.e.outView.bottom; got != 20-half {
 			t.Errorf("書き足した後の bottom = %d, want %d（動かない）", got, 20-half)
 		}
+		// 名前を省いて開いた欄は、上へスクロールした時点の欄に固定し、別の欄へ書き足されても替えない。
+		h.e.appendOutput("dap", ext.OutputAppendParams{Channel: "dap", Text: "debuggee\n"})
+		if got := h.e.shownOutput(); got != (outputKey{ext: "acp", channel: "acp"}) {
+			t.Errorf("別の欄へ書き足した後の欄 = %v, want acp", got)
+		}
 	})
 	for range 30 {
-		h.keys("<C-w>u")
+		h.keys("<C-w><PageUp>")
 	}
 	h.settle()
 	h.screenHas("先頭", "line00")
 	for range 30 {
-		h.keys("<C-w>d")
+		h.keys("<C-w><PageDown>")
 	}
 	h.settle()
 	h.e.do(func() {
@@ -114,11 +121,103 @@ func TestOutputScroll(t *testing.T) {
 		}
 	})
 	// 欄を開いていなければ、スクロールのキーは何もしない。
-	h.keys("<C-w>z<C-w>u")
+	h.keys("<C-w>z<C-w><PageUp>")
 	h.settle()
 	if msg := h.message(); msg != "" {
 		t.Errorf("閉じた欄のスクロール: message = %q", msg)
 	}
+}
+
+// 折り返す長い行（opencode の返答の形: プロンプトの行、各段落が 1 行で 2〜3 行に折り返す 6 行、[end_turn] の行）だけの欄でも、
+// 上へのスクロールは画面の行で数えるので、押すたびに動き、先頭の行（プロンプト）まで戻れる。下へ戻すと末尾に追従する。
+//
+// req: FR-34
+func TestOutputScrollWrapped(t *testing.T) {
+	h := start(t, Config{})
+	h.e.do(func() {
+		e := h.e
+		text := "> main.go の main 関数を説明して\n"
+		for i := range 6 {
+			// 120 列で 2〜3 行に折り返す。どの画面の行も違う文字列になるように、語に番号を付ける。
+			for j := range 18 + i%2*8 {
+				text += fmt.Sprintf("段落%d-%02d本文 ", i, j)
+			}
+			text += "\n"
+		}
+		text += "[end_turn]\n"
+		e.appendOutput("acp", ext.OutputAppendParams{Channel: "acp", Text: text})
+		e.outView = &outputView{bottom: -1}
+		// do の関数はイベントループの goroutine で動くので、t.Fatalf ではなく t.Errorf と return で止める。
+		if w := e.renderer.Width; w != 120 {
+			t.Errorf("renderer.Width = %d", w)
+			return
+		}
+		lines := e.shownLines()
+		total := 0
+		for _, l := range lines {
+			total += e.renderer.OutputLineRows(l)
+		}
+		if total <= len(lines)+5 {
+			t.Errorf("折り返しが足りない: %d 行が %d 画面行", len(lines), total)
+			return
+		}
+		r := &ui.Renderer{Width: 120, Height: 30}
+		paneTop := func() string {
+			scr := r.Render(&ui.Frame{Output: e.uiOutput()})
+			return strings.TrimRight(scr.Grid.RowText(r.TextRows()+1), " ")
+		}
+		const rows = 10
+		if r.Render(&ui.Frame{Output: e.uiOutput()}); r.OutputRows() != rows {
+			t.Errorf("OutputRows = %d", r.OutputRows())
+			return
+		}
+		prev := paneTop()
+		reached := false
+		for i := range total {
+			e.scrollOutput(rows/2, rows)
+			top := paneTop()
+			if top == prev && !reached {
+				t.Errorf("%d 回目の上へのスクロールで欄が動かない（上の端 %q）", i+1, top)
+				return
+			}
+			prev = top
+			if strings.HasPrefix(top, "> main.go") {
+				reached = true
+			}
+		}
+		if !reached {
+			t.Errorf("先頭の行まで戻れない（上の端 %q）", prev)
+			return
+		}
+		for range total {
+			e.scrollOutput(-rows/2, rows)
+		}
+		if e.outView.bottom != -1 {
+			t.Errorf("下の端まで戻した後の bottom = %d, want -1", e.outView.bottom)
+		}
+	})
+}
+
+// 改行の無い長い出力は、1 行の上限で文字の境目で次の行へ送る（NFR-03）。
+func TestOutputLongLine(t *testing.T) {
+	h := start(t, Config{})
+	h.e.do(func() {
+		e := h.e
+		for range 3 {
+			e.appendOutput("dap", ext.OutputAppendParams{Channel: "dap", Text: strings.Repeat("あ", maxOutputLineBytes/3+1)})
+		}
+		lines := e.outputs[outputKey{ext: "dap", channel: "dap"}]
+		got := 0
+		for _, l := range lines {
+			if len(l) > maxOutputLineBytes || !utf8.ValidString(l) {
+				t.Errorf("行の長さ %d、UTF-8 として正しい %v", len(l), utf8.ValidString(l))
+			}
+			got += len(l)
+		}
+		if want := 3 * 3 * (maxOutputLineBytes/3 + 1); got != want || len(lines) < 3 {
+			t.Errorf("合計 %d バイト（want %d）、%d 行", got, want, len(lines))
+		}
+	})
 }
 
 // 拡張機能のコマンドの前に :output を置ける（:output|acp.prompt ...）。

@@ -50,7 +50,8 @@ var (
 //
 // 印の列は、Vim の 'signcolumn' の既定（auto）と同じく、印か診断が 1 つでもあれば出し、無ければ出さない。
 // 出力の欄は、画面の下（ステータス行とコマンドラインの行の間）に、欄の中身と欄の名前の行を置く。
-// 中身の行数は outputMaxRows 行と、バッファの表示領域の半分の小さい方にする。
+// 中身の行数は outputMaxRows 行と、画面の行数からステータス行、欄の名前の行、コマンドラインの行の 3 行を除いた行数の半分
+// （切り捨て）の小さい方にする。
 // 画面が低く、バッファの表示領域と欄の中身を 1 行ずつも取れないときは、欄を出さない。
 func (r *Renderer) layout(f *Frame) {
 	r.gutter = max(r.GutterWidth, 0)
@@ -138,8 +139,15 @@ func wrapLine(line int, s string, width, tabStop int) []outputRow {
 	return rows
 }
 
+// OutputLineRows は、出力の欄の 1 行 s を、直前の Render の画面の幅で折り返したときの画面の行数を返す（1 以上）。
+// 欄のスクロールの位置を画面の行で数えるために、internal/editor が使う。
+func (r *Renderer) OutputLineRows(s string) int {
+	return len(wrapLine(0, s, max(r.Width, 1), tabStopOr(r.TabStop)))
+}
+
 // outputRows は、出力の欄に出す行を、上から順に返す。
-// Bottom の手前の行から上へ、欄の n 行が埋まるまで折り返した行を集める。足りなければ先頭の行から下へ集める。
+// Bottom の手前の行を折り返した画面の行のうち、下から Skip 行を除いて、その上の n 行を出す。
+// 先頭の行まで集めても足りなければ（画面の幅が変わったときなど）、先頭の行から下へ欄が埋まるまで集める。
 func (r *Renderer) outputRows(o *Output, n int) []outputRow {
 	lines := o.Lines
 	// 最後の行が空なら、改行で終わったテキストの、まだ何も書かれていない行なので出さない。
@@ -151,12 +159,19 @@ func (r *Renderer) outputRows(o *Output, n int) []outputRow {
 		bottom = o.Bottom
 	}
 	tabStop := tabStopOr(r.TabStop)
+	skip := 0
+	if o.Bottom >= 0 {
+		skip = max(o.Skip, 0)
+	}
 	var rows []outputRow
 	first := bottom
-	for first > 0 && len(rows) < n {
+	for first > 0 && len(rows) < n+skip {
 		first--
 		rows = append(wrapLine(first, lines[first], r.Width, tabStop), rows...)
 	}
+	// 先頭の行まで集めても足りなければ、先頭の行から欄が埋まるところまでにする。
+	skip = min(skip, max(len(rows)-n, 0))
+	rows = rows[:len(rows)-skip]
 	if len(rows) > n {
 		rows = rows[len(rows)-n:]
 	}
