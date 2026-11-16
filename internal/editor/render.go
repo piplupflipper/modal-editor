@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"strings"
+
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
@@ -42,6 +44,7 @@ func (e *Editor) frame() *ui.Frame {
 		Signs:       bs.uiSigns(),
 		Output:      e.uiOutput(),
 	}
+	f.HitEnter = e.hitEnter()
 	f.OperatorPending = st.Mode() == command.ModeNormal && st.Pending()
 	if start, end, linewise, ok := st.Selection(); ok {
 		f.Selection = ui.Selection{Active: true, Start: start, End: end, Linewise: linewise}
@@ -63,6 +66,15 @@ func (e *Editor) frame() *ui.Frame {
 		}
 	}
 	return f
+}
+
+// hitEnter は、改行を含むメッセージを出していて、Vim の hit-enter の問いと同じくキーを待っているかを返す。
+// 待っている間は、メッセージの下に問いを出してカーソルをその末尾に置き（ui.Frame.HitEnter）、<CR> と <Space> はメッセージを消すだけにする（handleKey）。
+// 確認の問いと選択肢の問いを出している間と、コマンドラインモード（コマンドラインの行にメッセージを出さない）では待たない。
+// モードは問わない。インサートモードの間に拡張機能のメッセージが届いても待つ（Vim も、インサートモードの間に出た複数行のメッセージで hit-enter の問いを出す）。
+func (e *Editor) hitEnter() bool {
+	return e.confirm == nil && e.activeChoice() == nil && e.cur.state.Mode() != command.ModeCommandLine &&
+		strings.Contains(strings.TrimRight(e.message.Text, "\n"), "\n")
 }
 
 // viewport は、描画の表示領域（ui.Renderer の縦のスクロールの位置）を、command.State のページ単位のスクロール

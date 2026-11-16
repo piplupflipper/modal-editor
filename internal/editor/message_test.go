@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // popup/show の本文は、2 行目以降もカーソルの下に浮かべて出し、次のキー入力で消す。
@@ -104,5 +106,89 @@ func TestMessageOrderAfterWrite(t *testing.T) {
 	h.settle()
 	if got := h.text(); got != "bc\ndef" {
 		t.Errorf(":w! dir|2,1d の後の y: text = %q（消さない）", got)
+	}
+}
+
+// 改行を含むメッセージの間は、Vim の hit-enter の問いと同じく、メッセージの下に問いを出してカーソルを問いの末尾に置き、
+// <CR> と <Space> はメッセージを消すだけにする。他のキーは、メッセージを消してからコマンドとして使う。
+// インサートモードでも同じで、コマンドラインモードでは問いを出さない（#135）。
+//
+// 期待値は Vim 9.1 で確かめた（:echo "aaa\nbbb" の後の <CR>、<Space>、<Esc> はカーソルを動かさず、j と <BS> は動かす。
+// インサートモードの間にタイマーで出した 2 行の :echo の後の <CR> は、改行を入れない）。
+func TestHitEnterPrompt(t *testing.T) {
+	h := start(t, Config{})
+	h.keys("iabc<CR>def<CR>ghi<Esc>k")
+	h.settle()
+	show := func(text string) {
+		h.e.do(func() {
+			h.e.handleEvent(&exthost.MessageShow{Params: ext.MessageShowParams{Level: ext.MessageInfo, Text: text}})
+		})
+	}
+	cursor := func() (line, off int) {
+		h.e.do(func() {
+			c := h.e.cur.state.Cursor()
+			line, off = c.Line, c.Byte
+		})
+		return line, off
+	}
+	screenCursor := func() ui.Cursor {
+		h.term.mu.Lock()
+		defer h.term.mu.Unlock()
+		return h.term.last.Cursor
+	}
+
+	show("aaa\nbbb")
+	h.screenHas("問い", "aaa\nbbb\n"+ui.HitEnterPrompt)
+	want := ui.Cursor{Row: 5, Col: ui.StringWidth(ui.HitEnterPrompt, 0), Shape: ui.CursorBlock, Visible: true}
+	if c := screenCursor(); c != want {
+		t.Errorf("問いの間のカーソル = %+v, want %+v（問いの末尾）", c, want)
+	}
+	for _, k := range []string{"<CR>", "<Space>"} {
+		show("aaa\nbbb")
+		h.screenHas(k+" の前の問い", ui.HitEnterPrompt)
+		h.keys(k)
+		h.settle()
+		if l, b := cursor(); l != 1 || b != 2 || h.message() != "" {
+			t.Errorf("%s: cursor = %d:%d, message = %q, want 1:2 で消える（コマンドとして使わない）", k, l, b, h.message())
+		}
+	}
+	if scr := h.trimmedScreen(); strings.Contains(scr, ui.HitEnterPrompt) {
+		t.Errorf("消した後も問いが残る:\n%s", scr)
+	}
+	show("aaa\nbbb")
+	h.screenHas("j の前の問い", ui.HitEnterPrompt)
+	h.keys("j")
+	h.settle()
+	if l, _ := cursor(); l != 2 || h.message() != "" {
+		t.Errorf("j: cursor の行 = %d, message = %q, want 2 で消える（コマンドとして使う）", l, h.message())
+	}
+	// 1 行のメッセージは問いを出さず、<CR> はそのまま使う（インサートモードなら改行を入れる）。
+	h.keys("A")
+	h.settle()
+	show("one line")
+	h.screenHas("1 行のメッセージ", "one line")
+	h.keys("<CR>x<Esc>")
+	h.settle()
+	if got := h.text(); got != "abc\ndef\nghi\nx" {
+		t.Errorf("1 行のメッセージの後の <CR>: text = %q, want 改行を入れる", got)
+	}
+	// インサートモードでも、改行を含むメッセージの間の <CR> は、改行を入れずにメッセージを消す。
+	h.keys("A")
+	h.settle()
+	show("aaa\nbbb")
+	h.screenHas("インサートモードの問い", ui.HitEnterPrompt)
+	h.keys("<CR>y<Esc>")
+	h.settle()
+	if got := h.text(); got != "abc\ndef\nghi\nxy" {
+		t.Errorf("インサートモードの <CR>: text = %q, want 改行を入れない", got)
+	}
+	// コマンドラインモードでは問いを出さず、<CR> はコマンドラインを実行する。
+	h.keys(":1")
+	h.settle()
+	show("aaa\nbbb")
+	h.keys("<CR>")
+	h.settle()
+	if l, _ := cursor(); l != 0 {
+		t.Errorf("コマンドラインモードの <CR>: cursor の行 = %d, want 0（:1 を実行する）", l)
 	}
 }

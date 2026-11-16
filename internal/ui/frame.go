@@ -92,7 +92,7 @@ const (
 // Message は、コマンドラインの行に出すメッセージである。Text が空ならメッセージを出さない。
 type Message struct {
 	// Text は本文である。改行を含むときは、コマンドラインの行から上へ行を広げて出す（Vim のメッセージの行が広がるのと同じ）。
-	// 広げるのは画面の半分までで、収まらない行は省いたことを最後の行に書く。
+	// 広げるのは画面の半分まで（Frame.HitEnter の問いの行を除く）で、収まらない行は省いたことを最後の行に書く。
 	Text  string
 	Level MessageLevel
 }
@@ -151,6 +151,9 @@ type Frame struct {
 	Recording rune
 	// Message は、コマンドラインモードでないときにコマンドラインの行に出すメッセージである。
 	Message Message
+	// HitEnter が true で、Message が改行を含むなら、メッセージの下の最後の行に、続けるためのキーを促す問い（HitEnterPrompt）を出し、
+	// カーソルを問いの末尾に置く（Vim の hit-enter の問い）。キーの扱いは internal/editor が行う。
+	HitEnter bool
 	// Decorations は、構文の色の範囲を行ごとに分けたもの（NewDecorations で作る）である。nil なら色を付けない。
 	Decorations *Decorations
 	// Diagnostics は、診断の範囲の一覧である。構文の色の上に重ねる。範囲の始まりの行には、印の列に診断の印も出す。

@@ -97,18 +97,41 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 // drawMessageLines は、改行を含むメッセージを、コマンドラインの行から上へ広げて描く（Vim のメッセージの行が広がるのと同じ）。
 // 広げるのは画面の半分の行までで、収まらなければ、最後の行に省いた行数を書く。長い行は右の端で切る。
 // 上の行は、バッファの表示領域とステータス行の上に重ねる。次のキー入力でメッセージが消えると元に戻る。
-func (r *Renderer) drawMessageLines(g *Grid, lines []string, a Attr) {
+// prompt が空でなければ、最後の行に prompt を pa の属性で描き、メッセージの行はその上に置く（問いの行は画面の半分に数えない）。
+// prompt を描いた最後の行の、描いた文字の次の列を返す。
+func (r *Renderer) drawMessageLines(g *Grid, lines []string, a Attr, prompt string, pa Attr) int {
 	limit := max(r.Height/2, 1)
-	if len(lines) > limit {
+	if prompt != "" {
+		limit = min(limit, r.Height-1)
+	}
+	switch {
+	case limit <= 0:
+		lines = nil
+	case len(lines) > limit:
 		rest := len(lines) - (limit - 1)
 		lines = append(lines[:limit-1:limit-1], fmt.Sprintf("（残り %d 行）", rest))
 	}
-	top := r.Height - len(lines)
-	for i, l := range lines {
-		row := top + i
+	rows := len(lines)
+	if prompt != "" {
+		rows++
+	}
+	top := r.Height - rows
+	blankRow := func(row int) {
 		for c := range r.Width {
 			g.set(row, c, blank(Attr{}))
 		}
-		r.drawText(g, row, 0, r.Width, l, a)
 	}
+	for i, l := range lines {
+		blankRow(top + i)
+		r.drawText(g, top+i, 0, r.Width, l, a)
+	}
+	if prompt == "" {
+		return 0
+	}
+	blankRow(r.Height - 1)
+	return r.drawText(g, r.Height-1, 0, r.Width, prompt, pa)
 }
+
+// HitEnterPrompt は、改行を含むメッセージの下に出す、続けるためのキーを促す問いである（Frame.HitEnter）。
+// Vim 9.1 の日本語のメッセージ（"Press ENTER or type command to continue"）に、ASCII の語の前後の空白を足したもの。
+const HitEnterPrompt = "続けるには ENTER を押すかコマンドを入力してください"

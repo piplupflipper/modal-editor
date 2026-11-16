@@ -44,6 +44,7 @@ type Screen struct {
 // バッファの行は折り返さず、長い行は横にスクロールして表示する（Vim の 'nowrap'）。出力の欄の行は折り返す。
 //
 // Renderer は、縦と横のスクロールの位置を、描画をまたいで持つ。
+// 表示領域の行数が変わったとき（出力の欄の開け閉め、端末の大きさの変更）は、カーソルの行が表示領域の中で同じ割合の位置に来るように縦の位置を決める（fitHeight）。
 // スクロールの位置は表示のための状態で、編集の状態（バッファ、カーソル、モード）は持たず、変更もしない。
 // イベントループの goroutine 1 つだけが使う前提で、排他制御をしない（基本設計 2.1）。
 type Renderer struct {
@@ -62,7 +63,16 @@ type Renderer struct {
 
 	// gutter と outRows は、直前の Render（layout）で決めた、左の欄の列数と出力の欄の中身の行数である。
 	gutter, outRows int
+
+	// 以下は、表示領域の行数が変わったときに最初の行を決める（fitHeight）ための、直前の Render の状態である。
+	rendered bool // Render を 1 回以上行ったか
+	rows     int  // 直前の Render の表示領域の行数
+	fraction int  // カーソルの行の、表示領域の中の相対位置（Vim の w_fraction。fractionMult 分の 1 の単位）
+	fracRow  int  // fraction を最後に使ったときのカーソルの画面の行に 1 を足したもの。0 なら未設定（Vim の w_prev_fraction_row）
 }
+
+// fractionMult は、fraction の単位である（Vim の FRACTION_MULT と同じ値）。
+const fractionMult = 16384
 
 // Top は、表示領域の最初の行の番号（0 から数える）を返す。
 func (r *Renderer) Top() int { return r.top }
@@ -128,7 +138,12 @@ func (r *Renderer) Render(f *Frame) Screen {
 	g := NewGrid(r.Width, r.Height)
 	r.layout(f)
 	cur := r.placeCursor(text, f)
+	resized := r.fitHeight(text.LineCount(), cur)
 	r.scroll(text.LineCount(), cur)
+	if resized {
+		r.fracRow = cur.line - r.top + 1
+	}
+	r.rendered, r.rows = true, r.textRows()
 
 	rows := r.textRows()
 	d := drawer{r: r, g: g, theme: theme, text: text, f: f, cur: cur}
@@ -211,7 +226,15 @@ func (r *Renderer) placeCursor(text Text, f *Frame) cursorPlace {
 //
 // 横は 'sidescroll' が 0 の既定に合わせ、カーソルの文字が画面の外に出たら、カーソルを画面の幅の半分の位置に置く。
 func (r *Renderer) scroll(lineCount int, cur cursorPlace) {
-	if h := r.textRows(); h > 0 {
+	r.scrollRows(lineCount, cur, r.textRows())
+	if w := r.textWidth(); w > 0 && (cur.col < r.left || cur.end > r.left+w) {
+		r.left = max(cur.col-w/2, 0)
+	}
+}
+
+// scrollRows は、scroll の縦の部分で、表示領域を h 行として、カーソルの行が収まるように最初の行を更新する。
+func (r *Renderer) scrollRows(lineCount int, cur cursorPlace, h int) {
+	if h > 0 {
 		switch {
 		case cur.line < r.top:
 			if r.top-cur.line >= max(h/2-1, 2) {
@@ -228,9 +251,37 @@ func (r *Renderer) scroll(lineCount int, cur cursorPlace) {
 		}
 		r.top = max(r.top, 0)
 	}
-	if w := r.textWidth(); w > 0 && (cur.col < r.left || cur.end > r.left+w) {
-		r.left = max(cur.col-w/2, 0)
+}
+
+// fitHeight は、表示領域の行数が直前の Render から変わったとき（出力の欄を開け閉めした、端末の大きさが変わった）に、
+// カーソルの行が、表示領域の中で前と同じ割合の位置に来るように最初の行を決める。
+// Vim 9.1 の win_new_height と scroll_to_fraction（'splitkeep' が既定の cursor のとき）に合わせた。
+//
+// 前の割合は、前の行数のままカーソルを表示領域に収めた（Vim が高さを変える前に行う validate_cursor）ときのカーソルの画面の行から求める。
+// 直前の Render の後に、カーソルの移動と行数の変更が 1 回の描画にまとまっても（G:output の続けての入力）、Vim と同じく移動の後の位置から求めるためである。
+// 割合は、カーソルの画面の行が前の変更の後から動いていなければ前の値を使い続ける（Vim の w_prev_fraction_row）。
+// 開け閉めを繰り返しても位置がずれていかないためである。
+// 表示領域にバッファの全体が収まり、最初の行が先頭なら、最初の行を変えない（Vim と同じ）。
+//
+// この後の scroll が、カーソルが表示領域に収まるようにする。
+// 前の行数が 0 でない変更のとき（Render が、scroll の後のカーソルの画面の行を w_prev_fraction_row として記録するとき）に true を返す。
+func (r *Renderer) fitHeight(lineCount int, cur cursorPlace) bool {
+	h, prev := r.textRows(), r.rows
+	if !r.rendered || h == prev {
+		return false
 	}
+	if prev > 0 {
+		r.scrollRows(lineCount, cur, prev)
+		if wrow := cur.line - r.top; prev > 1 && wrow+1 != r.fracRow {
+			// 最初の行と最後の行のカーソルは、その行の真ん中にあるとして数える（Vim の set_fraction）。
+			r.fraction = (wrow*fractionMult + fractionMult/2) / prev
+		}
+	}
+	if h > 0 && (h < lineCount || r.top > 0) {
+		wrow := (r.fraction*h - 1) / fractionMult
+		r.top = min(max(cur.line-wrow, 0), max(lineCount-1, 0))
+	}
+	return prev > 0
 }
 
 // span は、1 行の中の、属性を重ねるバイトの範囲 [start, end) である。
@@ -573,8 +624,12 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool
 		style = StyleMessageError
 	}
 	if len(lines) > 1 {
-		r.drawMessageLines(g, lines, theme.attr(style))
-		return Cursor{}, false
+		if !f.HitEnter {
+			r.drawMessageLines(g, lines, theme.attr(style), "", Attr{})
+			return Cursor{}, false
+		}
+		end := r.drawMessageLines(g, lines, theme.attr(style), HitEnterPrompt, theme.attr(StyleMessageInfo))
+		return Cursor{Row: row, Col: min(end, max(r.Width-1, 0)), Shape: CursorBlock, Visible: r.Width > 0}, true
 	}
 	r.drawText(g, row, 0, r.Width, lines[0], theme.attr(style))
 	return Cursor{}, false

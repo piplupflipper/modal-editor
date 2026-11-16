@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
@@ -86,7 +87,47 @@ var (
 	outputTitleRe = regexp.MustCompile(`\x1b\[23;9H(\x1b\[[0-9;]*m)*acp`)
 	// signRe は、1 行目の先頭（CUP の 1;1H）に、印の列の "B" と空白に続いてバッファの行が描かれた出力に一致する。
 	signRe = regexp.MustCompile(`\x1b\[1;1H(\x1b\[[0-9;]*m)*B (\x1b\[[0-9;]*m)*package`)
+	// firstLineRe は、1 行目の先頭（CUP の 1;1H）に、バッファの 1 行目の "aaa" が描かれた出力に一致する。
+	firstLineRe = regexp.MustCompile(`\x1b\[1;1H(\x1b\[[0-9;]*m)*aaa`)
 )
+
+// TestFitHeightInPTY は、出力の欄を閉じた後と、端末を小さくしてから大きくした後に、
+// Vim 9.1 と同じく、カーソルの行が表示領域の中で前と同じ割合の位置に来るように描き直すことを確かめる（#135）。
+// 20 行のファイルの最終行にカーソルを置くと、閉じた後と大きくした後は 1 行目から全体が出る（上の行を隠したまま "~" を並べない）。
+func TestFitHeightInPTY(t *testing.T) {
+	var text strings.Builder
+	for c := 'a'; c < 'a'+20; c++ {
+		text.WriteString(strings.Repeat(string(c), 3) + "\n")
+	}
+	path := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(path, []byte(text.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := startEditorIn(t, t.TempDir(), nil, path)
+	before := ptytest.Termios(t, p.tty)
+	p.out.WaitForString(t, "a.txt")
+	// 欄を開くと表示領域は 11 行になり、カーソルの行（20 行目）が下から 2 行目に来るよう、11 行目から出す。
+	p.write(t, "G:output\r")
+	p.out.WaitForString(t, "[出力]")
+	mark := len(p.out.String())
+	p.write(t, ":outclose\r")
+	p.out.WaitFor(t, "欄を閉じた後の 1 行目", func(out string) bool { return firstLineRe.MatchString(out[mark:]) })
+
+	// 大きさが変わると、画面を消して全体を書き直す（TestEditResizeInPTY）。12 行では 12 行目から出し、24 行へ戻すと 1 行目から出す。
+	clears := strings.Count(p.out.String(), "\x1b[2J")
+	ptytest.SetSize(t, p.master, 80, 12)
+	p.out.WaitFor(t, "12 行の画面の描き直し", func(out string) bool { return strings.Count(out, "\x1b[2J") >= clears+1 })
+	ptytest.SetSize(t, p.master, 80, 24)
+	p.out.WaitFor(t, "24 行へ戻した後の 1 行目", func(out string) bool {
+		i := strings.LastIndex(out, "\x1b[2J")
+		return strings.Count(out, "\x1b[2J") >= clears+2 && firstLineRe.MatchString(out[i:])
+	})
+	p.write(t, ":q\r")
+	if err := p.wait(t); err != nil {
+		t.Fatalf("エディタの終了 = %v。出力: %q", err, p.out.String())
+	}
+	p.checkRestored(t, before)
+}
 
 // TestSignColumnInPTY は、DAP の拡張機能を実際に起動し、:dap.toggleBreakpoint で置いたブレークポイントの印が、
 // バッファの左の印の列に出ることを確かめる（基本設計 6.4、6.7）。ブレークポイントを置くだけなので、デバッグアダプターは起動しない。

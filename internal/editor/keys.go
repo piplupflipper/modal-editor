@@ -131,6 +131,12 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		e.choiceKey(k)
 		return
 	}
+	if e.hitEnter() && (k == editcmd.Special(editcmd.CodeEnter) || k == editcmd.Rune(' ')) {
+		// Vim の hit-enter の問いと同じく、<CR> と <Space> はメッセージを消すだけで、コマンドとしては使わない。
+		// 他のキーは、メッセージを消してからコマンドとして使う。
+		e.message = noMessage
+		return
+	}
 	e.message = noMessage
 	for _, k := range e.remap.feed(e.mapMode(), k) {
 		if !e.feedKey(k) {
