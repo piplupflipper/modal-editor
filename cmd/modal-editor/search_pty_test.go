@@ -20,9 +20,10 @@ func TestSearchInPTY(t *testing.T) {
 	before := ptytest.Termios(t, p.tty)
 	p.out.WaitForString(t, "a.txt")
 
-	// 入力の途中は、コマンドラインの行に "/" とパターンが出る。
+	// 入力の途中は、コマンドラインの行（24 行目）の先頭に "/" が出る。
+	// 描画は前の画面との差分なので、"/" とパターンが続けて出るとは限らない。"/" が行の先頭に描かれたことだけを見る。
 	p.write(t, "/fo")
-	p.out.WaitForString(t, "/fo")
+	p.out.WaitForString(t, "\x1b[24;1H\x1b[0m/")
 	// <CR> で 2 行目の foo へ移り、n で 4 行目の foo へ移る。もう一度の n は先頭へ折り返して 2 行目へ戻り、警告を出す。
 	p.write(t, "o\rnn")
 	p.out.WaitForString(t, "末尾まで検索したので先頭から続けました")
