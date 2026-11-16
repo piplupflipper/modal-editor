@@ -11,7 +11,8 @@ import (
 // 項目の名前は仮である。
 //
 // 宣言ファイルは JSONC で書く。
-// JSONC を読む方法は未決なので、このパッケージは読み込んだ後の値の型と検査（Validate）だけを持つ。
+// JSONC は internal/config が github.com/tailscale/hujson で標準の JSON に直してから読む（#9 の裁定）。
+// このパッケージは、読み込んだ後の値の型と検査（Validate）だけを持つ。
 //
 // req: FR-13
 type Manifest struct {

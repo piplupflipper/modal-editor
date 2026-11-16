@@ -14,7 +14,7 @@
 //
 // # 置き場所（仮）
 //
-// 設定ファイルの置き場所と、本体が拡張機能を探す規則は、要件定義 7 章で未決なので、仮に次のとおりにする（基本設計 7 章）。
+// 設定ファイルの置き場所と、本体が拡張機能を探す規則は、仮に次のとおりにする（PR #109。基本設計 7 章、要件定義 6 章）。
 //
 //   - 設定ファイル: $XDG_CONFIG_HOME/modal-editor/config.jsonc。XDG_CONFIG_HOME が空か相対パスなら ~/.config を使う（DefaultPath）
 //   - 拡張機能: $XDG_DATA_HOME/modal-editor/extensions/<名前>/（利用者）と、本体の実行ファイルの隣の extensions/<名前>/（同梱）。

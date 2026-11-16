@@ -28,11 +28,24 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 make build
 bin/modal-editor [ファイル ...]   # 最初のファイルを表示して起動する。ファイルを省くと空のバッファで起動する
 bin/modal-editor --log ed.log a.go # ログを ed.log に追記する（既定ではログを書かない）
+bin/modal-editor --version         # バージョン（ビルドしたコミット）を表示して終わる
 ```
 
 標準入力と標準出力が端末のときだけ起動する。
+端末でなければ、`modal-editor: 標準入力と標準出力が端末のときだけ起動できる` と出して終了コード 1 で終わる。
+
+起動するとノーマルモードになり、Vim と同じキーで編集する。
+`:w` で保存し、`:q` で終わる。
+変更を保存していなければ `:q` は `E37` のエラーを出すので、変更を捨てて終わるには `:q!` を打つ。
+Vim との違いは [docs/vim-differences.md](docs/vim-differences.md) にある。
+
 起動時に、設定ファイル（`$XDG_CONFIG_HOME/modal-editor/config.jsonc`）と、拡張機能の宣言ファイル（`$XDG_DATA_HOME/modal-editor/extensions/<名前>/manifest.json` と、本体の隣の `extensions/<名前>/manifest.json`）を読む。
-置き場所と項目は仮で、`go doc ./internal/config` にある。設定の誤りは、起動後にコマンドラインの行へ位置と内容を 1 行で出す。
+置き場所と項目は仮で、`go doc ./internal/config` にある。
+設定の誤りは、起動後にコマンドラインの行へ位置と内容を 1 行で出す（例: `config.jsonc:2:19: fixendofline は true か false にする`）。
+
+`make build` は `bin/` に実行ファイルだけを作り、宣言ファイルを置かないので、`bin/modal-editor` は標準の拡張機能を読まない（行のテキストオブジェクトの `dil` を打っても何も起きない）。
+標準の拡張機能も使うときは、`make dist` で作る配布物の本体（`dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor`）を起動する。
+配布物では、宣言ファイルと実行ファイルが本体の隣の `extensions/<名前>/` に並ぶ。
 端末は xterm の制御シーケンスで制御する（代替画面、bracketed paste、24 ビット色、カーソルの形）。terminfo は読まない。
 実際の端末で動きを確かめたのは、2026-11-16 時点で tmux 3.4 の中だけである。
 F キーと Insert キーは、キーの型（`internal/editcmd`）に対応する種類が無いので、押しても何もしない。
