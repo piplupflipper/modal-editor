@@ -8,6 +8,8 @@ require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-go v0.25.0
 	github.com/tree-sitter/tree-sitter-json v0.24.8
+	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.47.0
 )
 
 require github.com/mattn/go-pointer v0.0.1 // indirect
