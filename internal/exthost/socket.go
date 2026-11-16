@@ -39,8 +39,13 @@ type socketActivator struct {
 	idle chan struct{}
 	// pending は、受け付けて、次の起動で引き継ぐ接続である。
 	pending []*os.File
-	// arrived は、再起動待ちの間に接続を受け付けたことを、supervise へ知らせる。
+	// arrived は、再起動待ちの間に接続を受け付けたか、kick を立てたことを、supervise へ知らせる。
 	arrived chan struct{}
+	// waiting は、異常の後の再起動の待ち時間が過ぎ、supervise が接続を待っている間 true である（waitConnectionLocked）。
+	waiting bool
+	// kick は、再起動待ちの間に、利用者の起動し直し（[Host.Restart]）か問い合わせ（コマンドの呼び出し）があったことを表す。
+	// 立っていれば、supervise は接続を待たずに起動する（基本設計 6.2）。
+	kick bool
 	// done は、acceptLoop が戻ると閉じる。
 	done chan struct{}
 }
@@ -270,6 +275,7 @@ func (h *Host) takeSocketFiles(e *extension) (listener *os.File, conns []*os.Fil
 		h.mu.Lock()
 	}
 	conns, s.pending = s.pending, nil
+	s.kick = false
 	select {
 	case <-s.arrived:
 	default:
@@ -278,14 +284,19 @@ func (h *Host) takeSocketFiles(e *extension) (listener *os.File, conns []*os.Fil
 }
 
 // waitConnectionLocked は、起動の契機 socket の拡張機能 e が異常で終わった後、再起動の前に、接続が来るまで待つ（基本設計 6.2）。
-// 接続が来たか、e が socket の拡張機能でないか、待ち受けていなければ true を返す。
+// 接続が来たか、利用者の起動し直しか問い合わせがあった（kickLocked）か、e が socket の拡張機能でないか、待ち受けていなければ true を返す。
 // stop が閉じるか Host が閉じたら false を返す。Host.mu を持って呼び、持ったまま戻る。
 func (h *Host) waitConnectionLocked(e *extension, stop <-chan struct{}) bool {
 	s := h.sock
 	if s == nil || s.e != e {
 		return true
 	}
-	for len(s.pending) == 0 {
+	s.waiting = true
+	defer func() {
+		s.waiting = false
+		s.kick = false
+	}()
+	for len(s.pending) == 0 && !s.kick {
 		h.mu.Unlock()
 		select {
 		case <-s.arrived:
@@ -301,6 +312,28 @@ func (h *Host) waitConnectionLocked(e *extension, stop <-chan struct{}) bool {
 	return true
 }
 
+// kickLocked は、起動の契機 socket の拡張機能 e が再起動待ちのとき、接続を待たずに起動するよう supervise へ知らせる。
+// 再起動の待ち時間の中なら、待ち時間が過ぎた時点で起動する。ただし onlyWaiting なら、待ち時間の中では何もしない。
+// supervise が接続を待っている（待ち時間が過ぎた）なら true を返す。e が socket の拡張機能でなければ何もせず false を返す。
+func (h *Host) kickLocked(e *extension, onlyWaiting bool) bool {
+	s := h.sock
+	if s == nil || s.e != e || e.state != StateRestartWait || (onlyWaiting && !s.waiting) {
+		return false
+	}
+	s.kick = true
+	select {
+	case s.arrived <- struct{}{}:
+	default:
+	}
+	return s.waiting
+}
+
+// kickedLocked は、e が kickLocked で起動を待たされている（再起動待ちだが、まもなく起動する）かどうかを返す。
+func (h *Host) kickedLocked(e *extension) bool {
+	s := h.sock
+	return s != nil && s.e == e && e.state == StateRestartWait && s.kick
+}
+
 // dropPendingLocked は、引き継ぐ前の接続を閉じる。拡張機能を無効にしたときと Host を閉じるときに呼ぶ。
 func (h *Host) dropPendingLocked(e *extension) {
 	s := h.sock
@@ -311,6 +344,7 @@ func (h *Host) dropPendingLocked(e *extension) {
 		_ = f.Close()
 	}
 	s.pending = nil
+	s.kick = false
 }
 
 // closeSocket は、待ち受けをやめ、ソケットのファイルを消す。拡張機能のプロセスがすべて終わった後に呼ぶ。

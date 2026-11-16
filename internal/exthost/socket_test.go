@@ -68,7 +68,10 @@ func answer(t *testing.T, path string) (pid, inherited int) {
 func TestSocketActivation(t *testing.T) {
 	path := socketPath(t)
 	t.Setenv(ext.EnvSocketFDs, "9")
-	hs := newHarness(t, []Spec{socketSpec(t, "m"), fakeSpec(t, "x", modeNormal, "")}, func(c *Config) { c.SocketPath = path }, true)
+	hs := newHarness(t, []Spec{socketSpec(t, "m"), fakeSpec(t, "x", modeNormal, "")}, func(c *Config) {
+		c.SocketPath = path
+		c.MaxFailures = 10
+	}, true)
 
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -122,6 +125,36 @@ func TestSocketActivation(t *testing.T) {
 		t.Errorf("after crash: pid %d (inherited %d), want a new process with 1 connection", pid2, n)
 	}
 	hs.waitState("m", StateRunning)
+
+	// 接続を待つ再起動待ちの間でも、問い合わせ（コマンドの呼び出し）と利用者の起動し直しでは、接続を待たずに起動する。
+	crashAndWait := func() {
+		t.Helper()
+		if err := hs.h.Call(ctx, "m", methodExit, nil, callTimeout, nil); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("exit: %v", err)
+		}
+		hs.waitState("m", StateRestartWait)
+		time.Sleep(300 * time.Millisecond)
+		if st := hs.state("m"); st != StateRestartWait {
+			t.Fatalf("state = %v, want restart-wait", st)
+		}
+	}
+	crashAndWait()
+	var st fakeState
+	if err := hs.h.Call(ctx, "m", methodState, nil, callTimeout, &st); err != nil {
+		t.Fatalf("query while waiting for a connection: %v", err)
+	}
+	if st.PID == pid2 {
+		t.Error("query did not restart the extension")
+	}
+	hs.waitState("m", StateRunning)
+	crashAndWait()
+	if err := hs.h.Restart("m"); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("m", StateRunning)
+	if _, n = answer(t, path); n != 0 {
+		t.Errorf("after Restart while waiting: inherited %d connections, want 0", n)
+	}
 
 	// 無効の間の接続は、本体が受け付けてすぐに閉じる。
 	if err := hs.h.Disable("m"); err != nil {

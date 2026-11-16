@@ -401,7 +401,8 @@ func (h *Host) Start(id string) error {
 }
 
 // Restart は、無効になった拡張機能の連続の失敗の数を 0 に戻し、起動し直す（図 4 の「利用者が再起動を指示」）。
-// 未起動の拡張機能なら起動する。それ以外の状態では何もしない。起動は非同期である。
+// 未起動の拡張機能なら起動する。起動の契機 socket の拡張機能が異常の後の再起動待ちなら、接続を待たずに起動する
+// （再起動の待ち時間の中なら、待ち時間が過ぎた時点で起動する。基本設計 6.2）。それ以外の状態では何もしない。起動は非同期である。
 // 停止中（[StateStopping]）でも何もしないので、無効へ移った後に呼び直す。
 func (h *Host) Restart(id string) error {
 	h.mu.Lock()
@@ -414,7 +415,11 @@ func (h *Host) Restart(id string) error {
 	case StateDisabled, StateNotStarted:
 		e.failures = 0
 		h.startLocked(e)
-	case StateStarting, StateRunning, StateStopping, StateRestartWait:
+	case StateRestartWait:
+		// 起動の契機 socket の拡張機能は、異常の後に接続を待つので、利用者の指示で接続を待たずに起動する（基本設計 6.2）。
+		// 再起動の待ち時間の中なら、待ち時間が過ぎた時点で起動する。それ以外の拡張機能は、待ち時間の後に自動で起動する。
+		h.kickLocked(e, false)
+	case StateStarting, StateRunning, StateStopping:
 	}
 	return nil
 }

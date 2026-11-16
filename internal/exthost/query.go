@@ -162,10 +162,11 @@ func (h *Host) send(id, method string, params any, opts SendOptions, defaultTime
 	h.mu.Lock()
 	e, err := h.lookupLocked(id)
 	if err == nil {
-		if (e.state == StateNotStarted || e.state == StateStarting) && opts.StartTimeout > timeout {
+		err = check(e)
+		starting := e.state == StateNotStarted || e.state == StateStarting || h.kickedLocked(e)
+		if err == nil && starting && opts.StartTimeout > timeout {
 			timeout = opts.StartTimeout
 		}
-		err = check(e)
 	}
 	if err != nil {
 		h.mu.Unlock()
@@ -211,7 +212,12 @@ func (h *Host) ensureStartedLocked(e *extension) error {
 	case StateNotStarted:
 		h.startLocked(e)
 	case StateStarting, StateRunning:
-	case StateStopping, StateRestartWait, StateDisabled:
+	case StateRestartWait:
+		// 起動の契機 socket の拡張機能が、異常の後の待ち時間を過ぎて接続を待っているなら、接続を待たずに起動する（基本設計 6.2）。
+		if !h.kickLocked(e, true) {
+			return fmt.Errorf("%w: state %s", ErrUnavailable, e.state)
+		}
+	case StateStopping, StateDisabled:
 		return fmt.Errorf("%w: state %s", ErrUnavailable, e.state)
 	}
 	return nil
@@ -235,7 +241,12 @@ func (h *Host) waitRunning(ctx context.Context, id string) (*rpc.Conn, error) {
 			conn := e.run.conn
 			h.mu.Unlock()
 			return conn, nil
-		case StateStopping, StateRestartWait, StateDisabled:
+		case StateRestartWait:
+			if !h.kickedLocked(e) {
+				h.mu.Unlock()
+				return nil, fmt.Errorf("%w: state %s", ErrUnavailable, StateRestartWait)
+			}
+		case StateStopping, StateDisabled:
 			st := e.state
 			h.mu.Unlock()
 			return nil, fmt.Errorf("%w: state %s", ErrUnavailable, st)

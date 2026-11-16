@@ -59,6 +59,7 @@ func TestParseJSONC(t *testing.T) {
   "fileTypes": { ".tmpl": "html", "Justfile": "make", },
   "extensions": {
     "syncTimeoutMs": 50,
+    "startSyncTimeoutMs": 2000,
     "memoryLimitMb": 256,
     "settings": { "lsp": { "servers": [ { "fileTypes": ["go"], }, ], }, },
     "activation": { "lsp": [ { "on": "filetype", "pattern": "python" }, ] },
@@ -78,6 +79,9 @@ func TestParseJSONC(t *testing.T) {
 	}
 	if cfg.SyncTimeout == nil || *cfg.SyncTimeout != 50*time.Millisecond {
 		t.Errorf("SyncTimeout = %v, want 50ms", cfg.SyncTimeout)
+	}
+	if cfg.StartSyncTimeout != 2*time.Second {
+		t.Errorf("StartSyncTimeout = %v, want 2s", cfg.StartSyncTimeout)
 	}
 	if cfg.MemoryLimitMB != 256 {
 		t.Errorf("MemoryLimitMB = %d, want 256", cfg.MemoryLimitMB)
@@ -182,6 +186,7 @@ func TestParseInvalidItems(t *testing.T) {
     "memoryLimitMb": -1,
     "activation": { "lsp": [ { "on": "operator", "id": "x" }, { "on": "filetype" }, { "on": "filetype", "pattern": "c", "extra": 1 }, { "on": "filetype", "pattern": "go" } ] },
     "tabstop": 4,
+    "startSyncTimeoutMs": -5,
   },
   "unknown": true,
 }`
@@ -201,8 +206,12 @@ func TestParseInvalidItems(t *testing.T) {
 		{10, 63, "filetype"},
 		{10, 85, `契機を読めない: json: unknown field "extra"`},
 		{11, 5, "未知の項目 extensions.tabstop"},
-		{13, 3, "未知の項目 unknown"},
+		{12, 27, "extensions.startSyncTimeoutMs は 0 以上"},
+		{14, 3, "未知の項目 unknown"},
 	})
+	if cfg.StartSyncTimeout != 0 {
+		t.Errorf("StartSyncTimeout = %v, want 0（既定値）", cfg.StartSyncTimeout)
+	}
 	if want := map[string]map[string]string{"normal": {"<Space>w": ":w<CR>", "b": "<Bar"}}; !reflect.DeepEqual(cfg.Keymap, want) {
 		t.Errorf("Keymap = %v, want %v", cfg.Keymap, want)
 	}

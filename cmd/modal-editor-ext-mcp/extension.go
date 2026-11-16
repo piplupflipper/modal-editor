@@ -30,6 +30,9 @@ var errNotInherited = errors.New("本体から待ち受けのソケットを引�
 // 本体は shutdown を送ってから 3 秒（仮）で SIGTERM を送るので（基本設計 5.2）、それより短くする。
 const stopTimeout = time.Second
 
+// acceptRetryDelay は、Accept が閉じた以外の誤りで失敗したときに、受け付け直すまで待つ時間である（仮）。
+const acceptRetryDelay = 100 * time.Millisecond
+
 // notSentWait は、複製を持っていないバッファを読むときに、buffer/open の処理を待つ上限である（仮。hostEditor.ReadBuffer）。
 const notSentWait = time.Second
 
@@ -116,14 +119,25 @@ func (x *extension) start() {
 }
 
 // acceptLoop は、ln が閉じるまで接続を受け付け、接続ごとに別の goroutine で serveMCP を動かす。
+//
+// 閉じた以外の誤り（ファイル記述子の不足など）では、acceptRetryDelay だけ待って受け付け直す。
+// 稼働中は本体が受け付けないので、ここでやめると、拡張機能は稼働中のまま、以降の接続がバックログに残り続ける。
 func (x *extension) acceptLoop(ctx context.Context, ln net.Listener) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			if !errors.Is(err, net.ErrClosed) {
-				x.log.Printf("accept: %v", err)
+			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
+				return
 			}
-			return
+			x.log.Printf("accept: %v", err)
+			t := time.NewTimer(acceptRetryDelay)
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+				t.Stop()
+				return
+			}
+			continue
 		}
 		x.wg.Add(1)
 		go func() {

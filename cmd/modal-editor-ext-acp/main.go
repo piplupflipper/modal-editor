@@ -24,7 +24,7 @@
 // MCP の中継コマンドを MCP サーバーとして渡す（client.mcpServers）。
 // エージェントからの session/update は acp の欄へ書き足し、session/request_permission は choice/ask で利用者に問い、
 // fs/read_text_file はバッファの複製かファイルから読み、fs/write_text_file はバッファを通して書き出す（handlers.go、files.go）。
-// 開いていないファイルへの書き込みの方式は #43 の 3 の裁定待ちで、差し替えられる口（unopenedFileWriter）にしてある。
+// 開いていないファイルへの書き込みも、本体にバッファとして開かせてバッファを通して書く（#43 の裁定 3 の A。unopenedFileWriter）。
 //
 // エージェントが異常終了したら、利用者へ知らせ、次の acp.prompt で起動し直す。
 // 設定（initialize の settings）の項目は settings の doc にある。

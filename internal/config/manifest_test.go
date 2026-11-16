@@ -121,7 +121,7 @@ func TestLoadManifestWarnings(t *testing.T) {
   "id": "a",
   "command": "x",
   "future": true,
-  "activation": [{ "on": "socket" }, { "on": "command", "id": "a.run" }],
+  "activation": [{ "on": "startup" }, { "on": "command", "id": "a.run" }],
   "contributes": { "commands": [{ "id": "a.run" }] }
 }`
 	p := writeManifest(t, t.TempDir(), "a", src)
@@ -129,7 +129,7 @@ func TestLoadManifestWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warns) != 2 || !strings.HasPrefix(warns[0].Error(), p+":4:3: 未知の項目 future") || !strings.Contains(warns[1].Error(), "socket") {
+	if len(warns) != 2 || !strings.HasPrefix(warns[0].Error(), p+":4:3: 未知の項目 future") || !strings.Contains(warns[1].Error(), "startup") {
 		t.Errorf("warns = %v", warns)
 	}
 	if m.ID != "a" {
