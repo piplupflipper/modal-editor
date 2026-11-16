@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // nextEvent は、Input から次のイベントを待って返す。
@@ -93,8 +94,24 @@ func TestTerminalPTY(t *testing.T) {
 		t.Errorf("リサイズのイベント = %+v, want 100x30", ev)
 	}
 
+	r := &ui.Renderer{Width: 100, Height: 30}
+	s := r.Render(&ui.Frame{Text: lines{"hello", "日本語"}, Mode: ui.ModeInsert})
+	if err := tm.Draw(s); err != nil {
+		t.Fatal(err)
+	}
+	out.waitFor(t, "\x1b[?25h")
+	v := newVT(100, 30)
+	v.write(t, out.String())
+	v.check(t, s)
+	if !v.modes[1049] || !v.modes[2004] || v.modes[7] {
+		t.Errorf("代替画面、bracketed paste、折り返しの止めのモードが違う: %v", v.modes)
+	}
+
 	if err := tm.Restore(); err != nil {
 		t.Fatal(err)
+	}
+	if err := tm.Draw(s); err != nil {
+		t.Errorf("Restore の後の Draw: %v", err)
 	}
 	if err := tm.Restore(); err != nil {
 		t.Errorf("2 回目の Restore: %v", err)
@@ -104,8 +121,13 @@ func TestTerminalPTY(t *testing.T) {
 		t.Errorf("端末の設定が戻っていない:\n before %+v\n after  %+v", before, after)
 	}
 	out.waitFor(t, seqLeave)
-	if s := out.String(); !strings.HasSuffix(s, seqLeave) {
-		t.Errorf("出力の最後が seqLeave でない: %q", s[max(0, len(s)-64):])
+	if o := out.String(); !strings.HasSuffix(o, seqLeave) {
+		t.Errorf("出力の最後が seqLeave でない: %q", o[max(0, len(o)-64):])
+	}
+	o := out.String()
+	v.write(t, o[strings.LastIndex(o, seqLeave):])
+	if v.modes[1049] || v.modes[2004] || !v.modes[7] || !v.cursorVisible || v.shape != 0 {
+		t.Errorf("Restore の後のモードが戻っていない: %v, カーソルの表示 %v, 形 %d", v.modes, v.cursorVisible, v.shape)
 	}
 
 	if err := tm.Close(); err != nil {

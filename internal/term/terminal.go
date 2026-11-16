@@ -1,6 +1,7 @@
 package term
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	xterm "golang.org/x/term"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // DefaultEscTimeout は、ESC で始まる列の続きを待つ時間の既定値である。
@@ -63,6 +65,8 @@ type Terminal struct {
 	// mu は、out への書き込みを守る。Draw と Restore が別の goroutine から呼ばれても、制御シーケンスが混ざらないようにする。
 	mu       sync.Mutex
 	restored bool
+	painter  Painter
+	buf      bytes.Buffer
 
 	events chan Event
 	stop   chan struct{}
@@ -129,6 +133,27 @@ func (t *Terminal) Size() (width, height int) {
 		return 80, 24
 	}
 	return w, h
+}
+
+// Draw は、画面 s を端末へ出す。前回の Draw から変わったセルだけを書く（Painter）。
+// Restore の後は何も書かずに nil を返す。
+func (t *Terminal) Draw(s ui.Screen) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.restored {
+		return nil
+	}
+	t.buf.Reset()
+	t.painter.Paint(&t.buf, s)
+	if t.buf.Len() == 0 {
+		return nil
+	}
+	if _, err := t.out.Write(t.buf.Bytes()); err != nil {
+		// 書けた所が分からないので、次は全体を書き直す。
+		t.painter.Invalidate()
+		return fmt.Errorf("term: write: %w", err)
+	}
+	return nil
 }
 
 // Restore は、端末を Open の前の状態に戻す（代替画面から戻り、bracketed paste を止め、raw モードを解く）。
