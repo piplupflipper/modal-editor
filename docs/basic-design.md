@@ -1113,7 +1113,7 @@ func TestNextWord(t *testing.T) {
 「実装とテスト」は、実装とテストの両方に注釈があることを表し、要件を満たし終えたことは表さない。
 要件を満たしたかどうかは、テストの内容で判断する。
 
-NFR-01 や NFR-05 のように、Go のテストで検証しにくい要件は、検証の方法が決まるまで「未着手」または「実装のみ」のままになる。
+Go のテストで検証しにくい要件は、検証の方法が決まるまで「未着手」または「実装のみ」のままになる。
 
 ### 9.1 ビルドと配布で満たす要件の検証
 
@@ -1143,9 +1143,15 @@ glibc を静的にリンクすると LGPL の再リンクの義務を伴うの�
 配布物には、静的にリンクするサードパーティのライセンスの文面を `licenses/` に同梱する。
 理由と、2026-11-16 の結果は [measurements/nfr-dist.md](measurements/nfr-dist.md) に書く。
 
-NFR-05 は目標値が未定なので、検証のテストを置かず、注釈も付けない。
-起動時間、メモリの使用量、実行ファイルのサイズの測り方と値を [measurements/nfr05-footprint.md](measurements/nfr05-footprint.md) に書く。
-目標値が決まったら、同じ手順で測る検査を置く。
+NFR-05 の上限は、`make build` の生成物を測る検査で確かめる。
+CI は `make build-check` の後に `make footprint-check` を実行する。
+
+| ターゲット | 検証すること | 要件 |
+|---|---|---|
+| `make build-check` | 本体の実行ファイルが 10 MiB 以下（`internal/distcheck`） | NFR-05 |
+| `make footprint-check` | 拡張機能なしで 10,000 行のファイルを偽の端末で開き、起動から文字を含む最初の画面までと、その後の本体の `VmRSS` を 20 回測った中央値が、20 ms 以下と 16 MiB 以下（`cmd/modal-editor`） | NFR-05 |
+
+測り方と、目標値を決めた根拠の実測は [measurements/nfr05-footprint.md](measurements/nfr05-footprint.md) に書く。
 
 ## 10. 未決の項目
 

@@ -76,6 +76,26 @@ func TestBuildMainStatic(t *testing.T) {
 	assertStaticELF(t, path)
 }
 
+// mainSizeLimit は、`make build` の本体の実行ファイルの大きさの上限（10 MiB）である（要件定義の NFR-05）。
+// `make build` はシンボルとデバッグ情報を削らないので、削らない形の大きさで比べる。
+const mainSizeLimit = 10 * 1024 * 1024
+
+// TestBuildMainSize は、`make build` の本体の実行ファイルの大きさが、NFR-05 の上限に収まることを確かめる。
+// 大きさはビルドの環境が同じなら揺れないので、1 回の値をそのまま上限と比べる。
+//
+// req: NFR-05
+func TestBuildMainSize(t *testing.T) {
+	path := filepath.Join(buildDir(t), "modal-editor")
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%s の大きさ: %d バイト（%.2f MiB）、上限 %d バイト", path, fi.Size(), float64(fi.Size())/(1024*1024), mainSizeLimit)
+	if fi.Size() > mainSizeLimit {
+		t.Errorf("%s の大きさ %d バイトが上限 %d バイトを超えた", path, fi.Size(), mainSizeLimit)
+	}
+}
+
 // TestBuildAllStatic は、`make build` の全ての実行ファイルが静的にリンクされていることを確かめる。
 // 動的リンカーと共有ライブラリを要求しないので、glibc の版や musl かどうかによらず、ファイルを置くだけで起動する。
 // cgo の拡張機能も、C の標準ライブラリごと静的にリンクする。

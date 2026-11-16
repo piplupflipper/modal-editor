@@ -93,8 +93,10 @@ progress-check: ## docs/progress.md が最新でなければ失敗する
 check: fmt-check typecheck lint test tidy-check progress-check ## コミット前の検査を全て実行する（CI と同じ内容）
 
 # 本体を CGO_ENABLED=0 で作る（NFR-02）。make build-check が検査する。
+# 本体はシンボルとデバッグ情報を削らずに作る（-ldflags に -s -w を足さない）。デバッガーで変数を読めるようにするためで、
+# NFR-05 の実行ファイルの大きさの上限（10 MiB）は、この形で満たす。make build-check と make footprint-check が検査する。
 #
-# req: NFR-02
+# req: NFR-02, NFR-05
 .PHONY: build
 build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行ファイルを bin/ に作る
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/modal-editor
@@ -103,8 +105,15 @@ build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行フ
 	for e in $(CGO_EXTENSIONS); do CGO_ENABLED=1 CC=$(MUSL_CC) go build -trimpath -ldflags '$(CGO_STATIC_LDFLAGS)' -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
 
 .PHONY: build-check
-build-check: build ## make build の生成物を検査する（本体の静的リンクと CGO_ENABLED=0 など。NFR-02）
-	MODAL_EDITOR_BUILD_DIR=$(abspath $(BIN_DIR)) go test -count=1 ./internal/distcheck
+build-check: build ## make build の生成物を検査する（本体の静的リンクと CGO_ENABLED=0、本体の大きさなど。NFR-02、NFR-05）
+	MODAL_EDITOR_BUILD_DIR=$(abspath $(BIN_DIR)) go test -count=1 -v ./internal/distcheck
+
+# 起動から最初の画面までの時間と本体の RSS を、make build の本体で測る（NFR-05）。
+# テストの実行ファイルは -race と -cover の計測を含むので測らない。測り方は docs/measurements/nfr05-footprint.md に合わせる。
+# 他のテストと CPU を取り合わないよう、このテストだけを単独で実行する。
+.PHONY: footprint-check
+footprint-check: build ## make build の本体の起動時間と RSS を検査する（10,000 行のファイルで 20 回の中央値。NFR-05）
+	MODAL_EDITOR_BUILD_DIR=$(abspath $(BIN_DIR)) go test -count=1 -v -run '^TestFootprintInPTY$$' ./cmd/modal-editor
 
 .PHONY: dist
 dist: build ## 配布物を dist/ に作る（実行ファイルと宣言ファイルのディレクトリと tar.gz。NFR-01）
