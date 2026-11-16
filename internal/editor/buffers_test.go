@@ -236,6 +236,44 @@ func TestJumpAcrossBuffers(t *testing.T) {
 	}
 }
 
+// 別のバッファへ移ると、画面の最初の行を、移った先のカーソルの行を表示領域の中ほど（上から (h-1)/2 行目）に置く位置にし、
+// 先頭より前と、最終行の後ろの "~" の行が出る位置には詰める（Vim 9.1 の enter_buffer。#155）。
+// 期待値は、tmux の Vim 9.1 で、別のバッファの 300 行目から <C-^> で戻ったときの line("w0") を、
+// 表示領域が 33 行と 32 行の画面で測った式（400 行のファイルの 50 行目は 34 と 35、384 行目以降は 368 と 369、22 行のファイルは常に 1）を、
+// fake の端末の 4 行の表示領域に当てはめたもの。
+func TestEnterBufferView(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"a.txt": numberedLines("a", 3, ""), "b.txt": numberedLines("b", 30, ""), "c.txt": numberedLines("c", 30, ""),
+	})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	steps := []struct {
+		keys string
+		top  int // 0 から数えた最初の行
+	}{
+		// 画面に収まる短いファイルへ戻ると、1 行目から出す（変更前は前のバッファの位置から中ほどへ動かし、1 行目が隠れた）。
+		{"3G:e b.txt<CR>20G", 17},
+		{":b1<CR>", 0},
+		{"<C-^>", 18},
+		{":e c.txt<CR>30G", 26},
+		{"<C-^>", 18},
+		{"<C-^>", 26},
+		// 同じバッファの中の <C-o> は、移る前の位置から画面に収める（b.txt の 20 行目へ）。別のバッファへの <C-o> は中ほどに置く（c.txt の 30 行目へ）。
+		{"<C-^>2G", 0},
+		{"<C-o>", 17},
+		{"<C-o>", 26},
+	}
+	for _, st := range steps {
+		h.keys(st.keys)
+		h.settle()
+		h.e.do(func() {
+			if got := h.e.renderer.Top(); got != st.top {
+				_, _, cur := h.e.jumpList()
+				t.Errorf("%s: top = %d, want %d (cur %s)", st.keys, got, st.top, cur)
+			}
+		})
+	}
+}
+
 // マクロの中の <C-o> は、その場で動く。別のバッファへ移ったら、マクロの残りは移った先のバッファで続く。
 //
 // req: FR-05

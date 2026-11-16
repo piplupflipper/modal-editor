@@ -56,7 +56,7 @@ func stripCodeFences(s string) string {
 // 窓は、カーソルの文字の列から始まり、カーソルの下の行に置く。下に収まらず、上の方が広ければ上の行に置く。
 // バッファの表示領域の中だけに描き、ステータス行と出力の欄には重ねない。
 // 幅は popupMaxWidth 列と画面の幅の小さい方を上限に、本文の最も長い行に合わせ、左右に 1 列の余白を置く。
-// 長い行は折り返す。行が popupMaxRows 行と置ける行数に収まらなければ、最後の行に残りの行数を書く。
+// 長い行は空白の位置で折り返す（wrapWords）。行が popupMaxRows 行と置ける行数に収まらなければ、最後の行に残りの行数を書く。
 // Markdown は、呼び出し側（Render）がコードの囲みの行だけを除き（stripCodeFences）、他の記法は整形せずに出す
 // （6.7 の format は、整形するかを ui が決めてよいとしている）。
 func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol int) {
@@ -69,7 +69,7 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 	var rows []outputRow
 	width := 0
 	for i, l := range lines {
-		for _, or := range wrapLine(i, l, maxW-2, tabStop) {
+		for _, or := range wrapWords(i, l, maxW-2, tabStop) {
 			rows = append(rows, or)
 			width = max(width, StringWidth(l[or.start:or.end], tabStop))
 		}
@@ -111,6 +111,48 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 		or := rows[i]
 		r.drawSegmentAt(g, row, x0+1, boxW-2, lines[or.line], or, a, special)
 	}
+}
+
+// wrapWords は、s を幅 width の行に、空白（半角の空白とタブ）の位置で折り返した、行ごとのバイトの範囲を返す
+// （Vim の 'linebreak' に近い。ホバーの本文の英語の文を単語の途中で切らないため。#155）。空の行は 1 行にする。
+//
+// 幅を超える文字の前に、同じ行の中で空白があれば、最後の空白の後から次の行を始める。
+// 空白が無ければ（幅より長い単語、空白で区切らない日本語の文）、wrapLine と同じく幅を超える文字の前で切る。
+// 行の末尾で幅を超える空白は、どの行にも含めずに飛ばす（次の行を空白で始めない）。
+func wrapWords(line int, s string, width, tabStop int) []outputRow {
+	rows := []outputRow{{line: line}}
+	col, rowCol := 0, 0
+	// brk は、いまの行の中で最後の空白の後のバイト位置、brkCol はその表示の列、brkEnd はそこで切るときのいまの行の終わりである。
+	brk, brkCol, brkEnd := -1, 0, 0
+	for off := 0; off < len(s); {
+		gl := nextGlyph(s, off, col, tabStop)
+		cur := &rows[len(rows)-1]
+		blank := gl.kind == glyphTab || (gl.kind == glyphText && gl.text == " ")
+		if gl.col+gl.width-rowCol > width && off > cur.start {
+			if blank {
+				col += gl.width
+				off += gl.size
+				brk, brkCol, brkEnd = off, col, cur.end
+				continue
+			}
+			if brk > cur.start {
+				// 最後の空白の後まで戻り、そこから次の行を始める。
+				cur.end = brkEnd
+				off, col = brk, brkCol
+				gl = nextGlyph(s, off, col, tabStop)
+			}
+			rows = append(rows, outputRow{line: line, start: off, end: off, col: gl.col})
+			cur = &rows[len(rows)-1]
+			rowCol = gl.col
+		}
+		col += gl.width
+		off += gl.size
+		cur.end = off
+		if blank {
+			brk, brkCol, brkEnd = off, col, off
+		}
+	}
+	return rows
 }
 
 // drawMessageLines は、改行を含むメッセージを、コマンドラインの行から上へ広げて描く（Vim のメッセージの行が広がるのと同じ）。

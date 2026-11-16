@@ -86,6 +86,20 @@ func (r *Renderer) SetScroll(top, left int) {
 	r.top, r.left = max(top, 0), max(left, 0)
 }
 
+// EnterBuffer は、表示するバッファを替えたときに、スクロールの位置を、替えた先のバッファ（行数 lineCount）のカーソルの行 line に合わせて決め直す。
+// 縦は、line を表示領域の中ほど（上から (h-1)/2 行目。h は直前の Render の表示領域の行数）に置き、
+// 最初の行が先頭より前にも、バッファの最終行の後ろに "~" の行が出る位置にもならないように詰める。横は左の端に戻す。
+// 次の Render は、この位置からカーソルが画面に収まるようにスクロールする。
+//
+// Vim 9.1 の enter_buffer（最初の行を 1 にしてから、バッファに残したカーソルで scroll_cursor_halfway を呼ぶ）に合わせた。
+// 前のバッファの最初の行を使い続けると、定義へ移動して戻った（<C-o>）ときに、画面に収まる短いファイルの先頭の行が隠れる（#155）。
+// 値は、tmux の 33 行と 32 行の表示領域で、400 行、40 行、22 行のファイルのカーソルの行を変えて、別のバッファから戻ったときの line("w0") を測って合わせた。
+func (r *Renderer) EnterBuffer(lineCount, line int) {
+	h := r.textRows()
+	r.top = max(min(line-(h-1)/2, lineCount-h), 0)
+	r.left = 0
+}
+
 // Columns は、このレンダラーのタブ幅で数える Columns を返す。internal/command の State.Columns に差し込む。
 func (r *Renderer) Columns() Columns {
 	return Columns{TabStop: r.TabStop}

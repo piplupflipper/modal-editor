@@ -677,9 +677,12 @@ func (e *Editor) syncFinalNewline(bs *bufferState) {
 
 // switchTo は、カーソルのあるバッファを bs にする。レジスター、直前の検索、ドットリピート、マクロの記録などの
 // Vim でエディタ全体に 1 つの状態は引き継ぐ（command.State.TakeOver）。
+// 別のバッファへ移るときは、画面の位置を、bs に残したカーソルを中ほどに置く位置に決め直す（ui.Renderer.EnterBuffer。Vim 9.1 の enter_buffer）。
+// 移った後に呼び出し側がカーソルを動かせば（<C-o> の移り先、定義へ移動）、次の描画がその位置から画面に収める。
 func (e *Editor) switchTo(bs *bufferState) {
 	if e.cur != nil && e.cur != bs {
 		bs.state.TakeOver(e.cur.state)
+		e.renderer.EnterBuffer(bs.buf.LineCount(), bs.state.Cursor().Line)
 	}
 	e.cur = bs
 }
