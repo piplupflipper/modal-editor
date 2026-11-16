@@ -17,7 +17,8 @@ import (
 
 // testMemoryLimitMB は、上限を掛けるテストで使う RLIMIT_AS（MiB）である。
 // testdata/memhog（Go）が起動して initialize に応答でき、test/alloc の確保（最大 4 GiB）の途中で当たる大きさにする。
-// 2026-11-16 の計測では、Go の標準の拡張機能が起動できた最小の上限は 747〜789 MiB だった（Config.MemoryLimitMB）。
+// Go の実行時が起動できるかは上限について単調でなく、起動できない帯がある（Config.MemoryLimitMB の doc）。
+// 2048 MiB は、2026-11-16 の計測（32 CPU の Linux、Go 1.27.4）で、小さな Go の拡張機能（ext-line）が 20/20 で起動した値である。
 const testMemoryLimitMB = 2048
 
 // memhogSpec は、testdata/memhog を -race を付けずにビルドし、それを拡張機能 id とする定義を返す。

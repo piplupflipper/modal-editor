@@ -70,9 +70,9 @@ type Config struct {
 	// 項目が無いか誤りなら nil で、既定の有効（true）として扱う。
 	// editor.Config にはまだ対応する項目が無いので、呼び出し側が buffer.Buffer.SetFixEndOfLine へ写す。
 	FixEndOfLine *bool
-	// MemoryLimitMB は extensions.memoryLimitMb の値（MB）で、0 は「上限なし」である（FR-20）。
-	// 基本設計 7 章のとおり、拡張機能の子プロセスの RLIMIT_AS として設定する値である。
-	// exthost.Config にはまだ対応する項目が無いので、読むだけで、適用は別の issue で行う。
+	// MemoryLimitMB は extensions.memoryLimitMb の値（MiB）で、0 は「上限なし」である（FR-20）。
+	// 基本設計 7 章のとおり、拡張機能の子プロセスの RLIMIT_AS として設定する値で、
+	// 呼び出し側（cmd/modal-editor）が exthost.Config.MemoryLimitMB にそのまま写す。
 	MemoryLimitMB int64
 	// FileTypes は fileTypes の値で、editor.Config.FileTypes にそのまま渡す（基本設計 6.7 のファイルの種類の対応表）。
 	// キーは拡張子（".md"）かファイル名（"Makefile"）、値はファイルの種類の名前である。
