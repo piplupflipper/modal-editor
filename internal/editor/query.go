@@ -451,6 +451,7 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 		Cursor: toExtPos(q.Cursor), Count: count(q.Count, q.CountGiven), Args: commandArgs(q), Sync: info.Replaying,
 	}
 	var r ext.CommandExecuteResult
+	x.e.extRan = true
 	err := x.call(ref, ext.MethodCommandExecute, p, info, &r)
 	if (err != nil || !r.OK) && x.e.host.Withheld(x.bs.id) && !errors.Is(err, context.Canceled) && !errors.Is(err, command.ErrDeferred) {
 		// 送っていないバッファでは、バッファを使うコマンドは失敗する。拡張機能の返す理由より、送っていないことを知らせる。

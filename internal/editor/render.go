@@ -56,6 +56,8 @@ func (e *Editor) frame() *ui.Frame {
 	switch {
 	case e.confirm != nil:
 		f.Message = ui.Message{Text: e.confirm.Prompt, Level: ui.MessageWarning}
+	case e.prompt != nil:
+		f.Message = ui.Message{Text: e.prompt.text, Level: ui.MessageWarning}
 	case e.activeChoice() != nil:
 		f.Choice = uiChoice(e.choices[0])
 	case e.popup != nil:
@@ -74,7 +76,7 @@ func (e *Editor) frame() *ui.Frame {
 // 確認の問いと選択肢の問いを出している間と、コマンドラインモード（コマンドラインの行にメッセージを出さない）では待たない。
 // モードは問わない。インサートモードの間に拡張機能のメッセージが届いても待つ（Vim も、インサートモードの間に出た複数行のメッセージで hit-enter の問いを出す）。
 func (e *Editor) hitEnter() bool {
-	return e.confirm == nil && e.activeChoice() == nil && e.cur.state.Mode() != command.ModeCommandLine &&
+	return !e.asking() && e.activeChoice() == nil && e.cur.state.Mode() != command.ModeCommandLine &&
 		strings.Contains(strings.TrimRight(e.message.Text, "\n"), "\n")
 }
 

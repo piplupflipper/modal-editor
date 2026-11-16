@@ -96,6 +96,9 @@ const (
 	// Output に操作を、Text に欄の名前（OutputOpen のときだけ。空なら最後に書き足された欄）を入れる。
 	// バッファを読み書きしないので、後に拡張機能のコマンドを置ける（:output|acp.prompt ...）。
 	ActionOutput
+	// ActionCheckTime は、開いているバッファのファイルが外で変わっていないかを確かめる動作（:checktime）である（基本設計 6.7）。
+	// バッファを読み書きしないので、範囲も引数も持たない。
+	ActionCheckTime
 )
 
 // OutputOp は、ActionOutput の操作である。

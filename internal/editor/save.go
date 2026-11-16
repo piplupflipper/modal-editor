@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -47,6 +47,9 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 		return e.edit(bs, a)
 	case ex.ActionOutput:
 		return e.outputAction(a)
+	case ex.ActionCheckTime:
+		e.checkTime()
+		return nil
 	case ex.ActionExtCommand:
 		// command.State が問い合わせるので、Result.Actions には入らない。来たら内部の誤りである。
 		return fmt.Errorf("内部の誤り: 拡張機能のコマンド %s が本体の動作として渡された", a.Command)
@@ -58,6 +61,10 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 // 引数が無いか、バッファのファイルと同じなら保存の流れ（基本設計 6.7）を通す。
 // 名前の無いバッファに名前を付けて書くと、そのファイルのバッファにする（Vim と同じ）。
 // 別のファイルへ書くときは、保存の流れを通さずに書き出すだけにし、バッファは保存済みにしない。
+// バッファのファイルへ書くときは、! が無ければ、読み込んだ後にファイルが外で変わっていないかを先に確かめる（writeConflict）。
+// 変わっていれば errChangedOnDisk を返し、呼び出し側が書き込むかを問う。
+//
+// req: FR-08
 func (e *Editor) write(bs *bufferState, a ex.Action) error {
 	path := bs.path
 	if a.File != "" {
@@ -81,6 +88,11 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 		bs.fileType = e.detectFileType(path)
 		if err := e.host.UpdateBuffer(bs.id, bs.path, bs.fileType); err != nil {
 			e.log.Error("buffer/open を送り直せない", "err", err)
+		}
+	}
+	if !a.Force {
+		if err := writeConflict(bs); err != nil {
+			return err
 		}
 	}
 	return e.save(bs, path, false)
@@ -121,6 +133,9 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 	if err := bs.buf.WriteFile(path); err != nil {
 		return fmt.Errorf("E212: %s を書けません: %w", path, err)
 	}
+	if st, err := statFile(path); err == nil {
+		bs.setDisk(st)
+	}
 	bs.buf.MarkSaved()
 	if err := e.host.DidSave(ext.BufferDidSaveParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Path: path}); err != nil {
 		e.log.Error("buffer/didSave を送れない", "err", err)
@@ -142,63 +157,78 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 	if bs.path == "" {
 		return errNoFileName
 	}
-	b, err := buffer.ReadFile(bs.path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		b = buffer.New("")
-	case err != nil:
-		return fmt.Errorf("%s を読めません: %w", filepath.Base(bs.path), err)
-	}
-	e.reload(bs, b)
-	return nil
+	return e.reloadFile(bs)
 }
 
 // reload は、バッファ bs の内容を、読み直した b の内容にする。バッファの番号は変えない（Vim の :e と同じ）。
 //
-// 末尾の改行の有無が同じなら、全体を置き換える 1 つの編集として適用する。
-// バージョン番号は進み続け、拡張機能へは差分（buffer/change）で届き、アンドゥで読み直す前へ戻れる（Vim の 'undoreload' と同じ）。
-// 末尾の改行の有無が違えば（編集では変えられないので）、同じ番号で buffer/close と buffer/open を送り直し、
-// バージョン番号は 0 から数え直す。このとき、そのバッファの診断と印と色は消す。
+// 読み直しは、前後の共通の行を除いた、変わった行の範囲だけを置き換える 1 つの編集（reloadEdits）として適用する（#143）。
+// アンドゥの単位と拡張機能へ送る差分（buffer/change）の大きさは変わった行の数に比例し、変わっていない行の印と診断は動かない。
+// 末尾の改行の有無の記録も同じ単位で変える（buffer.Buffer.ApplyReload）ので、アンドゥ 1 回で、末尾の改行も含めて読み直す前へ戻れる
+// （Vim 9.1 の 'undoreload' の範囲の読み直しと同じ）。
+// 外での変更を問わずに読み直す（autoread）ときに毎秒呼ばれても、ログの追記のような変更ならアンドゥの履歴は追記した行の分しか増えない。
 func (e *Editor) reload(bs *bufferState, b *buffer.Buffer) {
 	cur := bs.buf
 	cursor := bs.state.Cursor()
-	b.SetFixEndOfLine(cur.FixEndOfLine())
-	if b.HasTrailingNewline() == cur.HasTrailingNewline() {
-		if b.Text() != cur.Text() {
-			last := cur.LineCount() - 1
-			whole := buffer.Range{End: buffer.Position{Line: last, Byte: len(cur.Line(last))}}
-			ch, err := cur.Apply(buffer.Transaction{BaseVersion: cur.Version(), Edits: []buffer.Edit{{Range: whole, Text: b.Text()}}})
-			if err != nil {
-				e.showError(err)
-				return
-			}
-			e.commitChange(bs, ch)
-		}
-		// 読み直したファイルが空なら、Vim と同じく行の無いバッファにする（書き出すと空のファイルになる）。
-		// 空の行 1 つ（"\n"）なら、テキストが同じでも行の無いバッファの記録を外す。
-		if b.NoLines() {
-			cur.MarkNoLines()
-		} else {
-			cur.MarkHasLines()
-		}
-		e.syncFinalNewline(bs)
-		cur.MarkSaved()
-		bs.state.SetCursor(cursor)
+	ch, err := cur.ApplyReload(buffer.Transaction{BaseVersion: cur.Version(), Edits: reloadEdits(cur, b)}, b.HasTrailingNewline())
+	if err != nil {
+		e.showError(err)
 		return
 	}
-	if err := e.host.CloseBuffer(bs.id); err != nil {
-		e.log.Error("buffer/close を送れない", "err", err)
+	if ch.Before != ch.After {
+		cur.SetUndoCursor(cursor)
+		e.commitChange(bs, ch)
 	}
-	regs := *bs.state.Registers()
-	last := bs.state.LastSearch()
-	bs.buf = b
-	bs.history = nil
-	bs.decorations = map[string]decorationSet{}
-	bs.decoView = nil
-	bs.diagnostics = map[string][]ext.Diagnostic{}
-	bs.signs = map[string][]ext.Sign{}
-	e.initState(bs)
-	*bs.state.Registers() = regs
-	bs.state.SetLastSearch(last)
+	// 読み直したファイルが空なら、Vim と同じく行の無いバッファにする（書き出すと空のファイルになる）。
+	// 空の行 1 つ（"\n"）なら、テキストが同じでも行の無いバッファの記録を外す。
+	if b.NoLines() {
+		cur.MarkNoLines()
+	} else {
+		cur.MarkHasLines()
+	}
+	e.syncFinalNewline(bs)
+	cur.MarkSaved()
 	bs.state.SetCursor(cursor)
+}
+
+// reloadEdits は、バッファ cur の行を、読み直した b の行にする最小の編集を返す。
+// 先頭と末尾から同じ行を数えて除き、残った行の範囲を 1 つの編集で置き換える。行が同じなら空を返す。
+func reloadEdits(cur, b *buffer.Buffer) []buffer.Edit {
+	n, m := cur.LineCount(), b.LineCount()
+	p := 0
+	for p < n && p < m && cur.Line(p) == b.Line(p) {
+		p++
+	}
+	s := 0
+	for s < n-p && s < m-p && cur.Line(n-1-s) == b.Line(m-1-s) {
+		s++
+	}
+	if n == m && p == n {
+		return nil
+	}
+	lines := make([]string, 0, m-p-s)
+	for i := p; i < m-s; i++ {
+		lines = append(lines, b.Line(i))
+	}
+	text := strings.Join(lines, "\n")
+	endOf := func(i int) buffer.Position { return buffer.Position{Line: i, Byte: len(cur.Line(i))} }
+	switch {
+	case n-s > p && m-s > p:
+		// 両方に違う行がある: cur の p〜n-s-1 行を置き換える。
+		return []buffer.Edit{{Range: buffer.Range{Start: buffer.Position{Line: p}, End: endOf(n - s - 1)}, Text: text}}
+	case m-s > p && p < n:
+		// 行を足すだけ（p 行目の前）。
+		at := buffer.Position{Line: p}
+		return []buffer.Edit{{Range: buffer.Range{Start: at, End: at}, Text: text + "\n"}}
+	case m-s > p:
+		// 末尾に行を足すだけ。
+		at := endOf(n - 1)
+		return []buffer.Edit{{Range: buffer.Range{Start: at, End: at}, Text: "\n" + text}}
+	case n-s < n:
+		// 行を消すだけ（後ろに行が残る）。
+		return []buffer.Edit{{Range: buffer.Range{Start: buffer.Position{Line: p}, End: buffer.Position{Line: n - s}}}}
+	default:
+		// 末尾の行を消すだけ（p > 0。行は少なくとも 1 つ残る）。
+		return []buffer.Edit{{Range: buffer.Range{Start: endOf(p - 1), End: endOf(n - 1)}}}
+	}
 }

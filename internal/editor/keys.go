@@ -94,6 +94,16 @@ func (e *Editor) afterKey() {
 	} else {
 		e.stopKeyTimer()
 	}
+	if e.extRan {
+		// コマンドラインから実行した拡張機能のコマンドの後は、記録した外での変更の問いを出してよい時点である（askNotice）。
+		// ノーマルモードのキーに割り当てたコマンドの後は出さない。続けて打つ l や o を答えに取らないためである（PR #149 の再レビュー）。
+		// 出さなかった問い、打ちかけのキーや先読みのキーがあって出せなかった問いは、記録したまま次の安全な時点へ回る。
+		e.extRan = false
+		if e.fromCmdline {
+			e.askNotice()
+		}
+	}
+	e.fromCmdline = false
 }
 
 func (e *Editor) armKeyTimer() {
@@ -128,6 +138,10 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		_ = e.handleResult(bs, bs.state.Confirm(cf, yes)) // 失敗は handleResult が知らせる
 		return
 	}
+	if e.prompt != nil {
+		e.promptKey(k)
+		return
+	}
 	if e.activeChoice() != nil {
 		e.choiceKey(k)
 		return
@@ -139,6 +153,9 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		return
 	}
 	e.message = noMessage
+	// 利用者がコマンドラインで打ったキー（:acp.prompt ...<CR> の <CR>）かを覚える。afterKey が、拡張機能のコマンドの後に
+	// 記録した問いを出してよいかを決めるのに使う。キーマップの展開で入ったコマンドラインは、利用者のキーがノーマルモードなので数えない。
+	e.fromCmdline = e.cur.state.Mode() == command.ModeCommandLine
 	for _, k := range e.remap.feed(e.mapMode(), k) {
 		if !e.feedKey(k) {
 			e.remap.reset()
@@ -152,7 +169,7 @@ func (e *Editor) handleKey(k editcmd.Key) {
 // 確認の問いと choice/ask の問いを出している間の貼り付けは、答えにせずに捨てる。
 func (e *Editor) handlePaste(text string) {
 	e.popup = nil
-	if e.confirm != nil || e.activeChoice() != nil {
+	if e.asking() || e.activeChoice() != nil {
 		return
 	}
 	e.message = noMessage
@@ -228,14 +245,8 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 	// ex は誤りのコマンドで止まるので、動作はどれも誤りより左のコマンドのものである。
 	// 先に知らせると、:w|foo の E492 が :w の「書き込みました」に上書きされて見えない（Vim は :w の後に E492 を出す）。
 	// 動作が失敗したら、そこで止めてその誤りを知らせ、右のコマンドの誤りは知らせない（Vim は :w が失敗すると右を実行しない）。
-	actionFailed := false
-	for _, a := range res.Actions {
-		if err := e.doAction(bs, a); err != nil {
-			e.showError(err)
-			actionFailed = true
-			break
-		}
-	}
+	// :w が外での変更を見つけて問いを出したときも、失敗と同じく右のコマンドの問いと誤りは出さない（runActions）。
+	actionFailed := !e.runActions(bs, res.Actions)
 	switch {
 	case res.Confirm != nil && !actionFailed:
 		// Err は確認を求めた E493 なので知らせず、問いを出す（render）。

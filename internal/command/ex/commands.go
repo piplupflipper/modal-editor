@@ -74,7 +74,19 @@ func init() {
 		{name: "delete", min: 1, rng: rangeCurrent, inGlobal: true, run: runDelete},
 		{name: "output", min: 3, rng: rangeNone, run: runOutput},
 		{name: "outclose", min: 4, rng: rangeNone, run: runOutClose},
+		{name: "checktime", min: 6, rng: rangeNone, run: runCheckTime},
 	}
+}
+
+// runCheckTime は :checktime を実行する。外での変更の確認は、ファイルの状態を持つ呼び出し側が行う（Vim の省略形 :checkt と同じく 6 文字から）。
+//
+// req: FR-08
+func runCheckTime(c *execCtx, inv *invocation) error {
+	if err := noArg(inv); err != nil {
+		return err
+	}
+	c.actions = append(c.actions, Action{Kind: ActionCheckTime})
+	return nil
 }
 
 // runOutput は :output [名前] を実行する。出力の欄を開き、名前があればその欄に切り替える（基本設計 6.7）。

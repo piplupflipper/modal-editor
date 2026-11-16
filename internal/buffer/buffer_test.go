@@ -909,3 +909,35 @@ func TestReadFileNotExist(t *testing.T) {
 		t.Errorf("ReadFile() error = %v, want os.ErrNotExist", err)
 	}
 }
+
+// ApplyReload は、編集と末尾の改行の記録の変更を 1 つのアンドゥの単位にし、アンドゥとリドゥで記録も戻す。
+// 編集が無くても記録が変われば単位を作り、どちらも変わらなければ何もしない。
+func TestApplyReload(t *testing.T) {
+	b := New("a\nb\n")
+	ch, err := b.ApplyReload(Transaction{BaseVersion: 0, Edits: []Edit{{Range: rng(1, 0, 1, 1), Text: "B"}}}, false)
+	if err != nil || ch.After != 1 || b.Text() != "a\nB" || b.HasTrailingNewline() {
+		t.Fatalf("ApplyReload() = %+v, %v; text = %q, eol = %v", ch, err, b.Text(), b.HasTrailingNewline())
+	}
+	if _, ok := b.Undo(); !ok || b.Text() != "a\nb" || !b.HasTrailingNewline() {
+		t.Fatalf("Undo: text = %q, eol = %v", b.Text(), b.HasTrailingNewline())
+	}
+	if _, ok := b.Redo(); !ok || b.Text() != "a\nB" || b.HasTrailingNewline() {
+		t.Fatalf("Redo: text = %q, eol = %v", b.Text(), b.HasTrailingNewline())
+	}
+	// 記録だけが変わる。
+	ch, err = b.ApplyReload(Transaction{BaseVersion: b.Version()}, true)
+	if err != nil || ch.Before == ch.After || !b.HasTrailingNewline() {
+		t.Fatalf("記録だけの ApplyReload() = %+v, %v", ch, err)
+	}
+	if _, ok := b.Undo(); !ok || b.HasTrailingNewline() {
+		t.Fatalf("記録だけの Undo: eol = %v", b.HasTrailingNewline())
+	}
+	// どちらも変わらない。
+	v := b.Version()
+	if ch, err := b.ApplyReload(Transaction{BaseVersion: v}, false); err != nil || ch.Before != ch.After || b.Version() != v {
+		t.Fatalf("変わらない ApplyReload() = %+v, %v", ch, err)
+	}
+	if _, err := b.ApplyReload(Transaction{BaseVersion: v + 1}, true); !errors.Is(err, ErrVersionMismatch) {
+		t.Errorf("版の不一致: %v", err)
+	}
+}
