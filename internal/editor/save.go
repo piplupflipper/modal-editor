@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -58,6 +57,10 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 // 引数が無いか、バッファのファイルと同じなら保存の流れ（基本設計 6.7）を通す。
 // 名前の無いバッファに名前を付けて書くと、そのファイルのバッファにする（Vim と同じ）。
 // 別のファイルへ書くときは、保存の流れを通さずに書き出すだけにし、バッファは保存済みにしない。
+// バッファのファイルへ書くときは、! が無ければ、読み込んだ後にファイルが外で変わっていないかを先に確かめる（writeConflict）。
+// 変わっていれば errChangedOnDisk を返し、呼び出し側が書き込むかを問う。
+//
+// req: FR-08
 func (e *Editor) write(bs *bufferState, a ex.Action) error {
 	path := bs.path
 	if a.File != "" {
@@ -81,6 +84,11 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 		bs.fileType = e.detectFileType(path)
 		if err := e.host.UpdateBuffer(bs.id, bs.path, bs.fileType); err != nil {
 			e.log.Error("buffer/open を送り直せない", "err", err)
+		}
+	}
+	if !a.Force {
+		if err := writeConflict(bs); err != nil {
+			return err
 		}
 	}
 	return e.save(bs, path, false)
@@ -121,6 +129,9 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 	if err := bs.buf.WriteFile(path); err != nil {
 		return fmt.Errorf("E212: %s を書けません: %w", path, err)
 	}
+	if st, err := statFile(path); err == nil {
+		bs.setDisk(st)
+	}
 	bs.buf.MarkSaved()
 	if err := e.host.DidSave(ext.BufferDidSaveParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Path: path}); err != nil {
 		e.log.Error("buffer/didSave を送れない", "err", err)
@@ -142,15 +153,7 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 	if bs.path == "" {
 		return errNoFileName
 	}
-	b, err := buffer.ReadFile(bs.path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		b = buffer.New("")
-	case err != nil:
-		return fmt.Errorf("%s を読めません: %w", filepath.Base(bs.path), err)
-	}
-	e.reload(bs, b)
-	return nil
+	return e.reloadFile(bs)
 }
 
 // reload は、バッファ bs の内容を、読み直した b の内容にする。バッファの番号は変えない（Vim の :e と同じ）。

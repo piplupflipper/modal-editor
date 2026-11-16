@@ -288,7 +288,15 @@ func (e *Editor) bufferSaveRequest(ev *exthost.BufferSaveRequest) {
 		_ = ev.ReplyError(invalidParams("buffer %d has no file name", bs.id))
 		return
 	}
-	err := e.save(bs, bs.path, ev.Params.SkipHooks)
+	// 外で変わったファイルへは書き出さない。拡張機能の応答を待たせたまま利用者に問うと、問いの間に取っておくイベントが溜まるので、
+	// 問わずに断り、利用者が :w か :w! で決める（基本設計 6.7）。
+	err := writeConflict(bs)
+	if errors.Is(err, errChangedOnDisk) {
+		err = fmt.Errorf("警告: 読み込んだ後にファイル \"%s\" が変更されているので、拡張機能の保存を断りました (:w! で上書きします)", e.shortName(bs))
+	}
+	if err == nil {
+		err = e.save(bs, bs.path, ev.Params.SkipHooks)
+	}
 	if err != nil {
 		e.showError(err)
 	}

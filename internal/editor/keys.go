@@ -128,6 +128,10 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		_ = e.handleResult(bs, bs.state.Confirm(cf, yes)) // 失敗は handleResult が知らせる
 		return
 	}
+	if e.prompt != nil {
+		e.promptKey(k)
+		return
+	}
 	if e.activeChoice() != nil {
 		e.choiceKey(k)
 		return
@@ -152,7 +156,7 @@ func (e *Editor) handleKey(k editcmd.Key) {
 // 確認の問いと choice/ask の問いを出している間の貼り付けは、答えにせずに捨てる。
 func (e *Editor) handlePaste(text string) {
 	e.popup = nil
-	if e.confirm != nil || e.activeChoice() != nil {
+	if e.asking() || e.activeChoice() != nil {
 		return
 	}
 	e.message = noMessage
@@ -228,14 +232,8 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 	// ex は誤りのコマンドで止まるので、動作はどれも誤りより左のコマンドのものである。
 	// 先に知らせると、:w|foo の E492 が :w の「書き込みました」に上書きされて見えない（Vim は :w の後に E492 を出す）。
 	// 動作が失敗したら、そこで止めてその誤りを知らせ、右のコマンドの誤りは知らせない（Vim は :w が失敗すると右を実行しない）。
-	actionFailed := false
-	for _, a := range res.Actions {
-		if err := e.doAction(bs, a); err != nil {
-			e.showError(err)
-			actionFailed = true
-			break
-		}
-	}
+	// :w が外での変更を見つけて問いを出したときも、失敗と同じく右のコマンドの問いと誤りは出さない（runActions）。
+	actionFailed := !e.runActions(bs, res.Actions)
 	switch {
 	case res.Confirm != nil && !actionFailed:
 		// Err は確認を求めた E493 なので知らせず、問いを出す（render）。

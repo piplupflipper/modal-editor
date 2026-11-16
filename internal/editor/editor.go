@@ -125,6 +125,12 @@ type Config struct {
 	// Problems は、呼び出し側が設定ファイルと宣言ファイルを読んだときの誤り（位置と内容）である（基本設計 8 章）。
 	// New は、すべてをログに記録し、New 自身が見つけた設定の誤りより先に並べて、最初の 1 件を起動後のメッセージで知らせる。
 	Problems []error
+	// CheckInterval は、開いているバッファのファイルが外で変わっていないかを確かめる間隔である（基本設計 6.7）。
+	// 0 なら DefaultCheckInterval、負なら確かめない（:w の前の確認は、この値によらず行う）。
+	CheckInterval time.Duration
+	// AutoRead は、未変更のバッファのファイルが外で変わったときに、問わずに読み直すかどうか（Vim の 'autoread'）である。
+	// nil なら既定の有効（true）である。Vim の既定は無効だが、エージェントがディスクへ直接書いた変更をすぐ画面へ出すために有効にした（Neovim の既定と同じ）。
+	AutoRead *bool
 }
 
 // Editor は、イベントループと、編集の状態の全体である。New で作り、Run で動かし、Close で終える。
@@ -187,7 +193,9 @@ type Editor struct {
 	// confirm は、表示中の Ex の確認の問いと、問いを出したバッファである。
 	confirm   *ex.Confirm
 	confirmBS *bufferState
-	outputs   map[outputKey][]string
+	// prompt は、表示中の本体の問い（外で変わったファイルへの :w の確認、W11〜W13）である。
+	prompt  *prompt
+	outputs map[outputKey][]string
 	// outputOrder は、出力の欄を、最初に書き足された順に並べたものである（<C-w>P で切り替える順）。
 	outputOrder []outputKey
 	// outputLast は、最後に書き足された欄である。
@@ -219,6 +227,12 @@ type bufferState struct {
 	// decoGen は、拡張機能ごとの一覧の世代の番号である。一覧を消すたびに進める（removeDecorations）。
 	// バッファを読み込み直したときは進めない。読み込み直す前の表は、decoBuilt.buf で見分ける。
 	decoGen map[string]uint64
+
+	// disk は、バッファとファイルの内容が最後に一致した時点（読み込み、書き出し、読み直し）のファイルの状態である。
+	// :w の前に、外で変わっていないかをこれと比べる（Vim の b_mtime_read に当たる）。
+	disk fileStamp
+	// seen は、外での変更を最後に確かめた時点のファイルの状態である。同じ変更を何度も知らせないために使う（Vim の b_mtime に当たる）。
+	seen fileStamp
 }
 
 // New は、エディタを作る。拡張機能は起動しない（FR-14、NFR-04）。バッファは Open で開き、開かなければ Run が空のバッファを作る。
@@ -422,12 +436,18 @@ func (e *Editor) Run(ctx context.Context) error {
 	e.stop = make(chan struct{})
 	defer close(e.stop)
 	go e.forwardInput()
+	var checkC <-chan time.Time
+	if d := e.checkInterval(); d > 0 {
+		t := time.NewTicker(d)
+		defer t.Stop()
+		checkC = t.C
+	}
 	e.render()
 	for !e.quit {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if len(e.held) > 0 && e.confirm == nil {
+		if len(e.held) > 0 && !e.asking() {
 			ev := e.held[0]
 			e.held = e.held[1:]
 			e.handleEvent(ev)
@@ -452,7 +472,7 @@ func (e *Editor) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if e.confirm != nil {
+			if e.asking() {
 				// 確認の問いに答えるまでは、Vim の問いと同じく他の処理をしない。問いを出したバッファと範囲を変えないためである。
 				e.hold(ev)
 			} else {
@@ -465,6 +485,10 @@ func (e *Editor) Run(ctx context.Context) error {
 			f()
 		case r := <-e.decoDone:
 			e.decorationsBuilt(r)
+		case <-checkC:
+			if !e.checkFiles() {
+				continue // 何も変わらなければ描き直さない
+			}
 		}
 		e.renderIdle()
 	}
@@ -640,6 +664,8 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 			return bs, nil
 		}
 	}
+	// 状態は読む前に得る。読む間に書き換えられても、次の確認で変更として見つかる（読んだ後に得ると、その変更を見逃す）。
+	st, _ := statFile(abs)
 	b, err := buffer.ReadFile(abs)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -652,6 +678,7 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	b.SetFixEndOfLine(e.fixEOL)
 	prev := e.cur
 	bs := e.newBuffer(b, abs, e.detectFileType(abs))
+	bs.setDisk(st)
 	if !focus && prev != nil {
 		e.cur = prev
 	}

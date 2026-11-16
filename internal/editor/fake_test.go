@@ -125,6 +125,15 @@ func runFakeExt(mode string) int {
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("v%d:%q", b.Version(), b.Text()))
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.save は、カーソルのあるバッファを buffer/save（skipHooks）で保存させ、結果を表示する。
+		s.Command("fake.save", func(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			id := b.ID()
+			go func() {
+				r, err := s.SaveBuffer(hostCtx, ext.BufferSaveParams{Buffer: id, SkipHooks: true})
+				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("saved=%v err=%v", r.Saved, err))
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		// fake.echo は、受け取った command/execute の args をそのまま表示する。
 		s.Command("fake.echo", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("args=%s", p.Args))
@@ -246,7 +255,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.dump", `\d`), contrib("fake.ask", `\a`), contrib("fake.state", `\s`),
 					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
-					contrib("fake.endofline", `\o`), contrib("fake.echo", ""),
+					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.save", `\w`),
 				},
 			},
 		},
