@@ -504,6 +504,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.sent = b.Version()
 	bs.state = command.New(b, input.NewParser(e.keymap))
 	bs.state.Columns = e.renderer.Columns()
+	bs.state.Viewport = viewport{r: e.renderer}
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Interrupted = e.interrupt.Load
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{

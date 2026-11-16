@@ -52,6 +52,14 @@ var (
 		{keys: "%", id: "match-pair"},
 		{keys: "{", id: "paragraph-prev"},
 		{keys: "}", id: "paragraph-next"},
+		// 矢印キーと Home、End は、Vim 9.1 の既定（'whichwrap' に < > が無い）と同じく h、j、k、l、0、$ と同じ働きにする。
+		// 修飾キーの付いたもの（<S-Right> の w、<C-Home> の gg など）は登録しない。
+		{keys: "<Left>", id: "left"},
+		{keys: "<Down>", id: "down"},
+		{keys: "<Up>", id: "up"},
+		{keys: "<Right>", id: "right"},
+		{keys: "<Home>", id: "line-start"},
+		{keys: "<End>", id: "line-end"},
 	}
 
 	builtinOperators = []spec{
@@ -139,6 +147,10 @@ var (
 		{keys: "V", id: "visual-line", modes: MapNormal | MapVisual},
 		// ビジュアルモードの o は、カーソルを選択の反対の端へ移す。
 		{keys: "o", id: "visual-swap", modes: MapVisual},
+		// ページ単位のスクロール（Vim の <C-f> と <C-b>）。画面の表示領域を動かすので、モーションではなく操作にする。
+		// Vim と同じく、オペレーターの後では使えない（d<PageDown> は誤りになる）。
+		{keys: "<PageDown>", id: "page-down", modes: MapNormal | MapVisual},
+		{keys: "<PageUp>", id: "page-up", modes: MapNormal | MapVisual},
 	}
 )
 

@@ -118,6 +118,9 @@ type State struct {
 	// マクロの再生（999999999@: など）は、キーやコマンドラインを 1 つ実行するたびにこれを呼び、true なら ErrInterrupted で止める。
 	// 再生は Feed の中で同期に進むので、呼び出し側は別の goroutine で立てた印（atomic.Bool など）を読む関数を渡す。
 	Interrupted func() bool
+	// Viewport は、画面のバッファの表示領域である。ページ単位のスクロール（<PageUp>、<PageDown>）が読み書きする。
+	// nil なら、ページ単位のスクロールは失敗する。
+	Viewport Viewport
 
 	buf    *buffer.Buffer
 	cursor buffer.Position
