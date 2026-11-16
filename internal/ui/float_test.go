@@ -33,3 +33,19 @@ func TestGoldenMessageLines(t *testing.T) {
 		{"画面の半分を超える", Frame{Text: b, Message: Message{Text: strings.Repeat("m\n", 5)}}},
 	}))
 }
+
+// HitEnter なら、改行を含むメッセージの下の最後の行に hit-enter の問いを出し、カーソルを問いの末尾に置く。
+// 問いの行は画面の半分に数えない。1 行のメッセージには問いを出さない。幅に収まらない問いは右の端で切り、カーソルは最後の列に置く（#135）。
+func TestGoldenHitEnter(t *testing.T) {
+	b := buffer.New("x\n")
+	r := &Renderer{Width: 56, Height: 6, Theme: testTheme()}
+	golden(t, "hitenter", renderSteps(r, []step{
+		{"2 行", Frame{Text: b, HitEnter: true, Message: Message{Text: "first\nsecond\n", Level: MessageError}}},
+		{"画面の半分を超える", Frame{Text: b, HitEnter: true, Message: Message{Text: strings.Repeat("m\n", 5)}}},
+		{"1 行には出さない", Frame{Text: b, HitEnter: true, Message: Message{Text: "one\n"}}},
+	}))
+	narrow := &Renderer{Width: 16, Height: 2, Theme: testTheme()}
+	golden(t, "hitenter-narrow", renderSteps(narrow, []step{
+		{"幅と高さに収まらない", Frame{Text: b, HitEnter: true, Message: Message{Text: "first\nsecond\n"}}},
+	}))
+}

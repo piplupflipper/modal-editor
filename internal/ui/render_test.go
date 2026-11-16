@@ -373,6 +373,70 @@ func TestScrollVertical(t *testing.T) {
 	}
 }
 
+// TestScrollFitHeight は、表示領域の行数が変わったとき（出力の欄の開け閉め、端末の大きさの変更）の最初の行を、
+// 端末の Vim 9.1 で測った値と比べる（#135）。
+// 測り方: tmux の 60 列の端末で、Vim（'laststatus' は 2）とこのエディタに同じファイルを開き、同じ操作の後の画面の 1 行目を読んだ。
+// 出力の欄は、Vim では :copen 8 と :wincmd p、このエディタでは :output で開いた（高さ 20 の画面で、どちらも表示領域が 9 行になる）。
+// zt と zz を使う 2 件は、'laststatus' が 1 の Vim で測り、このエディタでは SetScroll で同じ最初の行にした。
+func TestScrollFitHeight(t *testing.T) {
+	lines := func(n int) *buffer.Buffer {
+		var s strings.Builder
+		for i := 1; i <= n; i++ {
+			fmt.Fprintf(&s, "line %d\n", i)
+		}
+		return buffer.New(s.String())
+	}
+	type op struct {
+		height  int  // 画面の行数
+		output  bool // 出力の欄を開いているか
+		wantTop int  // 1 から数えた最初の行
+		cursor  int  // 0 でなければ、同じ描画の中でカーソルをこの行（1 から数える）へ動かす
+	}
+	tests := []struct {
+		name   string
+		text   *buffer.Buffer
+		height int // 最初の画面の行数
+		cursor int // 1 から数えたカーソルの行（Vim の nG）
+		top    int // 0 でなければ、最初の描画の後に SetScroll で置く最初の行（1 から数える）
+		ops    []op
+	}{
+		// PR #133 のレビューの例。閉じると全体が出る（閉じても 6 行目からのままにしない）。
+		{"14 行で G、欄の開け閉め", lines(14), 20, 14, 0, []op{{20, true, 8, 0}, {20, false, 1, 0}}},
+		// G と :output を続けて打ち、1 回の描画にまとまっても、G の後に開いたのと同じ位置にする。
+		{"14 行で G と開くのが 1 回の描画", lines(14), 20, 1, 0, []op{{20, true, 8, 14}, {20, false, 1, 0}}},
+		{"100 行で G、欄の開け閉め", lines(100), 20, 100, 0, []op{{20, true, 92, 0}, {20, false, 83, 0}}},
+		// Vim は G の後の 30G で 22 行目を 1 行目に置いた。中ほどに置く位置が Vim と 1 行ずれることがある（scroll の doc）ので、SetScroll で揃える。
+		{"100 行で 30G、端末の大きさの変更", lines(100), 20, 30, 22, []op{{30, false, 17, 0}, {12, false, 26, 0}, {20, false, 22, 0}}},
+		// 最終行を表示領域の 1 行目に置いた後（Vim の zt）は、欄を閉じても "~" の行が残る。
+		{"最終行が 1 行目", lines(100), 21, 100, 100, []op{{21, true, 100, 0}, {21, false, 100, 0}}},
+		// 25 行で 25Gzz の後に大きくすると、"~" の行が残る位置に置く（全体を出すように詰めない）。
+		{"25 行で zz の後に大きくする", lines(25), 21, 25, 16, []op{{31, false, 11, 0}}},
+	}
+	for _, tt := range tests {
+		r := &Renderer{Width: 60, Height: tt.height}
+		f := &Frame{Text: tt.text, Cursor: pos(tt.cursor-1, 0)}
+		r.Render(f)
+		if tt.top > 0 {
+			r.SetScroll(tt.top-1, 0)
+			r.Render(f)
+		}
+		for i, o := range tt.ops {
+			r.Height = o.height
+			f.Output = nil
+			if o.output {
+				f.Output = &Output{Title: "acp", Bottom: -1}
+			}
+			if o.cursor > 0 {
+				f.Cursor = pos(o.cursor-1, 0)
+			}
+			r.Render(f)
+			if got := r.Top() + 1; got != o.wantTop {
+				t.Errorf("%s: %d 番目の操作の後の最初の行 = %d, want %d", tt.name, i+1, got, o.wantTop)
+			}
+		}
+	}
+}
+
 // TestScrollHorizontal は、横のスクロールの位置を、端末の Vim 9.1（'nowrap'）で測った値と比べる。
 // 測り方: 300 文字の行を幅 w の端末で開き、0 の後に n|（または 100| の後に n|）を打ち、winsaveview().leftcol を読んだ。
 func TestScrollHorizontal(t *testing.T) {
