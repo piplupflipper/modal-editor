@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -135,3 +136,74 @@ func (r *Renderer) drawMessageLines(g *Grid, lines []string, a Attr, prompt stri
 // HitEnterPrompt は、改行を含むメッセージの下に出す、続けるためのキーを促す問いである（Frame.HitEnter）。
 // Vim 9.1 の日本語のメッセージ（"Press ENTER or type command to continue"）に、ASCII の語の前後の空白を足したもの。
 const HitEnterPrompt = "続けるには ENTER を押すかコマンドを入力してください"
+
+// ChoicePrompt は、選択肢の問いの最後の行に出す、選び方の案内である（Frame.Choice）。n は番号で選べる選択肢の数である。
+// HitEnterPrompt と同じく、ASCII の語の前後に空白を置く。狭い端末でも <Esc> まで見えるように、文にせず短くする（40 列に収まる）。
+func ChoicePrompt(n int) string {
+	switch n {
+	case 0:
+		return "<Esc> で取り消し"
+	case 1:
+		return "1 で選ぶか <Esc> で取り消し"
+	}
+	return fmt.Sprintf("1〜%d で選ぶか <Esc> で取り消し", n)
+}
+
+// wrapText は、s を幅 width の行に折り返した文字列を返す（wrapLine の範囲を文字列にしたもの）。
+func (r *Renderer) wrapText(s string, width int) []string {
+	rows := wrapLine(0, s, max(width, 1), tabStopOr(r.TabStop))
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		out[i] = s[row.start:row.end]
+	}
+	return out
+}
+
+// drawChoice は、選択肢の問いを、画面の下から上へ広げて描き、カーソルの位置を返す（基本設計 6.7）。
+// 最後の行に選び方の案内（ChoicePrompt）を描き、その上に問いの文の行と、選択肢を 1 つずつ "[番号] ラベル" の行で描く。
+// 長い行は折り返す。改行を含むメッセージ（drawMessageLines）と違って画面の半分で止めず、案内の行を除く画面の全体まで広げる。
+// 収まらなければ、選択肢を残すために問いの文の行を先に減らし（最低 1 行）、それでも収まらなければ選択肢の行を減らす。
+// 減らした側の最後の行には、省いた行数を書く。カーソルは案内の末尾（幅に収まらなければ最後の列）に置く。
+func (r *Renderer) drawChoice(g *Grid, theme Theme, c *Choice) Cursor {
+	a := theme.attr(StyleMessageInfo)
+	var title, items []string
+	for _, l := range textLines(c.Title) {
+		title = append(title, r.wrapText(l, r.Width)...)
+	}
+	for i, l := range c.Labels {
+		// ラベルの改行は空白にして、選択肢を 1 つの行（折り返しを除く）に保つ。
+		l = strings.Join(strings.Fields(l), " ")
+		items = append(items, r.wrapText(fmt.Sprintf("[%d] %s", i+1, l), r.Width)...)
+	}
+	if c.Omitted > 0 {
+		items = append(items, r.wrapText(fmt.Sprintf("（他の %d 件は番号が無いので選べません）", c.Omitted), r.Width)...)
+	}
+	avail := max(r.Height-1, 0)
+	tk := min(len(title), max(avail-len(items), min(avail, 1)))
+	if 0 < tk && tk < len(title) {
+		title = append(title[:tk-1:tk-1], fmt.Sprintf("（問いの文の残り %d 行）", len(title)-(tk-1)))
+	}
+	ik := min(len(items), avail-tk)
+	if ik < len(items) {
+		if ik > 0 {
+			items = append(items[:ik-1:ik-1], fmt.Sprintf("（残り %d 行）", len(items)-(ik-1)))
+		} else {
+			items = nil
+		}
+	}
+	lines := slices.Concat(title[:tk], items)
+	top := r.Height - 1 - len(lines)
+	blankRow := func(row int) {
+		for col := range r.Width {
+			g.set(row, col, blank(Attr{}))
+		}
+	}
+	for i, l := range lines {
+		blankRow(top + i)
+		r.drawText(g, top+i, 0, r.Width, l, a)
+	}
+	row := r.Height - 1
+	blankRow(row)
+	end := r.drawText(g, row, 0, r.Width, ChoicePrompt(len(c.Labels)), a)
+	return Cursor{Row: row, Col: min(end, max(r.Width-1, 0)), Shape: CursorBlock, Visible: r.Width > 0}
+}

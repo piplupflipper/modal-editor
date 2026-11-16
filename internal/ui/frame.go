@@ -97,6 +97,16 @@ type Message struct {
 	Level MessageLevel
 }
 
+// Choice は、選択肢の問い（choice/ask）の表示である（Frame.Choice）。
+type Choice struct {
+	// Title は、問いの文である。改行を含んでよい。
+	Title string
+	// Labels は、選択肢の表示である。i 番目を "[i+1] ラベル" の形で 1 行に出す。番号のキーで選べるものだけを入れる。
+	Labels []string
+	// Omitted は、番号のキーが足りずに Labels に入れなかった選択肢の数である。0 より大きければ、その旨を選択肢の後の行に書く。
+	Omitted int
+}
+
 // SignKind は、行の印の種類である。値は sign/set の kind と同じ文字列である（基本設計 6.7）。
 type SignKind string
 
@@ -154,6 +164,10 @@ type Frame struct {
 	// HitEnter が true で、Message が改行を含むなら、メッセージの下の最後の行に、続けるためのキーを促す問い（HitEnterPrompt）を出し、
 	// カーソルを問いの末尾に置く（Vim の hit-enter の問い）。キーの扱いは internal/editor が行う。
 	HitEnter bool
+	// Choice は、出している選択肢の問い（choice/ask）である。nil なら問いを出していない。
+	// nil でなければ、Message とコマンドラインの代わりに、画面の下から上へ問いの文と選択肢を 1 つずつ行に分けて描き、
+	// 最後の行に選び方の案内（ChoicePrompt）を出してカーソルをその末尾に置く。キーの扱いは internal/editor が行う。
+	Choice *Choice
 	// Decorations は、構文の色の範囲を行ごとに分けたもの（NewDecorations で作る）である。nil なら色を付けない。
 	Decorations *Decorations
 	// Diagnostics は、診断の範囲の一覧である。構文の色の上に重ねる。範囲の始まりの行には、印の列に診断の印も出す。

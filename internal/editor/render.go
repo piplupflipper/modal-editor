@@ -56,7 +56,7 @@ func (e *Editor) frame() *ui.Frame {
 	case e.confirm != nil:
 		f.Message = ui.Message{Text: e.confirm.Prompt, Level: ui.MessageWarning}
 	case e.activeChoice() != nil:
-		f.Message = ui.Message{Text: choicePrompt(e.choices[0]), Level: ui.MessageInfo}
+		f.Choice = uiChoice(e.choices[0])
 	case e.popup != nil:
 		f.Popup = e.popup.text
 	case f.Message.Text == "" && st.Mode() == command.ModeNormal && !st.Pending():

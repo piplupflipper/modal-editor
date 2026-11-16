@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/ext"
@@ -337,16 +336,16 @@ func (e *Editor) choiceKey(k editcmd.Key) {
 	e.choices = e.choices[1:]
 }
 
-// choicePrompt は、問いをコマンドラインの行に出す文にする。
-func choicePrompt(c *exthost.ChoiceAskRequest) string {
-	var sb strings.Builder
-	sb.WriteString(c.Params.Title)
-	for i, ch := range c.Params.Choices {
-		if i >= 9 {
-			break
-		}
-		fmt.Fprintf(&sb, " [%d] %s", i+1, ch.Label)
+// maxChoiceKeys は、choice/ask の選択肢を選べる番号のキーの数（1〜9）である。
+const maxChoiceKeys = 9
+
+// uiChoice は、問いを描画の入力にする。番号のキーで選べる最初の 9 つを選択肢として出し、残りは数だけを出す（#144）。
+func uiChoice(c *exthost.ChoiceAskRequest) *ui.Choice {
+	chs := c.Params.Choices
+	n := min(len(chs), maxChoiceKeys)
+	labels := make([]string, n)
+	for i, ch := range chs[:n] {
+		labels[i] = ch.Label
 	}
-	sb.WriteString(" (<Esc> で取り消し)")
-	return sb.String()
+	return &ui.Choice{Title: c.Params.Title, Labels: labels, Omitted: len(chs) - n}
 }
