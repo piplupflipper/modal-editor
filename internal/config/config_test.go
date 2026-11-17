@@ -122,6 +122,41 @@ func TestParseFixEndOfLine(t *testing.T) {
 	}{{1, 18, "fixendofline は true か false にする"}})
 }
 
+// registers の historySize と maxEntryBytes は 1 以上の整数で、0 以下は誤りとして既定値（0）のままにする。
+// deleteToHistory は、項目が無いときの nil（既定の有効）と、書いた値を区別する。
+//
+// req: FR-52, FR-53
+func TestParseRegisters(t *testing.T) {
+	cases := []struct {
+		src            string
+		size, maxBytes int
+		del            *bool
+		errs           int
+	}{
+		{`{}`, 0, 0, nil, 0},
+		{`{"registers": {"historySize": 20, "maxEntryBytes": 4096, "deleteToHistory": false}}`, 20, 4096, new(false), 0},
+		{`{"registers": {"deleteToHistory": true}}`, 0, 0, new(true), 0},
+		{`{"registers": {"historySize": 0, "maxEntryBytes": -1, "deleteToHistory": "no"}}`, 0, 0, nil, 3},
+		{`{"registers": {"historySize": 1.5, "clipboards": "x"}}`, 0, 0, nil, 2},
+		{`{"registers": {"historySize": 10000}}`, 10000, 0, nil, 0},
+		{`{"registers": {"historySize": 10001}}`, 0, 0, nil, 1},
+		{`{"registers": []}`, 0, 0, nil, 1},
+	}
+	for _, c := range cases {
+		cfg, errs := Parse("c", []byte(c.src))
+		if len(errs) != c.errs || cfg.RegisterHistorySize != c.size || cfg.RegisterMaxEntryBytes != c.maxBytes ||
+			!reflect.DeepEqual(cfg.DeleteToHistory, c.del) {
+			t.Errorf("%s: historySize = %d, maxEntryBytes = %d, deleteToHistory = %v, errs = %v",
+				c.src, cfg.RegisterHistorySize, cfg.RegisterMaxEntryBytes, cfg.DeleteToHistory, errs)
+		}
+	}
+	_, errs := Parse("c", []byte(`{"registers": {"historySize": 0}}`))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{{1, 31, "registers.historySize は 1 以上"}})
+}
+
 // autoread と checkIntervalMs は、項目が無いときの nil（editor の既定値）と、書いた値を区別する（#143）。
 // checkIntervalMs の 0 は「定期的に確かめない」である。
 func TestParseExternalChange(t *testing.T) {

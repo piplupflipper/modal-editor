@@ -10,13 +10,14 @@ import (
 //
 // 期待値は、Vim 9.1（vim -Nu NONE -i NONE）を tmux 3.4（TERM=xterm-256color）の中で起動し、
 // before のキーを送ってから paste を tmux の paste-buffer -p（bracketed paste）で貼り、after のキーを送った後の、
-// バッファの内容、カーソル（行:バイト。0 から数える）、レジスター（"、-、1）である（2026-11-16）。
+// バッファの内容、カーソル（行:バイト。0 から数える）、レジスター（"）である（2026-11-16）。
 // 同じ手順で本体の実行ファイルにも貼り、内容とカーソルが一致することを確かめた（PR の説明に方法と件数を書いた）。
-// レジスターは、空の状態から始めた値である。"" は確かめない。
+// レジスターは、空の状態から始めた値で、無名のレジスター（履歴の先頭。FR-51）と比べる。"" は確かめない。
+// ビジュアルモードの貼り付けは、FR-51 で置き換えたテキストを履歴に積まないので、Vim と違って空のまま（"）である。
 type pasteCase struct {
 	text, before, paste, after string
 	want, cursor               string
-	unnamed, rMinus, r1        string
+	unnamed                    string
 }
 
 var pasteCases = []pasteCase{
@@ -31,32 +32,32 @@ var pasteCases = []pasteCase{
 	{text: "あ|いう", paste: "えお", want: "あいえおう", cursor: "0:9"},
 	{text: "a|bc", paste: "a\tb", want: "aba\tbc", cursor: "0:4"},
 	// 回数とオペレーターを打ちかけていれば、それも貼り付けも捨てる。
-	{text: "|abc\ndef", before: "2", paste: "XY", after: "x", want: "bc\ndef", cursor: "0:0", unnamed: "v:a", rMinus: "v:a"},
-	{text: "|abc\ndef", before: "d", paste: "XY", after: "x", want: "bc\ndef", cursor: "0:0", unnamed: "v:a", rMinus: "v:a"},
+	{text: "|abc\ndef", before: "2", paste: "XY", after: "x", want: "bc\ndef", cursor: "0:0", unnamed: "v:a"},
+	{text: "|abc\ndef", before: "d", paste: "XY", after: "x", want: "bc\ndef", cursor: "0:0", unnamed: "v:a"},
 	// アンドゥの 1 単位で、ドットリピートは a でテキストを入れる。
 	{text: "a|bc\ndef", paste: "X\nY", after: "u", want: "abc\ndef", cursor: "0:2"},
 	{text: "a|bc\ndefg", paste: "XY", after: "j.", want: "abXYc\ndefgXY", cursor: "1:5"},
 	{text: "|abc\ndefg", paste: "XY", after: "jl.", want: "XYabc\ndefXYg", cursor: "1:4"},
 	{text: "a|bc\ndefg", paste: "XY", after: "j0.", want: "abXYc\ndXYefg", cursor: "1:2"},
 
-	// ビジュアルモード。選択を消して、消した位置から入れる。
-	{text: "a|bcd\ndef", before: "vl", paste: "Z", want: "aZd\ndef", cursor: "0:1", unnamed: "v:bc", rMinus: "v:bc"},
-	{text: "ab|cd\ndef", before: "vl", paste: "Z", want: "abZ\ndef", cursor: "0:2", unnamed: "v:cd", rMinus: "v:cd"},
-	{text: "|abcd\ndef", before: "vl", paste: "Z", want: "Zcd\ndef", cursor: "0:0", unnamed: "v:ab", rMinus: "v:ab"},
-	{text: "ab|cd\ndef", before: "vh", paste: "Z", want: "aZd\ndef", cursor: "0:1", unnamed: "v:bc", rMinus: "v:bc"},
-	{text: "a|bcd\ndef\nghi", before: "vj", paste: "Z", want: "aZf\nghi", cursor: "0:1", unnamed: "v:bcd\nde", r1: "v:bcd\nde"},
-	{text: "abcd\ne|fgh", before: "vkl", paste: "Z", want: "abZgh", cursor: "0:2", unnamed: "v:cd\nef", r1: "v:cd\nef"},
-	{text: "|abc\ndef", before: "v$", paste: "Z", want: "Zdef", cursor: "0:0", unnamed: "v:abc\n", rMinus: "v:abc\n", r1: "v:abc\n"},
-	{text: "a|bcd\ndef", before: "vl", paste: "X\nY", want: "aX\nYd\ndef", cursor: "1:0", unnamed: "v:bc", rMinus: "v:bc"},
-	{text: "a|bcd\ndef", before: "vl", paste: "Z", after: "u", want: "abcd\ndef", cursor: "0:1", unnamed: "v:bc", rMinus: "v:bc"},
-	{text: "a|bcd\ndefg", before: "vl", paste: "Z", after: "j.", want: "aZd\ndeZfg", cursor: "1:2", unnamed: "v:bc", rMinus: "v:bc"},
-	{text: "abc\n|def\nghi", before: "V", paste: "Z\n", want: "abc\nZ\nghi", cursor: "2:0", unnamed: "V:def\n", r1: "V:def\n"},
-	{text: "abc\ndef\n|ghi", before: "V", paste: "Z\n", want: "abc\ndef\nZ\n", cursor: "3:0", unnamed: "V:ghi\n", r1: "V:ghi\n"},
-	{text: "abc\n|def\nghi", before: "V", paste: "Z", want: "abc\nZghi", cursor: "1:0", unnamed: "V:def\n", r1: "V:def\n"},
-	{text: "|abc\ndef", before: "Vj", paste: "Z", want: "Z", cursor: "0:0", unnamed: "V:abc\ndef\n", r1: "V:abc\ndef\n"},
-	{text: "abc\n|def\nghi", before: "Vj", paste: "Z", want: "abc\nZ", cursor: "1:0", unnamed: "V:def\nghi\n", r1: "V:def\nghi\n"},
-	{text: "abc\n\n|ghi", before: "V", paste: "Z", want: "abc\nZ", cursor: "1:0", unnamed: "V:ghi\n", r1: "V:ghi\n"},
-	{text: "abc\n|def\nghi", before: "V", paste: "Z\n", after: "u", want: "abc\ndef\nghi", cursor: "1:0", unnamed: "V:def\n", r1: "V:def\n"},
+	// ビジュアルモード。選択を消して、消した位置から入れる。消したテキストは履歴に積まない（FR-51。Vim は "-か "1 に入れる）。
+	{text: "a|bcd\ndef", before: "vl", paste: "Z", want: "aZd\ndef", cursor: "0:1"},
+	{text: "ab|cd\ndef", before: "vl", paste: "Z", want: "abZ\ndef", cursor: "0:2"},
+	{text: "|abcd\ndef", before: "vl", paste: "Z", want: "Zcd\ndef", cursor: "0:0"},
+	{text: "ab|cd\ndef", before: "vh", paste: "Z", want: "aZd\ndef", cursor: "0:1"},
+	{text: "a|bcd\ndef\nghi", before: "vj", paste: "Z", want: "aZf\nghi", cursor: "0:1"},
+	{text: "abcd\ne|fgh", before: "vkl", paste: "Z", want: "abZgh", cursor: "0:2"},
+	{text: "|abc\ndef", before: "v$", paste: "Z", want: "Zdef", cursor: "0:0"},
+	{text: "a|bcd\ndef", before: "vl", paste: "X\nY", want: "aX\nYd\ndef", cursor: "1:0"},
+	{text: "a|bcd\ndef", before: "vl", paste: "Z", after: "u", want: "abcd\ndef", cursor: "0:1"},
+	{text: "a|bcd\ndefg", before: "vl", paste: "Z", after: "j.", want: "aZd\ndeZfg", cursor: "1:2"},
+	{text: "abc\n|def\nghi", before: "V", paste: "Z\n", want: "abc\nZ\nghi", cursor: "2:0"},
+	{text: "abc\ndef\n|ghi", before: "V", paste: "Z\n", want: "abc\ndef\nZ\n", cursor: "3:0"},
+	{text: "abc\n|def\nghi", before: "V", paste: "Z", want: "abc\nZghi", cursor: "1:0"},
+	{text: "|abc\ndef", before: "Vj", paste: "Z", want: "Z", cursor: "0:0"},
+	{text: "abc\n|def\nghi", before: "Vj", paste: "Z", want: "abc\nZ", cursor: "1:0"},
+	{text: "abc\n\n|ghi", before: "V", paste: "Z", want: "abc\nZ", cursor: "1:0"},
+	{text: "abc\n|def\nghi", before: "V", paste: "Z\n", after: "u", want: "abc\ndef\nghi", cursor: "1:0"},
 
 	// インサートモードでは、そのまま入れてインサートモードに残る（<Esc> で抜ける）。
 	{text: "|abc\ndef", before: "i", paste: "P\tQ\nR", after: "<Esc>", want: "P\tQ\nRabc\ndef", cursor: "1:0"},
@@ -79,19 +80,13 @@ func TestPasteVim(t *testing.T) {
 			if s.Mode() != ModeNormal {
 				t.Errorf("mode = %v", s.Mode())
 			}
-			r := &s.registers
-			for _, c := range []struct{ name, got, want string }{
-				{`"`, vimReg(r.unnamed), tc.unnamed},
-				{"-", vimReg(r.small), tc.rMinus},
-				{"1", vimReg(r.numbered[1]), tc.r1},
-			} {
-				want := c.want
-				if want == "" {
-					want = ":"
-				}
-				if c.got != want {
-					t.Errorf("register %s = %q, want %q", c.name, c.got, want)
-				}
+			unnamed, _ := s.registers.Get(0)
+			want := tc.unnamed
+			if want == "" {
+				want = ":"
+			}
+			if got := vimReg(unnamed); got != want {
+				t.Errorf("register \" = %q, want %q", got, want)
 			}
 		})
 	}
@@ -155,7 +150,7 @@ func TestPasteRecording(t *testing.T) {
 	s.Paste("W")
 	feedKeys(s, "<Esc>q")
 	reg, _ := s.registers.Get('q')
-	if want := "aX\ty\r\x1bvlcZ\x1biW\x1b"; reg.Text != want {
+	if want := "aX\ty\r\x1bvl\"_cZ\x1biW\x1b"; reg.Text != want {
 		t.Errorf("記録 = %q, want %q", reg.Text, want)
 	}
 	if got, want := s.buf.Text(), "abX\ty\nWZ\nefgh"; got != want {

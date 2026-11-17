@@ -10,8 +10,9 @@ var pasteAppend = editcmd.Command{
 	Kind: editcmd.KindAction, Action: editcmd.Ref{ID: "append"}, Count: 1, Mode: editcmd.ModeInsert,
 }
 
-// pasteDelete は、ビジュアルモードの貼り付けで選択を消す値（d）である。
-var pasteDelete = editcmd.Command{Kind: editcmd.KindOperator, Operator: editcmd.Ref{ID: "delete"}, Count: 1}
+// pasteDelete は、ビジュアルモードの貼り付けで選択を消す値（"_d）である。
+// 置き換えられたテキストは、名前付きのレジスターも履歴も変えない（FR-51）。
+var pasteDelete = editcmd.Command{Kind: editcmd.KindOperator, Operator: editcmd.Ref{ID: "delete"}, Count: 1, Register: '_'}
 
 // Paste は、端末から貼り付けた（bracketed paste）テキスト text を、現在のモードに応じて入れる（#114）。
 // text の改行は "\n" とする。"\n" と "\t" の他の制御文字は入れずに捨てる。
@@ -26,16 +27,15 @@ var pasteDelete = editcmd.Command{Kind: editcmd.KindOperator, Operator: editcmd.
 //     回数、オペレーター、レジスターの指定などを打ちかけていれば、それを取り消し、貼り付けも捨てて失敗にする。
 //     Vim は回数とオペレーターでは同じく捨てるが、"a の後の貼り付けは入れ（レジスターの指定は無視する）、
 //     r と f などの文字を待つコマンドの後は貼った最初の文字を引数に使う。ここでは区別しない（docs/vim-differences.md）
-//   - ビジュアルモード: 選択を消し、消した位置から入れて、ノーマルモードへ戻る。消したテキストは、1 行の中の文字単位の選択なら "-d、
-//     それ以外なら "1d と同じくレジスターに入れる（無名のレジスターも指す。1 行の中でも改行を含めば 1 にも入る）。
-//     Vim は 1 に入れるとき 2 にも同じテキストを入れる（1〜9 を 2 回ずらす）が、ここでは 1 回だけずらす。
+//   - ビジュアルモード: 選択を消し、消した位置から入れて、ノーマルモードへ戻る。消したテキストは、"_d と同じくどのレジスターにも入れず、
+//     履歴にも積まない（FR-51 の「ビジュアルモードの貼り付けで置き換えられたテキスト」。Vim は "1 か "- に入れる）。
 //     行単位の選択でバッファの最後の行まで消し、カーソルが選択より上の行へ移ったときは、下に空の行を開いてそこへ入れる。
 //     文字単位の選択で行末まで消し、カーソルが選択より左へ移ったときは、カーソルの文字の後ろへ入れる（Vim の nv_edit の K_PS）
 //
 // ノーマルモードとビジュアルモードの貼り付けは、選択を消すことも含めてアンドゥの 1 単位にする。
 // ドットリピートには、どちらも a でテキストを入れる操作として記録する（Vim と同じ。ビジュアルモードでも . は消さずに a で入れる）。
 // マクロの記録中は、記録の時点の貼り付けに当たるキーの列を記録する。ノーマルモードは i か a（記録の時点のカーソルで選ぶ）、
-// テキスト、<Esc>、ビジュアルモードは c、テキスト、<Esc> である。打ちかけを取り消したときは、取り消しの <Esc> を記録する。
+// テキスト、<Esc>、ビジュアルモードは "_c、テキスト、<Esc> である（再生でも置き換えたテキストを履歴に積まない）。打ちかけを取り消したときは、取り消しの <Esc> を記録する。
 // Vim は貼り付けの印ごと記録し、再生の時点で i か a を選び直すので、記録と再生でカーソルが行の先頭かどうかが違うと結果が違う。
 // 行単位の選択の c は空の行を残すので、ビジュアルモードの行単位の選択でも再生の結果が違う（docs/vim-differences.md）。
 func (s *State) Paste(text string) Result {
@@ -139,21 +139,15 @@ func (s *State) pasteNormal(text string) {
 
 // pasteVisual は、ビジュアルモードの貼り付けである（Paste の doc）。
 func (s *State) pasteVisual(text string) {
-	s.record(editcmd.Rune('c'))
+	s.record(editcmd.Rune('"'), editcmd.Rune('_'), editcmd.Rune('c'))
 	s.record(pasteKeys(text, false)...)
 	s.record(editcmd.Esc)
 	oldCursor, oldAnchor := s.cursor, s.visual.anchor
 	linewise := s.mode == ModeVisualLine
-	// Vim と同じく、1 行の中の文字単位の選択は - に、それ以外は 1 に入れる（どちらも無名のレジスターが指す）。
-	del := pasteDelete
-	del.Register = '1'
-	if !linewise && oldCursor.Line == oldAnchor.Line {
-		del.Register = '-'
-	}
 	rg := s.visualRegion()
 	s.exitVisual()
 	s.buf.BeginUndoGroup()
-	if err := s.regionOperator(del, rg); err != nil {
+	if err := s.regionOperator(pasteDelete, rg); err != nil {
 		s.buf.EndUndoGroup()
 		s.fail(err)
 		return

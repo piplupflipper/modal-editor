@@ -173,6 +173,9 @@ func TestExecuteEdit(t *testing.T) {
 		{name: ":d の逆順の範囲は確認を求める", text: lines10, cmdline: "4,2d", want: strings.TrimSuffix(lines10, "\n"), wantCode: "E493"},
 		{name: ":d の余分な文字", text: "a\n", cmdline: "d a b", want: "a", wantCode: "E488"},
 		{name: ":d ! は書き込めないレジスター", text: "a\nb\n", cmdline: "d !", want: "a\nb", wantCode: "E488"},
+		// req: FR-50
+		{name: ":d - は無い名前のレジスター", text: "a\nb\n", cmdline: "d -", want: "a\nb", wantCode: "E488"},
+		{name: ":d + は無い名前のレジスター", text: "a\nb\n", cmdline: "d +", want: "a\nb", wantCode: "E488"},
 
 		// | による連結
 		{name: ":d|d", text: "a\nb\nc\n", cmdline: "d|d", want: "c"},

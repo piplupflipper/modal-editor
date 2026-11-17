@@ -83,7 +83,7 @@ func TestSearchVim(t *testing.T) {
 	for _, tc := range searchCases {
 		t.Run(fmt.Sprintf("%q/%s", tc.text, tc.keys), func(t *testing.T) {
 			s := setup(t, tc.text)
-			s.registers.unnamed = Register{Text: "U"}
+			s.registers.history = []Register{{Text: "U", filled: true}}
 			var err error
 			for _, r := range feedKeys(s, tc.keys) {
 				if r.Err != nil && err == nil {
@@ -102,8 +102,8 @@ func TestSearchVim(t *testing.T) {
 			if got := s.LastSearch(); got.Pattern != tc.pattern || got.Backward != tc.backward {
 				t.Errorf("last search = %+v, want %q backward=%v", got, tc.pattern, tc.backward)
 			}
-			if got := s.registers.unnamed.Text; got != tc.unnamed {
-				t.Errorf(`register " = %q, want %q`, got, tc.unnamed)
+			if got, _ := s.registers.Get(0); got.Text != tc.unnamed {
+				t.Errorf(`register " = %q, want %q`, got.Text, tc.unnamed)
 			}
 			var ee *ex.Error
 			switch {

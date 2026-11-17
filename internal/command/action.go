@@ -128,8 +128,8 @@ func actShorthand(op string, tg editcmd.Target) actionFunc {
 
 // actDeleteChar は、x である。カーソルから回数の文字を消す。行末を越えては消さない。空の行では何もしない。
 func actDeleteChar(s *State, cmd editcmd.Command) error {
-	if !writable(cmd.Register) {
-		return failf("invalid register %q", cmd.Register)
+	if err := checkRegister(cmd.Register); err != nil {
+		return err
 	}
 	line := s.line(s.cursor.Line)
 	if line == "" {
@@ -141,8 +141,8 @@ func actDeleteChar(s *State, cmd editcmd.Command) error {
 
 // actDeleteCharBefore は、X である。カーソルの前の回数の文字を消す。行の先頭では失敗する。
 func actDeleteCharBefore(s *State, cmd editcmd.Command) error {
-	if !writable(cmd.Register) {
-		return failf("invalid register %q", cmd.Register)
+	if err := checkRegister(cmd.Register); err != nil {
+		return err
 	}
 	if s.cursor.Byte == 0 {
 		return failf("at the start of the line")
@@ -172,7 +172,7 @@ func (s *State) deleteInLine(cmd editcmd.Command, from, to int) error {
 	if err := s.apply(edit); err != nil {
 		return err
 	}
-	s.registers.delete(cmd.Register, reg, true, false)
+	s.writeRegister(cmd.Register, reg, true, false)
 	s.setCursorNormal(pos(l, from))
 	return nil
 }
@@ -290,7 +290,11 @@ const maxPutBytes = 64 << 20
 // 文字単位のテキストは、カーソルの文字の後（P は前）に回数だけ続けて入れる。
 // カーソルは、入れたテキストが 1 行なら最後の文字へ、複数の行にわたれば始まりへ移る。
 // 行単位のテキストは、カーソルの行の下（P は上）に入れ、入れた最初の行の最初の空白でない文字へ移る。
+// 名前を省略すれば履歴の先頭（上限を超えた無名のレジスターがあればそれ）を、名前を指定すればそのレジスターを入れる。
+// 貼り付けは履歴の順を変えない（基本設計 4.5）。
 // レジスターが空なら失敗する。_ は何もしない。
+//
+// req: FR-51
 func actPut(after bool) actionFunc {
 	return func(s *State, cmd editcmd.Command) error {
 		if cmd.Register == '_' {
@@ -298,7 +302,7 @@ func actPut(after bool) actionFunc {
 		}
 		reg, ok := s.registers.Get(cmd.Register)
 		if !ok {
-			return failf("invalid register %q", cmd.Register)
+			return checkRegister(cmd.Register)
 		}
 		if reg.empty() {
 			return failf("register %q is empty", cmd.Register)

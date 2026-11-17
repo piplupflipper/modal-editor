@@ -15,7 +15,6 @@ var shorthandCases = []vimCase{
 	{"abc d|ef", "\"aD", "abc d", "0:4", "v:ef", "v:U", ":", ":", "v:ef"},
 	{"abc d|ef", "\"AD", "abc d", "0:4", "v:Aef", "v:U", ":", ":", "v:Aef"},
 	{"abc d|ef", "\"_D", "abc d", "0:4", "v:U", "v:U", ":", ":", "v:A"},
-	{"abc d|ef", "\"-D", "abc d", "0:4", "v:ef", "v:U", ":", "v:ef", "v:A"},
 	{"abc d|ef\nghi\njkl", "2D", "abc d\njkl", "0:4", "v:ef\nghi", "v:U", "v:ef\nghi", ":", "v:A"},
 	{"a|bc\nghi\njkl", "3D", "a", "0:0", "v:bc\nghi\njkl", "v:U", "v:bc\nghi\njkl", ":", "v:A"},
 	{"a|bc\nghi\njkl", "5D", "a", "0:0", "v:bc\nghi\njkl", "v:U", "v:bc\nghi\njkl", ":", "v:A"},

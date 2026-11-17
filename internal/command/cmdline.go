@@ -82,7 +82,6 @@ func (s *State) runCommandLine(line string) {
 	if strings.TrimLeft(line, ": \t") == "" {
 		return
 	}
-	s.registers.cmdline = line
 	// コマンドラインの編集と、後に置いた拡張機能のコマンドの編集（:s/a/X/|dup.line）を、アンドゥの 1 単位にまとめる
 	// （Vim 9.1 で :s/a/X/|Dup y の後の u 1 回で両方が戻るのと同じ）。
 	// 期限 0 で保留した拡張機能のコマンドの結果は、届いたときに別の単位で適用する。
@@ -112,8 +111,13 @@ func (s *State) applyExResult(res ex.Result, err error) {
 		}
 		s.res.Actions = append(s.res.Actions, a)
 	}
+	// 1 回の Ex コマンドの行の中の削除（:g/pat/d、:d|d）は、履歴の 1 件として扱う（基本設計 4.5）。
+	// 最初に積んだ後の削除は、積む代わりに履歴の先頭を置き換える（Vim の無名のレジスターが最後に消した行を持つのと同じ）。
+	pushed := false
 	for _, d := range res.Deletions {
-		s.registers.delete(d.Register, Register{Text: strings.Join(d.Lines, "\n"), Linewise: true}, false, false)
+		if s.writeRegister(d.Register, Register{Text: strings.Join(d.Lines, "\n"), Linewise: true}, true, pushed) {
+			pushed = true
+		}
 	}
 	switch res.Move {
 	case ex.CursorFirstNonBlank:

@@ -145,7 +145,6 @@ func (s *State) breakInsert() {
 	s.insert.moved = true
 	s.buf.EndUndoGroup()
 	text := string(s.insert.text)
-	s.registers.inserted = applyBackspaces(text)
 	cmd := s.insert.cmd
 	cmd.Text = text
 	s.dot = &cmd
@@ -250,25 +249,9 @@ func (s *State) finishInsert() {
 	}
 	if !in.moved {
 		s.buf.EndUndoGroup()
-		s.registers.inserted = applyBackspaces(text)
 		cmd := in.cmd
 		cmd.Text = text
 		s.dot = &cmd
 	}
 	s.insert = insertState{}
-}
-
-// applyBackspaces は、記録したテキストの '\b' を、その前の文字を消す働きとして解いた文字列を返す（レジスター . の内容）。
-func applyBackspaces(text string) string {
-	out := make([]rune, 0, len(text))
-	for _, r := range text {
-		if r == '\b' {
-			if len(out) > 0 {
-				out = out[:len(out)-1]
-			}
-			continue
-		}
-		out = append(out, r)
-	}
-	return string(out)
 }

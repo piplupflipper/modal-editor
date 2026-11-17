@@ -2,16 +2,12 @@ package input
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // MaxCount は、回数の上限である。これを超える回数は MaxCount に丸める。
 const MaxCount = 999_999_999
-
-// registerNames は、"x の x に書けるレジスターの名前（英字と数字を除く）である。
-const registerNames = `"-*+_/:.%#`
 
 type state int
 
@@ -144,7 +140,8 @@ func (p *Parser) run(queue []editcmd.Key) []editcmd.Result {
 func (p *Parser) step(k editcmd.Key) (results []editcmd.Result, rest []editcmd.Key) {
 	switch p.st {
 	case stRegister:
-		if !k.Plain() || !isRegisterName(k.Rune) {
+		// 名前は検査せずに値へ入れ、command が確かめて、使えない名前ならメッセージを出す（基本設計 4.5。FR-50）。
+		if !k.Plain() {
 			return p.fail(), nil
 		}
 		p.cmd.Register = k.Rune
@@ -212,9 +209,8 @@ func (p *Parser) special(r rune) (results []editcmd.Result, ok bool) {
 func (p *Parser) takeChar(k editcmd.Key) []editcmd.Result {
 	switch p.charFor {
 	case charRecord, charPlay:
-		ok := k.Plain() && (isRecordRegister(k.Rune) ||
-			p.charFor == charPlay && (k.Rune == '@' || isRegisterName(k.Rune) && k.Rune != ':'))
-		if !ok {
+		// " の後と同じく、名前は command が確かめる（FR-50）。
+		if !k.Plain() {
 			return p.fail()
 		}
 		p.cmd.Char = k.Rune
@@ -382,13 +378,4 @@ func charArg(k editcmd.Key) (rune, bool) {
 		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1:
 	}
 	return 0, false
-}
-
-func isRegisterName(r rune) bool {
-	return isRecordRegister(r) || strings.ContainsRune(registerNames, r)
-}
-
-// isRecordRegister は、q で記録先にできるレジスターの名前（英字、数字、"）であるかを返す。
-func isRecordRegister(r rune) bool {
-	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '"'
 }
