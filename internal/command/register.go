@@ -215,6 +215,15 @@ func (r *Registers) Promote(i int) bool {
 // 値は TakeOver で引き継ぐので、バッファの切り替えをまたいでも単調に増える。
 func (r *Registers) Pushes() uint64 { return r.pushes }
 
+// Head は、履歴の先頭（最も新しい項目）を返す。履歴が空なら false を返す。
+// Get(0) と違い、上限を超えた無名のレジスターは読まない（FR-56 の送り出しは、上限を超えたテキストを送らない）。
+func (r *Registers) Head() (Register, bool) {
+	if n := len(r.history); n > 0 {
+		return r.history[n-1], true
+	}
+	return Register{}, false
+}
+
 // Set は、名前を指定したヤンクと同じく、名前が name のレジスターに reg を書き込む（基本設計 4.5 の表）。
 // 大文字の名前は追記する。name が 0 なら履歴に積むだけである。_ には何も書かない。
 // 名前に使えない文字なら何もせず false を返す。

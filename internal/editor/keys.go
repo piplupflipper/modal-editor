@@ -234,6 +234,9 @@ func (e *Editor) mapMode() mapMode {
 // マクロの再生の途中でカーソルのあるバッファが移った（command.ErrBufferSwitched）なら、
 // 再生の残りを、移った先のバッファで続ける（Vim と同じく、マクロのキーはカーソルのあるバッファへ入る）。
 func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
+	// State を呼んだ入り口によらず、結果を扱い終えた時点で、履歴の先頭が変わっていればホストのクリップボードへ送る（基本設計 4.5）。
+	// 動作（:e など）でバッファを切り替えても、レジスターは TakeOver で引き継ぐので、扱い終えた後のカーソルのあるバッファのものを読む。
+	defer e.syncClipboard()
 	for _, ch := range res.Changes {
 		e.commitChange(bs, ch)
 	}
@@ -270,6 +273,42 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 		return e.handleResult(next, next.state.ContinueReplay(res.Remaining))
 	}
 	return res.Err
+}
+
+// syncClipboard は、カーソルのあるバッファのレジスターの履歴の先頭が、前に判定したときから変わっていれば、
+// その内容を Terminal.SetClipboard でホストのクリップボードへ送る（FR-56、基本設計 4.5）。
+// 変わったかは command.Registers.Pushes の値を clipPushes と比べて判定する。1 回の結果の中で何度変わっても、送るのは最後の先頭だけである。
+// 行単位のテキストは、Vim と同じく最後に改行を付けて送る。
+// 上限を超えた無名のレジスターに置いただけでは Pushes が変わらないので送らない。
+// Config.NoClipboard なら送らない（判定した値だけ進める）。
+//
+// 切り替えの前のバッファの State に保留した拡張機能の結果が書き込んだレジスターは、カーソルのあるバッファの履歴ではないので送らない。
+//
+// req: FR-56
+func (e *Editor) syncClipboard() {
+	if e.cur == nil {
+		return
+	}
+	regs := e.cur.state.Registers()
+	n := regs.Pushes()
+	if n <= e.clipPushes {
+		return
+	}
+	e.clipPushes = n
+	if e.cfg.NoClipboard {
+		return
+	}
+	reg, ok := regs.Head()
+	if !ok {
+		return
+	}
+	text := reg.Text
+	if reg.Linewise {
+		text += "\n"
+	}
+	if err := e.term.SetClipboard(text); err != nil {
+		e.log.Error("クリップボードへ送れない", "err", err)
+	}
 }
 
 // reportError は、操作の失敗を知らせる。

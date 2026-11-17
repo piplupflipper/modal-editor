@@ -60,6 +60,9 @@ type Terminal interface {
 	// Draw は、画面の内容とカーソルを端末へ出す。前回との差分だけを書くのは実装の自由である。
 	// Run の goroutine から呼ぶ。誤りはログに記録し、編集は続ける。
 	Draw(s ui.Screen) error
+	// SetClipboard は、text をホストのクリップボードへ送る（FR-56。実物の端末では OSC 52 の制御シーケンス）。
+	// 端末の応答は待たない。Run の goroutine から呼ぶ。誤りはログに記録し、編集は続ける。
+	SetClipboard(text string) error
 }
 
 // TermEvent は、端末からのイベント 1 件である。
@@ -134,6 +137,9 @@ type Config struct {
 	// Registers は、レジスターの履歴の設定（基本設計 7 章の registers。FR-52、FR-53）である。
 	// ゼロ値は、すべての項目が既定値の設定である。すべてのバッファの command.State のレジスターに設定する。
 	Registers command.RegisterConfig
+	// NoClipboard は、レジスターの履歴の先頭をホストのクリップボードへ送らないことを表す（基本設計 7 章の registers.clipboard が "off"）。
+	// ゼロ値の false は既定の "osc52" で、履歴の先頭が変わるたびに Terminal.SetClipboard で送る（FR-56）。
+	NoClipboard bool
 }
 
 // Editor は、イベントループと、編集の状態の全体である。New で作り、Run で動かし、Close で終える。
@@ -213,6 +219,9 @@ type Editor struct {
 	deferred *pendingQuery
 	// pendingOpen は、command/execute の結果の Open のうち、別のバッファへ移るもので、Feed が戻ってから行うものである。
 	pendingOpen []openRequest
+
+	// clipPushes は、ホストのクリップボードへ最後に送ったか、送るかを判定したときの command.Registers.Pushes の値である（syncClipboard）。
+	clipPushes uint64
 
 	message ui.Message
 	popup   *popupState
