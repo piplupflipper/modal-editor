@@ -145,13 +145,16 @@ type State struct {
 	undoAtSet bool
 
 	// ドットリピート（FR-06）。
-	dot       *editcmd.Command
-	dotVisual visualExtent
-	replaying bool // ドットリピートの再実行中
-	insert    insertState
-	visual    visualState
-	cmdline   []rune
-	search    *pendingSearch // / か ? でパターンを入力している間の値。Ex コマンドの入力中は nil
+	dot *editcmd.Command
+	// lastChange は、再生（@a）ではない直前の変更である。マクロの再生の置き場の初期値にする（FR-57）。
+	// State.dot が再生ではない値の間は、dot より古いことがある（再生の始まりと終わりの noteChange で追いつく）。
+	lastChange *editcmd.Command
+	dotVisual  visualExtent
+	replaying  bool // ドットリピートの再実行中
+	insert     insertState
+	visual     visualState
+	cmdline    []rune
+	search     *pendingSearch // / か ? でパターンを入力している間の値。Ex コマンドの入力中は nil
 	// searchBackward は、直前の検索（/、?、*、#）が後ろ向きだったかである。n と N の向きを決める。
 	searchBackward bool
 	recording      rune // マクロの記録先。0 なら記録していない

@@ -309,6 +309,74 @@ func TestMacroDotRepeat(t *testing.T) {
 	}
 }
 
+// マクロの中で変更の前の . は、対象が再生（@a）であっても、再生ではない直前の変更を繰り返す。
+// 自分自身を再生し直して入れ子の上限まで回ることはない（PR #165 のレビューの 4 例。Vim 9.1 と同じ行数が消える）。
+//
+// req: FR-57
+func TestMacroDotRepeatNotRecursive(t *testing.T) {
+	lines := func(prefix string, n int, numbered bool) string {
+		var ls []string
+		for i := 1; i <= n; i++ {
+			if numbered {
+				ls = append(ls, fmt.Sprintf("%s%d", prefix, i))
+			} else {
+				ls = append(ls, prefix)
+			}
+		}
+		return "|" + strings.Join(ls, "\n")
+	}
+	tests := []struct {
+		name, text, keys string
+		regs             map[rune]string
+		want             string // 結果のバッファ。空なら wantLines で行数だけ比べる
+		wantLines        int
+	}{
+		{
+			"j. を 2 回", lines("abc", 11, true), "dd@a@a",
+			map[rune]string{'a': "j."},
+			"abc2\nabc4\nabc6\nabc7\nabc8\nabc9\nabc10\nabc11", 0,
+		},
+		{"記録した j. を 2 回", lines("abc", 301, false), "ddqaj.q@a@a", nil, "", 297},
+		{". だけを記録し直す", "|abcdefghij", "qaxq@aqa.q@a", nil, "efghij", 0},
+		{". だけのマクロを 2 回", lines("abc", 301, false), "dd@a@a", map[rune]string{'a': "."}, "", 298},
+	}
+	for _, tt := range tests {
+		s := setup(t, tt.text)
+		for name, text := range tt.regs {
+			s.registers.Set(name, Register{Text: text})
+		}
+		if err := errOf(feedKeys(s, tt.keys)); err != nil {
+			t.Errorf("%s: err = %v", tt.name, err)
+		}
+		got := s.buf.Text()
+		if tt.want != "" && got != tt.want {
+			t.Errorf("%s: text = %q, want %q", tt.name, got, tt.want)
+		}
+		if n := strings.Count(got, "\n") + 1; tt.want == "" && n != tt.wantLines {
+			t.Errorf("%s: 行数 = %d, want %d", tt.name, n, tt.wantLines)
+		}
+		if got := dotString(s.dot); got != "@a" {
+			t.Errorf("%s: dot = %s", tt.name, got)
+		}
+	}
+}
+
+// インサートモードで終わったマクロの後の <Esc> は、再生の外の利用者の入力なので、その挿入をドットリピートの対象にする。
+//
+// req: FR-57
+func TestMacroEndsInInsertDot(t *testing.T) {
+	s := setup(t, "|abcd")
+	s.registers.Set('a', Register{Text: "iZ"})
+	feedKeys(s, "x@a")
+	if got := dotString(s.dot); got != "@a" {
+		t.Errorf("再生の直後: dot = %s", got)
+	}
+	feedKeys(s, "<Esc>l.")
+	if got := s.buf.Text(); got != "ZZbcd" {
+		t.Errorf("text = %q", got)
+	}
+}
+
 // . から再生したマクロの中のインサートモードは、ドットリピートの再実行としてではなく、マクロのキーのとおりに入力する。
 //
 // req: FR-57
