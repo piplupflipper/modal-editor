@@ -54,7 +54,8 @@ import (
 //	    "memoryLimitMb": 0,
 //	    "settings": { "lsp": { "servers": [] } },
 //	    "activation": { "lsp": [{ "on": "filetype", "pattern": "python" }] }
-//	  }
+//	  },
+//	  "registers": { "historySize": 100, "maxEntryBytes": 1048576, "deleteToHistory": true }
 //	}
 type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
@@ -91,6 +92,15 @@ type Config struct {
 	// ExtensionActivation は extensions.activation の値で、拡張機能の ID から、宣言ファイルの activation に足す契機への対応である
 	// （基本設計 6.7 の「拡張機能ごとの activation の追加」）。足せるのは filetype の契機だけである。
 	ExtensionActivation map[string][]ext.Activation
+	// RegisterHistorySize は registers.historySize の値で、レジスターの履歴の件数である（FR-53）。
+	// 項目が無いか誤り（1 未満を含む）なら 0 で、command の既定値（command.DefaultHistorySize）を使う。
+	RegisterHistorySize int
+	// RegisterMaxEntryBytes は registers.maxEntryBytes の値で、履歴に積む 1 件の最大のバイト数である（FR-53）。
+	// 項目が無いか誤り（1 未満を含む）なら 0 で、command の既定値（command.DefaultMaxEntryBytes）を使う。
+	RegisterMaxEntryBytes int
+	// DeleteToHistory は registers.deleteToHistory の値で、名前を省略した削除と変更を履歴に積むかである（FR-52）。
+	// 項目が無いか誤りなら nil で、既定の有効（true）として扱う。
+	DeleteToHistory *bool
 
 	// extPos は、extensions.settings と extensions.activation に書いた拡張機能の ID の位置である。
 	// 見つからない拡張機能の ID を LoadExtensions が知らせるのに使う。
@@ -169,6 +179,8 @@ func Parse(path string, data []byte) (Config, []error) {
 			cfg.FileTypes = s.fileTypes(m.value)
 		case "extensions":
 			s.extensions(m.value, &cfg)
+		case "registers":
+			s.registers(m.value, &cfg)
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", join("", m.name))
 		}
@@ -274,6 +286,39 @@ func (s *source) extensions(v *hujson.Value, cfg *Config) {
 			cfg.ExtensionSettings = s.extensionSettings(m.value, cfg)
 		case "activation":
 			cfg.ExtensionActivation = s.extensionActivation(m.value, cfg)
+		default:
+			s.report(m.nameOff, "未知の項目 %s を無視する", path)
+		}
+	}
+}
+
+// maxRegisterSetting は、historySize と maxEntryBytes の上限である。32 ビットの int でも溢れない値にする。
+const maxRegisterSetting = math.MaxInt32
+
+// registers は、registers の値を読んで cfg に入れる（基本設計 7 章。FR-52、FR-53）。
+// historySize と maxEntryBytes は 1 以上の整数で、0 以下の値は誤りとして既定値を使う。
+//
+// req: FR-52, FR-53
+func (s *source) registers(v *hujson.Value, cfg *Config) {
+	obj, ok := s.object(v, "registers")
+	if !ok {
+		return
+	}
+	for _, m := range s.members(obj, "registers") {
+		path := join("registers", m.name)
+		switch m.name {
+		case "historySize":
+			if n, ok := s.posInt(m.value, path, maxRegisterSetting); ok {
+				cfg.RegisterHistorySize = int(n)
+			}
+		case "maxEntryBytes":
+			if n, ok := s.posInt(m.value, path, maxRegisterSetting); ok {
+				cfg.RegisterMaxEntryBytes = int(n)
+			}
+		case "deleteToHistory":
+			if b, ok := s.boolean(m.value, path); ok {
+				cfg.DeleteToHistory = &b
+			}
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", path)
 		}

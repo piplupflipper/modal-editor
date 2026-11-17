@@ -92,8 +92,8 @@ func TestMacroRecordAppend(t *testing.T) {
 	if reg.Text != "@bl" || !equalKeys(reg.keys, "@bl") {
 		t.Errorf("a = %+v", reg)
 	}
-	if s.registers.unnamed.Text != "a" {
-		t.Errorf("無名 = %+v", s.registers.unnamed)
+	if got, _ := s.registers.Get(0); got.Text != "a" {
+		t.Errorf("無名 = %+v", got)
 	}
 }
 

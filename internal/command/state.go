@@ -334,6 +334,9 @@ func (s *State) execute(cmd editcmd.Command) error {
 			return nil
 		}
 	}
+	if err := s.checkNames(cmd); err != nil {
+		return err
+	}
 	switch cmd.Kind {
 	case editcmd.KindMotion:
 		if s.mode.visual() {
@@ -358,6 +361,29 @@ func (s *State) execute(cmd editcmd.Command) error {
 		return s.repeat(cmd)
 	}
 	return failf("unknown command kind %d", cmd.Kind)
+}
+
+// checkNames は、値が指定したレジスターの名前（"x の x、q と @ の引数）を確かめ、使えない名前なら *InvalidRegisterError を返す（FR-50）。
+// 入力の解釈は名前を検査せずに値へ入れるので、拡張機能のオペレーターと操作に渡す名前も含めてここで確かめる。
+// @ の引数の @（@@）と :（@:）は、レジスターの名前ではないので通す。
+//
+// req: FR-50
+func (s *State) checkNames(cmd editcmd.Command) error {
+	if err := checkRegister(cmd.Register); err != nil {
+		return err
+	}
+	switch cmd.Kind {
+	case editcmd.KindRecordStart:
+		if !recordable(cmd.Char) {
+			return &InvalidRegisterError{Name: cmd.Char}
+		}
+	case editcmd.KindPlay:
+		if c := cmd.Char; c != '@' && c != ':' {
+			return checkRegister(c)
+		}
+	case editcmd.KindMotion, editcmd.KindOperator, editcmd.KindAction, editcmd.KindRecordStop, editcmd.KindRepeat:
+	}
+	return nil
 }
 
 // change は、バッファを変えうる操作 f を、アンドゥの 1 単位として実行する（FR-07）。

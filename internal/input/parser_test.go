@@ -160,7 +160,12 @@ func TestParserBuiltin(t *testing.T) {
 		}},
 		{"f の引数に特殊キー", "f<Up>", []editcmd.Result{invalid}},
 		{"r の引数に修飾キーつきの文字", "r<C-a>", []editcmd.Result{invalid}},
-		{"q の記録先にできないレジスター", "q_", []editcmd.Result{invalid}},
+		// レジスターの名前は検査せずに値へ入れる。使えない名前は command が失敗させてメッセージを出す（基本設計 4.5）。
+		{"q の後の名前は検査しない", "q_", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindRecordStart, Count: 1, Char: '_'})}},
+		{"@ の後の名前は検査しない", "@0", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindPlay, Count: 1, Char: '0'})}},
+		{`" の後の名前は検査しない`, `"0p`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Register: '0', Count: 1, Action: builtin("put-after"),
+		})}},
 		{"@ の引数に特殊キー", "@<CR>", []editcmd.Result{invalid}},
 		{"不正な列の後は初期状態", "dqj", []editcmd.Result{invalid, done(editcmd.Command{
 			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("down")},

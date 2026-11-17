@@ -64,8 +64,6 @@ var navCases = []navCase{
 	{"ifoo<Left>bar<Esc>u", "fooabc def\nghijkl\n\n  mn opq\nrs", "0:2", -1},
 	{"ifoo<Left>bar<Esc>uu", navText, "0:0", -1},
 	{"ifoo<Left>bar<Esc>j0.", "fobaroabc def\nbarghijkl\n\n  mn opq\nrs", "1:2", -1},
-	{`ifoo<Left>bar<Esc>".p`, "fobarbaroabc def\nghijkl\n\n  mn opq\nrs", "0:7", -1},
-	{`ifoo<Left><Esc>".p`, "fofoooabc def\nghijkl\n\n  mn opq\nrs", "0:4", -1},
 	{"ifoo<Left><Esc>j0.", "fooabc def\nfooghijkl\n\n  mn opq\nrs", "1:2", -1},
 	{"ifoo<Left><Left>x<Right>y<Esc>uu", "fooabc def\nghijkl\n\n  mn opq\nrs", "0:1", -1},
 	{"3ifoo<Left>bar<Esc>", "fobaroabc def\nghijkl\n\n  mn opq\nrs", "0:4", -1},

@@ -25,7 +25,7 @@ func (s *State) startRecording(name rune) error {
 
 // recordable は、マクロの記録先にできる名前であるかを返す。
 func recordable(name rune) bool {
-	return name >= 'a' && name <= 'z' || name >= 'A' && name <= 'Z' || name >= '0' && name <= '9' || name == '"'
+	return name >= 'a' && name <= 'z' || name >= 'A' && name <= 'Z'
 }
 
 // stopRecording は、記録中の q である。記録したキーの列（止めた q を除く）をレジスターに入れる。
@@ -259,7 +259,6 @@ func repeatable(cmd editcmd.Command) bool {
 // repeat は、. である。直前の変更の値をもう一度実行する（FR-06）。
 //
 // 回数を付けると、記録した値の回数を置き換える（2d3w の後の 3. は d3w）。置き換えた回数は以後の . にも残る。
-// "1p の後の . は、"2p、"3p のようにレジスターの番号を 1 つ進める（Vim と同じ）。
 // ビジュアルモードのオペレーターは、カーソルから同じ大きさの範囲に対して繰り返す。
 // 拡張機能の操作は、記録した Ref と引数で同じ拡張機能へ問い合わせ直す（FR-12）。
 // マクロの再生（@a）は、レジスターの今の中身を再生する。3@a の後の . は 3 回、2. は 2 回再生する（FR-57）。
@@ -272,10 +271,6 @@ func (s *State) repeat(cmd editcmd.Command) error {
 	d := *s.dot
 	if cmd.CountGiven {
 		d.Count, d.CountGiven = cmd.Count, true
-	}
-	if d.Kind == editcmd.KindAction && d.Action.Builtin() && (d.Action.ID == "put-after" || d.Action.ID == "put-before") &&
-		d.Register >= '1' && d.Register <= '8' {
-		d.Register++
 	}
 	// マクロの中の . は、再生（play）が戻した値へ戻す。
 	replaying := s.replaying

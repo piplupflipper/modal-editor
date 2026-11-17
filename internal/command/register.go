@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -48,130 +49,216 @@ func (r Register) appendTo(add Register) Register {
 	return out
 }
 
-// Registers は、レジスターの集合である（FR-04）。ゼロ値は全て空のレジスターである。
+// 履歴の設定の既定値である（基本設計 7 章の registers）。
+const (
+	// DefaultHistorySize は、履歴の件数の既定値である（FR-53）。
+	DefaultHistorySize = 100
+	// DefaultMaxEntryBytes は、履歴に積む 1 件の最大のバイト数の既定値（1 MiB）である（FR-53）。
+	DefaultMaxEntryBytes = 1 << 20
+)
+
+// RegisterConfig は、レジスターの履歴の設定である（基本設計 7 章の registers。FR-52、FR-53）。
+// ゼロ値は、すべての項目が既定値の設定である。
+type RegisterConfig struct {
+	// HistorySize は、履歴の件数の上限（historySize）である。0 以下なら DefaultHistorySize を使う。
+	HistorySize int
+	// MaxEntryBytes は、履歴に積む 1 件の最大のバイト数（maxEntryBytes）である。0 以下なら DefaultMaxEntryBytes を使う。
+	MaxEntryBytes int
+	// DeleteToHistory は、名前を省略した削除と変更を履歴に積むか（deleteToHistory）である。nil なら既定の true である。
+	DeleteToHistory *bool
+}
+
+// historySize は、既定値を補った履歴の件数の上限を返す。
+func (c RegisterConfig) historySize() int {
+	if c.HistorySize <= 0 {
+		return DefaultHistorySize
+	}
+	return c.HistorySize
+}
+
+// maxEntryBytes は、既定値を補った 1 件の最大のバイト数を返す。
+func (c RegisterConfig) maxEntryBytes() int {
+	if c.MaxEntryBytes <= 0 {
+		return DefaultMaxEntryBytes
+	}
+	return c.MaxEntryBytes
+}
+
+// deleteToHistory は、既定値を補った deleteToHistory を返す。
+func (c RegisterConfig) deleteToHistory() bool {
+	return c.DeleteToHistory == nil || *c.DeleteToHistory
+}
+
+// Registers は、レジスターの集合である（FR-04、FR-50、FR-51）。ゼロ値は、全て空で、設定が既定値のレジスターである。
 //
-// 名前と働きは Vim に合わせる。
+// 名前は次の 3 種類だけで、それ以外の名前（Vim の 0〜9、-、"、.、: など）は読み書きできない（FR-50）。
 //
-//	"      無名のレジスター。最後に書き込んだレジスターの内容を指す
 //	a〜z   名前付きのレジスター。A〜Z で書き込むと追記する
-//	0      直前のヤンクの内容
-//	1〜9   削除の履歴。行をまたぐ削除と行単位の削除で 1 に入り、それまでの内容は 1 つずつずれる
-//	-      1 行の中の小さな削除
-//	_      ブラックホール。書き込んでも何も残らず、読むと空である
-//	.      直前にインサートモードで入力したテキスト（読み出しだけ）
-//	:      直前に実行したコマンドライン（読み出しだけ）
+//	_      書き込んでも何も残らず、読むと空である
+//	0      名前の省略（無名のレジスター）。別の置き場を持たず、履歴の先頭を読む
 //
-// クリップボード（+、*）は後回しで、読み書きすると失敗する。
+// 履歴は 1 本で、新しいものを先頭に置く（FR-51）。どの操作が何を変えるかは基本設計 4.5 の表のとおりである。
+// 件数の上限を超えたら最も古いものから捨てる。MaxEntryBytes を超えたテキストは履歴に積まず、
+// 「上限を超えた無名のレジスター」として 1 つだけ持つ。その間は、無名のレジスターはそれを読む。次に履歴に積むと捨てる（FR-53）。
+//
+// TakeOver で State の間を値のまま移すので、履歴のスライスは書き換えずに作り直す（移す前の State と配列を共有してよい）。
 //
 // req: FR-04
 type Registers struct {
-	unnamed  Register
-	named    [26]Register
-	numbered [10]Register
-	small    Register
-	inserted string
-	cmdline  string
+	named   [26]Register
+	history []Register
+	// oversize は、上限を超えた無名のレジスターである。無ければ空（empty）である。
+	oversize Register
+	cfg      RegisterConfig
+	// pushes は、履歴の先頭に積んだ回数である。履歴の先頭が変わったかを、呼び出しの前後の値の比較で判定する。
+	pushes uint64
 }
 
-// Get は、名前が name のレジスターの内容を返す。name が 0 なら無名のレジスターである。
-// 読めない名前なら false を返す。
+// SetConfig は、履歴の設定を c にする。件数の上限が今の件数より少なければ、古いものを捨てる。
+func (r *Registers) SetConfig(c RegisterConfig) {
+	r.cfg = c
+	if n := c.historySize(); len(r.history) > n {
+		r.history = slices.Clone(r.history[:n])
+	}
+}
+
+// Config は、履歴の設定を返す。
+func (r *Registers) Config() RegisterConfig { return r.cfg }
+
+// validRegister は、name がレジスターの名前（a〜z、A〜Z、_、名前の省略の 0）であるかを返す（FR-50）。
+func validRegister(name rune) bool {
+	return name == 0 || name == '_' || name >= 'a' && name <= 'z' || name >= 'A' && name <= 'Z'
+}
+
+// InvalidRegisterError は、レジスターの名前に使えない文字を指定した操作の失敗である（FR-50）。
+// ErrFailed を包まないので、呼び出し側（internal/editor）はメッセージの行に出す。
+type InvalidRegisterError struct {
+	// Name は、指定した名前である。
+	Name rune
+}
+
+func (e *InvalidRegisterError) Error() string {
+	return fmt.Sprintf("E354: レジスターの名前に使えない文字です: '%c'", e.Name)
+}
+
+// checkRegister は、name がレジスターの名前でなければ *InvalidRegisterError を返す（FR-50）。
+//
+// req: FR-50
+func checkRegister(name rune) error {
+	if validRegister(name) {
+		return nil
+	}
+	return &InvalidRegisterError{Name: name}
+}
+
+// Get は、名前が name のレジスターの内容を返す。name が 0 なら無名のレジスター（上限を超えた無名のレジスターがあればそれ、
+// 無ければ履歴の先頭）である。_ は空を返す。名前に使えない文字なら false を返す（FR-50）。
+//
+// req: FR-50, FR-51
 func (r *Registers) Get(name rune) (Register, bool) {
 	switch {
-	case name == 0 || name == '"':
-		return r.unnamed, true
+	case name == 0:
+		if !r.oversize.empty() {
+			return r.oversize, true
+		}
+		if len(r.history) > 0 {
+			return r.history[0], true
+		}
+		return Register{}, true
 	case name >= 'a' && name <= 'z':
 		return r.named[name-'a'], true
 	case name >= 'A' && name <= 'Z':
 		return r.named[name-'A'], true
-	case name >= '0' && name <= '9':
-		return r.numbered[name-'0'], true
-	}
-	switch name {
-	case '-':
-		return r.small, true
-	case '_':
+	case name == '_':
 		return Register{}, true
-	case '.':
-		return Register{Text: r.inserted}, true
-	case ':':
-		return Register{Text: r.cmdline}, true
 	}
 	return Register{}, false
 }
 
-// Set は、名前が name のレジスターに reg を書き込む。大文字の名前は追記する。
-// 無名のレジスターは、書き込んだレジスターの内容を指すようになる。
-// 書き込めない名前（.、:、+、* など）なら false を返す。
+// History は、履歴を新しい順に返す（FR-51）。上限を超えた無名のレジスターは含めない。返したスライスは書き換えない。
+func (r *Registers) History() []Register { return r.history }
+
+// Pushes は、これまでに履歴の先頭に積んだ回数を返す。操作の前後で値が違えば、履歴の先頭が変わった。
+func (r *Registers) Pushes() uint64 { return r.pushes }
+
+// Set は、名前を指定したヤンクと同じく、名前が name のレジスターに reg を書き込む（基本設計 4.5 の表）。
+// 大文字の名前は追記する。name が 0 なら履歴に積むだけである。_ には何も書かない。
+// 名前に使えない文字なら何もせず false を返す。
+// 書き込んだテキストが MaxEntryBytes を超えて履歴に積まなかったことは知らせない（write の notice を捨てる）。
 func (r *Registers) Set(name rune, reg Register) bool {
-	p := r.slot(name)
-	if p == nil {
-		return name == '_'
+	if !validRegister(name) {
+		return false
 	}
-	reg.filled = true
-	if name >= 'A' && name <= 'Z' {
-		reg = p.appendTo(reg)
-	}
-	*p = reg
-	r.unnamed = reg
+	r.write(name, reg, false)
 	return true
 }
 
-// slot は、書き込める名前のレジスターを指すポインターを返す。書き込めない名前と _ では nil を返す。
+// slot は、名前付きのレジスターを指すポインターを返す。a〜z、A〜Z 以外の名前では nil を返す。
+// マクロの記録（stopRecording）は、これで履歴を変えずに書き込む。
 func (r *Registers) slot(name rune) *Register {
 	switch {
-	case name == 0 || name == '"':
-		return &r.unnamed
 	case name >= 'a' && name <= 'z':
 		return &r.named[name-'a']
 	case name >= 'A' && name <= 'Z':
 		return &r.named[name-'A']
-	case name >= '0' && name <= '9':
-		return &r.numbered[name-'0']
-	case name == '-':
-		return &r.small
 	}
 	return nil
 }
 
-// writable は、オペレーターの書き込み先にできる名前であるかを返す。
-func writable(name rune) bool {
-	return name == 0 || name == '_' || (&Registers{}).slot(name) != nil
-}
-
-// yank は、ヤンクした内容を書き込む。名前が無ければ 0 と無名のレジスターに入れる。
-func (r *Registers) yank(name rune, reg Register) {
-	reg.filled = true
-	if name == 0 || name == '"' {
-		r.numbered[0] = reg
-		r.unnamed = reg
-		return
-	}
-	r.Set(name, reg)
-}
-
-// delete は、削除した内容を書き込む。
+// write は、ヤンク（del が false）か、削除と変更（del が true）で、名前が name のレジスターに reg を書く（基本設計 4.5 の表）。
 //
-// 名前が無ければ、small（1 行の中の削除）なら - に、そうでなければ 1〜9 をずらして 1 に入れる。
-// 名前があれば、その名前に入れ、small でなければ 1 にも入れる。
-// forceOne は、%、{、} などのモーションの削除で、1 行の中でも 1 に入れることを表す（Vim と同じ）。
-// _ には何も書かず、無名のレジスターも変えない。
-func (r *Registers) delete(name rune, reg Register, small, forceOne bool) {
-	if name == '_' {
-		return
-	}
+//   - 名前の省略: ヤンクは履歴の先頭に積む。削除と変更は、deleteToHistory が真なら積み、偽なら何もしない（FR-52）
+//   - a〜z: そのレジスターに書き、書いた内容を履歴の先頭に積む（deleteToHistory によらない）
+//   - A〜Z: そのレジスターに追記し、追記した後の内容全体を履歴の先頭に積む
+//   - _: 何もしない
+//
+// 履歴に積むテキストが MaxEntryBytes を超えたら、積まずに上限を超えた無名のレジスターに置き、
+// 積まなかったことを知らせる文言を notice に返す（FR-53）。名前付きのレジスターには大きさによらず書く。
+// 名前は呼び出し側が checkRegister で確かめておく。名前に使えない文字なら何もしない。
+//
+// req: FR-51, FR-52, FR-53
+func (r *Registers) write(name rune, reg Register, del bool) (notice string) {
 	reg.filled = true
-	if !small || forceOne {
-		copy(r.numbered[2:], r.numbered[1:9])
-		r.numbered[1] = reg
-	}
 	switch {
-	case name != 0 && name != '"':
-		r.Set(name, reg)
-		return
-	case small:
-		r.small = reg
+	case name == 0:
+		if del && !r.cfg.deleteToHistory() {
+			return ""
+		}
+	case name >= 'a' && name <= 'z':
+		r.named[name-'a'] = reg
+	case name >= 'A' && name <= 'Z':
+		p := &r.named[name-'A']
+		*p = p.appendTo(reg)
+		reg = *p
+	default:
+		return ""
 	}
-	r.unnamed = reg
+	return r.push(reg)
+}
+
+// push は、reg を履歴の先頭に積む。件数の上限を超えたら最も古いものを捨てる。
+// MaxEntryBytes を超えたら積まずに上限を超えた無名のレジスターに置き、知らせる文言を返す（FR-53）。
+//
+// req: FR-51, FR-53
+func (r *Registers) push(reg Register) string {
+	if limit := r.cfg.maxEntryBytes(); len(reg.Text) > limit {
+		r.oversize = reg
+		return fmt.Sprintf("%d バイトのテキストは上限の %d バイトを超えるので、レジスターの履歴に積みませんでした", len(reg.Text), limit)
+	}
+	r.oversize = Register{}
+	n := min(len(r.history)+1, r.cfg.historySize())
+	h := make([]Register, 0, n)
+	h = append(h, reg)
+	r.history = append(h, r.history[:n-1]...)
+	r.pushes++
+	return ""
+}
+
+// writeRegister は、操作の書き込みを Registers.write で行い、積まなかったことの知らせ（FR-53）を Result.Message に入れる。
+func (s *State) writeRegister(name rune, reg Register, del bool) {
+	if notice := s.registers.write(name, reg, del); notice != "" {
+		s.res.Message = Message{Text: notice, Warning: true}
+	}
 }
 
 // rawText は、マクロとして記録したキーの列を、Vim のレジスターと同じ生のテキストにする。

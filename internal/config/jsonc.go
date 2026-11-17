@@ -209,3 +209,16 @@ func (s *source) nonNegInt(v *hujson.Value, path string, limit int64) (int64, bo
 	s.report(v.StartOffset, "%s は 0 以上 %d 以下の整数にする", path, limit)
 	return 0, false
 }
+
+// posInt は、v が 1 以上 limit 以下の整数ならそれを返す。そうでなければ誤りを記録して false を返す。
+// 小数の表記は nonNegInt と同じく整数として扱わない。
+func (s *source) posInt(v *hujson.Value, path string, limit int64) (int64, bool) {
+	if l, ok := v.Value.(hujson.Literal); ok && l.Kind() == '0' {
+		n, err := strconv.ParseInt(string(l), 10, 64)
+		if err == nil && n >= 1 && n <= limit {
+			return n, true
+		}
+	}
+	s.report(v.StartOffset, "%s は 1 以上 %d 以下の整数にする", path, limit)
+	return 0, false
+}

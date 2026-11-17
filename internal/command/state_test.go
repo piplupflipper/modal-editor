@@ -35,7 +35,6 @@ func TestFeedOperator(t *testing.T) {
 		{"|abc def", "dfzx", "bc def", "0:0", true},
 		{"a\n|b", "2dd", "a\nb", "1:0", true},
 		{"|a", "u", "a", "0:0", true},
-		{"|a", "\"+yy", "a", "0:0", true},
 		{"|abc def", "y<Esc>dw", "def", "0:0", false},
 	}
 	for _, tt := range tests {

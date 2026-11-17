@@ -15,6 +15,12 @@ import (
 // レジスター（"、0、1、-、a）の getregtype() と getreg() を ":" でつないだものである。
 // 入力の前に、" と 0 に文字単位の "U"、a に文字単位の "A"、b に行単位の "L1"、"L2" を入れ、他のレジスターを空にしておく。
 // 行単位のレジスターは、Vim と同じく最後に改行を付けて比べる。
+//
+// FR-50 で 0、1、- のレジスターを無くしたので、r0、r1、rMinus は Vim 9.1 の値の記録として残し、比べない。
+// それらの名前を指定したケース（"1p の後の .、"0p、"-dw など）は表から除き、名前の検査は TestInvalidRegisterName で確かめる。
+// unnamed は、Vim の " と、レジスターの履歴の先頭（無名のレジスター。FR-51）を比べる。
+// 名前を省略したヤンク、削除、変更と、名前を指定した書き込みの後は、Vim の " と履歴の先頭は同じテキストを指す。
+// 入力の前の " と 0 の "U" は、履歴に "U" を 1 件積んだ状態に当たる。
 type vimCase struct {
 	text, keys                  string
 	want, cursor                string
@@ -192,8 +198,6 @@ var vimCases = []vimCase{
 	{"|abcdef", "x.", "cdef", "0:0", "v:b", "v:U", ":", "v:b", "v:A"},
 	{"|abcdef", "rxl.", "xxcdef", "0:1", "v:U", "v:U", ":", ":", "v:A"},
 	{"|abc", "ylp.", "aaabc", "0:2", "v:a", "v:a", ":", ":", "v:A"},
-	{"a\n|b\nc\nd", "dddd\"1p.", "a\nd\nc\nb", "3:0", "V:c\n", "v:U", "V:c\n", ":", "v:A"},
-	{"a\n|b\nc\nd\ne", "dddddd\"1p..", "a\ne\nd\nc\nb", "4:0", "V:d\n", "v:U", "V:d\n", ":", "v:A"},
 	{"|a b c", "dwyw.", "c", "0:0", "v:b ", "v:b ", ":", "v:b ", "v:A"},
 	{"|a b c", "dwu.", "b c", "0:0", "v:a ", "v:U", ":", "v:a ", "v:A"},
 	{"|ab cd", "ciwX<Esc>w.", "X X", "0:2", "v:cd", "v:U", ":", "v:cd", "v:A"},
@@ -212,14 +216,8 @@ var vimCases = []vimCase{
 	{"|ab\ncd", "\"ayw\"Ayy", "ab\ncd", "0:0", "V:ab\nab\n", "v:U", ":", ":", "V:ab\nab\n"},
 	{"|ab cd", "\"_dw", "cd", "0:0", "v:U", "v:U", ":", ":", "v:A"},
 	{"|ab\ncd", "\"add", "cd", "0:0", "V:ab\n", "v:U", "V:ab\n", ":", "V:ab\n"},
-	{"|ab cd", "\"-dw", "cd", "0:0", "v:ab ", "v:U", ":", "v:ab ", "v:A"},
-	{"|ab cd", "yw\"0p", "aab b cd", "0:3", "v:ab ", "v:ab ", ":", ":", "v:A"},
-	{"|ab cd", "ywdw\"0P", "ab cd", "0:2", "v:ab ", "v:ab ", ":", "v:ab ", "v:A"},
-	{"|ab\ncd\nef", "dddd\"2p", "ef\nab", "1:0", "V:cd\n", "v:U", "V:cd\n", ":", "v:A"},
 	{"|ab cd", "\"ayw\"ap", "aab b cd", "0:3", "v:ab ", "v:U", ":", ":", "v:ab "},
 	{"|ab cd", "\"Ayw", "ab cd", "0:0", "v:Aab ", "v:U", ":", ":", "v:Aab "},
-	{"|ab cd", "dw\"-p", "cab d", "0:3", "v:ab ", "v:U", ":", "v:ab ", "v:A"},
-	{"|ab cd", "\"1yw", "ab cd", "0:0", "v:ab ", "v:U", "v:ab ", ":", "v:A"},
 	{"|ab cd", "xp", "ba cd", "0:1", "v:a", "v:U", ":", "v:a", "v:A"},
 	{"|ab cd", "ddp", "\nab cd", "1:0", "V:ab cd\n", "v:U", "V:ab cd\n", ":", "v:A"},
 	{"|a\nb", "ddp", "b\na", "1:0", "V:a\n", "v:U", "V:a\n", ":", "v:A"},
@@ -332,8 +330,7 @@ func runVimCases(t *testing.T, cases []vimCase) {
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%q/%s", tc.text, tc.keys), func(t *testing.T) {
 			s := setup(t, tc.text)
-			s.registers.unnamed = Register{Text: "U"}
-			s.registers.numbered[0] = Register{Text: "U"}
+			s.registers.history = []Register{{Text: "U", filled: true}}
 			s.registers.named[0] = Register{Text: "A"}
 			s.registers.named[1] = Register{Text: "L1\nL2", Linewise: true}
 			feedKeys(s, tc.keys)
@@ -346,16 +343,13 @@ func runVimCases(t *testing.T, cases []vimCase) {
 			if s.Mode() != ModeNormal {
 				t.Errorf("mode = %v", s.Mode())
 			}
-			r := &s.registers
+			unnamed, _ := s.registers.Get(0)
 			for _, c := range []struct {
 				name      string
 				got, want string
 			}{
-				{`"`, vimReg(r.unnamed), tc.unnamed},
-				{"0", vimReg(r.numbered[0]), tc.r0},
-				{"1", vimReg(r.numbered[1]), tc.r1},
-				{"-", vimReg(r.small), tc.rMinus},
-				{"a", vimReg(r.named[0]), tc.ra},
+				{`"`, vimReg(unnamed), tc.unnamed},
+				{"a", vimReg(s.registers.named[0]), tc.ra},
 			} {
 				if c.got != c.want {
 					t.Errorf("register %s = %q, want %q", c.name, c.got, c.want)

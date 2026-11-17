@@ -4,7 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/piplupflipper/modal-editor/internal/command"
 )
 
 // TestFixEndOfLine は、Config.FixEndOfLine を開いたバッファの書き出しに使うことを確かめる（基本設計 4.1）。
@@ -33,6 +36,53 @@ func TestFixEndOfLine(t *testing.T) {
 				t.Errorf("保存した内容 = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// TestRegistersConfig は、Config.Registers をバッファのレジスターに設定し、切り替えた先のバッファにも引き継ぐことを確かめる。
+// maxEntryBytes を超えたヤンクは、履歴に積まなかったことをメッセージの行に出す。
+//
+// req: FR-52, FR-53
+func TestRegistersConfig(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abcdef\n", "b.txt": "xyz\n"})
+	h := start(t, Config{WorkDir: dir, Registers: command.RegisterConfig{MaxEntryBytes: 3, DeleteToHistory: new(false)}}, "a.txt")
+	h.keys("yw")
+	h.settle()
+	if got := h.message(); !strings.Contains(got, "積みませんでした") {
+		t.Errorf("message = %q", got)
+	}
+	h.keys(":e b.txt<CR>")
+	h.settle()
+	var cfg command.RegisterConfig
+	var history int
+	h.e.do(func() {
+		cfg = h.e.cur.state.Registers().Config()
+		history = len(h.e.cur.state.Registers().History())
+	})
+	if cfg.MaxEntryBytes != 3 || cfg.DeleteToHistory == nil || *cfg.DeleteToHistory {
+		t.Errorf("切り替えた先の設定 = %+v", cfg)
+	}
+	h.keys("x")
+	h.settle()
+	h.e.do(func() { history = len(h.e.cur.state.Registers().History()) })
+	if history != 0 {
+		t.Errorf("deleteToHistory が偽なのに x が履歴に積んだ: %d 件", history)
+	}
+}
+
+// TestInvalidRegisterMessage は、無い名前のレジスターを指定した操作を失敗させ、メッセージの行に出すことを確かめる。
+//
+// req: FR-50
+func TestInvalidRegisterMessage(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	for _, keys := range []string{`"0p`, `"+yy`, "q1", "@-"} {
+		h.keys("<Esc>")
+		h.keys(keys)
+		h.settle()
+		if got := h.message(); !strings.HasPrefix(got, "E354: ") {
+			t.Errorf("%s: message = %q", keys, got)
+		}
 	}
 }
 

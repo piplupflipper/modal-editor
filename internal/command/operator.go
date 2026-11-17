@@ -36,8 +36,6 @@ func (s *State) regionOf(sp target.Span) region {
 type opOptions struct {
 	// visual は、ビジュアルモードの選択に対する実行であることを表す。d の行単位の例外を適用しない。
 	visual bool
-	// forceOne は、削除を 1 行の中でもレジスター 1 に入れることを表す（%、{、} の削除）。
-	forceOne bool
 	// times は、> と < で字下げを繰り返す回数である（ビジュアルモードの 3>）。
 	times int
 }
@@ -59,9 +57,6 @@ var operators = map[string]operatorFunc{
 	"lowercase":   opCase(unicode.ToLower),
 	"uppercase":   opCase(unicode.ToUpper),
 }
-
-// forceOneMotions は、1 行の中の削除でもレジスター 1 に入れるモーションである（Vim の `:help quote1`）。
-var forceOneMotions = map[string]bool{"match-pair": true, "paragraph-prev": true, "paragraph-next": true}
 
 // moveMotion は、モーションだけの移動を実行する。
 func (s *State) moveMotion(cmd editcmd.Command) error {
@@ -89,9 +84,6 @@ func (s *State) operator(cmd editcmd.Command) error {
 		return err
 	}
 	o := opOptions{times: 1}
-	if cmd.Target.Kind == editcmd.TargetMotion && cmd.Target.Ref.Builtin() {
-		o.forceOne = forceOneMotions[cmd.Target.Ref.ID]
-	}
 	return s.runOperator(cmd, sp, s.regionOf(sp), o)
 }
 
@@ -201,18 +193,13 @@ func (s *State) cut(rg region) (Register, buffer.Edit, error) {
 	return reg, buffer.Edit{Range: rg.r}, nil
 }
 
-// smallDelete は、範囲が 1 行の中の文字単位の範囲であるかを返す（レジスター - に入る削除）。
-func smallDelete(rg region) bool {
-	return !rg.linewise && rg.r.Start.Line == rg.r.End.Line
-}
-
-// opDelete は、d である。
+// opDelete は、d である。消したテキストは、名前を省略すれば設定（deleteToHistory）に従って履歴に積む（FR-52）。
 //
 // `:help d` の例外に合わせ、ノーマルモードで、文字単位の範囲が 2 行以上にわたり、
 // 始まりの前が空白だけで、終わりの後に空白でない文字が無い場合は、行単位の削除にする。
 func opDelete(s *State, cmd editcmd.Command, rg region, o opOptions) error {
-	if !writable(cmd.Register) {
-		return failf("invalid register %q", cmd.Register)
+	if err := checkRegister(cmd.Register); err != nil {
+		return err
 	}
 	if !o.visual && !rg.linewise && rg.r.Start.Line != rg.r.End.Line &&
 		blank(s.line(rg.r.Start.Line)[:rg.r.Start.Byte]) && blank(s.line(rg.r.End.Line)[rg.r.End.Byte:]) {
@@ -238,7 +225,7 @@ func opDelete(s *State, cmd editcmd.Command, rg region, o opOptions) error {
 		// 行の無いバッファは、書き出すと空のファイルになる（基本設計 4.1）。
 		s.buf.MarkNoLines()
 	}
-	s.registers.delete(cmd.Register, reg, smallDelete(rg), o.forceOne)
+	s.writeRegister(cmd.Register, reg, true)
 	if rg.linewise {
 		s.setCursorNormal(s.firstNonBlankPos(min(rg.r.Start.Line, s.lastLine())))
 		return nil
@@ -251,8 +238,8 @@ func opDelete(s *State, cmd editcmd.Command, rg region, o opOptions) error {
 // 行単位の範囲は、行の内容を消して空の行を 1 つ残す（'autoindent' がオフなので字下げも残さない）。
 // cw が ce のように動く例外（`:help cw`）は、モーションの解決（target.ChangeOperator）が扱う。
 func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
-	if !writable(cmd.Register) {
-		return failf("invalid register %q", cmd.Register)
+	if err := checkRegister(cmd.Register); err != nil {
+		return err
 	}
 	text, err := s.buf.Slice(rg.r)
 	if err != nil {
@@ -271,7 +258,7 @@ func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if !rg.empty && !noLines {
 		// Vim の op_change は、範囲が空でなければ（空の行の c$、ciw のように包含的な範囲なら、テキストが空でも）、
 		// 消したテキストをレジスターに書く。cl のような排他的で空の範囲では書かない。
-		s.registers.delete(cmd.Register, Register{Text: text, Linewise: rg.linewise}, smallDelete(rg), false)
+		s.writeRegister(cmd.Register, Register{Text: text, Linewise: rg.linewise}, true)
 	}
 	s.cursor = rg.r.Start
 	s.updateWant()
@@ -281,14 +268,14 @@ func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 
 // opYank は、y である。カーソルは範囲の始まりへ移る（yy では動かない）。
 func opYank(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
-	if !writable(cmd.Register) {
-		return failf("invalid register %q", cmd.Register)
+	if err := checkRegister(cmd.Register); err != nil {
+		return err
 	}
 	text, err := s.buf.Slice(rg.r)
 	if err != nil {
 		return err
 	}
-	s.registers.yank(cmd.Register, Register{Text: text, Linewise: rg.linewise})
+	s.writeRegister(cmd.Register, Register{Text: text, Linewise: rg.linewise}, false)
 	s.setCursorNormal(rg.start)
 	return nil
 }

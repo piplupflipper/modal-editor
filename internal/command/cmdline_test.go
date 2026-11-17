@@ -128,7 +128,7 @@ func TestCommandLineConfirm(t *testing.T) {
 	if got := s.buf.Text(); got != "d" {
 		t.Errorf("text = %q", got)
 	}
-	if reg, _ := s.registers.Get('"'); reg.Text != "a\nb\nc" {
+	if reg, _ := s.registers.Get(0); reg.Text != "a\nb\nc" {
 		t.Errorf("\" = %+v", reg)
 	}
 }

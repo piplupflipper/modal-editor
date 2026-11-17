@@ -131,6 +131,9 @@ type Config struct {
 	// AutoRead は、未変更のバッファのファイルが外で変わったときに、問わずに読み直すかどうか（Vim の 'autoread'）である。
 	// nil なら既定の有効（true）である。Vim の既定は無効だが、エージェントがディスクへ直接書いた変更をすぐ画面へ出すために有効にした（Neovim の既定と同じ）。
 	AutoRead *bool
+	// Registers は、レジスターの履歴の設定（基本設計 7 章の registers。FR-52、FR-53）である。
+	// ゼロ値は、すべての項目が既定値の設定である。すべてのバッファの command.State のレジスターに設定する。
+	Registers command.RegisterConfig
 }
 
 // Editor は、イベントループと、編集の状態の全体である。New で作り、Run で動かし、Close で終える。
@@ -645,6 +648,8 @@ func (e *Editor) initState(bs *bufferState) {
 	b := bs.buf
 	bs.sent = b.Version()
 	bs.state = command.New(b, input.NewParser(e.keymap))
+	// レジスターはバッファを切り替えるたびに TakeOver で引き継ぐので、ここでの設定は最初のバッファのものが全体に残る。
+	bs.state.Registers().SetConfig(e.cfg.Registers)
 	bs.state.Columns = e.renderer.Columns()
 	bs.state.Viewport = viewport{r: e.renderer}
 	bs.state.Extensions = &extQuery{e: e, bs: bs}

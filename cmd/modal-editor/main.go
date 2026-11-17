@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/config"
 	"github.com/piplupflipper/modal-editor/internal/editor"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
@@ -221,10 +222,15 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		StartSyncTimeout: cfg.StartSyncTimeout,
 		FileTypes:        cfg.FileTypes,
 		FixEndOfLine:     cfg.FixEndOfLine,
-		Extensions:       specs,
-		Host:             host,
-		Logger:           logger,
-		Problems:         problems,
+		Registers: command.RegisterConfig{
+			HistorySize:     cfg.RegisterHistorySize,
+			MaxEntryBytes:   cfg.RegisterMaxEntryBytes,
+			DeleteToHistory: cfg.DeleteToHistory,
+		},
+		Extensions: specs,
+		Host:       host,
+		Logger:     logger,
+		Problems:   problems,
 	}
 }
 

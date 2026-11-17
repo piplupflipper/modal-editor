@@ -366,7 +366,7 @@ func (c *execCtx) applyCount(inv *invocation, count int, pos int) error {
 }
 
 // runDelete は :d [x] [count] を実行する。消した行は Deletion として返す。
-// x は書き込めるレジスターの名前（英字、"、-、_、*、+）で、それ以外は E488 にする（:d ! など。Vim 9.1 と同じ）。
+// x は書き込めるレジスターの名前（英字と _。FR-50）で、それ以外は E488 にする（:d ! は Vim 9.1 と同じ。:d - と :d " は Vim では書ける）。
 // カーソルは、消した範囲の次の行（最後の行を消したときは新しい最後の行）の最初の空白でない文字へ移る。
 //
 // req: FR-08
@@ -431,10 +431,10 @@ func firstNonBlankByte(line string) int {
 	return i
 }
 
-// isWritableRegister は、ch が :d の書き込み先にできるレジスターの名前かを返す（Vim の valid_yank_reg の書き込みの場合）。
+// isWritableRegister は、ch が :d の書き込み先にできるレジスターの名前（英字と _）かを返す（FR-50）。
 // 数字は回数として読むので、ここには来ない。
 func isWritableRegister(ch byte) bool {
-	return isLetter(ch) || strings.IndexByte(`"-_*+`, ch) >= 0
+	return isLetter(ch) || ch == '_'
 }
 
 // deleteLinesEdit は、l1 行目から l2 行目まで（0 始まり、両端を含む）を行ごと消す編集を返す。
