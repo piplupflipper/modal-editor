@@ -273,8 +273,14 @@ func (s *State) visualOperator(cmd editcmd.Command) error {
 	rg := s.visualRegion()
 	ext := s.extentOf(rg)
 	s.exitVisual()
-	s.dotVisual = ext
-	return s.change(cmd, func() error { return s.regionOperator(cmd, rg) })
+	err := s.change(cmd, func() error { return s.regionOperator(cmd, rg) })
+	// 範囲の大きさは、. が繰り返す値（s.dot）と組で使うので、. の対象になる値のときだけ記録する。
+	// ヤンクや失敗したオペレーターで上書きすると、直前の変更の . が別の大きさの範囲に働く（Vim の vld0vllly0. は 2 文字を消す。#167）。
+	// c のようにインサートモードへ移る値は、s.dot をインサートモードを抜けるときに記録するが、範囲の大きさはここで記録しておく。
+	if err == nil && repeatable(cmd) {
+		s.dotVisual = ext
+	}
+	return err
 }
 
 // regionOperator は、ビジュアルモードの選択（またはその繰り返し）の範囲に対してオペレーターを実行する。
