@@ -45,6 +45,8 @@ func init() {
 		"join-lines":         actJoin,
 		"put-after":          actPut(true),
 		"put-before":         actPut(false),
+		"put-older":          actPutCycle(true),
+		"put-newer":          actPutCycle(false),
 		"open-below":         actOpen(true),
 		"open-above":         actOpen(false),
 		"insert":             actInsert,
@@ -293,6 +295,7 @@ const maxPutBytes = 64 << 20
 // 名前を省略すれば履歴の先頭（上限を超えた無名のレジスターがあればそれ）を、名前を指定すればそのレジスターを入れる。
 // 貼り付けは履歴の順を変えない（基本設計 4.5）。
 // レジスターが空なら失敗する。_ は何もしない。
+// 入れたら、直後の <C-p> と <C-n> で置き換えられるように記録する（notePut。FR-55）。
 //
 // req: FR-51
 func actPut(after bool) actionFunc {
@@ -307,49 +310,71 @@ func actPut(after bool) actionFunc {
 		if reg.empty() {
 			return failf("register %q is empty", cmd.Register)
 		}
-		if reg.Text == "" && !reg.Linewise {
-			// 空のテキストが入ったレジスター（空の行の C の後など）は、Vim と同じく何も入れず、カーソルも動かさない。
-			return nil
-		}
-		n := max(cmd.Count, 1)
-		unit := reg.Text
-		if reg.Linewise {
-			unit += "\n"
-		}
-		if len(unit)*n > maxPutBytes {
-			return failf("text too large")
-		}
-		text := strings.Repeat(unit, n)
-		l := s.cursor.Line
-		if reg.Linewise {
-			text = strings.TrimSuffix(text, "\n")
-			if after {
-				if err := s.apply(buffer.Edit{Range: emptyRange(s.lineEnd(l)), Text: "\n" + text}); err != nil {
-					return err
-				}
-				s.setCursorNormal(s.firstNonBlankPos(l + 1))
-				return nil
-			}
-			if err := s.apply(buffer.Edit{Range: emptyRange(pos(l, 0)), Text: text + "\n"}); err != nil {
-				return err
-			}
-			s.setCursorNormal(s.firstNonBlankPos(l))
-			return nil
-		}
-		at := s.cursor
-		if after {
-			at.Byte = nextChar(s.line(l), at.Byte)
-		}
-		if err := s.apply(buffer.Edit{Range: emptyRange(at), Text: text}); err != nil {
+		before := s.cursor
+		rg, put, err := s.putText(reg, after, max(cmd.Count, 1))
+		if err != nil || !put {
 			return err
 		}
-		if strings.Contains(text, "\n") {
-			s.setCursorNormal(at)
-			return nil
-		}
-		s.setCursorNormal(pos(l, at.Byte+lastCharStart(text)))
+		s.notePut(cmd.Register, reg, after, max(cmd.Count, 1), before, rg)
 		return nil
 	}
+}
+
+// putText は、p（after が true）と P と同じく、reg のテキストを n 回続けてカーソルの位置に入れ、カーソルを動かす（actPut の doc）。
+// 入れた範囲を返す。空のテキストが入ったレジスターは、何も入れずに put を false で返す。
+func (s *State) putText(reg Register, after bool, n int) (rg buffer.Range, put bool, err error) {
+	if reg.Text == "" && !reg.Linewise {
+		// 空のテキストが入ったレジスター（空の行の C の後など）は、Vim と同じく何も入れず、カーソルも動かさない。
+		return buffer.Range{}, false, nil
+	}
+	unit := reg.Text
+	if reg.Linewise {
+		unit += "\n"
+	}
+	if len(unit)*n > maxPutBytes {
+		return buffer.Range{}, false, failf("text too large")
+	}
+	text := strings.Repeat(unit, n)
+	l := s.cursor.Line
+	if reg.Linewise {
+		text = strings.TrimSuffix(text, "\n")
+		if after {
+			at := s.lineEnd(l)
+			if err := s.apply(buffer.Edit{Range: emptyRange(at), Text: "\n" + text}); err != nil {
+				return buffer.Range{}, false, err
+			}
+			s.setCursorNormal(s.firstNonBlankPos(l + 1))
+			return buffer.Range{Start: at, End: textEnd(at, "\n"+text)}, true, nil
+		}
+		at := pos(l, 0)
+		if err := s.apply(buffer.Edit{Range: emptyRange(at), Text: text + "\n"}); err != nil {
+			return buffer.Range{}, false, err
+		}
+		s.setCursorNormal(s.firstNonBlankPos(l))
+		return buffer.Range{Start: at, End: textEnd(at, text+"\n")}, true, nil
+	}
+	at := s.cursor
+	if after {
+		at.Byte = nextChar(s.line(l), at.Byte)
+	}
+	if err := s.apply(buffer.Edit{Range: emptyRange(at), Text: text}); err != nil {
+		return buffer.Range{}, false, err
+	}
+	rg = buffer.Range{Start: at, End: textEnd(at, text)}
+	if strings.Contains(text, "\n") {
+		s.setCursorNormal(at)
+		return rg, true, nil
+	}
+	s.setCursorNormal(pos(l, at.Byte+lastCharStart(text)))
+	return rg, true, nil
+}
+
+// textEnd は、start の位置に text を入れたときの、入れたテキストの終わりの位置を返す。
+func textEnd(start buffer.Position, text string) buffer.Position {
+	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
+		return pos(start.Line+strings.Count(text, "\n"), len(text)-i-1)
+	}
+	return pos(start.Line, start.Byte+len(text))
 }
 
 // emptyRange は、p の位置の空の範囲（挿入の位置）を返す。

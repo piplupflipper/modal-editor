@@ -225,6 +225,8 @@ type Editor struct {
 
 	message ui.Message
 	popup   *popupState
+	// regList は、:registers で出したレジスターの一覧の窓である（reglist.go）。nil なら出していない。
+	regList *regListState
 	choices []*exthost.ChoiceAskRequest
 	// choiceDone は、続けて届いた問い（choices が空になるまでの一続き）のうち、答えたか取り下げられた問いの数である。
 	// 表示中の問いが何件目か（choiceDone+1）を出すのに使い、choices が空になったら 0 に戻す（#151）。

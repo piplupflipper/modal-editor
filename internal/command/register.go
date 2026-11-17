@@ -188,6 +188,39 @@ func (r *Registers) History() []Register {
 	return out
 }
 
+// fromHistory は、名前 name の貼り付けが履歴の先頭を貼るかを返す。名前を省略し、上限を超えた無名のレジスターが無く、履歴が空でないときである。
+func (r *Registers) fromHistory(name rune) bool {
+	return name == 0 && r.oversize.empty() && len(r.history) > 0
+}
+
+// RegisterEntry は、レジスターの一覧（:registers）の 1 項目である（FR-54）。
+type RegisterEntry struct {
+	// Name は、名前付きのレジスターの名前（a〜z）である。履歴の項目なら 0 である。
+	Name rune
+	// Index は、履歴の項目の、新しいほうからの添字（0 が先頭）である。Name が 0 のときだけ意味を持つ。
+	Index int
+	// Register は、項目の内容である。
+	Register Register
+}
+
+// List は、レジスターの一覧に出す項目を返す（FR-54。基本設計 4.5）。
+// 履歴の項目を新しい順に並べ、続けて、中身のある名前付きのレジスターを a から順に並べる。
+// 上限を超えた無名のレジスターは、履歴の項目でないので含めない。
+//
+// req: FR-54
+func (r *Registers) List() []RegisterEntry {
+	out := make([]RegisterEntry, 0, len(r.history))
+	for i, reg := range r.History() {
+		out = append(out, RegisterEntry{Index: i, Register: reg})
+	}
+	for i, reg := range r.named {
+		if !reg.empty() {
+			out = append(out, RegisterEntry{Name: rune('a' + i), Register: reg})
+		}
+	}
+	return out
+}
+
 // Promote は、履歴の新しいほうから i 番目（0 が先頭）の項目を、履歴の先頭へ移す（基本設計 4.5 の、一覧から選んで貼った項目）。
 // 項目は移すだけで、同じ項目を 2 件にしない。上限を超えた無名のレジスターは捨てる（無名のレジスターは移した項目を読む）。
 // i が範囲の外なら何もせず false を返す。i が 1 以上なら履歴の先頭が変わるので、Pushes を 1 増やす。

@@ -40,6 +40,8 @@ var pasteDelete = editcmd.Command{Kind: editcmd.KindOperator, Operator: editcmd.
 // 行単位の選択の c は空の行を残すので、ビジュアルモードの行単位の選択でも再生の結果が違う（docs/vim-differences.md）。
 func (s *State) Paste(text string) Result {
 	s.res = Result{}
+	// 端末からの貼り付けも「別の操作」なので、p の後の <C-p> と <C-n> の対象を無くす（FR-55）。
+	s.lastPut = nil
 	text = pasteable(text)
 	if text == "" {
 		return s.take()

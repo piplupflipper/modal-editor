@@ -112,6 +112,8 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 	case ex.ActionJumpList:
 		e.message = infoMessage(e.jumpListText())
 		return nil
+	case ex.ActionRegisterList:
+		return e.openRegisterList(bs)
 	case ex.ActionJump:
 		// command.State が Navigator で行うので、Result.Actions には入らない。来たら内部の誤りである。
 		return errors.New("内部の誤り: ジャンプリストの移動が本体の動作として渡された")

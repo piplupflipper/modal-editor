@@ -149,6 +149,11 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		return
 	}
 	e.endChoices()
+	if e.regList != nil {
+		e.message = noMessage
+		e.regListKey(k)
+		return
+	}
 	if e.hitEnter() && (k == editcmd.Special(editcmd.CodeEnter) || k == editcmd.Rune(' ')) {
 		// Vim の hit-enter の問いと同じく、<CR> と <Space> はメッセージを消すだけで、コマンドとしては使わない。
 		// 他のキーは、メッセージを消してからコマンドとして使う。
@@ -180,6 +185,10 @@ func (e *Editor) handlePaste(text string) {
 		return
 	}
 	e.endChoices()
+	if e.regList != nil {
+		// レジスターの一覧の窓を出している間の貼り付けは、一覧の操作にならないので捨てる。
+		return
+	}
 	e.message = noMessage
 	for _, k := range e.remap.flush() {
 		if !e.feedKey(k) {

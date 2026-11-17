@@ -113,6 +113,16 @@ type Choice struct {
 	Note string
 }
 
+// List は、浮かべる窓に出す選択の一覧である（Frame.List。:registers の一覧。FR-54）。
+type List struct {
+	// Title は、窓の最初の行に出す見出し（選び方の案内）である。
+	Title string
+	// Items は、項目の表示である。1 項目を 1 行に出し、幅に収まらなければ右の端で切る。
+	Items []string
+	// Selected は、選んでいる項目の添字である。その行を StylePopupSelected で描く。
+	Selected int
+}
+
 // SignKind は、行の印の種類である。値は sign/set の kind と同じ文字列である（基本設計 6.7）。
 type SignKind string
 
@@ -187,6 +197,9 @@ type Frame struct {
 	// Popup は、カーソルの近くに浮かべて出すテキスト（popup/show の本文）である。空なら出さない。
 	// カーソルの下の行に、下に収まらなければ上の行に、バッファの表示領域の上に重ねて出す。行は折り返す。
 	Popup string
+	// List は、浮かべる窓に出す選択の一覧（:registers の一覧。FR-54）である。nil なら出さない。
+	// 出すときは Popup を出さず、カーソルを選んでいる項目の行に置く。キーの扱いは internal/editor が行う。
+	List *List
 	// PopupMarkdown は、Popup の本文が Markdown（popup/show の format が markdown）かどうかである。
 	// true なら、コードの囲みの行（```go など）を描かずに中身の行だけを出す（基本設計 6.7。#151）。他の記法は整形しない。
 	PopupMarkdown bool

@@ -83,6 +83,7 @@ func init() {
 		{name: "buffers", min: 7, bang: true, rng: rangeNone, run: runBufferList},
 		{name: "ls", min: 2, bang: true, rng: rangeNone, run: runBufferList},
 		{name: "jumps", min: 2, rng: rangeNone, run: runJumps},
+		{name: "registers", min: 3, rng: rangeNone, run: runRegisters},
 		{name: "wall", min: 2, bang: true, rng: rangeNone, run: runAll(true, false)},
 		{name: "qall", min: 2, bang: true, rng: rangeNone, run: runAll(false, true)},
 		{name: "wqall", min: 3, bang: true, rng: rangeNone, run: runAll(true, true)},
@@ -129,6 +130,18 @@ func runJumps(c *execCtx, inv *invocation) error {
 		return err
 	}
 	c.actions = append(c.actions, Action{Kind: ActionJumpList})
+	return nil
+}
+
+// runRegisters は :registers を実行する。一覧の窓は、レジスターと画面を持つ呼び出し側が出す（FR-54）。
+// Vim の :registers は引数に出すレジスターの名前を取るが、ここでは取らず、引数があれば E488 にする。
+//
+// req: FR-54
+func runRegisters(c *execCtx, inv *invocation) error {
+	if err := noArg(inv); err != nil {
+		return err
+	}
+	c.actions = append(c.actions, Action{Kind: ActionRegisterList})
 	return nil
 }
 
