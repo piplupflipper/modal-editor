@@ -141,6 +141,35 @@ func TestRegisterListNoRoom(t *testing.T) {
 	}
 }
 
+// 一覧から 2 番目以降の履歴の項目を選んで貼ると、Promote で履歴の先頭が変わるので、その項目をホストのクリップボードへ送る（FR-56）。
+// 1 番目の項目を選んでも、<C-p> で貼り直しても、履歴の先頭は変わらないので送らない。
+//
+// req: FR-54, FR-56
+func TestRegisterListClipboard(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "one two\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	h.keys("yiwwyiw")
+	want := []string{"one", "two"}
+	h.waitClipboard(want)
+
+	h.keys(":reg<CR>")
+	h.screenHas("一覧の窓", " 2  c  one")
+	h.keys("j<CR>")
+	want = append(want, "one")
+	h.waitClipboard(want)
+	if got := h.text(); got != "one tonewo" {
+		t.Errorf("text = %q", got)
+	}
+
+	h.keys("<C-p>:reg<CR>")
+	h.screenHas("一覧の窓", regListTitle)
+	h.keys("<CR>")
+	h.waitClipboard(want)
+	if got := h.text(); got != "one ttwoonewo" {
+		t.Errorf("text = %q", got)
+	}
+}
+
 // レジスターも履歴も空なら、:registers は窓を出さずに知らせる。
 //
 // req: FR-54
