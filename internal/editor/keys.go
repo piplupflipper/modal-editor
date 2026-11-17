@@ -248,8 +248,14 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 	// State を呼んだ入り口によらず、結果を扱い終えた時点で、履歴の先頭が変わっていればホストのクリップボードへ送る（基本設計 4.5）。
 	// 動作（:e など）でバッファを切り替えても、レジスターは TakeOver で引き継ぐので、扱い終えた後のカーソルのあるバッファのものを読む。
 	defer e.syncClipboard()
-	for _, ch := range res.Changes {
-		e.commitChange(bs, ch)
+	// 再生の途中の :e が bs の State を作り直したなら、res は捨てた State のもので、変更は捨てたバッファのものである。
+	// 作り直す前の変更は RunActions が送り終えているので、ここでは送らない（送ると、作り直したバッファの番号で複製がずれる）。
+	replaced := bs.replacedInReplay
+	bs.replacedInReplay = false
+	if !replaced {
+		for _, ch := range res.Changes {
+			e.commitChange(bs, ch)
+		}
 	}
 	e.trackDeferred(bs, res.Deferred)
 	if res.Message.Text != "" {
@@ -277,7 +283,7 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 	}
 	e.doPendingOpens()
 	if switched {
-		if len(res.Remaining) == 0 || e.cur == bs {
+		if len(res.Remaining) == 0 || (e.cur == bs && !replaced) {
 			return nil
 		}
 		next := e.cur

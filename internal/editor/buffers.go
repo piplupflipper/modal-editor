@@ -173,6 +173,8 @@ func shiftMarkLine(p buffer.Position, ed buffer.Edit) buffer.Position {
 type navigator struct {
 	e  *Editor
 	bs *bufferState
+	// st は、この navigator を渡した State である。:e が bs の State を作り直した（replaceBuffer）かを、bs.state と比べて知る。
+	st *command.State
 }
 
 // MarkJump は、command.Navigator.MarkJump である。
@@ -204,10 +206,21 @@ func (n navigator) Navigate(a ex.Action, cursor buffer.Position) (buffer.Positio
 //
 // 動作の前に、再生でまだ知らせていない変更を exthost へ送る（:w が書き出す内容と、移る前のバッファの複製を揃える）。
 // :w が外での変更を見つけたら、再生の外と同じく書き込むかを問い（askWrite）、再生はそこで止める。
-// Vim 9.1 は問いの答えをマクロの次のキーから読むが、ここでは利用者の答えを待つ。
-func (n navigator) RunActions(acts []ex.Action) error {
+// Vim 9.1 も問いでは利用者の答えを待つが、y か n の答えの後にマクロの残りを続ける。ここでは残りを捨てる（#174）。
+//
+// 起動したときの名前の無い空のバッファで :e すると、bufferState は同じまま buf と state を作り直す（replaceBuffer）。
+// このときも、呼んだ State は捨てた State なので ErrBufferSwitched を返し、再生の残りを作り直した State で続ける。
+func (n navigator) RunActions(acts []ex.Action) (err error) {
 	e, bs := n.e, n.bs
-	e.syncChanges(bs, bs.state.PendingChanges())
+	e.syncChanges(bs, n.st.PendingChanges())
+	defer func() {
+		if bs.state != n.st {
+			bs.replacedInReplay = true
+			if err == nil {
+				err = command.ErrBufferSwitched
+			}
+		}
+	}()
 	for i, a := range acts {
 		err := e.doAction(bs, a)
 		if errors.Is(err, errChangedOnDisk) {

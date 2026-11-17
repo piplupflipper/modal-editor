@@ -365,6 +365,41 @@ func TestExBufferSwitchInMacro(t *testing.T) {
 	}
 }
 
+// 起動したときの名前の無い空のバッファから、マクロの再生の中で :e すると、bufferState は同じまま State を作り直す（replaceBuffer）。
+// 残りのキーは作り直した State で動き、拡張機能へ送った版（sent）はバッファの版と揃う（PR #173 のレビューの必須 1）。
+// 期待値の xB1 は、Vim 9.1 で同じキーを打って得た（レビュー、2026-11-18）。
+//
+// req: FR-05, FR-16
+func TestExEditFromEmptyBufferInMacro(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"b.txt": "B1\nB2\n"})
+	h := start(t, Config{WorkDir: dir})
+	check := func(step, want string) {
+		t.Helper()
+		h.settle()
+		h.e.do(func() {
+			bs := h.e.cur
+			if got := filepath.Base(bs.path); got != "b.txt" {
+				t.Errorf("%s: cur = %q", step, got)
+			}
+			if got := bs.buf.Text(); got != want {
+				t.Errorf("%s: text = %q, want %q", step, got, want)
+			}
+			if bs.sent != bs.buf.Version() {
+				t.Errorf("%s: sent = %d, version = %d", step, bs.sent, bs.buf.Version())
+			}
+		})
+	}
+	h.keys("qc:e b.txt<CR>ix<Esc>q:bd!<CR>@c")
+	check("@c", "xB1\nB2")
+	h.keys("x")
+	check("x", "B1\nB2")
+	// 再生の中の yy も、作り直した State のレジスターに入る。
+	h.keys(":bd!<CR>")
+	h.e.do(func() { h.e.cur.state.Registers().Set('c', command.Register{Text: ":e b.txt\ryy"}) })
+	h.keys("@cP")
+	check("yy", "B1\nB1\nB2")
+}
+
 // :jumps の一覧は、Vim 9.1 と同じ形で出す。期待値は、tmux の上の Vim 9.1 で同じキーを打って得た（2026-11-16）。
 //
 // req: FR-08

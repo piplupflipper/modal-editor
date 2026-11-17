@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -167,6 +168,41 @@ func TestRegisterListClipboard(t *testing.T) {
 	h.waitClipboard(want)
 	if got := h.text(); got != "one ttwoonewo" {
 		t.Errorf("text = %q", got)
+	}
+}
+
+// マクロの再生の中の :registers は、再生の後のレジスターで一覧を作り、再生の終わったバッファで <CR> で貼れる（PR #173 のレビューの推奨 1）。
+// 再生の中の動作はその場で行う（#172）ので、開いた時点の写しのままだと、後の yy で「一覧を出した後に履歴が変わった」になる。
+//
+// req: FR-05, FR-54
+func TestRegisterListInMacro(t *testing.T) {
+	tests := []struct {
+		name, macro, file, want string
+	}{
+		{"同じバッファ", ":reg\ryy", "a.txt", "a1\na1\na2"},
+		{"後で移る", ":reg\r:e b.txt\ryy", "b.txt", "B1\nB1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": "a1\na2\n", "b.txt": "B1\n"})
+			h := start(t, Config{WorkDir: dir}, "a.txt")
+			h.keys("jyyk")
+			h.settle()
+			h.e.do(func() { h.e.cur.state.Registers().Set('c', command.Register{Text: tt.macro}) })
+			h.keys("@c")
+			// 先頭の項目は、再生の中の yy で取った行である。
+			h.screenHas("一覧の窓", " 1  l  "+strings.SplitN(tt.want, "\n", 2)[0])
+			h.keys("<CR>")
+			h.settle()
+			h.e.do(func() {
+				if got := filepath.Base(h.e.cur.path); got != tt.file {
+					t.Errorf("cur = %s, want %s", got, tt.file)
+				}
+			})
+			if got := h.text(); got != tt.want {
+				t.Errorf("text = %q, want %q (message %q)", got, tt.want, h.message())
+			}
+		})
 	}
 }
 
