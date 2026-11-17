@@ -646,6 +646,48 @@ func TestReplaySwitchesBuffer(t *testing.T) {
 	})
 }
 
+// バッファを切り替えた後に、切り替える前のバッファで期限 0 の結果を適用しても、今のバッファのレジスターの履歴は変わらない
+// （TakeOver が履歴の配列を複製する。PR #166 の再レビューの再現）。
+//
+// req: FR-51
+func TestDeferredAfterSwitchKeepsHistory(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1 a2 a3\nxyz\n", "b.txt": "B\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), SyncTimeout: durationPtr(0)}, "a.txt")
+	h.keys("ywwywwyw0j")
+	h.keys("dis")
+	h.keys(":e b.txt<CR>yy")
+	h.settle()
+	history := func() []string {
+		var out []string
+		h.e.do(func() {
+			for _, r := range h.e.cur.state.Registers().History() {
+				out = append(out, r.Text)
+			}
+		})
+		return out
+	}
+	want := []string{"B", "a3", "a2 ", "a1 "}
+	if got := history(); !slices.Equal(got, want) {
+		t.Fatalf("切り替えた直後の履歴 = %q, want %q", got, want)
+	}
+	h.eventually("a.txt での後からの適用", func() bool {
+		for _, bs := range h.e.bufs {
+			if filepath.Base(bs.path) == "a.txt" {
+				return bs.buf.Text() == "a1 a2 a3\n"
+			}
+		}
+		return false
+	})
+	if got := history(); !slices.Equal(got, want) {
+		t.Errorf("a.txt の適用の後の b.txt の履歴 = %q, want %q", got, want)
+	}
+	h.keys("p")
+	h.settle()
+	if got := h.text(); got != "B\nB" {
+		t.Errorf("p の後の text = %q", got)
+	}
+}
+
 // 期限 0 の結果が、キーの列の解釈の途中（d の後）に届いたら、適用せずに捨てる。
 //
 // req: FR-18

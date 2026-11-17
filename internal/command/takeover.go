@@ -1,5 +1,7 @@
 package command
 
+import "slices"
+
 // TakeOver は、カーソルのあるバッファが prev の State からこの State へ移るときに、Vim でエディタ全体に 1 つの状態を引き継ぐ。
 // 呼び出し側（internal/editor）は、バッファを切り替えるたびと、バッファの State を作り直すたびに呼ぶ。
 //
@@ -13,7 +15,10 @@ func (s *State) TakeOver(prev *State) {
 	if prev == nil || prev == s {
 		return
 	}
+	// 履歴の配列は push、replace、Promote がその場で書き換えるので、複製して prev と共有しない。
+	// 切り替えの後も、prev の State には保留した拡張機能の結果（ApplyDeferred）が書き込みうる（PR #166 の再レビュー）。
 	s.registers = prev.registers
+	s.registers.history = slices.Clone(prev.registers.history)
 	s.Ex.LastPattern, s.searchBackward = prev.Ex.LastPattern, prev.searchBackward
 	s.Ex.LastSubstitute = prev.Ex.LastSubstitute
 	s.lastFind = prev.lastFind
