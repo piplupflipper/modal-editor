@@ -55,12 +55,14 @@ const (
 	DefaultHistorySize = 100
 	// DefaultMaxEntryBytes は、履歴に積む 1 件の最大のバイト数の既定値（1 MiB）である（FR-53）。
 	DefaultMaxEntryBytes = 1 << 20
+	// MaxHistorySize は、履歴の件数の上限に設定できる最大の値である（基本設計 7 章）。
+	MaxHistorySize = 10000
 )
 
 // RegisterConfig は、レジスターの履歴の設定である（基本設計 7 章の registers。FR-52、FR-53）。
 // ゼロ値は、すべての項目が既定値の設定である。
 type RegisterConfig struct {
-	// HistorySize は、履歴の件数の上限（historySize）である。0 以下なら DefaultHistorySize を使う。
+	// HistorySize は、履歴の件数の上限（historySize）である。0 以下なら DefaultHistorySize、MaxHistorySize を超えたら MaxHistorySize を使う。
 	HistorySize int
 	// MaxEntryBytes は、履歴に積む 1 件の最大のバイト数（maxEntryBytes）である。0 以下なら DefaultMaxEntryBytes を使う。
 	MaxEntryBytes int
@@ -73,7 +75,7 @@ func (c RegisterConfig) historySize() int {
 	if c.HistorySize <= 0 {
 		return DefaultHistorySize
 	}
-	return c.HistorySize
+	return min(c.HistorySize, MaxHistorySize)
 }
 
 // maxEntryBytes は、既定値を補った 1 件の最大のバイト数を返す。
@@ -101,11 +103,14 @@ func (c RegisterConfig) deleteToHistory() bool {
 // 件数の上限を超えたら最も古いものから捨てる。MaxEntryBytes を超えたテキストは履歴に積まず、
 // 「上限を超えた無名のレジスター」として 1 つだけ持つ。その間は、無名のレジスターはそれを読む。次に履歴に積むと捨てる（FR-53）。
 //
-// TakeOver で State の間を値のまま移すので、履歴のスライスは書き換えずに作り直す（移す前の State と配列を共有してよい）。
+// 履歴のスライスは古い順に並べ、積むときは末尾に足し、上限を超えたら先頭を捨てる（積むたびに全体を写さない）。
+// TakeOver で State の間を値のまま移すので、移す前の State と配列を共有しうる（その場で書き換えることもある）。
+// 読み書きするのはカーソルのあるバッファの State だけで、移す前の State の値は読まずに、次に TakeOver で戻るときに上書きされる。
 //
 // req: FR-04
 type Registers struct {
-	named   [26]Register
+	named [26]Register
+	// history は、履歴を古い順に並べたものである（最後が先頭、つまり最も新しい）。
 	history []Register
 	// oversize は、上限を超えた無名のレジスターである。無ければ空（empty）である。
 	oversize Register
@@ -118,7 +123,7 @@ type Registers struct {
 func (r *Registers) SetConfig(c RegisterConfig) {
 	r.cfg = c
 	if n := c.historySize(); len(r.history) > n {
-		r.history = slices.Clone(r.history[:n])
+		r.history = slices.Clone(r.history[len(r.history)-n:])
 	}
 }
 
@@ -161,8 +166,8 @@ func (r *Registers) Get(name rune) (Register, bool) {
 		if !r.oversize.empty() {
 			return r.oversize, true
 		}
-		if len(r.history) > 0 {
-			return r.history[0], true
+		if n := len(r.history); n > 0 {
+			return r.history[n-1], true
 		}
 		return Register{}, true
 	case name >= 'a' && name <= 'z':
@@ -175,10 +180,38 @@ func (r *Registers) Get(name rune) (Register, bool) {
 	return Register{}, false
 }
 
-// History は、履歴を新しい順に返す（FR-51）。上限を超えた無名のレジスターは含めない。返したスライスは書き換えない。
-func (r *Registers) History() []Register { return r.history }
+// History は、履歴を新しい順に並べた複製を返す（FR-51）。上限を超えた無名のレジスターは含めない。
+func (r *Registers) History() []Register {
+	out := slices.Clone(r.history)
+	slices.Reverse(out)
+	return out
+}
 
-// Pushes は、これまでに履歴の先頭に積んだ回数を返す。操作の前後で値が違えば、履歴の先頭が変わった。
+// Promote は、履歴の新しいほうから i 番目（0 が先頭）の項目を、履歴の先頭へ移す（基本設計 4.5 の、一覧から選んで貼った項目）。
+// 項目は移すだけで、同じ項目を 2 件にしない。上限を超えた無名のレジスターは捨てる（無名のレジスターは移した項目を読む）。
+// i が範囲の外なら何もせず false を返す。i が 1 以上なら履歴の先頭が変わるので、Pushes を 1 増やす。
+//
+// req: FR-51
+func (r *Registers) Promote(i int) bool {
+	n := len(r.history)
+	if i < 0 || i >= n {
+		return false
+	}
+	r.oversize = Register{}
+	if i == 0 {
+		return true
+	}
+	j := n - 1 - i
+	reg := r.history[j]
+	copy(r.history[j:], r.history[j+1:])
+	r.history[n-1] = reg
+	r.pushes++
+	return true
+}
+
+// Pushes は、履歴の先頭が変わった回数（積んだ、置き換えた、Promote で移した回数）を返す。
+// 呼び出し側（internal/editor）は、State を呼ぶ前後の値を比べて、履歴の先頭が変わったかを判定する（基本設計 4.5 の FR-56）。
+// 値は TakeOver で引き継ぐので、バッファの切り替えをまたいでも単調に増える。
 func (r *Registers) Pushes() uint64 { return r.pushes }
 
 // Set は、名前を指定したヤンクと同じく、名前が name のレジスターに reg を書き込む（基本設計 4.5 の表）。
@@ -189,7 +222,7 @@ func (r *Registers) Set(name rune, reg Register) bool {
 	if !validRegister(name) {
 		return false
 	}
-	r.write(name, reg, false)
+	r.write(name, reg, false, false)
 	return true
 }
 
@@ -216,13 +249,16 @@ func (r *Registers) slot(name rune) *Register {
 // 積まなかったことを知らせる文言を notice に返す（FR-53）。名前付きのレジスターには大きさによらず書く。
 // 名前は呼び出し側が checkRegister で確かめておく。名前に使えない文字なら何もしない。
 //
+// replace が真なら、積む代わりに履歴の先頭を置き換える（1 回の Ex コマンドの行の中の 2 回目以降の削除。applyExResult）。
+// pushed は、履歴に積んだか先頭を置き換えたかである。
+//
 // req: FR-51, FR-52, FR-53
-func (r *Registers) write(name rune, reg Register, del bool) (notice string) {
+func (r *Registers) write(name rune, reg Register, del, replace bool) (pushed bool, notice string) {
 	reg.filled = true
 	switch {
 	case name == 0:
 		if del && !r.cfg.deleteToHistory() {
-			return ""
+			return false, ""
 		}
 	case name >= 'a' && name <= 'z':
 		r.named[name-'a'] = reg
@@ -231,34 +267,43 @@ func (r *Registers) write(name rune, reg Register, del bool) (notice string) {
 		*p = p.appendTo(reg)
 		reg = *p
 	default:
-		return ""
+		return false, ""
 	}
-	return r.push(reg)
+	return r.push(reg, replace)
 }
 
-// push は、reg を履歴の先頭に積む。件数の上限を超えたら最も古いものを捨てる。
+// push は、reg を履歴の先頭に積む（replace が真で履歴が空でなければ、先頭を置き換える）。件数の上限を超えたら最も古いものを捨てる。
 // MaxEntryBytes を超えたら積まずに上限を超えた無名のレジスターに置き、知らせる文言を返す（FR-53）。
 //
+// 末尾に足して先頭を切り詰めるので、全体を写すのは配列の容量が尽きたときだけである。
+//
 // req: FR-51, FR-53
-func (r *Registers) push(reg Register) string {
+func (r *Registers) push(reg Register, replace bool) (bool, string) {
 	if limit := r.cfg.maxEntryBytes(); len(reg.Text) > limit {
 		r.oversize = reg
-		return fmt.Sprintf("%d バイトのテキストは上限の %d バイトを超えるので、レジスターの履歴に積みませんでした", len(reg.Text), limit)
+		return false, fmt.Sprintf("%d バイトのテキストは上限の %d バイトを超えるので、レジスターの履歴に積みませんでした", len(reg.Text), limit)
 	}
 	r.oversize = Register{}
-	n := min(len(r.history)+1, r.cfg.historySize())
-	h := make([]Register, 0, n)
-	h = append(h, reg)
-	r.history = append(h, r.history[:n-1]...)
+	if n := len(r.history); replace && n > 0 {
+		r.history[n-1] = reg
+	} else {
+		r.history = append(r.history, reg)
+		if over := len(r.history) - r.cfg.historySize(); over > 0 {
+			r.history = r.history[over:]
+		}
+	}
 	r.pushes++
-	return ""
+	return true, ""
 }
 
 // writeRegister は、操作の書き込みを Registers.write で行い、積まなかったことの知らせ（FR-53）を Result.Message に入れる。
-func (s *State) writeRegister(name rune, reg Register, del bool) {
-	if notice := s.registers.write(name, reg, del); notice != "" {
+// replace と pushed は Registers.write と同じである。
+func (s *State) writeRegister(name rune, reg Register, del, replace bool) (pushed bool) {
+	pushed, notice := s.registers.write(name, reg, del, replace)
+	if notice != "" {
 		s.res.Message = Message{Text: notice, Warning: true}
 	}
+	return pushed
 }
 
 // rawText は、マクロとして記録したキーの列を、Vim のレジスターと同じ生のテキストにする。

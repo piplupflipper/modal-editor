@@ -172,7 +172,7 @@ func (s *State) deleteInLine(cmd editcmd.Command, from, to int) error {
 	if err := s.apply(edit); err != nil {
 		return err
 	}
-	s.writeRegister(cmd.Register, reg, true)
+	s.writeRegister(cmd.Register, reg, true, false)
 	s.setCursorNormal(pos(l, from))
 	return nil
 }

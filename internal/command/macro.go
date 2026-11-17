@@ -66,7 +66,7 @@ func (s *State) stopRecording() {
 // 対象を再生した値にする（finishPlayDot）。
 // 入れ子の再生（a の中の @b）も同じ規則に従うので、内側の再生が終わると外側の置き場の対象は @b になる。
 // 再生を始める前に失敗した場合（@@ で前が無い、名前が無効、入れ子の上限）は、対象を変えない。
-// Vim の @: は持たない（要件定義 1.1）。入力の解釈（internal/input）が @: を受け付けない。
+// Vim の @: は持たない（要件定義 1.1）。名前の検査（checkNames）が @: を E354 で失敗させるので、ここには来ない。
 //
 // req: FR-05, FR-07, FR-57
 func (s *State) play(cmd editcmd.Command) error {

@@ -365,7 +365,7 @@ func (s *State) execute(cmd editcmd.Command) error {
 
 // checkNames は、値が指定したレジスターの名前（"x の x、q と @ の引数）を確かめ、使えない名前なら *InvalidRegisterError を返す（FR-50）。
 // 入力の解釈は名前を検査せずに値へ入れるので、拡張機能のオペレーターと操作に渡す名前も含めてここで確かめる。
-// @ の引数の @（@@）と :（@:）は、レジスターの名前ではないので通す。
+// @ の引数の @（@@）は、レジスターの名前ではないので通す。Vim の @: は持たない（要件定義 1.1）ので、: も E354 にする。
 //
 // req: FR-50
 func (s *State) checkNames(cmd editcmd.Command) error {
@@ -379,7 +379,7 @@ func (s *State) checkNames(cmd editcmd.Command) error {
 		}
 	case editcmd.KindPlay:
 		// 再生できるのは a〜z（A〜Z は a〜z と同じ）と @（@@）だけである。@_ は、空の再生をドットリピートの対象にしないよう失敗させる。
-		if c := cmd.Char; c != '@' && c != ':' && !recordable(c) {
+		if c := cmd.Char; c != '@' && !recordable(c) {
 			return &InvalidRegisterError{Name: c}
 		}
 	case editcmd.KindMotion, editcmd.KindOperator, editcmd.KindAction, editcmd.KindRecordStop, editcmd.KindRepeat:

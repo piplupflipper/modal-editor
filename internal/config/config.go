@@ -292,11 +292,14 @@ func (s *source) extensions(v *hujson.Value, cfg *Config) {
 	}
 }
 
-// maxRegisterSetting は、historySize と maxEntryBytes の上限である。32 ビットの int でも溢れない値にする。
-const maxRegisterSetting = math.MaxInt32
+// maxHistorySize は、historySize の上限である（command.MaxHistorySize と同じ値。基本設計 7 章）。
+const maxHistorySize = 10000
+
+// maxEntryBytesSetting は、maxEntryBytes の上限である。32 ビットの int でも溢れない値にする。
+const maxEntryBytesSetting = math.MaxInt32
 
 // registers は、registers の値を読んで cfg に入れる（基本設計 7 章。FR-52、FR-53）。
-// historySize と maxEntryBytes は 1 以上の整数で、0 以下の値は誤りとして既定値を使う。
+// historySize は 1 以上 10000 以下、maxEntryBytes は 1 以上の整数で、範囲の外の値は誤りとして既定値を使う。
 //
 // req: FR-52, FR-53
 func (s *source) registers(v *hujson.Value, cfg *Config) {
@@ -308,11 +311,11 @@ func (s *source) registers(v *hujson.Value, cfg *Config) {
 		path := join("registers", m.name)
 		switch m.name {
 		case "historySize":
-			if n, ok := s.posInt(m.value, path, maxRegisterSetting); ok {
+			if n, ok := s.posInt(m.value, path, maxHistorySize); ok {
 				cfg.RegisterHistorySize = int(n)
 			}
 		case "maxEntryBytes":
-			if n, ok := s.posInt(m.value, path, maxRegisterSetting); ok {
+			if n, ok := s.posInt(m.value, path, maxEntryBytesSetting); ok {
 				cfg.RegisterMaxEntryBytes = int(n)
 			}
 		case "deleteToHistory":

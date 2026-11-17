@@ -67,8 +67,9 @@ func TestMacroRepeat(t *testing.T) {
 		t.Errorf("@@ err = %v", err)
 	}
 	feedKeys(s, ":s/a/b/<CR>")
-	if err := errOf(feedKeys(s, "j@:")); !errors.Is(err, ErrFailed) {
-		t.Errorf("@: err = %v", err)
+	var ie *InvalidRegisterError
+	if err := errOf(feedKeys(s, "j@:")); !errors.As(err, &ie) || ie.Name != ':' {
+		t.Errorf("@: err = %v, want E354", err)
 	}
 	if got := s.buf.Text(); got != "b1\na2\na3\na4" {
 		t.Errorf("@: text = %q", got)

@@ -225,7 +225,7 @@ func opDelete(s *State, cmd editcmd.Command, rg region, o opOptions) error {
 		// 行の無いバッファは、書き出すと空のファイルになる（基本設計 4.1）。
 		s.buf.MarkNoLines()
 	}
-	s.writeRegister(cmd.Register, reg, true)
+	s.writeRegister(cmd.Register, reg, true, false)
 	if rg.linewise {
 		s.setCursorNormal(s.firstNonBlankPos(min(rg.r.Start.Line, s.lastLine())))
 		return nil
@@ -258,7 +258,7 @@ func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if !rg.empty && !noLines {
 		// Vim の op_change は、範囲が空でなければ（空の行の c$、ciw のように包含的な範囲なら、テキストが空でも）、
 		// 消したテキストをレジスターに書く。cl のような排他的で空の範囲では書かない。
-		s.writeRegister(cmd.Register, Register{Text: text, Linewise: rg.linewise}, true)
+		s.writeRegister(cmd.Register, Register{Text: text, Linewise: rg.linewise}, true, false)
 	}
 	s.cursor = rg.r.Start
 	s.updateWant()
@@ -275,7 +275,7 @@ func opYank(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if err != nil {
 		return err
 	}
-	s.writeRegister(cmd.Register, Register{Text: text, Linewise: rg.linewise}, false)
+	s.writeRegister(cmd.Register, Register{Text: text, Linewise: rg.linewise}, false, false)
 	s.setCursorNormal(rg.start)
 	return nil
 }

@@ -61,7 +61,7 @@ func TestRegistersSetGet(t *testing.T) {
 //
 // req: FR-50
 func TestInvalidRegisterName(t *testing.T) {
-	for _, keys := range []string{`"0p`, `"1p`, `"-p`, `".p`, `":p`, `""p`, `"+yy`, `"0dd`, `"-x`, `"=cw`, "q0", `q"`, "q_", "@0", `@"`, "@-", "@_"} {
+	for _, keys := range []string{`"0p`, `"1p`, `"-p`, `".p`, `":p`, `""p`, `"+yy`, `"0dd`, `"-x`, `"=cw`, "q0", `q"`, "q_", "@0", `@"`, "@-", "@_", "@:"} {
 		t.Run(keys, func(t *testing.T) {
 			s := setup(t, "|abc\ndef")
 			s.registers.history = []Register{{Text: "U", filled: true}}
@@ -191,6 +191,75 @@ func TestRegistersHistorySize(t *testing.T) {
 	}
 	if got := len(d.History()); got != DefaultHistorySize {
 		t.Errorf("既定の件数 = %d", got)
+	}
+	var big Registers
+	big.SetConfig(RegisterConfig{HistorySize: MaxHistorySize + 5})
+	for i := range MaxHistorySize + 3 {
+		big.Set(0, Register{Text: fmt.Sprint(i)})
+	}
+	if h := big.History(); len(h) != MaxHistorySize || h[0].Text != fmt.Sprint(MaxHistorySize+2) {
+		t.Errorf("上限を超えた設定の件数 = %d, 先頭 = %q", len(h), h[0].Text)
+	}
+}
+
+// Promote は、選んだ項目を先頭へ移し、同じ項目を 2 件にしない。先頭が変わったときだけ Pushes を増やす。
+//
+// req: FR-51
+func TestRegistersPromote(t *testing.T) {
+	s := setup(t, "|one two three")
+	feedKeys(s, "ywwywwyw")
+	r := &s.registers
+	pushes := r.Pushes()
+	if !r.Promote(2) {
+		t.Fatal("Promote(2) が失敗した")
+	}
+	if got := historyTexts(r); !slices.Equal(got, []string{"one ", "three", "two "}) {
+		t.Errorf("履歴 = %q", got)
+	}
+	if got, _ := r.Get(0); got.Text != "one " || r.Pushes() != pushes+1 {
+		t.Errorf("無名 = %q, Pushes = %d", got.Text, r.Pushes())
+	}
+	if !r.Promote(0) || r.Pushes() != pushes+1 {
+		t.Errorf("Promote(0) で Pushes が変わった: %d", r.Pushes())
+	}
+	if r.Promote(3) || r.Promote(-1) {
+		t.Error("範囲の外の Promote が成功した")
+	}
+	feedKeys(s, "0p")
+	if got := s.buf.Text(); got != "oone ne two three" {
+		t.Errorf("移した後の p: text = %q", got)
+	}
+}
+
+// 1 回の Ex コマンドの行の中の削除（:g/pat/d、:d|d）は履歴の 1 件として扱い、先頭は最後に消した行になる。
+// 名前を指定したときも、そのレジスターは最後に消した行（大文字なら追記した全体）で、履歴は 1 件だけ増える。
+//
+// req: FR-51
+func TestRegistersHistoryExGlobal(t *testing.T) {
+	cases := []struct {
+		cmd     string
+		history []string
+		a       string
+	}{
+		{":g/x/d<CR>", []string{"x3", "keep"}, "A"},
+		{":3d|3d<CR>", []string{"x2", "keep"}, "A"},
+		{":g/x/d a<CR>", []string{"x3", "keep"}, "x3"},
+		{":g/x/d A<CR>", []string{"A\nx0\nx1\nx2\nx3", "keep"}, "A\nx0\nx1\nx2\nx3"},
+		{":g/x/d _<CR>", []string{"keep"}, "A"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			s := setup(t, "x0\nkeep\nx1\nx2\nx3")
+			s.registers.named[0] = Register{Text: "A", filled: true}
+			feedKeys(s, "jyy")
+			feedKeys(s, tc.cmd)
+			if got := historyTexts(&s.registers); !slices.Equal(got, tc.history) {
+				t.Errorf("履歴 = %q, want %q", got, tc.history)
+			}
+			if got, _ := s.registers.Get('a'); got.Text != tc.a {
+				t.Errorf("a = %q, want %q", got.Text, tc.a)
+			}
+		})
 	}
 }
 

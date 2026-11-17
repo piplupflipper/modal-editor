@@ -138,6 +138,8 @@ func TestParseRegisters(t *testing.T) {
 		{`{"registers": {"deleteToHistory": true}}`, 0, 0, new(true), 0},
 		{`{"registers": {"historySize": 0, "maxEntryBytes": -1, "deleteToHistory": "no"}}`, 0, 0, nil, 3},
 		{`{"registers": {"historySize": 1.5, "clipboards": "x"}}`, 0, 0, nil, 2},
+		{`{"registers": {"historySize": 10000}}`, 10000, 0, nil, 0},
+		{`{"registers": {"historySize": 10001}}`, 0, 0, nil, 1},
 		{`{"registers": []}`, 0, 0, nil, 1},
 	}
 	for _, c := range cases {
