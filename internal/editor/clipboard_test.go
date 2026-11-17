@@ -2,6 +2,7 @@ package editor
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/piplupflipper/modal-editor/internal/command"
@@ -68,6 +69,62 @@ func TestClipboardSkipsOversize(t *testing.T) {
 	if got := h.term.clipboard(); !slices.Equal(got, []string{"xy"}) {
 		t.Errorf("上限を超えたヤンクの後の送り出し = %q, want [xy]", got)
 	}
+}
+
+// マクロの記録は送らず、再生の中で先頭が何度変わっても最後の先頭だけを送る。
+// 大文字での追記（"A）は、追記した後の全体を送る。:g/pat/d は 1 件として、最後に消した行を送る。
+//
+// req: FR-56
+func TestClipboardMacroAppendGlobal(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "x1\nab\ncd\nx2\nx3\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	h.keys("qbylq")
+	h.waitClipboard([]string{"x"})
+
+	h.keys("qayyjylq")
+	want := []string{"x", "x1\n", "a"}
+	h.waitClipboard(want)
+
+	// 再生は yy と yl で先頭を 2 回変えるが、1 回の結果なので最後の yl の "c" だけを送る。
+	h.keys("@a")
+	want = append(want, "c")
+	h.waitClipboard(want)
+
+	h.keys(`gg"cyl"Cyl`)
+	want = append(want, "x", "xx")
+	h.waitClipboard(want)
+
+	h.keys(":g/x/d<CR>")
+	want = append(want, "x3\n")
+	h.waitClipboard(want)
+	if got := h.text(); got != "ab\ncd" {
+		t.Errorf(":g/x/d の後の text = %q", got)
+	}
+}
+
+// base64 にした大きさが MaxClipboardEncoded ちょうどのテキストは送り、1 バイトでも超えたら送らずにメッセージの行に出す。
+//
+// req: FR-56
+func TestClipboardSizeLimit(t *testing.T) {
+	// 行単位のテキストは改行を足して送るので、元のテキストは 750,000 バイト（base64 で 1,000,000 バイト）になる。
+	fit := strings.Repeat("a", MaxClipboardEncoded/4*3-1)
+	over := strings.Repeat("b", MaxClipboardEncoded/4*3)
+	dir := writeFiles(t, map[string]string{"a.txt": fit + "\n" + over + "\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	h.keys("yy")
+	h.waitClipboard([]string{fit + "\n"})
+
+	h.keys("jyy")
+	h.settle()
+	if got := h.term.clipboard(); len(got) != 1 {
+		t.Errorf("上限を超えたテキストを送った: %d 件", len(got))
+	}
+	if msg := h.message(); !strings.Contains(msg, "クリップボードへ送りませんでした") {
+		t.Errorf("message = %q", msg)
+	}
+	// 送らなかった後も、次に先頭が変われば送る。
+	h.keys("yl")
+	h.waitClipboard([]string{fit + "\n", "b"})
 }
 
 // バッファを切り替えても、レジスターは引き継ぐので送り直さない。切り替えた先のヤンクは送る。

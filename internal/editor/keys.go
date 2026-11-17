@@ -1,7 +1,9 @@
 package editor
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -275,11 +277,17 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 	return res.Err
 }
 
+// MaxClipboardEncoded は、ホストのクリップボードへ送るテキストを base64 にした後の大きさの上限（バイト）である（仮。基本設計 4.5）。
+// 元のテキストでおよそ 750,000 バイトに当たる。tmux 3.4 が base64 で 1 MiB を超える OSC 52 を黙って捨てた実測（PR #170 のレビュー）による。
+// 送り出しはイベントループの上で同期に書くので、この上限は書き終わるまで入力と描画が止まる時間も抑える。
+const MaxClipboardEncoded = 1_000_000
+
 // syncClipboard は、カーソルのあるバッファのレジスターの履歴の先頭が、前に判定したときから変わっていれば、
 // その内容を Terminal.SetClipboard でホストのクリップボードへ送る（FR-56、基本設計 4.5）。
 // 変わったかは command.Registers.Pushes の値を clipPushes と比べて判定する。1 回の結果の中で何度変わっても、送るのは最後の先頭だけである。
 // 行単位のテキストは、Vim と同じく最後に改行を付けて送る。
 // 上限を超えた無名のレジスターに置いただけでは Pushes が変わらないので送らない。
+// base64 にした大きさが MaxClipboardEncoded を超えるテキストは送らず、送らなかったことをメッセージの行に出す。
 // Config.NoClipboard なら送らない（判定した値だけ進める）。
 //
 // 切り替えの前のバッファの State に保留した拡張機能の結果が書き込んだレジスターは、カーソルのあるバッファの履歴ではないので送らない。
@@ -305,6 +313,13 @@ func (e *Editor) syncClipboard() {
 	text := reg.Text
 	if reg.Linewise {
 		text += "\n"
+	}
+	if n := base64.StdEncoding.EncodedLen(len(text)); n > MaxClipboardEncoded {
+		e.message = ui.Message{
+			Text:  fmt.Sprintf("%d バイトのテキストは、base64 で %d バイトになり上限の %d バイトを超えるので、クリップボードへ送りませんでした", len(text), n, MaxClipboardEncoded),
+			Level: ui.MessageWarning,
+		}
+		return
 	}
 	if err := e.term.SetClipboard(text); err != nil {
 		e.log.Error("クリップボードへ送れない", "err", err)
