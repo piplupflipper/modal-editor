@@ -157,6 +157,34 @@ func TestParseRegisters(t *testing.T) {
 	}{{1, 31, "registers.historySize は 1 以上"}})
 }
 
+// registers.clipboard は "osc52" か "off" で、項目が無いときと誤りのときは空（既定の "osc52"）のままにする。
+//
+// req: FR-56
+func TestParseRegisterClipboard(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+		errs int
+	}{
+		{`{}`, "", 0},
+		{`{"registers": {"clipboard": "osc52"}}`, ClipboardOSC52, 0},
+		{`{"registers": {"clipboard": "off"}}`, ClipboardOff, 0},
+		{`{"registers": {"clipboard": "xclip"}}`, "", 1},
+		{`{"registers": {"clipboard": false}}`, "", 1},
+	}
+	for _, c := range cases {
+		cfg, errs := Parse("c", []byte(c.src))
+		if len(errs) != c.errs || cfg.RegisterClipboard != c.want {
+			t.Errorf("%s: clipboard = %q, errs = %v", c.src, cfg.RegisterClipboard, errs)
+		}
+	}
+	_, errs := Parse("c", []byte(`{"registers": {"clipboard": "xclip"}}`))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{{1, 29, `registers.clipboard は "osc52" か "off"`}})
+}
+
 // autoread と checkIntervalMs は、項目が無いときの nil（editor の既定値）と、書いた値を区別する（#143）。
 // checkIntervalMs の 0 は「定期的に確かめない」である。
 func TestParseExternalChange(t *testing.T) {

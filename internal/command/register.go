@@ -116,7 +116,7 @@ type Registers struct {
 	// oversize は、上限を超えた無名のレジスターである。無ければ空（empty）である。
 	oversize Register
 	cfg      RegisterConfig
-	// pushes は、履歴の先頭に積んだ回数である。履歴の先頭が変わったかを、呼び出しの前後の値の比較で判定する。
+	// pushes は、履歴の先頭が変わった回数である。履歴の先頭が変わったかを、前に判定したときの値との比較で判定する。
 	pushes uint64
 }
 
@@ -211,9 +211,18 @@ func (r *Registers) Promote(i int) bool {
 }
 
 // Pushes は、履歴の先頭が変わった回数（積んだ、置き換えた、Promote で移した回数）を返す。
-// 呼び出し側（internal/editor）は、State を呼ぶ前後の値を比べて、履歴の先頭が変わったかを判定する（基本設計 4.5 の FR-56）。
+// 呼び出し側（internal/editor）は、結果を扱い終えるたびに、前に判定したときの値と比べて、履歴の先頭が変わったかを判定する（基本設計 4.5 の FR-56）。
 // 値は TakeOver で引き継ぐので、バッファの切り替えをまたいでも単調に増える。
 func (r *Registers) Pushes() uint64 { return r.pushes }
+
+// Head は、履歴の先頭（最も新しい項目）を返す。履歴が空なら false を返す。
+// Get(0) と違い、上限を超えた無名のレジスターは読まない（FR-56 の送り出しは、上限を超えたテキストを送らない）。
+func (r *Registers) Head() (Register, bool) {
+	if n := len(r.history); n > 0 {
+		return r.history[n-1], true
+	}
+	return Register{}, false
+}
 
 // Set は、名前を指定したヤンクと同じく、名前が name のレジスターに reg を書き込む（基本設計 4.5 の表）。
 // 大文字の名前は追記する。name が 0 なら履歴に積むだけである。_ には何も書かない。

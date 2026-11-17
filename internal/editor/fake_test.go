@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -319,6 +320,22 @@ type fakeTerm struct {
 
 	mu   sync.Mutex
 	last ui.Screen
+	// clips は、SetClipboard で送られたテキストを、送られた順に並べたものである。
+	clips []string
+}
+
+func (f *fakeTerm) SetClipboard(text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clips = append(f.clips, text)
+	return nil
+}
+
+// clipboard は、SetClipboard で送られたテキストの複製を返す。
+func (f *fakeTerm) clipboard() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.clips)
 }
 
 func newFakeTerm() *fakeTerm { return &fakeTerm{in: make(chan TermEvent, 1024)} }

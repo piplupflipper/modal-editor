@@ -2,6 +2,7 @@ package term
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -59,7 +60,7 @@ var ErrNotTerminal = errors.New("term: not a terminal")
 // 一時停止（SIGTSTP）を受けたら、端末を戻してから SIGSTOP で止まり、再開（SIGCONT）で raw モードと代替画面に入り直して、
 // Resize のイベント（大きさは今の端末のもの）を送ってエディタに全体を描き直させる。
 // 一時停止を受けるのは、kill -TSTP など外から送られたときである。raw モードでは <C-z> はキーとして届き、シグナルにならない。
-// Draw と Size は、1 つの goroutine（エディタのイベントループ）から呼ぶ。
+// Draw、SetClipboard、Size は、1 つの goroutine（エディタのイベントループ）から呼ぶ。
 // Restore は、どの goroutine からも何度でも呼べ、2 回目以降は何もしない。
 type Terminal struct {
 	in, out     *os.File
@@ -161,6 +162,34 @@ func (t *Terminal) Draw(s ui.Screen) error {
 		return fmt.Errorf("term: write: %w", err)
 	}
 	return nil
+}
+
+// SetClipboard は、text を OSC 52 の制御シーケンス（ESC ] 52 ; c ; <base64> BEL）で端末へ送り、
+// ホストのクリップボードに入れる（FR-56）。端末の応答は待たず、端末が受け取ったかは分からない。
+// 画面の出力と混ざらないよう、Draw と同じロックの中で書く。Restore の後と一時停止の間は何も書かずに nil を返す。
+//
+// req: FR-56
+func (t *Terminal) SetClipboard(text string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.restored || t.suspended {
+		return nil
+	}
+	if _, err := t.out.Write(osc52(text)); err != nil {
+		// 書いた途中で止まったら、画面の差分の前提が崩れているかもしれないので、次は全体を書き直す。
+		t.painter.Invalidate()
+		return fmt.Errorf("term: write: %w", err)
+	}
+	return nil
+}
+
+// osc52 は、text をクリップボード（c）に入れる OSC 52 の制御シーケンスを返す。終端は BEL で、tmux と多くの端末が受け付ける。
+func osc52(text string) []byte {
+	const prefix, suffix = "\x1b]52;c;", "\a"
+	out := make([]byte, 0, len(prefix)+base64.StdEncoding.EncodedLen(len(text))+len(suffix))
+	out = append(out, prefix...)
+	out = base64.StdEncoding.AppendEncode(out, []byte(text))
+	return append(out, suffix...)
 }
 
 // Restore は、端末を Open の前の状態に戻す（代替画面から戻り、bracketed paste を止め、raw モードを解く）。

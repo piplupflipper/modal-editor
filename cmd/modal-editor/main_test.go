@@ -85,7 +85,7 @@ func TestLoadConfig(t *testing.T) {
   "fixendofline": false,
   "fileTypes": { ".tmpl": "html" },
   "extensions": { "syncTimeoutMs": 30, "startSyncTimeoutMs": 2500, "memoryLimitMb": 6144 },
-  "registers": { "historySize": 7, "maxEntryBytes": 64, "deleteToHistory": false },
+  "registers": { "historySize": 7, "maxEntryBytes": 64, "deleteToHistory": false, "clipboard": "off" },
   "typo": 1,
 }`
 	if err := os.WriteFile(filepath.Join(dir, "config.jsonc"), []byte(text), 0o600); err != nil {
@@ -109,6 +109,9 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if r := cfg.Registers; r.HistorySize != 7 || r.MaxEntryBytes != 64 || r.DeleteToHistory == nil || *r.DeleteToHistory {
 		t.Errorf("Registers = %+v, want historySize 7, maxEntryBytes 64, deleteToHistory false", r)
+	}
+	if !cfg.NoClipboard {
+		t.Error(`clipboard が "off" なのに NoClipboard = false`)
 	}
 	if len(cfg.Problems) != 1 || !strings.HasPrefix(cfg.Problems[0].Error(), "config.jsonc:7:") {
 		t.Errorf("Problems = %v, want config.jsonc:7: で始まる 1 件", cfg.Problems)

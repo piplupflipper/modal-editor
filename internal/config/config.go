@@ -55,7 +55,7 @@ import (
 //	    "settings": { "lsp": { "servers": [] } },
 //	    "activation": { "lsp": [{ "on": "filetype", "pattern": "python" }] }
 //	  },
-//	  "registers": { "historySize": 100, "maxEntryBytes": 1048576, "deleteToHistory": true }
+//	  "registers": { "historySize": 100, "maxEntryBytes": 1048576, "deleteToHistory": true, "clipboard": "osc52" }
 //	}
 type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
@@ -101,6 +101,9 @@ type Config struct {
 	// DeleteToHistory は registers.deleteToHistory の値で、名前を省略した削除と変更を履歴に積むかである（FR-52）。
 	// 項目が無いか誤りなら nil で、既定の有効（true）として扱う。
 	DeleteToHistory *bool
+	// RegisterClipboard は registers.clipboard の値で、レジスターの履歴の先頭をホストのクリップボードへ送る手段である（FR-56）。
+	// ClipboardOSC52 か ClipboardOff で、項目が無いか誤りなら空で、既定の ClipboardOSC52 として扱う。
+	RegisterClipboard string
 
 	// extPos は、extensions.settings と extensions.activation に書いた拡張機能の ID の位置である。
 	// 見つからない拡張機能の ID を LoadExtensions が知らせるのに使う。
@@ -298,10 +301,19 @@ const maxHistorySize = 10000
 // maxEntryBytesSetting は、maxEntryBytes の上限である。32 ビットの int でも溢れない値にする。
 const maxEntryBytesSetting = math.MaxInt32
 
-// registers は、registers の値を読んで cfg に入れる（基本設計 7 章。FR-52、FR-53）。
+// registers.clipboard の値である（基本設計 7 章。FR-56）。
+const (
+	// ClipboardOSC52 は、履歴の先頭が変わるたびに OSC 52 の制御シーケンスで端末へ送ることを表す（既定）。
+	ClipboardOSC52 = "osc52"
+	// ClipboardOff は、ホストのクリップボードへ送らないことを表す。
+	ClipboardOff = "off"
+)
+
+// registers は、registers の値を読んで cfg に入れる（基本設計 7 章。FR-52、FR-53、FR-56）。
 // historySize は 1 以上 10000 以下、maxEntryBytes は 1 以上の整数で、範囲の外の値は誤りとして既定値を使う。
+// clipboard は "osc52" か "off" で、それ以外の値は誤りとして既定値（"osc52"）を使う。
 //
-// req: FR-52, FR-53
+// req: FR-52, FR-53, FR-56
 func (s *source) registers(v *hujson.Value, cfg *Config) {
 	obj, ok := s.object(v, "registers")
 	if !ok {
@@ -321,6 +333,15 @@ func (s *source) registers(v *hujson.Value, cfg *Config) {
 		case "deleteToHistory":
 			if b, ok := s.boolean(m.value, path); ok {
 				cfg.DeleteToHistory = &b
+			}
+		case "clipboard":
+			if str, ok := s.str(m.value, path); ok {
+				switch str {
+				case ClipboardOSC52, ClipboardOff:
+					cfg.RegisterClipboard = str
+				default:
+					s.report(m.value.StartOffset, "%s は %q か %q にする", path, ClipboardOSC52, ClipboardOff)
+				}
 			}
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", path)

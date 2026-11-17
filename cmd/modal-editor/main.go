@@ -227,10 +227,11 @@ func loadConfig(logger *slog.Logger) editor.Config {
 			MaxEntryBytes:   cfg.RegisterMaxEntryBytes,
 			DeleteToHistory: cfg.DeleteToHistory,
 		},
-		Extensions: specs,
-		Host:       host,
-		Logger:     logger,
-		Problems:   problems,
+		NoClipboard: cfg.RegisterClipboard == config.ClipboardOff,
+		Extensions:  specs,
+		Host:        host,
+		Logger:      logger,
+		Problems:    problems,
 	}
 }
 

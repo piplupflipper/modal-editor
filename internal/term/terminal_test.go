@@ -152,6 +152,44 @@ func TestTerminalPTY(t *testing.T) {
 	}
 }
 
+// TestSetClipboard は、SetClipboard がテキストを base64 にした OSC 52 の制御シーケンス（BEL で終わる）を書き、
+// Restore の後は何も書かないことを確かめる（FR-56）。
+//
+// req: FR-56
+func TestSetClipboard(t *testing.T) {
+	if got, want := string(osc52("")), "\x1b]52;c;\a"; got != want {
+		t.Errorf("osc52(\"\") = %q, want %q", got, want)
+	}
+	master, tty := ptytest.Open(t, 80, 24)
+	out := ptytest.StartCapture(master)
+	tm, err := Open(tty, tty, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tm.Close() })
+	out.WaitForString(t, seqEnter)
+
+	// "日本語\n" の base64 は 5pel5pys6KqeCg== である。
+	if err := tm.SetClipboard("日本語\n"); err != nil {
+		t.Fatal(err)
+	}
+	const want = "\x1b]52;c;5pel5pys6KqeCg==\a"
+	out.WaitForString(t, want)
+
+	if err := tm.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	out.WaitForString(t, seqLeave)
+	if err := tm.SetClipboard("after"); err != nil {
+		t.Errorf("Restore の後の SetClipboard: %v", err)
+	}
+	// Restore の後に書いていないことは、出力の最後が seqLeave のままであることで確かめる。
+	time.Sleep(50 * time.Millisecond)
+	if o := out.String(); !strings.HasSuffix(o, seqLeave) || strings.Count(o, "\x1b]52;") != 1 {
+		t.Errorf("Restore の後に書いた: %q", o[max(0, len(o)-64):])
+	}
+}
+
 // TestRestoreOnPanic は、RestoreOnPanic を defer した関数が panic すると、端末を戻してから同じ値で panic を続けることを確かめる。
 // 実際の goroutine で panic するとテストのプロセスが終わるので、同じ goroutine の関数で確かめる。
 func TestRestoreOnPanic(t *testing.T) {

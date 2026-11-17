@@ -86,6 +86,7 @@ type fakeTerm struct{ in chan editor.TermEvent }
 func (f *fakeTerm) Input() <-chan editor.TermEvent { return f.in }
 func (f *fakeTerm) Size() (int, int)               { return 80, 24 }
 func (f *fakeTerm) Draw(ui.Screen) error           { return nil }
+func (f *fakeTerm) SetClipboard(string) error      { return nil }
 
 func (f *fakeTerm) keys(s string) {
 	for _, k := range editcmd.MustParseKeys(s) {
