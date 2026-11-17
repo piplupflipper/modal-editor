@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/input"
 )
@@ -232,6 +233,60 @@ func TestReplayHandoff(t *testing.T) {
 	}
 	if got := segmentsString(r.Remaining); got != "x*1,@a,j*1,2@b" {
 		t.Errorf("Remaining = %s", got)
+	}
+}
+
+// recordNav は、RunActions に渡った動作を覚え、ActionBuffer を受けたら別のバッファへ移ったこと（ErrBufferSwitched）にする。
+type recordNav struct{ got [][]ex.Action }
+
+func (n *recordNav) MarkJump(buffer.Position) {}
+
+func (n *recordNav) Navigate(ex.Action, buffer.Position) (buffer.Position, bool, error) {
+	return buffer.Position{}, false, errors.New("unexpected")
+}
+
+func (n *recordNav) RunActions(acts []ex.Action) error {
+	n.got = append(n.got, acts)
+	for _, a := range acts {
+		if a.Kind == ex.ActionBuffer {
+			return ErrBufferSwitched
+		}
+	}
+	return nil
+}
+
+// マクロの再生の途中の Ex コマンドの動作（:w、:bn など）は、Navigator.RunActions でその場で行い、Result.Actions には残さない（#172）。
+// 別のバッファへ移ったら、残りのキーを Remaining に入れて止まる。再生の外の Ex コマンドの動作は、これまでどおり Result.Actions で返す。
+//
+// req: FR-05
+func TestReplayExActions(t *testing.T) {
+	s := setup(t, "|abc")
+	nav := &recordNav{}
+	s.Navigator = nav
+	s.registers.Set('a', Register{Text: ":w\rx:w|bn\rx"})
+	res := feedKeys(s, "@a")
+	last := res[len(res)-1]
+	if !errors.Is(last.Err, ErrBufferSwitched) {
+		t.Fatalf("err = %v", last.Err)
+	}
+	if len(last.Actions) != 0 {
+		t.Errorf("Actions = %+v", last.Actions)
+	}
+	// 1 行目の :w は x の前に行い、2 行目の :w|bn は 2 つの動作を 1 回で渡す。
+	if got := fmt.Sprint(len(nav.got), len(nav.got[0]), len(nav.got[len(nav.got)-1])); got != "2 1 2" {
+		t.Errorf("RunActions の呼び出し = %+v", nav.got)
+	}
+	if got := s.buf.Text(); got != "bc" {
+		t.Errorf("text = %q", got)
+	}
+	if got := segmentsString(last.Remaining); got != "x*1,@a" {
+		t.Errorf("Remaining = %s", got)
+	}
+
+	nav.got = nil
+	res = feedKeys(s, ":bn<CR>")
+	if last := res[len(res)-1]; len(last.Actions) != 1 || len(nav.got) != 0 {
+		t.Errorf("再生の外: Actions = %+v, RunActions = %+v", last.Actions, nav.got)
 	}
 }
 

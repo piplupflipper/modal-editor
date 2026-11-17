@@ -200,6 +200,30 @@ func (n navigator) Navigate(a ex.Action, cursor buffer.Position) (buffer.Positio
 	return buffer.Position{}, false, fmt.Errorf("内部の誤り: 移動として渡せない動作 %d", a.Kind)
 }
 
+// RunActions は、command.Navigator.RunActions である。マクロの再生の途中の Ex コマンドの動作（:w、:e、:b など）を、その場で行う（#172）。
+//
+// 動作の前に、再生でまだ知らせていない変更を exthost へ送る（:w が書き出す内容と、移る前のバッファの複製を揃える）。
+// :w が外での変更を見つけたら、再生の外と同じく書き込むかを問い（askWrite）、再生はそこで止める。
+// Vim 9.1 は問いの答えをマクロの次のキーから読むが、ここでは利用者の答えを待つ。
+func (n navigator) RunActions(acts []ex.Action) error {
+	e, bs := n.e, n.bs
+	e.syncChanges(bs, bs.state.PendingChanges())
+	for i, a := range acts {
+		err := e.doAction(bs, a)
+		if errors.Is(err, errChangedOnDisk) {
+			e.askWrite(bs, a, acts[i+1:])
+			return fmt.Errorf("%w: replay stopped at a write prompt", command.ErrFailed)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if e.cur != bs {
+		return command.ErrBufferSwitched
+	}
+	return nil
+}
+
 // jumpBy は、ジャンプリストを count だけ進める（負なら戻る）。bs はカーソルのあるバッファ、cursor はそのカーソルである（Vim 9.1 の movemark）。
 // 移る先が bs の中なら、その位置と true を返す。別のバッファなら、切り替えてカーソルを置き、command.ErrBufferSwitched を返す。
 // 移る先が無ければ command.ErrFailed を包んだエラーを返す（Vim と同じくビープだけで、メッセージは出さない）。

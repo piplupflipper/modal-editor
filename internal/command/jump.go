@@ -17,6 +17,11 @@ type Navigator interface {
 	// 別のバッファへ移したら ErrBufferSwitched を返す。State は操作をそこで終え、マクロの再生の残りは移った先のバッファで続く。
 	// 移動先が無ければ ErrFailed を包んだエラーを、未保存の変更などで移れなければ画面に出す誤りを返す。
 	Navigate(a ex.Action, cursor buffer.Position) (to buffer.Position, moved bool, err error)
+	// RunActions は、マクロの再生の途中の Ex コマンドが求めたエディタの動作 acts（:w、:e、:b、:bn など）を、その場で先頭から順に行う。
+	// 再生の残りのキーを、動作の後の状態（移った先のバッファ、書き出した後のファイル）で動かすためである（Vim と同じ）。
+	// 別のバッファへ移したら ErrBufferSwitched を返す。State は操作をそこで終え、マクロの再生の残りは移った先のバッファで続く。
+	// 動作が失敗したら、残りの動作は行わずに、その誤りを返す（画面に出すのは呼び出し側である）。
+	RunActions(acts []ex.Action) error
 }
 
 // jumpMotions は、ジャンプに当たる本体のモーションである（Vim 9.1 の jump-motions のうち、実装しているもの）。

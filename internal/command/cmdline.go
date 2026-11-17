@@ -131,6 +131,16 @@ func (s *State) applyExResult(res ex.Result, err error) {
 	}
 	if err != nil {
 		s.fail(err)
+	} else if s.playDepth > 0 && len(s.res.Actions) > 0 && s.Navigator != nil {
+		// マクロの再生の途中なら、動作（溜めた前の行のものを含む）をその場で行う（#172）。
+		// 呼び出し側へ返して Feed の後に行うと、:e や :bn の後のキーが元のバッファで動く。
+		// 別のバッファへ移ったら ErrBufferSwitched で止まり、再生の残りは移った先のバッファで続く（playKeys）。
+		// 誤りで止まった行（:w|foo）の動作は、再生も止まるので、これまでどおり呼び出し側が Feed の後に行う。
+		acts := s.res.Actions
+		s.res.Actions = nil
+		if err := s.Navigator.RunActions(acts); err != nil {
+			s.fail(err)
+		}
 	}
 	// 拡張機能のコマンド（ex.ActionExtCommand）は、呼び出し側へ返さずにここで問い合わせる。
 	// キーから呼んだ拡張機能の操作と同じく、期限の扱い（FR-17、FR-18）と再生中の待ち（FR-19）を通すためである。
