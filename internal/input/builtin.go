@@ -175,6 +175,10 @@ var (
 		{keys: "<Tab>", id: "jump-newer", modes: MapNormal},
 		{keys: "<C-i>", id: "jump-newer", modes: MapNormal},
 		{keys: "<C-^>", id: "alternate-buffer", modes: MapNormal},
+		// 貼り付けの直後に、貼ったテキストを履歴の古いほう（<C-p>）、新しいほう（<C-n>）の項目に置き換える（FR-55。キーは仮。基本設計 4.5）。
+		// Vim のノーマルモードの CTRL-P と CTRL-N は k と j と同じ移動で、ここでは移動に割り当てていない。
+		{keys: "<C-p>", id: "put-older", modes: MapNormal},
+		{keys: "<C-n>", id: "put-newer", modes: MapNormal},
 	}
 )
 

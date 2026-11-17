@@ -113,6 +113,57 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 	}
 }
 
+// listMaxWidth は、浮かべる一覧（Frame.List）の窓の列数の上限（仮）である。
+const listMaxWidth = 80
+
+// drawList は、選択の一覧（:registers の一覧。FR-54）を、バッファの表示領域の上の端から浮かべて描き、
+// 選んでいる項目の行の先頭に置くカーソルを返す。表示領域が無ければ描かずに false を返す。
+//
+// 窓は、表示領域の横の中央に置き、最初の行に見出しを、続く行に項目を 1 つずつ描く。
+// 幅は listMaxWidth 列と画面の幅の小さい方を上限に、見出しと項目の最も長いものに合わせ、左右に 1 列の余白を置く。
+// 長い項目は右の端で切る。項目が表示領域に収まらなければ、選んでいる項目が見える位置までずらして描く。
+// 選んでいる項目の行は StylePopupSelected で、他の行は StylePopup で描く。
+//
+// req: FR-54
+func (r *Renderer) drawList(g *Grid, theme Theme, l *List) (Cursor, bool) {
+	rows := r.textRows()
+	maxW := min(r.Width, listMaxWidth)
+	if rows < 2 || maxW < 3 {
+		return Cursor{}, false
+	}
+	tabStop := tabStopOr(r.TabStop)
+	width := StringWidth(l.Title, tabStop)
+	for _, it := range l.Items {
+		width = max(width, StringWidth(it, tabStop))
+	}
+	boxW := min(width+2, maxW)
+	x0 := max((r.Width-boxW)/2, 0)
+	shown := min(len(l.Items), rows-1)
+	sel := min(max(l.Selected, 0), max(len(l.Items)-1, 0))
+	first := max(sel-shown+1, 0)
+	a := theme.attr(StylePopup)
+	sa := theme.attr(StylePopupSelected)
+	drawRow := func(row int, s string, attr Attr) {
+		clearSplit(g, row, x0, x0+boxW)
+		for c := range boxW {
+			g.set(row, x0+c, blank(attr))
+		}
+		r.drawText(g, row, x0+1, x0+boxW-1, s, attr)
+	}
+	drawRow(0, l.Title, a)
+	cur := Cursor{Row: 0, Col: x0 + 1, Shape: CursorBlock, Visible: true}
+	for i := range shown {
+		n := first + i
+		attr := a
+		if n == sel {
+			attr = sa
+			cur.Row = 1 + i
+		}
+		drawRow(1+i, l.Items[n], attr)
+	}
+	return cur, true
+}
+
 // wrapWords は、s を幅 width の行に、空白（半角の空白とタブ）の位置で折り返した、行ごとのバイトの範囲を返す
 // （Vim の 'linebreak' に近い。ホバーの本文の英語の文を単語の途中で切らないため。#155）。空の行は 1 行にする。
 //

@@ -27,6 +27,7 @@
 //	:bn[ext][!] [N]      N 個先のバッファへ移る ActionBuffer（BufferNext）を返す
 //	:bp[revious][!] [N]  N 個前のバッファへ移る ActionBuffer（BufferPrev）を返す。:bN[ext] も同じ
 //	:ju[mps]             ジャンプリストを出す Action の ActionJumpList を返す
+//	:reg[isters]         レジスターと履歴の一覧を出す Action の ActionRegisterList を返す（名前は仮）
 //	:wa[ll][!]           未保存のバッファをすべて書き出す ActionWriteAll を返す
 //	:qa[ll][!]           エディタを閉じる ActionQuitAll を返す。未保存のバッファの確認は呼び出し側が行う
 //	:wqa[ll][!]、:xa[ll][!]  ActionWriteAll と ActionQuitAll を返す
@@ -129,6 +130,8 @@ const (
 	// ActionBufferDelete は、バッファを閉じる動作である（:bd）。Count にバッファの番号（0 ならカーソルのあるバッファ）を、
 	// Text に名前を、Force に "!" を入れる。
 	ActionBufferDelete
+	// ActionRegisterList は、レジスターと履歴の一覧を浮かべる窓に出す動作である（:registers。FR-54）。
+	ActionRegisterList
 )
 
 // BufferOp は、ActionBuffer の操作である。

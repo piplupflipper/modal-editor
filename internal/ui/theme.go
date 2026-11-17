@@ -35,6 +35,8 @@ const (
 	StyleDiagnosticHint    = "diagnostic.hint"
 	// StylePopup は、カーソルの近くに浮かべる popup/show の本文である（Vim の Pmenu に当たる）。
 	StylePopup = "popup"
+	// StylePopupSelected は、浮かべる一覧（Frame.List）の選んでいる項目である（Vim の PmenuSel に当たる）。
+	StylePopupSelected = "popup.selected"
 	// StyleStatusLineNC は、出力の欄の下の行（カーソルの無い窓のステータス行。Vim の StatusLineNC）である。
 	StyleStatusLineNC = "statuslinenc"
 	// StyleSign... は、印の列の印である。名前は "sign." と印の種類をつないだもの。診断の印は "sign.diagnostic." と重要度をつなぐ。
@@ -78,6 +80,7 @@ func DefaultTheme() Theme {
 
 		StyleStatusLineNC:             {Reverse: true},
 		StylePopup:                    {Fg: Indexed(15), Bg: Indexed(8)},
+		StylePopupSelected:            {Fg: Indexed(0), Bg: Indexed(14)},
 		StyleSignBreakpoint:           {Fg: Indexed(9), Bold: true},
 		StyleSignBreakpointUnverified: {Fg: Indexed(8)},
 		StyleSignExecutionPoint:       {Fg: Indexed(11), Bold: true},

@@ -29,6 +29,25 @@ func TestGoldenPopup(t *testing.T) {
 	}))
 }
 
+// 選択の一覧（:registers）は、表示領域の上の端の横の中央に浮かべ、選んでいる項目の行を別の色で描いてカーソルを置く。
+// 項目が収まらなければ、選んでいる項目が見えるまでずらす。長い項目は右の端で切る。
+//
+// req: FR-54
+func TestGoldenList(t *testing.T) {
+	b := buffer.New("line1\nline2\nline3\nline4\nline5\nline6\n")
+	theme := testTheme()
+	theme[StylePopup] = Attr{Underline: true}
+	theme[StylePopupSelected] = Attr{Reverse: true}
+	r := &Renderer{Width: 20, Height: 7, Theme: theme}
+	items := []string{" 1  c  abc", " 2  l  あいう（他 2 行）", `"a  c  x`, `"b  c  a very long register text`, `"c  c  last`}
+	golden(t, "list", renderSteps(r, []step{
+		{"最初の項目", Frame{Text: b, Cursor: pos(0, 0), List: &List{Title: "reg", Items: items[:2]}}},
+		{"選んだ項目", Frame{Text: b, Cursor: pos(0, 0), List: &List{Title: "reg", Items: items[:3], Selected: 1}}},
+		{"収まらなければずらす", Frame{Text: b, Cursor: pos(0, 0), List: &List{Title: "reg", Items: items, Selected: 4}}},
+		{"ポップアップより一覧を出す", Frame{Text: b, Cursor: pos(0, 0), Popup: "hover", List: &List{Title: "reg", Items: items[:1]}}},
+	}))
+}
+
 // wrapWords は、空白の位置で折り返す。空白の無い長い単語と日本語の文は幅で切る。行末からはみ出す空白は次の行へ送らない（#155）。
 func TestWrapWords(t *testing.T) {
 	tests := []struct {

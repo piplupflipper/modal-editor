@@ -161,6 +161,9 @@ type State struct {
 	recorded       []editcmd.Key
 	lastPlayed     rune // @@ が再生するレジスター
 	playDepth      int
+	// lastPut は、直前に実行した値が貼り付けなら、その記録である（FR-55）。execute が値を実行するたびに prevPut へ移して消すので、
+	// 別の操作を挟むと無くなる。prevPut は、実行中の値の直前の貼り付けの記録で、<C-p> と <C-n>（actPutCycle）が読む。
+	lastPut, prevPut *putRecord
 }
 
 // KeyParser は、キーを 1 個ずつ受け取り、編集コマンドの値に解釈する口である（基本設計 3 章の「入力の解釈」）。
@@ -326,6 +329,8 @@ func (s *State) run(cmd editcmd.Command) {
 //
 // req: FR-02
 func (s *State) execute(cmd editcmd.Command) error {
+	// 貼り付けの置き換え（FR-55）の対象は、直前の値の貼り付けだけである。
+	s.prevPut, s.lastPut = s.lastPut, nil
 	if t := cmd.Target; (cmd.Kind == editcmd.KindMotion || cmd.Kind == editcmd.KindOperator) &&
 		t.Kind == editcmd.TargetMotion && t.Ref.Builtin() && t.Pattern == "" {
 		if delim, ok := searchInputMotions[t.Ref.ID]; ok {

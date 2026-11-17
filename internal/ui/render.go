@@ -174,7 +174,12 @@ func (r *Renderer) Render(f *Frame) Screen {
 		}
 		d.drawLine(i, n)
 	}
-	if f.Popup != "" && rows > 0 {
+	var listCursor *Cursor
+	if f.List != nil && rows > 0 {
+		if c, ok := r.drawList(g, theme, f.List); ok {
+			listCursor = &c
+		}
+	} else if f.Popup != "" && rows > 0 {
 		text := f.Popup
 		if f.PopupMarkdown {
 			text = stripCodeFences(text)
@@ -190,6 +195,9 @@ func (r *Renderer) Render(f *Frame) Screen {
 		screen.Cursor.Shape = CursorBar
 	case f.OperatorPending:
 		screen.Cursor.Shape = CursorUnderline
+	}
+	if listCursor != nil {
+		screen.Cursor = *listCursor
 	}
 	if r.Height >= 2 {
 		r.drawStatus(g, theme, text, f, cur, rows)

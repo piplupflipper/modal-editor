@@ -620,6 +620,12 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":bdelete! 3", cmdline: "bdelete! 3", want: []Action{{Kind: ActionBufferDelete, Count: 3, Force: true}}},
 		{name: ":bd 名前", cmdline: "bd a.txt", want: []Action{{Kind: ActionBufferDelete, Text: "a.txt"}}},
 		{name: ":jumps の余分な文字", cmdline: "jumps 1", wantCode: "E488"},
+		// req: FR-54
+		{name: ":reg", cmdline: "reg", want: []Action{{Kind: ActionRegisterList}}},
+		{name: ":registers", cmdline: "registers", want: []Action{{Kind: ActionRegisterList}}},
+		{name: ":re は :registers にならない", cmdline: "re", wantCode: "E492"},
+		{name: ":reg の余分な文字", cmdline: "reg a", wantCode: "E488"},
+		{name: ":2reg は範囲を取らない", cmdline: "2reg", wantCode: "E481"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

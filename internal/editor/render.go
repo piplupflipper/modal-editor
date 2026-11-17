@@ -60,6 +60,9 @@ func (e *Editor) frame() *ui.Frame {
 		f.Message = ui.Message{Text: e.prompt.text, Level: ui.MessageWarning}
 	case e.activeChoice() != nil:
 		f.Choice = e.uiChoice()
+		f.List = e.uiRegList()
+	case e.regList != nil:
+		f.List = e.uiRegList()
 	case e.popup != nil:
 		f.Popup = e.popup.text
 		f.PopupMarkdown = e.popup.markdown
