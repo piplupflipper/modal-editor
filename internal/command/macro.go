@@ -55,10 +55,20 @@ func (s *State) stopRecording() {
 }
 
 // play は、@{reg} と @@ である。レジスターのキーの列を、回数だけ 1 個ずつ Feed と同じ解釈に渡す（FR-05）。
-// 途中の操作が失敗したら、そこで再生を止める（Vim と同じ）。@: は、直前のコマンドラインを実行し直す。
+// 途中の操作が失敗したら、そこで再生を止める（Vim と同じ）。
 // 再生 1 回（回数の繰り返しを含む）の変更は、Vim の `:help undo-blocks` と同じくアンドゥの 1 単位にまとめる（FR-07）。
 //
-// req: FR-05, FR-07
+// 再生はドットリピートの対象になる（FR-57）。@@ は、直前に再生したレジスターの名前へ読み替えた値（@a）を記録する。
+// 再生の間は、再生ではない直前の変更（lastChange）を初期値とする再生専用の置き場（State.dot をそのまま使う）を持ち、
+// 再生の中の変更がそれを更新し、再生の中の . はそれを繰り返す。対象が @a のときに再生の中の . が @a を再生し直して
+// 入れ子の上限まで回ることは、この初期値で避ける（2026-11-18 のオーケストレータの裁定、PR #165）。
+// 再生が終わったら（失敗で止まった場合も）、置き場の最後の値が再生ではない変更なら lastChange をそれにし、
+// 対象を再生した値にする（finishPlayDot）。
+// 入れ子の再生（a の中の @b）も同じ規則に従うので、内側の再生が終わると外側の置き場の対象は @b になる。
+// 再生を始める前に失敗した場合（@@ で前が無い、名前が無効、入れ子の上限）は、対象を変えない。
+// Vim の @: は持たない（要件定義 1.1）。入力の解釈（internal/input）が @: を受け付けない。
+//
+// req: FR-05, FR-07, FR-57
 func (s *State) play(cmd editcmd.Command) error {
 	name := cmd.Char
 	if name == '@' {
@@ -67,26 +77,6 @@ func (s *State) play(cmd editcmd.Command) error {
 			return failf("no previously used register")
 		}
 	}
-	n := max(cmd.Count, 1)
-	s.buf.BeginUndoGroup()
-	defer s.endPlayGroup()
-	if name == ':' {
-		if s.lastCmd == "" {
-			return failf("no previous command line")
-		}
-		s.lastPlayed = name
-		for range n {
-			if s.interrupted() {
-				s.fail(ErrInterrupted)
-				break
-			}
-			s.runCommandLine(s.lastCmd)
-			if s.res.Err != nil {
-				break
-			}
-		}
-		return nil
-	}
 	reg, ok := s.registers.Get(name)
 	if !ok {
 		return failf("invalid register %q", name)
@@ -94,15 +84,46 @@ func (s *State) play(cmd editcmd.Command) error {
 	if s.playDepth >= maxPlayDepth {
 		return failf("macro nested too deeply")
 	}
+	n := max(cmd.Count, 1)
+	s.buf.BeginUndoGroup()
+	defer s.endPlayGroup()
 	s.lastPlayed = name
+	dot := cmd
+	dot.Char = name
 	keys := reg.macroKeys()
+	s.noteChange()
+	s.dot = s.lastChange
+	// . から再生した場合も、マクロの中のキー（i など）は、ドットリピートの再実行としてではなく、ふつうの入力として解釈する。
+	replaying := s.replaying
+	s.replaying = false
 	s.playDepth++
-	defer func() { s.playDepth-- }()
 	s.playKeys(keys, n)
 	if s.mode == ModeNormal || s.mode.visual() {
 		s.runResults(s.parser.Flush())
 	}
+	s.playDepth--
+	s.replaying = replaying
+	if errors.Is(s.res.Err, ErrBufferSwitched) {
+		// 再生は移った先のバッファで続くので、終わったときにドットリピートの対象を決める印を残りに積む。
+		s.res.Remaining = append(s.res.Remaining, ReplaySegment{Dot: &dot})
+		return nil
+	}
+	s.finishPlayDot(&dot)
 	return nil
+}
+
+// noteChange は、ドットリピートの対象が再生ではない変更なら、それを再生ではない直前の変更（lastChange）にする（FR-57）。
+// 変更を記録する箇所（recordDot、インサートモードの記録）は State.dot だけを書くので、再生の始まりと終わりでここを通して拾う。
+func (s *State) noteChange() {
+	if s.dot != nil && s.dot.Kind != editcmd.KindPlay {
+		s.lastChange = s.dot
+	}
+}
+
+// finishPlayDot は、再生が終わったときに、置き場の最後の値を lastChange へ移し、ドットリピートの対象を再生した値 dot にする（FR-57）。
+func (s *State) finishPlayDot(dot *editcmd.Command) {
+	s.noteChange()
+	s.dot = dot
 }
 
 // playKeys は、キーの列 keys を n 回、1 個ずつ Feed と同じ解釈に渡す。失敗したら止める。
@@ -149,9 +170,13 @@ func (s *State) playKeys(keys []editcmd.Key, n int) {
 }
 
 // ReplaySegment は、再生の残りの 1 区切りで、Keys を Count 回再生することを表す。
+//
+// Dot が nil でなければ、キーを再生する代わりに、ドットリピートの対象を Dot にする印である（FR-57）。
+// 移る前のバッファで始めた再生（@a）が終わる位置に置き、移った先で再生を終えたときの対象を決める。
 type ReplaySegment struct {
 	Keys  []editcmd.Key
 	Count int
+	Dot   *editcmd.Command
 }
 
 // ErrBufferSwitched は、マクロの再生の途中で、拡張機能の操作（再生中の command/execute の結果の open）が
@@ -162,17 +187,29 @@ var ErrBufferSwitched = errors.New("command: replay continues in another buffer"
 
 // ContinueReplay は、別のバッファの State が ErrBufferSwitched で止めた再生の残り segs を、この State で続ける（FR-05、FR-19）。
 // 再生中として扱い（Replaying が true）、変更はアンドゥの 1 単位にまとめる。
+// 区切りの Dot の印に来たら、ドットリピートの対象をその値にする。途中で失敗したら、残りの印のうち最後のもの
+// （いちばん外側の再生）を対象にする（FR-57）。
 //
-// req: FR-05
+// req: FR-05, FR-57
 func (s *State) ContinueReplay(segs []ReplaySegment) Result {
 	s.res = Result{}
 	s.buf.BeginUndoGroup()
 	s.playDepth++
 	for i, seg := range segs {
+		if seg.Dot != nil {
+			s.finishPlayDot(seg.Dot)
+			continue
+		}
 		s.playKeys(seg.Keys, seg.Count)
 		if s.res.Err != nil {
 			if errors.Is(s.res.Err, ErrBufferSwitched) {
 				s.res.Remaining = append(s.res.Remaining, segs[i+1:]...)
+				break
+			}
+			for _, rest := range segs[i+1:] {
+				if rest.Dot != nil {
+					s.finishPlayDot(rest.Dot)
+				}
 			}
 			break
 		}
@@ -207,6 +244,7 @@ func (s *State) recordDot(cmd editcmd.Command) {
 
 // repeatable は、ドットリピートで繰り返す値であるかを返す。
 // ヤンク、移動、アンドゥ、モードの切り替えは繰り返さない。拡張機能のオペレーターと操作は、全て繰り返す（FR-12）。
+// マクロの再生（KindPlay）は繰り返すが、変更が起きたかを問わず再生の終わりに play が記録するので、ここでは false を返す（FR-57）。
 func repeatable(cmd editcmd.Command) bool {
 	switch cmd.Kind {
 	case editcmd.KindOperator:
@@ -224,8 +262,9 @@ func repeatable(cmd editcmd.Command) bool {
 // "1p の後の . は、"2p、"3p のようにレジスターの番号を 1 つ進める（Vim と同じ）。
 // ビジュアルモードのオペレーターは、カーソルから同じ大きさの範囲に対して繰り返す。
 // 拡張機能の操作は、記録した Ref と引数で同じ拡張機能へ問い合わせ直す（FR-12）。
+// マクロの再生（@a）は、レジスターの今の中身を再生する。3@a の後の . は 3 回、2. は 2 回再生する（FR-57）。
 //
-// req: FR-06, FR-12
+// req: FR-06, FR-12, FR-57
 func (s *State) repeat(cmd editcmd.Command) error {
 	if s.dot == nil {
 		return failf("no previous change")
@@ -238,8 +277,10 @@ func (s *State) repeat(cmd editcmd.Command) error {
 		d.Register >= '1' && d.Register <= '8' {
 		d.Register++
 	}
+	// マクロの中の . は、再生（play）が戻した値へ戻す。
+	replaying := s.replaying
 	s.replaying = true
-	defer func() { s.replaying = false }()
+	defer func() { s.replaying = replaying }()
 	if d.Kind == editcmd.KindOperator && d.Target.Kind == editcmd.TargetNone {
 		rg := s.regionFromExtent(s.dotVisual)
 		return s.change(d, func() error { return s.regionOperator(d, rg) })

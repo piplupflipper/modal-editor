@@ -213,7 +213,7 @@ func (p *Parser) takeChar(k editcmd.Key) []editcmd.Result {
 	switch p.charFor {
 	case charRecord, charPlay:
 		ok := k.Plain() && (isRecordRegister(k.Rune) ||
-			p.charFor == charPlay && (k.Rune == '@' || isRegisterName(k.Rune)))
+			p.charFor == charPlay && (k.Rune == '@' || isRegisterName(k.Rune) && k.Rune != ':'))
 		if !ok {
 			return p.fail()
 		}

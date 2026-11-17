@@ -118,7 +118,7 @@ type State struct {
 	// Ex は、Ex コマンドの呼び出しをまたいで保つ状態である。Mark は New が '< と '> を返す関数にする。
 	Ex ex.State
 	// Interrupted は、利用者が中断を求めたか（端末の <C-c> など）を返す関数である。nil なら中断しない。
-	// マクロの再生（999999999@: など）は、キーやコマンドラインを 1 つ実行するたびにこれを呼び、true なら ErrInterrupted で止める。
+	// マクロの再生（999999999@a など）は、キーやコマンドラインを 1 つ実行するたびにこれを呼び、true なら ErrInterrupted で止める。
 	// 再生は Feed の中で同期に進むので、呼び出し側は別の goroutine で立てた印（atomic.Bool など）を読む関数を渡す。
 	Interrupted func() bool
 	// Viewport は、画面のバッファの表示領域である。ページ単位のスクロール（<PageUp>、<PageDown>）が読み書きする。
@@ -145,17 +145,19 @@ type State struct {
 	undoAtSet bool
 
 	// ドットリピート（FR-06）。
-	dot       *editcmd.Command
-	dotVisual visualExtent
-	replaying bool // ドットリピートの再実行中
-	insert    insertState
-	visual    visualState
-	cmdline   []rune
-	search    *pendingSearch // / か ? でパターンを入力している間の値。Ex コマンドの入力中は nil
+	dot *editcmd.Command
+	// lastChange は、再生（@a）ではない直前の変更である。マクロの再生の置き場の初期値にする（FR-57）。
+	// State.dot が再生ではない値の間は、dot より古いことがある（再生の始まりと終わりの noteChange で追いつく）。
+	lastChange *editcmd.Command
+	dotVisual  visualExtent
+	replaying  bool // ドットリピートの再実行中
+	insert     insertState
+	visual     visualState
+	cmdline    []rune
+	search     *pendingSearch // / か ? でパターンを入力している間の値。Ex コマンドの入力中は nil
 	// searchBackward は、直前の検索（/、?、*、#）が後ろ向きだったかである。n と N の向きを決める。
 	searchBackward bool
-	lastCmd        string // @: が繰り返す直前のコマンドライン
-	recording      rune   // マクロの記録先。0 なら記録していない
+	recording      rune // マクロの記録先。0 なら記録していない
 	recorded       []editcmd.Key
 	lastPlayed     rune // @@ が再生するレジスター
 	playDepth      int

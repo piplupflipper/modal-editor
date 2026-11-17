@@ -82,7 +82,6 @@ func (s *State) runCommandLine(line string) {
 	if strings.TrimLeft(line, ": \t") == "" {
 		return
 	}
-	s.lastCmd = line
 	s.registers.cmdline = line
 	// コマンドラインの編集と、後に置いた拡張機能のコマンドの編集（:s/a/X/|dup.line）を、アンドゥの 1 単位にまとめる
 	// （Vim 9.1 で :s/a/X/|Dup y の後の u 1 回で両方が戻るのと同じ）。
