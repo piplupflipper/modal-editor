@@ -61,7 +61,7 @@ func TestRegistersSetGet(t *testing.T) {
 //
 // req: FR-50
 func TestInvalidRegisterName(t *testing.T) {
-	for _, keys := range []string{`"0p`, `"1p`, `"-p`, `".p`, `":p`, `""p`, `"+yy`, `"0dd`, `"-x`, `"=cw`, "q0", `q"`, "@0", `@"`, "@-"} {
+	for _, keys := range []string{`"0p`, `"1p`, `"-p`, `".p`, `":p`, `""p`, `"+yy`, `"0dd`, `"-x`, `"=cw`, "q0", `q"`, "q_", "@0", `@"`, "@-", "@_"} {
 		t.Run(keys, func(t *testing.T) {
 			s := setup(t, "|abc\ndef")
 			s.registers.history = []Register{{Text: "U", filled: true}}

@@ -378,8 +378,9 @@ func (s *State) checkNames(cmd editcmd.Command) error {
 			return &InvalidRegisterError{Name: cmd.Char}
 		}
 	case editcmd.KindPlay:
-		if c := cmd.Char; c != '@' && c != ':' {
-			return checkRegister(c)
+		// 再生できるのは a〜z（A〜Z は a〜z と同じ）と @（@@）だけである。@_ は、空の再生をドットリピートの対象にしないよう失敗させる。
+		if c := cmd.Char; c != '@' && c != ':' && !recordable(c) {
+			return &InvalidRegisterError{Name: c}
 		}
 	case editcmd.KindMotion, editcmd.KindOperator, editcmd.KindAction, editcmd.KindRecordStop, editcmd.KindRepeat:
 	}
