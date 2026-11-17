@@ -575,9 +575,9 @@ func TestConfirm(t *testing.T) {
 func TestInterrupt(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
 	h := start(t, Config{WorkDir: dir}, "a.txt")
-	h.keys(":s/a/aa/<CR>")
+	h.keys("qa:s/a/aa/<CR>q")
 	h.settle()
-	h.keys("999999999@:")
+	h.keys("999999999@a")
 	time.Sleep(100 * time.Millisecond)
 	h.keys("<C-c>")
 	h.settle()

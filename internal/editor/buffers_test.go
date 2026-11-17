@@ -320,7 +320,7 @@ func TestJumpsCommandVim(t *testing.T) {
 	}
 }
 
-// マクロの記録、ドットリピート、;、@:、@@ は、Vim 9.1 と同じくバッファの切り替えをまたいで引き継ぐ（PR #150 のレビューの必須 1）。
+// マクロの記録、ドットリピート、;、@@ は、Vim 9.1 と同じくバッファの切り替えをまたいで引き継ぐ（PR #150 のレビューの必須 1）。
 //
 // req: FR-05, FR-06
 func TestEditorWideStateAcrossBuffers(t *testing.T) {
@@ -355,7 +355,12 @@ func TestEditorWideStateAcrossBuffers(t *testing.T) {
 			}
 		}},
 		{"fh:bn<CR>3G;", cur("b.txt:3.1")},
-		{":2<CR>:bn<CR>@:", cur("a.txt:2.0")},
+		// マクロの再生を繰り返す . も引き継ぐ（FR-57）。
+		{"qaxq:w<CR>:bn<CR>.", func(t *testing.T, e *Editor) {
+			if got := e.cur.buf.Text(); got != "ne\ntwo\nthree" {
+				t.Errorf("b.txt = %q", got)
+			}
+		}},
 		{"qbjq@b:bn<CR>@@", cur("b.txt:2.0")},
 	}
 	for _, tt := range tests {
