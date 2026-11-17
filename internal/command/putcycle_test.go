@@ -3,6 +3,7 @@ package command
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -123,6 +124,65 @@ func TestPutCycleNamed(t *testing.T) {
 	}
 	if err := lastErr(feedKeys(s, "<C-n>")); !errors.Is(err, ErrFailed) {
 		t.Errorf("元のレジスターより新しいほうへ進めた: %v", err)
+	}
+}
+
+// 置き換えでは、いま入っているテキストと同じ内容（テキストと行単位かどうか）の項目を飛ばす。
+// "ayiw は a と履歴の先頭に同じテキストを書くので、"ap の直後の <C-p> は履歴の 2 番目に置き換える。飛ばした先が無ければ失敗する。
+//
+// req: FR-55
+func TestPutCycleSkipsSameText(t *testing.T) {
+	s := setup(t, "|one two\nx")
+	feedKeys(s, `yiww"ayiwj"ap`)
+	if got := s.buf.Text(); got != "one two\nxtwo" {
+		t.Fatalf("text = %q", got)
+	}
+	feedKeys(s, "<C-p>")
+	if got := s.buf.Text(); got != "one two\nxone" {
+		t.Errorf("<C-p> の後 = %q（同じ内容の履歴の先頭を飛ばしていない）", got)
+	}
+	feedKeys(s, "<C-n>")
+	if got := s.buf.Text(); got != "one two\nxtwo" {
+		t.Errorf("<C-n> の後 = %q", got)
+	}
+
+	s = cycleState(t, "|xy")
+	s.registers.history = []Register{{Text: "c", filled: true}, {Text: "c", filled: true}}
+	feedKeys(s, "p")
+	if err := lastErr(feedKeys(s, "<C-p>")); !errors.Is(err, ErrFailed) {
+		t.Errorf("同じ内容の項目しか無いときの err = %v", err)
+	}
+	if got := s.buf.Text(); got != "xcy" {
+		t.Errorf("text = %q", got)
+	}
+}
+
+// 置き換える項目が貼り付けの上限を超えるなら、元の貼り付けを残したまま（バッファを変えずに）、メッセージの行に出す誤りで失敗する。
+// 記録は残すので、続けて <C-n> などは使える。PR #171 のレビューの再現（700,000 バイトの行の yy の後に yiw 100p <C-p>）である。
+//
+// req: FR-55
+func TestPutCycleTooLarge(t *testing.T) {
+	long := strings.Repeat("a", 700000)
+	s := setup(t, "|"+long+"\nword")
+	feedKeys(s, "yyjyiw100p")
+	want := s.buf.Text()
+	if !strings.HasPrefix(want, long+"\nw"+strings.Repeat("word", 100)) {
+		t.Fatalf("100p の後の 2 行目 = %.20q", strings.Split(want, "\n")[1])
+	}
+	cursor := s.Cursor()
+	err := lastErr(feedKeys(s, "<C-p>"))
+	if !errors.Is(err, errCycleTooLarge) || errors.Is(err, ErrFailed) {
+		t.Errorf("err = %v, want errCycleTooLarge", err)
+	}
+	if s.buf.Text() != want {
+		t.Error("失敗した <C-p> がバッファを変えた")
+	}
+	if s.Cursor() != cursor {
+		t.Errorf("cursor = %v, want %v", s.Cursor(), cursor)
+	}
+	feedKeys(s, "u")
+	if got := s.buf.Text(); got != long+"\nword" {
+		t.Errorf("u の後の 2 行目 = %.20q", strings.Split(got, "\n")[1])
 	}
 }
 

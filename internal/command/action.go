@@ -327,12 +327,12 @@ func (s *State) putText(reg Register, after bool, n int) (rg buffer.Range, put b
 		// 空のテキストが入ったレジスター（空の行の C の後など）は、Vim と同じく何も入れず、カーソルも動かさない。
 		return buffer.Range{}, false, nil
 	}
+	if err := checkPutSize(reg, n); err != nil {
+		return buffer.Range{}, false, err
+	}
 	unit := reg.Text
 	if reg.Linewise {
 		unit += "\n"
-	}
-	if len(unit)*n > maxPutBytes {
-		return buffer.Range{}, false, failf("text too large")
 	}
 	text := strings.Repeat(unit, n)
 	l := s.cursor.Line
@@ -367,6 +367,18 @@ func (s *State) putText(reg Register, after bool, n int) (rg buffer.Range, put b
 	}
 	s.setCursorNormal(pos(l, at.Byte+lastCharStart(text)))
 	return rg, true, nil
+}
+
+// checkPutSize は、reg のテキストを n 回続けて入れると maxPutBytes を超えるなら失敗を返す（putText）。
+func checkPutSize(reg Register, n int) error {
+	size := len(reg.Text)
+	if reg.Linewise {
+		size++
+	}
+	if size*n > maxPutBytes {
+		return failf("text too large")
+	}
+	return nil
 }
 
 // textEnd は、start の位置に text を入れたときの、入れたテキストの終わりの位置を返す。

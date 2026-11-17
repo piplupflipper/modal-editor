@@ -29,6 +29,16 @@ const regListTitle = "レジスター  j/k で選び <CR> で貼る  <Esc> で�
 // errNoRegisters は、一覧に出す項目が無いときの :registers の失敗である。
 var errNoRegisters = errors.New("レジスターも履歴も空です")
 
+// errRegListNoRoom は、画面が小さく一覧の窓を描けないときの :registers の失敗である。
+var errRegListNoRoom = errors.New("画面が小さいので、レジスターの一覧を出せません")
+
+// regListFits は、一覧の窓を描ける大きさの画面か（ui の drawList が描くか）を返す。
+// 見出しと 1 項目の 2 行が表示領域に収まり、窓の左右の余白と 1 文字が幅に収まるときである。
+// 描けない窓を開くと、見えないままキーを一覧の操作に取られるので、開かずに知らせる（PR #171 のレビュー）。
+func (e *Editor) regListFits() bool {
+	return e.renderer.TextRows() >= 2 && e.renderer.Width >= 3
+}
+
 // openRegisterList は、バッファ bs のレジスターと履歴の一覧の窓を出す（:registers）。項目が無ければ errNoRegisters を返す。
 //
 // req: FR-54
@@ -37,6 +47,9 @@ func (e *Editor) openRegisterList(bs *bufferState) error {
 	entries := regs.List()
 	if len(entries) == 0 {
 		return errNoRegisters
+	}
+	if !e.regListFits() {
+		return errRegListNoRoom
 	}
 	e.regList = &regListState{bs: bs, entries: entries, pushes: regs.Pushes()}
 	return nil
@@ -49,6 +62,12 @@ func (e *Editor) openRegisterList(bs *bufferState) error {
 // req: FR-54
 func (e *Editor) regListKey(k editcmd.Key) {
 	l := e.regList
+	if !e.regListFits() {
+		// 開いた後に画面が小さくなり、窓が見えなくなった。見えない一覧の操作にしないよう、このキーは捨てて閉じ、知らせる。
+		e.regList = nil
+		e.showError(errRegListNoRoom)
+		return
+	}
 	switch k {
 	case editcmd.Rune('j'), editcmd.Special(editcmd.CodeDown):
 		l.sel = min(l.sel+1, len(l.entries)-1)
@@ -75,29 +94,37 @@ func (e *Editor) uiRegList() *ui.List {
 		e.regList = nil
 		return nil
 	}
+	// 名前の列と種類の列は、全ての項目で同じ幅にそろえ、テキストの 1 行目の始まりをそろえる（履歴が 100 件でも、行数が 2 桁でもずれない）。
+	nameW, kindW := 2, 1
+	for _, en := range l.entries {
+		nameW = max(nameW, len(regListName(en)))
+		kindW = max(kindW, len(regListKind(en.Register)))
+	}
 	items := make([]string, len(l.entries))
 	for i, en := range l.entries {
-		items[i] = regListLabel(en)
+		first, _, _ := strings.Cut(en.Register.Text, "\n")
+		items[i] = fmt.Sprintf("%*s  %-*s  %s", nameW, regListName(en), kindW, regListKind(en.Register), first)
 	}
 	return &ui.List{Title: regListTitle, Items: items, Selected: l.sel}
 }
 
-// regListLabel は、一覧の 1 項目の表示を返す。
-// 履歴の項目は新しい順の番号（1 から）を、名前付きのレジスターは "a の形の名前を先頭に置き、続けて行単位（l）か文字単位（c）かと、
-// テキストの 1 行目を置く。2 行目以降があれば、その行数を末尾に書く。
-func regListLabel(en command.RegisterEntry) string {
-	name := fmt.Sprintf("%2d", en.Index+1)
+// regListName は、一覧の 1 項目の名前の列を返す。履歴の項目は新しい順の番号（1 から）、名前付きのレジスターは "a の形である。
+func regListName(en command.RegisterEntry) string {
 	if en.Name != 0 {
-		name = fmt.Sprintf("\"%c", en.Name)
+		return fmt.Sprintf("\"%c", en.Name)
 	}
-	kind := 'c'
-	if en.Register.Linewise {
-		kind = 'l'
+	return fmt.Sprint(en.Index + 1)
+}
+
+// regListKind は、一覧の 1 項目の種類の列を返す。行単位なら l、文字単位なら c で、2 行以上にわたるテキストなら "l+2" のように
+// 2 行目以降の行数を続ける。テキストの 1 行目より左に置くので、狭い窓で右の端を切っても行数は残る（PR #171 のレビュー）。
+func regListKind(r command.Register) string {
+	kind := "c"
+	if r.Linewise {
+		kind = "l"
 	}
-	first, rest, multi := strings.Cut(en.Register.Text, "\n")
-	label := fmt.Sprintf("%s  %c  %s", name, kind, first)
-	if multi {
-		label += fmt.Sprintf("（他 %d 行）", strings.Count(rest, "\n")+1)
+	if n := strings.Count(r.Text, "\n"); n > 0 {
+		kind += fmt.Sprintf("+%d", n)
 	}
-	return label
+	return kind
 }

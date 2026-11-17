@@ -52,7 +52,9 @@ func (s *State) markPut(p *putRecord) {
 // 直前の貼り付けで入れたテキストを、履歴の 1 つ古い（<C-n> は新しい）項目に置き換える。回数を付けると、その数だけ進む。
 // 名前を指定した貼り付け（"ap）の直後の <C-p> は履歴の先頭に置き換え、そこからの <C-n> は元のレジスターの内容に戻す。
 // 置き換えは、元の貼り付けと同じ向き、同じ回数で、貼り付けの前のカーソルの位置に入れる。履歴の順は変えない。
-// 中身が空の文字単位のテキスト（何も入らない項目）は飛ばす。
+// 中身が空の文字単位のテキスト（何も入らない項目）と、いま入っているテキストと同じ内容（テキストと行単位かどうか）の項目は飛ばす。
+// 飛ばした先に項目が無ければ失敗する。
+// 進む先の項目が貼り付けの上限（maxPutBytes）を超えるなら、元の貼り付けを残したまま、メッセージの行に出す誤りで失敗する。
 //
 // 置き換えは、元の貼り付けとアンドゥの 1 単位にまとめる。元の貼り付けをアンドゥで取り消してから入れ直すので、
 // u の 1 回で貼り付けの前に戻る。マクロの再生の中では、再生全体が 1 つのアンドゥの単位なので、入れたテキストを消してから入れ直す。
@@ -83,10 +85,15 @@ func actPutCycle(older bool) actionFunc {
 			}
 			return hist[i]
 		}
+		cur := entry(p.index)
+		// 何も入らない項目と、いま入っているテキストと同じ内容の項目は、置き換えても画面が変わらないので飛ばす。
+		skip := func(r Register) bool {
+			return (r.Text == "" && !r.Linewise) || (r.Text == cur.Text && r.Linewise == cur.Linewise)
+		}
 		i := p.index
 		for range max(cmd.Count, 1) {
 			i += step
-			for i >= lowest && i < len(hist) && entry(i).Text == "" && !entry(i).Linewise {
+			for i >= lowest && i < len(hist) && skip(entry(i)) {
 				i += step
 			}
 		}
@@ -94,7 +101,13 @@ func actPutCycle(older bool) actionFunc {
 			s.lastPut = p
 			return failf("no more register history")
 		}
-		if err := s.unput(p); err != nil {
+		if err := checkPutSize(entry(i), p.count); err != nil {
+			// 入れられない項目なら、元の貼り付けを取り除く前に止め、バッファを変えない。
+			s.lastPut = p
+			return errCycleTooLarge
+		}
+		removed, err := s.unput(p)
+		if err != nil {
 			return err
 		}
 		s.cursor = p.before
@@ -102,6 +115,8 @@ func actPutCycle(older bool) actionFunc {
 		rg, _, err := s.putText(entry(i), p.after, p.count)
 		s.buf.EndUndoGroup()
 		if err != nil {
+			// 大きさは先に確かめたので、ここで失敗するのはバッファの誤りだけだが、元の貼り付けを戻してから失敗させる。
+			s.reput(p, removed)
 			return err
 		}
 		next := *p
@@ -111,19 +126,38 @@ func actPutCycle(older bool) actionFunc {
 	}
 }
 
-// unput は、直前の貼り付け p で入れたテキストを取り除く（actPutCycle）。
+// errCycleTooLarge は、貼り直す項目が貼り付けの上限（maxPutBytes）を超えるので、置き換えなかったことを表す。
+// ErrFailed を包まないので、呼び出し側（internal/editor）はメッセージの行に出す。
+var errCycleTooLarge = errors.New("貼り直す項目が貼り付けの上限を超えるので、置き換えませんでした")
+
+// unput は、直前の貼り付け p で入れたテキストを取り除き、取り除いたテキストを返す（actPutCycle）。
 // マクロの再生の外では、貼り付けのアンドゥの単位を取り消す（置き換えを元の貼り付けと 1 つのアンドゥの単位にするため）。
 // 再生の中では、再生全体のアンドゥのグループが開いているので、取り消さずに入れた範囲を消す。
-func (s *State) unput(p *putRecord) error {
+func (s *State) unput(p *putRecord) (string, error) {
 	if s.playDepth > 0 {
-		return s.apply(buffer.Edit{Range: p.rg})
+		text, err := s.buf.Slice(p.rg)
+		if err != nil {
+			return "", err
+		}
+		return text, s.apply(buffer.Edit{Range: p.rg})
 	}
 	ch, ok := s.buf.Undo()
 	if !ok {
-		return failf("no put to replace")
+		return "", failf("no put to replace")
 	}
 	s.res.Changes = append(s.res.Changes, ch)
-	return nil
+	return "", nil
+}
+
+// reput は、unput で取り除いた貼り付けを戻し、カーソルを貼り付けの直後の位置へ戻す。
+// マクロの再生の外ではリドゥで、再生の中では取り除いたテキスト removed を入れ直して戻す。
+func (s *State) reput(p *putRecord, removed string) {
+	if s.playDepth > 0 {
+		_ = s.apply(buffer.Edit{Range: emptyRange(p.rg.Start), Text: removed}) // 消した範囲に戻すだけなので失敗しない
+	} else if ch, ok := s.buf.Redo(); ok {
+		s.res.Changes = append(s.res.Changes, ch)
+	}
+	s.cursor = p.cursor
 }
 
 // PutFromList は、レジスターの一覧（:registers）で選んだ項目 e を、p と同じくカーソルの後に貼る（FR-54。基本設計 4.5）。
