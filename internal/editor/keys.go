@@ -316,7 +316,8 @@ func (e *Editor) syncClipboard() {
 	}
 	if n := base64.StdEncoding.EncodedLen(len(text)); n > MaxClipboardEncoded {
 		e.message = ui.Message{
-			Text:  fmt.Sprintf("%d バイトのテキストは、base64 で %d バイトになり上限の %d バイトを超えるので、クリップボードへ送りませんでした", len(text), n, MaxClipboardEncoded),
+			// 要点を先頭に置き、80 桁の端末でも切れない長さにする。
+			Text:  fmt.Sprintf("クリップボードへ送りませんでした: 大きすぎます（%d バイト）", len(text)),
 			Level: ui.MessageWarning,
 		}
 		return

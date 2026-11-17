@@ -119,8 +119,8 @@ func TestClipboardSizeLimit(t *testing.T) {
 	if got := h.term.clipboard(); len(got) != 1 {
 		t.Errorf("上限を超えたテキストを送った: %d 件", len(got))
 	}
-	if msg := h.message(); !strings.Contains(msg, "クリップボードへ送りませんでした") {
-		t.Errorf("message = %q", msg)
+	if msg, want := h.message(), "クリップボードへ送りませんでした: 大きすぎます（750001 バイト）"; msg != want {
+		t.Errorf("message = %q, want %q", msg, want)
 	}
 	// 送らなかった後も、次に先頭が変われば送る。
 	h.keys("yl")
