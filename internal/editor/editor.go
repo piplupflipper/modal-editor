@@ -260,6 +260,10 @@ type bufferState struct {
 	fileType string
 	// sent は、exthost へ知らせたバージョン番号である（FR-16）。
 	sent uint64
+	// replacedInReplay は、マクロの再生の途中の :e で、この bufferState の buf と state を作り直した（replaceBuffer）ことを表す。
+	// 作り直す前の State が返す結果は捨てたバッファのものなので、handleResult はその変更を exthost へ送らず、
+	// 再生の残りを作り直した State で続ける（PR #173 のレビュー）。handleResult が読んで下ろす。
+	replacedInReplay bool
 	// history は、直近の変更である（基本設計 6.7 の表示のデータ）。
 	history     []buffer.Change
 	decorations map[string]decorationSet
@@ -664,7 +668,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Columns = e.renderer.Columns()
 	bs.state.Viewport = viewport{r: e.renderer}
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
-	bs.state.Navigator = navigator{e: e, bs: bs}
+	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Interrupted = e.interrupt.Load
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{

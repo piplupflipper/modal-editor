@@ -302,6 +302,104 @@ func TestJumpInMacro(t *testing.T) {
 	})
 }
 
+// マクロの中の Ex コマンドのバッファの切り替え（:e、:b、:bn、:bp）は、その場で動く。
+// 切り替えの後のキーは、移った先のバッファで続く（#172）。
+// 期待値は、Vim 9.1 で同じ 3 つのファイルを開き、レジスター c に同じキーを入れて再生し、P を打って得た（2026-11-18）。
+// 未保存の変更で移れなければ（E37）、Vim 9.1 と同じく再生はそこで止まり、残りのキーは元のバッファでも動かない。
+//
+// req: FR-05
+func TestExBufferSwitchInMacro(t *testing.T) {
+	tests := []struct {
+		name  string
+		macro string            // レジスター c に入れる中身（空なら入れない）
+		keys  string            // a.txt で打つキー
+		want  map[string]string // ファイルの名前ごとのバッファのテキスト
+		cur   string
+		err   string // メッセージの行に出る誤り（空なら確かめない）
+	}{
+		// #172 の入力。記録した後、a.txt で再生した yy は b.txt の B1 を取る。
+		{"記録した :e", "", "qc:e b.txt<CR>yyq:e a.txt<CR>@cP", map[string]string{"a.txt": "ab", "b.txt": "B1\nB1\nB2"}, "b.txt", ""},
+		{":b", ":b2\ryy", "@cP", map[string]string{"a.txt": "ab", "b.txt": "B1\nB1\nB2"}, "b.txt", ""},
+		{":bn", ":bn\ryy", "@cP", map[string]string{"a.txt": "ab", "b.txt": "B1\nB1\nB2"}, "b.txt", ""},
+		// a.txt は最初のバッファなので、:bp は最後の c.txt へ回る。
+		{":bp", ":bp\ryy", "@cP", map[string]string{"a.txt": "ab", "c.txt": "C1\nC1\nC2"}, "c.txt", ""},
+		// 2 回の切り替え。x は c.txt の C を消し、P はそれを貼る。
+		{"2 回の :e", ":e b.txt\ryy:e c.txt\rx", "@cP", map[string]string{"a.txt": "ab", "b.txt": "B1\nB2", "c.txt": "C1\nC2"}, "c.txt", ""},
+		// 同じ行の :w の動作を先に行ってから移る。
+		{":w|e", ":w|e b.txt\ryy", "@cP", map[string]string{"a.txt": "ab", "b.txt": "B1\nB1\nB2"}, "b.txt", ""},
+		// 回数付き。1 回目の x で b.txt が変わるので、2 回目の :bn は E37 で止まる。
+		{"2@c と E37", ":bn\rx", "2@c", map[string]string{"a.txt": "ab", "b.txt": "1\nB2", "c.txt": "C1\nC2"}, "b.txt", "E37"},
+		// x で a.txt が変わるので :bn は E37 で止まり、後ろの x は動かない。
+		{"E37 で止まる", "x:bn\rx", "@c", map[string]string{"a.txt": "b", "b.txt": "B1\nB2", "c.txt": "C1\nC2"}, "a.txt", "E37"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": "ab\n", "b.txt": "B1\nB2\n", "c.txt": "C1\nC2\n"})
+			h := start(t, Config{WorkDir: dir}, "a.txt")
+			h.keys(":e b.txt<CR>:e c.txt<CR>:b1<CR>")
+			h.settle()
+			if tt.macro != "" {
+				h.e.do(func() { h.e.cur.state.Registers().Set('c', command.Register{Text: tt.macro}) })
+			}
+			h.keys(tt.keys)
+			h.settle()
+			h.e.do(func() {
+				for _, bs := range h.e.bufs {
+					name := filepath.Base(bs.path)
+					want, ok := tt.want[name]
+					if !ok {
+						continue
+					}
+					if got := bs.buf.Text(); got != want {
+						t.Errorf("%s: text = %q, want %q", name, got, want)
+					}
+				}
+				if got := filepath.Base(h.e.cur.path); got != tt.cur {
+					t.Errorf("cur = %s, want %s", got, tt.cur)
+				}
+			})
+			if got := h.message(); tt.err != "" && !strings.HasPrefix(got, tt.err) {
+				t.Errorf("message = %q, want %s", got, tt.err)
+			}
+		})
+	}
+}
+
+// 起動したときの名前の無い空のバッファから、マクロの再生の中で :e すると、bufferState は同じまま State を作り直す（replaceBuffer）。
+// 残りのキーは作り直した State で動き、拡張機能へ送った版（sent）はバッファの版と揃う（PR #173 のレビューの必須 1）。
+// 期待値の xB1 は、Vim 9.1 で同じキーを打って得た（レビュー、2026-11-18）。
+//
+// req: FR-05, FR-16
+func TestExEditFromEmptyBufferInMacro(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"b.txt": "B1\nB2\n"})
+	h := start(t, Config{WorkDir: dir})
+	check := func(step, want string) {
+		t.Helper()
+		h.settle()
+		h.e.do(func() {
+			bs := h.e.cur
+			if got := filepath.Base(bs.path); got != "b.txt" {
+				t.Errorf("%s: cur = %q", step, got)
+			}
+			if got := bs.buf.Text(); got != want {
+				t.Errorf("%s: text = %q, want %q", step, got, want)
+			}
+			if bs.sent != bs.buf.Version() {
+				t.Errorf("%s: sent = %d, version = %d", step, bs.sent, bs.buf.Version())
+			}
+		})
+	}
+	h.keys("qc:e b.txt<CR>ix<Esc>q:bd!<CR>@c")
+	check("@c", "xB1\nB2")
+	h.keys("x")
+	check("x", "B1\nB2")
+	// 再生の中の yy も、作り直した State のレジスターに入る。
+	h.keys(":bd!<CR>")
+	h.e.do(func() { h.e.cur.state.Registers().Set('c', command.Register{Text: ":e b.txt\ryy"}) })
+	h.keys("@cP")
+	check("yy", "B1\nB1\nB2")
+}
+
 // :jumps の一覧は、Vim 9.1 と同じ形で出す。期待値は、tmux の上の Vim 9.1 で同じキーを打って得た（2026-11-16）。
 //
 // req: FR-08

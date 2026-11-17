@@ -21,6 +21,10 @@ type regListState struct {
 	pushes uint64
 	// sel は、選んでいる項目の添字である。
 	sel int
+	// replayed は、マクロの再生の途中で出した一覧であることを表す。
+	// 再生の中の動作はその場で行う（#172）ので、出した後も再生の残りのキーがレジスターを変え、バッファを移ることがある。
+	// そのため、再生が終わった後の最初のキーか描画で、カーソルのあるバッファのレジスターから項目を作り直す（refreshRegList）。
+	replayed bool
 }
 
 // regListTitle は、一覧の窓の見出しである。
@@ -51,8 +55,23 @@ func (e *Editor) openRegisterList(bs *bufferState) error {
 	if !e.regListFits() {
 		return errRegListNoRoom
 	}
-	e.regList = &regListState{bs: bs, entries: entries, pushes: regs.Pushes()}
+	e.regList = &regListState{bs: bs, entries: entries, pushes: regs.Pushes(), replayed: bs.state.Replaying()}
 	return nil
+}
+
+// refreshRegList は、マクロの再生の途中で出した一覧（regListState.replayed）の項目を、カーソルのあるバッファのレジスターから作り直す。
+// 再生はキー 1 個の処理の中で終わるので、一覧の操作のキー（regListKey）と描画（uiRegList）の時点では、再生は終わっている。
+// 一覧は、再生の終わったバッファに付け直す（再生の残りが :e などで移った場合も、そのバッファで貼る）。
+func (e *Editor) refreshRegList() {
+	l := e.regList
+	if l == nil || !l.replayed {
+		return
+	}
+	regs := e.cur.state.Registers()
+	l.bs, l.entries, l.pushes, l.sel, l.replayed = e.cur, regs.List(), regs.Pushes(), 0, false
+	if len(l.entries) == 0 {
+		e.regList = nil
+	}
 }
 
 // regListKey は、一覧の窓を出している間のキーを処理する。
@@ -61,7 +80,11 @@ func (e *Editor) openRegisterList(bs *bufferState) error {
 //
 // req: FR-54
 func (e *Editor) regListKey(k editcmd.Key) {
+	e.refreshRegList()
 	l := e.regList
+	if l == nil {
+		return
+	}
 	if !e.regListFits() {
 		// 開いた後に画面が小さくなり、窓が見えなくなった。見えない一覧の操作にしないよう、このキーは捨てて閉じ、知らせる。
 		e.regList = nil
@@ -86,6 +109,7 @@ func (e *Editor) regListKey(k editcmd.Key) {
 
 // uiRegList は、一覧の窓を描画の入力にする。出したバッファからカーソルが移っていれば、窓を閉じて nil を返す。
 func (e *Editor) uiRegList() *ui.List {
+	e.refreshRegList()
 	l := e.regList
 	if l == nil {
 		return nil
