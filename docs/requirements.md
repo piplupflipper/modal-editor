@@ -205,7 +205,7 @@ FR-123 は、2026-11-18 のオーナーの裁定（#179 の 2 つのコメント
 | ID | 要件 |
 |---|---|
 | FR-58 | 本体を server と client に分ける。server はバッファ、レジスターとその履歴、直前の検索、マクロ、ドットリピート、拡張機能を持ち、同じ server に繋いだ client の間で共有する。client は端末に描き、キーを受ける。例: ある編集の client でヤンクしたテキストを、同じ server の別の編集の client で貼れる |
-| FR-59 | server は、tmux の window ごと、herdr のタブごとに 1 つとする。server のソケットのパスは、tmux のセッションと window の ID、または herdr のタブの ID から決める。同じ window（タブ）の中で起動した `modal-editor` は、新しい server を作らずに、その server に client として繋ぐ |
+| FR-59 | server は、tmux の window ごと、herdr のタブごとに 1 つとする。server のソケットのパスは、tmux のサーバーのソケットのパスと window の ID、または herdr のタブの ID から決める。同じ window（タブ）の中で起動した `modal-editor` は、新しい server を作らずに、その server に client として繋ぐ |
 | FR-60 | tmux と herdr の外で起動した `modal-editor` は、server と編集の client を 1 つのプロセスで動かす。このときも server のソケットは待ち受け、待つだけの client（FR-83）は繋げる |
 | FR-61 | server は、最後の編集の client が終わったときに、残った部品の client を閉じてから終わる |
 | FR-112 | ペインを別の window（タブ）へ動かした編集の client は、元の server に繋がったまま動き続ける |
