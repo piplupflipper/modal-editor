@@ -1,11 +1,15 @@
 package command
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
+
+// errShellInReplay は、マクロの再生の中で :{range}! と :r ! を実行しようとしたことを表す。
+var errShellInReplay = errors.New("E319: マクロの再生の中では外部のコマンドを使えません")
 
 // CommandLine は、コマンドラインモードで入力中の文字列（先頭の ":" を除く）を返す。
 func (s *State) CommandLine() string { return string(s.cmdline) }
@@ -107,6 +111,14 @@ func (s *State) applyExResult(res ex.Result, err error) {
 		// :{range}! と :r ! の行の数と、シェルの終了コードの通知（FR-81）。
 		s.res.Message = Message{Text: res.Notice.Text, Warning: res.Notice.Warning}
 	}
+	if res.Shell != nil {
+		if s.playDepth > 0 {
+			// 再生の途中で実行を待つと、残りのキーを止めておく手立てが無い（呼び出し側は実行の間イベントループを止めない）。
+			s.fail(errShellInReplay)
+		} else {
+			s.res.Shell = res.Shell
+		}
+	}
 	var extCmds []ex.Action
 	for _, a := range res.Actions {
 		if a.Kind == ex.ActionExtCommand {
@@ -153,6 +165,23 @@ func (s *State) applyExResult(res ex.Result, err error) {
 	for _, a := range extCmds {
 		s.runExtCommand(a)
 	}
+}
+
+// FinishShell は、Result.Shell で求められた外部のコマンドの結果を受け取り、出力でバッファを変える（FR-81）。
+// out と status は、コマンドの出力（標準出力と標準エラー出力を合わせたもの）と終了コードである。
+// err が nil でなければ（起動できない、中断した、出力が上限を超えた）、バッファを変えずに err を失敗として返す。
+// 変更はアンドゥの 1 単位で、カーソルと通知は ex.ShellRequest.Finish が Vim に合わせて決める。
+//
+// req: FR-81
+func (s *State) FinishShell(req *ex.ShellRequest, out []byte, status int, err error) Result {
+	s.res = Result{}
+	if err != nil {
+		s.fail(err)
+		return s.take()
+	}
+	res, err := req.Finish(s.buf, &s.Ex, s.cursor.Line, out, status)
+	s.applyExResult(res, err)
+	return s.take()
 }
 
 // Confirm は、Result.Confirm で求められた確認への利用者の答えを受け取り、yes なら Ex コマンドの続きを実行する。

@@ -85,7 +85,7 @@ func init() {
 		{name: "ls", min: 2, bang: true, rng: rangeNone, run: runBufferList},
 		{name: "jumps", min: 2, rng: rangeNone, run: runJumps},
 		// "read" を "registers" より前に置き、:r と :re を :read にする（Vim と同じ）。
-		{name: "read", min: 1, bang: true, rng: rangeCurrent, inGlobal: true, bar: barNone, run: runRead},
+		{name: "read", min: 1, bang: true, rng: rangeCurrent, bar: barNone, run: runRead},
 		{name: "registers", min: 3, rng: rangeNone, run: runRegisters},
 		{name: "wall", min: 2, bang: true, rng: rangeNone, run: runAll(true, false)},
 		{name: "qall", min: 2, bang: true, rng: rangeNone, run: runAll(false, true)},

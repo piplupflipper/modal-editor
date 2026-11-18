@@ -152,7 +152,7 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 				return err
 			}
 			if err := bs.buf.WriteFile(path); err != nil {
-				return fmt.Errorf("E212: %s を書けません: %w", path, err)
+				return writeError(path, made, err)
 			}
 			e.message = infoMessage(writtenText(path, made))
 			return nil
@@ -208,7 +208,7 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 		return err
 	}
 	if err := bs.buf.WriteFile(path); err != nil {
-		return fmt.Errorf("E212: %s を書けません: %w", path, err)
+		return writeError(path, made, err)
 	}
 	if st, err := statFile(path); err == nil {
 		bs.setDisk(st)
@@ -229,10 +229,13 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 }
 
 // makeParentDir は、書き出す先 path の親のディレクトリが無ければ、利用者に聞かずに作る（FR-78。基本設計 4.7）。
-// 作ったら、そのディレクトリ（path の親）を返す。あれば何もせずに空を返す。
+// 作ったら、path の親のディレクトリを返す（途中のディレクトリも作ったときでも、最も深いもの。:w a/b/c/f で a から作っても a/b/c）。
+// あれば何もせずに空を返す。
 // 権限は os.MkdirAll に 0o777 を渡して umask に任せる（シェルの mkdir -p と同じ）。
 // 作れなければ E212 の誤りを返す。権限の不足（EACCES）で作れないときに権限を上げて作る（FR-116）のは、まだ無い。
 // 親が無いか分からない（stat が ENOENT 以外の誤りを返した。途中がファイルなど）ときは作らず、書き出しの誤りに任せる。
+// 途中のディレクトリに検索の権限が無いと stat は EACCES を返し、親が無くても作らずに書き出しが EACCES で失敗する。
+// FR-79 と FR-116 を足すときは、この EACCES を「あるか分からない」として、権限を上げて mkdir -p してから tee する経路に回す。
 //
 // req: FR-78
 func makeParentDir(path string) (string, error) {
@@ -244,6 +247,14 @@ func makeParentDir(path string) (string, error) {
 		return "", fmt.Errorf("E212: ディレクトリ %s を作れません: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// writeError は、書き出しの失敗の E212 を返す。made が空でなければ、作ったディレクトリ（消さずに残す）も同じ文で知らせる（FR-78）。
+func writeError(path, made string, err error) error {
+	if made != "" {
+		return fmt.Errorf("E212: %s を書けません（ディレクトリ \"%s\" は作りました）: %w", path, made, err)
+	}
+	return fmt.Errorf("E212: %s を書けません: %w", path, err)
 }
 
 // writtenText は、書き出した後のメッセージの行の文言である。made が空でなければ、作ったディレクトリを同じ 1 行に入れる（FR-78）。

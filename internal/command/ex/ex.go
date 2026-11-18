@@ -32,10 +32,14 @@
 //	:qa[ll][!]           エディタを閉じる ActionQuitAll を返す。未保存のバッファの確認は呼び出し側が行う
 //	:wqa[ll][!]、:xa[ll][!]  ActionWriteAll と ActionQuitAll を返す
 //	:bd[elete][!] [N|名前]  バッファを閉じる ActionBufferDelete を返す。未保存の変更の確認は呼び出し側が行う
-//	:{range}!{cmd}       範囲の行を cmd の標準入力へ渡し、出力で範囲を置き換える（FR-81。State.Shell で実行する）
+//	:{range}!{cmd}       範囲の行を cmd の標準入力へ渡し、出力で範囲を置き換える（FR-81。Result.Shell を返す）
 //	:[N]r[ead] !{cmd}    cmd の出力を N 行目（省くとカーソルの行）の後に入れる。:0r は 1 行目の前に入れる（FR-81。:r! も同じ）
 //
 // :{range}! と :r ! は、"|" を含めて行末までを cmd としてシェルへ渡す（Vim と同じ）。
+// このパッケージはプロセスを起動しない。実行を Result.Shell で呼び出し側へ求め、呼び出し側が終わった後に
+// ShellRequest.Finish で出力をバッファへ入れる（イベントループを止めずに実行するため。基本設計 4.9）。
+// 置き換えと挿入は Finish の 1 回でアンドゥの 1 単位になるが、同じ行の前のコマンド（:s/a/b/|2,3!sort の :s）とは別の単位になる。
+// 実行の間に続きを止められないので、:g の cmd の中では使えず E319 にする（Vim では使える）。
 // Vim と違い、cmd の中の "!"（直前のコマンド）、"%"、"#"（ファイル名）は展開しない。
 // 範囲の無い :!{cmd}（端末を渡す実行。FR-80）と、ファイルを読み込む :r {file} はまだ無く、E319 にする。
 //
@@ -242,13 +246,6 @@ type State struct {
 	// ExtCommand は、コマンドの ID が拡張機能のコマンド（宣言ファイルの contributes.commands）であれば、
 	// それを宣言した拡張機能の ID と true を返す。nil なら、拡張機能のコマンドは呼べない（E492 にする）。
 	ExtCommand func(id string) (extension string, ok bool)
-	// Shell は、外部のコマンド cmd を、端末を渡さずにパイプでつないで実行する（:{range}! と :r !。FR-81）。
-	// input を標準入力へ渡し（nil なら何も渡さない）、標準出力と標準エラー出力を書かれた順に合わせたものを output で返す
-	// （Vim の 'shellredir' の既定 ">%s 2>&1" と同じく、標準エラー出力もバッファへ入る）。
-	// status はシェルの終了コードである。0 でなくても、Vim と同じく output でバッファを変える。
-	// 起動できない、中断された、期限を超えたときは err を返し、バッファは変えない。
-	// nil なら、:{range}! と :r ! は E319 にする。
-	Shell func(cmd string, input []byte) (output []byte, status int, err error)
 }
 
 // Notice は、Ex コマンドが利用者に知らせる 1 行の通知である（"3 行をフィルターしました" など）。
@@ -293,6 +290,9 @@ type Result struct {
 	Jumped bool
 	// Notice は、最後に通知を出したコマンドの通知である（:{range}! と :r ! の行の数と、シェルの終了コード）。
 	Notice Notice
+	// Shell は、外部のコマンドの実行を求めるときに nil でない（:{range}! と :r !）。行の最後のコマンドなので、後に続くコマンドは無い。
+	// 呼び出し側はコマンドを実行し、終わったら Shell.Finish で出力をバッファへ入れる。
+	Shell *ShellRequest
 }
 
 // Confirm は、Ex コマンドの続きを実行する前に、利用者に確認を求めることを表す。
@@ -369,6 +369,8 @@ type execCtx struct {
 	jumped bool
 	// notice は、最後に通知を出したコマンドの通知である（Result.Notice）。
 	notice Notice
+	// shell は、外部のコマンドの実行を求めたときの求めである（Result.Shell）。
+	shell *ShellRequest
 }
 
 // markJump は、ジャンプに当たるコマンドを実行したことを記録する。:g の cmd の中では記録しない。
@@ -384,7 +386,7 @@ type lineReplace struct {
 }
 
 func (c *execCtx) res() Result {
-	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions, Confirm: c.confirm, Jumped: c.jumped, Notice: c.notice}
+	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions, Confirm: c.confirm, Jumped: c.jumped, Notice: c.notice, Shell: c.shell}
 }
 
 // setCursor は、カーソルを line 行目（0 始まり）へ移し、列の置き方を記録する。

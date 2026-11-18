@@ -49,7 +49,6 @@ var filterCases = []struct {
 	{"|c\n  bb\n a\nd\ne", "2,3!printf '\\n'", "c\n\nd\ne", "1:0", "1:0", ""},
 	{"|c\n  bb\n a\nd\ne", "1,5!tac", "e\nd\n a\n  bb\nc", "0:0", "0:0", "5 行をフィルターしました"},
 	{"|c\n  bb\n a\nd\ne", "2,4!tac", "c\nd\n a\n  bb\ne", "1:0", "1:0", "3 行をフィルターしました"},
-	{"|c\n  bb\n a\nd\ne", "g/^ /.!tr a-z A-Z", "c\n  BB\n A\nd\ne", "2:1", "1:0", ""},
 	// "|" は cmd の一部としてシェルへ渡す。
 	{"|c\n  bb\n a\nd\ne", "2,3!cat | tr a-z A-Z", "c\n  BB\n A\nd\ne", "1:2", "1:0", ""},
 	{"c\n  b|b\n a\nd\ne", "r !printf '  X\\n Y\\n  Z\\n'", "c\n  bb\n  X\n Y\n  Z\n a\nd\ne", "4:2", "1:0", "3 行増えました"},
@@ -59,7 +58,6 @@ var filterCases = []struct {
 	{"|c\n  bb\n a\nd\ne", "r !echo out; echo err >&2; exit 2", "c\nout\nerr\n  bb\n a\nd\ne", "2:0", "0:0", "シェルが 2 を返しました"},
 	{"|c\n  bb\n a\nd\ne", "r!echo Q", "c\nQ\n  bb\n a\nd\ne", "1:0", "0:0", ""},
 	{"c\n  bb\n a\n|d\ne", "2r !echo x | tr x y", "c\n  bb\ny\n a\nd\ne", "2:0", "1:0", ""},
-	{"c\n  bb\n a\n|d\ne", "g/^ /r !echo -", "c\n  bb\n-\n a\n-\nd\ne", "4:0", "1:0", ""},
 	// cmd が空なら何もしない（Vim 9.1 の do_filter と同じ）。
 	{"|c\n  bb\n a\nd\ne", "2,3!", "c\n  bb\n a\nd\ne", "0:0", "", ""},
 	{"|c\n  bb\n a\nd\ne", "r !", "c\n  bb\n a\nd\ne", "0:0", "", ""},
@@ -77,8 +75,7 @@ func TestFilterVim(t *testing.T) {
 			if tc.text == "|" {
 				s.buf.MarkNoLines()
 			}
-			s.Ex.Shell = shCommand
-			res := s.ExecuteCommandLine(tc.cmd)
+			res := runShellLine(s, tc.cmd)
 			if res.Err != nil {
 				t.Fatalf("err = %v", res.Err)
 			}
@@ -110,8 +107,7 @@ func TestFilterVim(t *testing.T) {
 // req: FR-81
 func TestFilterNoLines(t *testing.T) {
 	s := setup(t, "|a\nb")
-	s.Ex.Shell = shCommand
-	s.ExecuteCommandLine("%!true")
+	runShellLine(s, "%!true")
 	if !s.buf.NoLines() {
 		t.Errorf("NoLines = false, want true")
 	}
@@ -121,23 +117,26 @@ func TestFilterNoLines(t *testing.T) {
 //
 // req: FR-81
 func TestFilterErrors(t *testing.T) {
-	failing := func(string, []byte) ([]byte, int, error) { return nil, 0, errors.New("interrupted") }
 	tests := []struct {
-		name  string
-		shell func(string, []byte) ([]byte, int, error)
-		cmd   string
+		name string
+		cmd  string
+		fail error // FinishShell に渡す実行の誤り
 	}{
-		{"Shell が無い", nil, "2!cat"},
-		{"実行できない", failing, "2!cat"},
-		{":r の実行できない", failing, "r !cat"},
-		{"範囲の無い :!", shCommand, "!ls"},
-		{":r {file}", shCommand, "r foo"},
+		{"実行できない", "2!cat", errors.New("interrupted")},
+		{":r の実行できない", "r !cat", errors.New("interrupted")},
+		{"範囲の無い :!", "!ls", nil},
+		{":r {file}", "r foo", nil},
+		// :g の cmd の中では、実行の間に :g の続きを止められないので使えない（Vim では使える）。
+		{":g の中の :!", "g/a/.!cat", nil},
+		{":g の中の :r !", "g/a/r !echo x", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := setup(t, "|a\nb")
-			s.Ex.Shell = tt.shell
 			res := s.ExecuteCommandLine(tt.cmd)
+			if res.Shell != nil {
+				res = s.FinishShell(res.Shell, []byte("x\n"), 0, tt.fail)
+			}
 			if res.Err == nil {
 				t.Fatalf("err = nil")
 			}
@@ -146,4 +145,63 @@ func TestFilterErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFilterStale は、実行を求めた後にバッファが変わっていれば、出力を捨てることを確かめる（範囲がずれているため）。
+//
+// req: FR-81
+func TestFilterStale(t *testing.T) {
+	s := setup(t, "|a\nb")
+	res := s.ExecuteCommandLine("2!cat")
+	if res.Shell == nil {
+		t.Fatal("Shell = nil")
+	}
+	feedKeys(s, "x")
+	res = s.FinishShell(res.Shell, []byte("X\n"), 0, nil)
+	if res.Err == nil {
+		t.Errorf("err = nil")
+	}
+	if got := s.buf.Text(); got != "\nb" {
+		t.Errorf("text = %q", got)
+	}
+}
+
+// TestFilterInMacro は、マクロの再生の中の :r ! を、実行を求めずに誤りにして再生を止めることを確かめる。
+// 記録の間（再生でない）は実行を求める。
+//
+// req: FR-81
+func TestFilterInMacro(t *testing.T) {
+	s := setup(t, "|a\nb")
+	var asked int
+	for _, res := range feedKeys(s, "qa:r !echo x<CR>xq") {
+		if res.Shell != nil {
+			asked++
+		}
+	}
+	if asked != 1 {
+		t.Fatalf("記録の間の実行の求め = %d, want 1", asked)
+	}
+	var last Result
+	for _, res := range feedKeys(s, "@a") {
+		if res.Shell != nil {
+			t.Errorf("再生の中で実行を求めた")
+		}
+		last = res
+	}
+	if !errors.Is(last.Err, errShellInReplay) {
+		t.Errorf("err = %v, want errShellInReplay", last.Err)
+	}
+	if got := s.buf.Text(); got != "\nb" {
+		t.Errorf("text = %q（再生は :r で止まり、x は動かない）", got)
+	}
+}
+
+// runShellLine は、Ex コマンドを実行し、外部のコマンドの実行を求められたら shCommand で実行して FinishShell に渡す。
+func runShellLine(s *State, cmd string) Result {
+	res := s.ExecuteCommandLine(cmd)
+	if res.Shell == nil || res.Err != nil {
+		return res
+	}
+	out, status, err := shCommand(res.Shell.Cmd, res.Shell.Input)
+	return s.FinishShell(res.Shell, out, status, err)
 }

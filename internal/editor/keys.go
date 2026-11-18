@@ -72,6 +72,10 @@ func (q *keyQueue) dropThrough(k editcmd.Key) {
 // handleKeys は、列からキーを 1 個取り出して処理する。残りがあれば ready が知らせ直すので、次の周回で処理する。
 // 1 個ずつにするのは、キーの間に届いた拡張機能のイベントも、届いた順に近く処理するためである。
 func (e *Editor) handleKeys() {
+	if e.shell != nil {
+		// 外部のコマンドの実行中は、キーを列に残して終わってから処理する（<C-c> の中断は intrCh で受ける。shell.go）。
+		return
+	}
 	in, ok := e.keys.pop()
 	if !ok {
 		return
@@ -87,6 +91,8 @@ func (e *Editor) handleKeys() {
 // afterKey は、キーの処理の後に、中断の後始末と、曖昧なキーの列の時間切れの準備をする。
 func (e *Editor) afterKey() {
 	if e.interrupt.Load() {
+		// このキーで始めた外部のコマンドは、知らせ（intrCh）を Run が先に取っていても、ここで中断する。
+		e.interruptShell()
 		// 処理の途中に <C-c> が押された。中断はもう効いたので印を下ろし、<C-c> までの先打ちを捨てる。
 		e.interrupt.Store(false)
 		e.keys.dropThrough(interruptKey)
@@ -280,6 +286,10 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 		e.confirm, e.confirmBS = res.Confirm, bs
 	case res.Err != nil && !switched && !actionFailed:
 		e.reportError(res.Err)
+	}
+	if res.Shell != nil {
+		// :{range}! と :r ! の外部のコマンドを、イベントループを止めずに動かす（FR-81。shell.go）。
+		e.startShell(bs, res.Shell)
 	}
 	e.doPendingOpens()
 	if switched {

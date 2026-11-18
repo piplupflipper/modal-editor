@@ -105,6 +105,9 @@ type Result struct {
 	// Message は、操作が利用者に知らせる通知である（検索したパターンと、検索の折り返しの警告）。無ければ Text が空である。
 	// 呼び出し側は、Err が nil でなければ Err を優先して知らせる。
 	Message Message
+	// Shell は、Ex コマンド（:{range}! と :r !）が外部のコマンドの実行を求めたときに nil でない（FR-81）。
+	// 呼び出し側はコマンドを実行し、終わったら State.FinishShell に結果を渡す。
+	Shell *ex.ShellRequest
 }
 
 // State は、1 つのバッファを編集する状態である。

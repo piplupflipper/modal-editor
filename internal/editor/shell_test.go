@@ -8,6 +8,29 @@ import (
 	"time"
 )
 
+// waitShell は、送ったキーを処理し、外部のコマンドが終わって結果を入れ終えるまで待つ。
+func (h *harness) waitShell() {
+	h.t.Helper()
+	h.eventually("外部のコマンドの終わり", func() bool {
+		return h.e.shell == nil && h.e.forwarded.Load() == h.sent && h.e.keys.empty()
+	})
+}
+
+// waitFile は、子プロセスが path を作るまで待つ（子が動き出したことを知るため）。
+func waitFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("子プロセスが %s を作らない", path)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // :{range}! と :r ! は、シェルの子プロセスとパイプでつないで実行し、作業ディレクトリと Config.ChildEnv を渡す。
 // 結果の細かい形（カーソル、アンドゥ、通知）は internal/command の TestFilterVim で Vim 9.1 と突き合わせている。
 //
@@ -17,12 +40,12 @@ func TestShellFilterAndRead(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "c\nbb\na\n"})
 	h := start(t, Config{WorkDir: dir, ChildEnv: []string{"MODAL_EDITOR_TEST_VALUE=xyz"}}, "a.txt")
 	h.keys(":2,3!tr a-z A-Z<CR>")
-	h.settle()
+	h.waitShell()
 	if got := h.text(); got != "c\nBB\nA" {
 		t.Fatalf(":2,3!tr: text = %q", got)
 	}
 	h.keys(":$r !pwd; echo $MODAL_EDITOR_TEST_VALUE<CR>")
-	h.settle()
+	h.waitShell()
 	if got, want := h.text(), "c\nBB\nA\n"+dir+"\nxyz"; got != want {
 		t.Errorf(":r !pwd: text = %q, want %q", got, want)
 	}
@@ -38,47 +61,100 @@ func TestShellFilterAndRead(t *testing.T) {
 		t.Errorf("uu: text = %q", got)
 	}
 	h.keys(":1!exit 4<CR>")
-	h.settle()
+	h.waitShell()
 	if got := h.message(); got != "シェルが 4 を返しました" {
 		t.Errorf(":1!exit 4: message = %q", got)
 	}
 }
 
-// <C-c> は、待っている外部のコマンドを終わらせ、バッファを変えない。上限の時間を超えたときも同じである。
+// 外部のコマンドの実行中もイベントループは動き、キーは終わるまで処理せずに残して、終わってから処理する。
 //
 // req: FR-81
-func TestShellInterruptAndTimeout(t *testing.T) {
+func TestShellDoesNotBlockLoop(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	h.keys(":r !touch started; while [ ! -e go ]; do sleep 0.01; done; echo x<CR>")
+	waitFile(t, filepath.Join(dir, "started"))
+	// イベントループが止まっていれば、do（inspect）は戻らない。
+	var running bool
+	h.e.do(func() { running = h.e.shell != nil })
+	if !running {
+		t.Fatal("実行中の印が無い")
+	}
+	h.keys("dd")
+	time.Sleep(50 * time.Millisecond)
+	if got := h.text(); got != "a" {
+		t.Errorf("実行中のキーが処理された: text = %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.waitShell()
+	// :r で x が入ってカーソルが 2 行目へ移り、その後に残しておいた dd が x の行を消す。
+	if got := h.text(); got != "a" {
+		t.Errorf("text = %q, want %q", got, "a")
+	}
+	h.keys("u")
+	h.settle()
+	if got := h.text(); got != "a\nx" {
+		t.Errorf("u: text = %q", got)
+	}
+}
+
+// <C-c> は、外部のコマンドを終わらせ、バッファを変えない。プロセスグループから抜けた子孫がパイプを持っていても戻り、
+// <C-c> より前に打ったキーは捨てる（Vim と同じ）。
+//
+// req: FR-81
+func TestShellInterrupt(t *testing.T) {
 	t.Setenv("SHELL", "/bin/sh")
 	dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
 	h := start(t, Config{WorkDir: dir}, "a.txt")
 	begin := time.Now()
-	h.keys(":r !echo x; touch started; sleep 30<CR>")
-	// <C-c> を先に送ると、:r の前のキーと一緒に捨てられる（afterKey）。子プロセスが動き出してから送る。
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "started")); err == nil {
-			break
-		}
-		if time.Since(begin) > 10*time.Second {
-			t.Fatal("子プロセスが動き出さない")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	h.keys("<C-c>")
-	h.settle()
-	if d := time.Since(begin); d > 10*time.Second {
-		t.Errorf("<C-c> で終わるまでに %v かかった", d)
+	h.keys(":r !setsid sleep 4 & touch started; sleep 30<CR>")
+	waitFile(t, filepath.Join(dir, "started"))
+	h.keys("x<C-c>")
+	h.waitShell()
+	if d := time.Since(begin); d > 3*time.Second {
+		t.Errorf("<C-c> で終わるまでに %v かかった（パイプを持つ子孫を待った）", d)
 	}
 	if got, msg := h.text(), h.message(); got != "a" || !strings.Contains(msg, "中断しました") {
 		t.Errorf("<C-c>: text = %q, message = %q", got, msg)
 	}
+}
 
-	old := shellTimeout
-	shellTimeout = 200 * time.Millisecond
-	defer func() { shellTimeout = old }()
-	h.keys(":1!sleep 30<CR>")
-	h.settle()
-	if got, msg := h.text(), h.message(); got != "a" || !strings.Contains(msg, "を過ぎても終わりません") {
-		t.Errorf("timeout: text = %q, message = %q", got, msg)
+// シェルが終われば、背景に回してパイプを持ったままの子孫を待たずに（shellWaitDelay の後に）出力を入れる。
+//
+// req: FR-81
+func TestShellBackgroundChild(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	begin := time.Now()
+	h.keys(":r !(sleep 5 &); echo hi<CR>")
+	h.waitShell()
+	if d := time.Since(begin); d > 3*time.Second {
+		t.Errorf("背景の子孫を %v 待った", d)
+	}
+	if got := h.text(); got != "a\nhi" {
+		t.Errorf("text = %q", got)
+	}
+}
+
+// 出力が上限を超えたら、子を止めてバッファを変えずに誤りを出す。
+//
+// req: FR-81
+func TestShellOutputLimit(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	old := shellOutputLimit
+	shellOutputLimit = 1 << 20
+	defer func() { shellOutputLimit = old }()
+	dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	h.keys(":r !yes<CR>")
+	h.waitShell()
+	if got, msg := h.text(), h.message(); got != "a" || !strings.Contains(msg, "上限") {
+		t.Errorf("text = %q, message = %q", got, msg)
 	}
 }
 
@@ -112,6 +188,12 @@ func TestWriteMakesDirectory(t *testing.T) {
 	h.settle()
 	if msg := h.message(); strings.Contains(msg, "ディレクトリ") {
 		t.Errorf("2 回目の :w: message = %q", msg)
+	}
+	// 作った後に書き出しが失敗したら、誤りの中で作ったことも知らせる。
+	h.keys(":w made/" + strings.Repeat("x", 300) + "<CR>")
+	h.settle()
+	if msg := h.message(); !strings.HasPrefix(msg, "E212") || !strings.Contains(msg, "ディレクトリ \""+filepath.Join(dir, "made")+"\" は作りました") {
+		t.Errorf("作った後の失敗: message = %q", msg)
 	}
 }
 
