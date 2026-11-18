@@ -33,6 +33,49 @@ func TestStatusLineReadOnly(t *testing.T) {
 	}
 }
 
+// 名前が長くて収まらなければ、Vim 9.1 と同じく名前の先頭を "<" で切り、[RO] と [+] を残す（PR #206 のレビューの入力。
+// 100 列の端末で 94 文字のパス。Vim 9.1 の `vim -Nu NONE -R` の 50 列の窓は `<4030-b80ff77dac4f/find.go [RO]` と出す）。
+//
+// req: FR-87
+func TestStatusLineLongName(t *testing.T) {
+	b := buffer.New("abc\n")
+	r := newRenderer(100, 6)
+	name := "/home/endo84/go/pkg/mod/github.com/tailscale/hujson@v0.0.0-20260727124030-b80ff77dac4f/find.go"
+	got := r.Render(&Frame{Text: b, Name: name, ReadOnly: true}).Grid.RowText(4)
+	want := " NORMAL  <mod/github.com/tailscale/hujson@v0.0.0-20260727124030-b80ff77dac4f/find.go [RO]  1,1  All "
+	if got != want {
+		t.Errorf("ステータス行\n got %q\nwant %q", got, want)
+	}
+	got = r.Render(&Frame{Text: b, Name: name, ReadOnly: true, Modified: true}).Grid.RowText(4)
+	if !strings.Contains(got, "find.go [+] [RO]  1,1") || !strings.HasPrefix(got, " NORMAL  <") {
+		t.Errorf("未保存と禁止: %q", got)
+	}
+	// 収まる名前は切らない。
+	if got := r.Render(&Frame{Text: b, Name: "a.go", ReadOnly: true}).Grid.RowText(4); !strings.HasPrefix(got, " NORMAL  a.go [RO] ") {
+		t.Errorf("短い名前: %q", got)
+	}
+}
+
+// 部品の色が文字か背景の色を持てば、既定の statusline の反転を外す（反転すると、部品の文字の色と背景の色が入れ替わるため）。
+// 飾りだけの部品の色（太字など）は、statusline の反転の上に重ねる。
+//
+// req: FR-91
+func TestStatusLinePartReverse(t *testing.T) {
+	b := buffer.New("abc\n")
+	theme := DefaultTheme().WithColors(map[string]Attr{
+		StyleStatusLineModeNormal: {Fg: Indexed(0), Bg: Indexed(1)},
+		StyleStatusLineName:       {Italic: true},
+	})
+	r := &Renderer{Width: 30, Height: 4, Theme: theme}
+	g := r.Render(&Frame{Text: b, Name: "a.go"}).Grid
+	if got, want := g.At(2, 1).Attr, (Attr{Fg: Indexed(0), Bg: Indexed(1), Bold: true}); got != want {
+		t.Errorf("モードの部品 = %+v, want %+v", got, want)
+	}
+	if got, want := g.At(2, 10).Attr, (Attr{Reverse: true, Bold: true, Italic: true}); got != want {
+		t.Errorf("名前の部品 = %+v, want %+v", got, want)
+	}
+}
+
 // ステータス行の部品は、設定の並び（StatusLine）の順に、左と右へ並べる。並べなかった部品は出さず、知らない ID は描かない。
 // 部品の色（statusline.<ID>）は、ステータス行の色の上に重ねる。モードの部品は、モードごとの色も重ねる。
 // 編集の禁止の印と未保存の印の文字は、記号の設定で変えられる。
@@ -91,6 +134,24 @@ func TestGoldenBorder(t *testing.T) {
 		{"右の端で左へ寄せる", Frame{Text: b, Cursor: pos(1, 4), Popup: "abcdefghijkl"}},
 		{"選択の一覧", Frame{Text: b, Cursor: pos(0, 0), List: &List{Title: "reg", Items: []string{"a", "b"}, Selected: 1}}},
 	}))
+}
+
+// 枠線があっても、上と下のどちらに置くかを枠線を含めた大きさで決めるので、表示領域のどの行のカーソルでもホバーが出る
+// （PR #206 のレビューの入力。表示領域 8 行で、下から 2〜3 行目のカーソルで出なかった）。
+//
+// req: FR-93
+func TestBorderPopupPlacement(t *testing.T) {
+	b := buffer.New("0\n1\n2\n3\n4\n5\n6\n7\n")
+	r := newRenderer(40, 10)
+	r.Symbols = Symbols{SymbolPopupBorder: "╭─╮│╯─╰│"}
+	// カーソルの行から、本文の行（枠線の内側）への対応。下に 3 行（本文と枠線）が入らなければ上に置く。
+	want := map[int]int{0: 2, 4: 6, 5: 3, 6: 4, 7: 5}
+	for line, row := range want {
+		g := r.Render(&Frame{Text: b, Cursor: pos(line, 0), Popup: "hover"}).Grid
+		if got := g.RowText(row); !strings.Contains(got, "│ hover │") {
+			t.Errorf("カーソルの行 %d: %d 行目 = %q\n%s", line, row, got, g.String())
+		}
+	}
 }
 
 func TestCheckSymbol(t *testing.T) {

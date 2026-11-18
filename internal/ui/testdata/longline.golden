@@ -34,6 +34,6 @@ fx |SSSSSSSSSSSSSSSSSSSS|
 size 20x4 cursor 1,4 block
    |abcdefghijklmnopqrst|
    |short               |
-   | NORMAL  [ 2,5  All |
+   | NORMAL  < 2,5  All |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |

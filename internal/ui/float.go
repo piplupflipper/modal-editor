@@ -82,13 +82,14 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 		}
 	}
 	textRows := r.textRows()
-	below, above := textRows-curRow-1, curRow
+	// 上と下に本文を置ける行数は、枠線の 2 行を除いて数える（枠線を数えずに決めると、下に枠線しか入らない行で何も出なかった。PR #206 のレビュー）。
+	below, above := textRows-curRow-1-2*b, curRow-2*b
 	useAbove := len(rows) > below && above > below
 	space := below
 	if useAbove {
 		space = above
 	}
-	h := min(len(rows), popupMaxRows-2*b, space-2*b)
+	h := min(len(rows), popupMaxRows-2*b, space)
 	if h <= 0 {
 		return
 	}

@@ -7,6 +7,22 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
+// 設定の色（Config.Colors）は、描画に渡り、名前ごとに既定の属性を置き換える。
+//
+// req: FR-91
+func TestColorsReachRenderer(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
+	want := ui.Attr{Fg: ui.RGB(0xc6, 0xc8, 0xd1), Bg: ui.RGB(0x0f, 0x11, 0x17)}
+	h := start(t, Config{WorkDir: dir, Colors: map[string]ui.Attr{ui.StyleStatusLine: want}}, "a.txt")
+	h.eventually("ステータス行の色", func() bool {
+		h.term.mu.Lock()
+		defer h.term.mu.Unlock()
+		g := h.term.last.Grid
+		// fakeTerm は 6 行なので、ステータス行は 5 行目（0 から数えて 4）。
+		return g != nil && g.RowText(4) != "" && g.At(4, 1).Text == "N" && g.At(4, 1).Attr == want
+	})
+}
+
 // 編集を禁止したバッファは、ステータス行に禁止の印を出し、:readonly で解くと消える。
 // 印の文字（Config.Symbols）とステータス行の並び（Config.StatusLine）は設定で変えられる。
 //

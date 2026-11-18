@@ -88,6 +88,22 @@ func TestCheckAppearance(t *testing.T) {
 	}
 }
 
+// Parse の誤りと CheckAppearance の誤りを SortErrors で合わせると、ファイルの位置の順になる
+// （起動後のメッセージに出す最初の 1 件を、位置の最も前の誤りにする。PR #206 のレビュー）。
+func TestSortErrors(t *testing.T) {
+	src := "{\n  \"colors\": {\n    \"keywrd\": { \"fg\": 1 },\n    \"string\": { \"fg\": \"#fff\" }\n  }\n}"
+	cfg, errs := Parse("config.jsonc", []byte(src))
+	errs = append(errs, cfg.CheckAppearance(AppearanceCheck{Color: func(n string) bool { return n == "string" }})...)
+	SortErrors(errs)
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{
+		{3, 5, "keywrd"},
+		{4, 23, `"#rrggbb"`},
+	})
+}
+
 // statusline は left と right を持つオブジェクトで、書かなかった側は空の列（部品を出さない）にする。
 // 書かなかったときは nil（本体の既定の並び）である。
 //

@@ -379,7 +379,8 @@ type Decoration struct {
 	// Style は、色の種類の名前（"keyword" など）である（基本設計 6.1、7.1。FR-91）。
 	// 名前から色への対応は本体が持ち、利用者は設定の colors で名前ごとに変えられる。
 	// 構文の色の名前は comment、keyword、string、number、constant、function、type、variable、operator、punctuation の 10 個で、
-	// 前に "syntax." を付けない。本体の色の名前の全部は docs/usage.md の「見た目の設定」にあり、本体が知らない名前の範囲には色を付けない。
+	// 前に "syntax." を付けない。構文の色の他に、本体の色の名前（docs/usage.md の「見た目の設定」の表。診断の diagnostic.error、
+	// 画面の部品の statusline など）のどれを使ってもよい。本体が知らない名前の範囲には色を付けない。
 	Style string `json:"style"`
 }
 

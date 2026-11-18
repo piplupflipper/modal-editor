@@ -311,8 +311,9 @@ func loadConfig(logger *slog.Logger) editor.Config {
 	} else {
 		var errs []error
 		cfg, errs = config.Load(path)
+		errs = append(errs, cfg.CheckAppearance(appearanceCheck)...)
+		config.SortErrors(errs)
 		problems = append(problems, errs...)
-		problems = append(problems, cfg.CheckAppearance(appearanceCheck)...)
 	}
 	exe, err := os.Executable()
 	if err != nil {

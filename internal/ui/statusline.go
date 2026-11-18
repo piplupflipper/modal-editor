@@ -62,6 +62,7 @@ func DefaultStatusLine() StatusLine {
 
 // statusSeg は、ステータス行に描く 1 つの部品の文字列と属性である。
 type statusSeg struct {
+	id   string // 部品の ID
 	text string
 	attr Attr
 }
@@ -124,6 +125,9 @@ func modeStyle(m Mode) string {
 // statusSegs は、ids の部品を、描く順の文字列と属性の列にする。中身の無い部品は飛ばす。
 // 部品は左右に空白を 1 つずつ置き、部品の色で描く（lualine の部品と同じく、色を付けた部品が帯に見えるようにするため）。
 // 印の部品（flagParts）は、前に部品があれば左の空白を置かずに続ける。
+//
+// 部品の色は base（statusline の色）の上に重ねる。ただし部品の色が文字か背景の色を持てば、base の反転を外す（部品の色の反転だけを使う）。
+// 既定の statusline は反転なので、外さないと部品の文字の色と背景の色が入れ替わって出るためである（PR #206 のレビュー）。
 func (r *Renderer) statusSegs(ids []string, theme Theme, base Attr, text Text, f *Frame, cur cursorPlace) []statusSeg {
 	var segs []statusSeg
 	for _, id := range ids {
@@ -133,20 +137,55 @@ func (r *Renderer) statusSegs(ids []string, theme Theme, base Attr, text Text, f
 		}
 		a := base
 		for _, st := range styles {
-			a = a.Over(theme.attr(st))
+			o := theme.attr(st)
+			if o.Fg != ColorDefault || o.Bg != ColorDefault {
+				a.Reverse = false
+			}
+			a = a.Over(o)
 		}
 		if !flagParts[id] || len(segs) == 0 {
 			s = " " + s
 		}
-		segs = append(segs, statusSeg{text: s + " ", attr: a})
+		segs = append(segs, statusSeg{id: id, text: s + " ", attr: a})
 	}
 	return segs
+}
+
+// fitName は、左の部品 segs が幅 width に収まらなければ、名前の部品（StatusPartName）の先頭を切って "<" を付け、
+// 後ろの部品（編集の禁止の印、未保存の印など）が収まるようにする（Vim 9.1 のステータス行と同じ。FR-87）。
+// 名前を切っても収まらなければ、名前を "<" だけまで切り、残りは drawSegs が右の端で切る。
+func (r *Renderer) fitName(segs []statusSeg, width int) {
+	total := 0
+	for _, s := range segs {
+		total += StringWidth(s.text, r.TabStop)
+	}
+	over := total - width
+	if over <= 0 {
+		return
+	}
+	for i, s := range segs {
+		if s.id != StatusPartName {
+			continue
+		}
+		// s.text は " " + 名前 + " "。"<" の 1 列を足すので、over+1 列以上を名前の先頭から落とす。
+		name := s.text[1 : len(s.text)-1]
+		tabStop := tabStopOr(r.TabStop)
+		dropped, off := 0, 0
+		for off < len(name) && dropped < over+1 {
+			gl := nextGlyph(name, off, dropped, tabStop)
+			dropped += gl.width
+			off += gl.size
+		}
+		segs[i].text = " <" + name[off:] + " "
+		return
+	}
 }
 
 // drawStatus は、row 行目（バッファの表示領域のすぐ下）にステータス行を描く。
 //
 // 部品の並びは Renderer.StatusLine（nil なら DefaultStatusLine）で決める（FR-92）。
-// 左の部品を左の端から、右の部品を右の端に寄せて描き、幅が足りなければ、右の部品を優先して左の部品を右の端で切る。
+// 左の部品を左の端から、右の部品を右の端に寄せて描く。幅が足りなければ右の部品を優先し、左の部品は名前の先頭を "<" で切って
+// 後ろの印を残し（fitName）、それでも収まらなければ右の端で切る。
 // 部品の中身は statusPart の doc にある。カーソルの位置は Vim のルーラーと同じく「行,バイトの列-表示の列」で、
 // 2 つの列が同じなら表示の列を省き、空の行では "0-1" と出す。範囲の位置は Vim と同じく All、Top、Bot、または上に隠れた行の割合である。
 // 編集を禁止したバッファでは、編集の禁止の印（既定は [RO]）を出す（FR-87）。
@@ -173,7 +212,9 @@ func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cur
 	}
 	start := max(r.Width-rw, 0)
 	r.drawSegs(g, row, start, r.Width, right)
-	r.drawSegs(g, row, 0, start, r.statusSegs(layout.Left, theme, a, text, f, cur))
+	left := r.statusSegs(layout.Left, theme, a, text, f, cur)
+	r.fitName(left, start)
+	r.drawSegs(g, row, 0, start, left)
 }
 
 // drawSegs は、segs を row 行目の col 列から、列 limit の手前まで順に描く。収まらない文字の手前で止め、後の部品は描かない。

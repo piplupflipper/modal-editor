@@ -2231,7 +2231,9 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 #204 で、色は `#rrggbb` に加えて 0〜255 の 256 色の番号でも書けるようにし（本体の既定の色が端末の 16 色の番号のため）、属性は `bold`、`italic`、`underline`、`undercurl`、`reverse` と下線の色 `sp` にした。
 上書きは名前ごとの置き換えで、既定の属性と混ぜない（`internal/ui` の `Theme.WithColors`）。
 ステータス行の部品の色（`statusline.<部品の ID>`、モードごとの `statusline.mode.<モード>`）だけは、`statusline` の色の上に重ねる。
+部品の色が文字か背景の色を持てば、`statusline` の反転を外す（既定の `statusline` の反転で、部品の色の文字と背景が入れ替わらないように。PR #206 のレビュー）。
 本体の知らない名前は、設定の誤りとして知らせて使わない。
+ポップアップの部品（1.4。ファインダーの一致した文字、ファイラのディレクトリ、フォーカスを入れた窓の枠線など）が要る色の名前は、拡張機能が独自の名前を使えないので、その部品の issue で本体の名前に足す。
 名前の一覧は `docs/usage.md` の「見た目の設定」と `internal/ui` の `StyleNames` にある。
 `tabline`、`tabline.selected`、`diff.add` は、タブの行（FR-62）と diff（6.8）の issue で足す。
 
@@ -2259,7 +2261,8 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 1 つの列に区切りの ID を挟む形（Vim の `%=`）より、左と右に寄せる部品の分け方が読み取りやすいためである。
 本体の部品は `mode`、`name`、`modified`、`readonly`、`filetype`、`recording`、`ruler`、`position` で、既定の並びは段階 2 までのステータス行と同じ並びに、名前の後の `readonly` を足したものである（`internal/ui` の `DefaultStatusLine`）。
 知らない ID は、設定の誤りとして知らせて使わない。
-拡張機能の部品（`contributes.statusline` と `statusline/set`）と、タブの行の並び（`tabline`）は、#204 では作らず、宣言ファイルと拡張機能 API とタブの行の issue で足す。
+左の部品が収まらなければ、Vim 9.1 と同じく名前の部品の先頭を `<` で切り、後ろの未保存の印と編集の禁止の印を残す（PR #206 のレビュー。長いパスで FR-87 の印が消えないように）。
+拡張機能の部品（`contributes.statusline` と `statusline/set`）は #208 で、タブの行の並び（`tabline`）はタブの行の issue で足す。
 
 記号は、印の列の印（6.7 の表の `=>`、`B` など）、枠線の文字、編集の禁止の印など、本体が描く記号の文字の対応である（FR-93）。
 設定の `symbols` で名前ごとに上書きする。

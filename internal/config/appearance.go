@@ -113,7 +113,7 @@ func (c *Config) CheckAppearance(check AppearanceCheck) []error {
 		}
 		c.StatusLine.Left, c.StatusLine.Right = keep(c.StatusLine.Left), keep(c.StatusLine.Right)
 	}
-	sortErrors(errs)
+	SortErrors(errs)
 	return errs
 }
 
@@ -298,8 +298,9 @@ func (e *Error) with(format string, args ...any) error {
 	return out
 }
 
-// sortErrors は、CheckAppearance の誤りを、ファイルの中の位置の順に並べる（対応表を回る順は決まらないため）。
-func sortErrors(errs []error) {
+// SortErrors は、同じファイルの誤りを、ファイルの中の位置（行、列）の順に並べる。位置の無い誤りは先頭に置く。
+// CheckAppearance の誤り（対応表を回る順は決まらない）と、Parse の誤りを合わせて、最初の 1 件を位置の最も前の誤りにするために使う。
+func SortErrors(errs []error) {
 	key := func(err error) (line, col int, msg string) {
 		var p *Error
 		if errors.As(err, &p) {
