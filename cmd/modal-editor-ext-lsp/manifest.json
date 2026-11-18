@@ -5,11 +5,9 @@
   "activation": [
     { "on": "filetype", "pattern": "go" }
   ],
-  "contributes": {
-    "commands": [
-      { "id": "lsp.definition" },
-      { "id": "lsp.hover" },
-      { "id": "lsp.format" }
-    ]
-  }
+  "provides": [
+    "definition", "implementation", "typeDefinition", "hover",
+    "references", "documentSymbols", "workspaceSymbols",
+    "format", "rename"
+  ]
 }

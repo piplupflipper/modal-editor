@@ -342,12 +342,12 @@ func TestManifest(t *testing.T) {
 	if m.Command != "./modal-editor-ext-lsp" || !m.SaveHook {
 		t.Errorf("manifest = %+v", m)
 	}
-	var ids []string
-	for _, c := range m.Contributes.Commands {
-		ids = append(ids, c.ID)
+	// 段階 2 のコマンド（lsp.definition など）は、provides で名乗る本体の操作に置き換えた（#203）。
+	if len(m.Contributes.Commands) != 0 {
+		t.Errorf("commands = %v, want none", m.Contributes.Commands)
 	}
-	if want := []string{cmdDefinition, cmdHover, cmdFormat}; !slices.Equal(ids, want) {
-		t.Errorf("commands = %v, want %v", ids, want)
+	if !slices.Equal(m.Provides, providedOps) {
+		t.Errorf("provides = %v, want %v", m.Provides, providedOps)
 	}
 	for ft := range defaultServers() {
 		if !slices.Contains(m.Activation, ext.Activation{On: ext.ActivationFileType, Pattern: ft}) {

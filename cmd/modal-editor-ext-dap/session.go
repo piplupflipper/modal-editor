@@ -62,7 +62,7 @@ type session struct {
 	// terminatedCh は、terminated の event を受け取ると閉じる。
 	terminatedCh   chan struct{}
 	terminatedOnce sync.Once
-	// stopping は、利用者が dap.stop で終わらせたか、拡張機能が終わるところであることを表す。
+	// stopping は、利用者が debug.terminate か debug.restart で終わらせたか、拡張機能が終わるところであることを表す。
 	stopping atomic.Bool
 	// terminated は、terminated の event を受け取ったことを表す。
 	terminated atomic.Bool
@@ -359,10 +359,10 @@ func (s *session) sendBreakpoints(ctx context.Context, path string) error {
 	if c == nil {
 		return errDAPClosed
 	}
-	lines, gen := s.d.snapshotBreakpoints(path)
+	bps, gen := s.d.snapshotBreakpoints(path)
 	args := setBreakpointsArguments{Source: source{Name: filepath.Base(path), Path: path}, Breakpoints: []sourceBreakpoint{}}
-	for _, l := range lines {
-		args.Breakpoints = append(args.Breakpoints, sourceBreakpoint{Line: toDAPLine(l, linesStartAt1)})
+	for _, b := range bps {
+		args.Breakpoints = append(args.Breakpoints, sourceBreakpoint{Line: toDAPLine(b.line, linesStartAt1), Condition: b.cond})
 	}
 	var res setBreakpointsResponse
 	if err := c.call(ctx, "setBreakpoints", args, &res); err != nil {
@@ -398,6 +398,24 @@ func (s *session) resume(ctx context.Context, command string) error {
 		return err
 	}
 	return c.call(ctx, command, threadArguments{ThreadID: tid}, nil)
+}
+
+// pause は、DAP の pause を送る。実行中は止まったスレッドを知らないので、threads の最初のスレッドを対象にする。
+// delve は、pause の threadId に依らずにデバッグ対象の全体を止める。
+func (s *session) pause(ctx context.Context) error {
+	c := s.getConn()
+	if c == nil {
+		return errDAPClosed
+	}
+	var res threadsResponse
+	if err := c.call(ctx, "threads", nil, &res); err != nil {
+		return err
+	}
+	tid := 1
+	if len(res.Threads) > 0 {
+		tid = res.Threads[0].ID
+	}
+	return c.call(ctx, "pause", threadArguments{ThreadID: tid}, nil)
 }
 
 // stop は、disconnect を送ってデバッグ対象とデバッグアダプターを終わらせる。
@@ -543,7 +561,7 @@ func (s *session) handleEvent(e dapEvent) {
 		s.terminatedOnce.Do(func() { close(s.terminatedCh) })
 		s.d.clearExecution()
 		// デバッグアダプターがセッションを終えた。disconnect を送ってデバッグアダプターを終わらせる。
-		// dap.stop で終わらせている最中なら、stop が disconnect を送るので、ここでは送らない（二重に送ると、閉じた接続への書き込みになる）。
+		// debug.terminate で終わらせている最中なら、stop が disconnect を送るので、ここでは送らない（二重に送ると、閉じた接続への書き込みになる）。
 		if !s.stopping.Load() {
 			go s.disconnect(context.Background(), killGrace)
 		}

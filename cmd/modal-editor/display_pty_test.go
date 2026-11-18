@@ -173,10 +173,10 @@ func TestFitHeightInPTY(t *testing.T) {
 	p.checkRestored(t, before)
 }
 
-// TestSignColumnInPTY は、DAP の拡張機能を実際に起動し、:dap.toggleBreakpoint で置いたブレークポイントの印が、
+// TestSignColumnInPTY は、DAP の拡張機能を実際に起動し、既定のキー <leader>db（breakpoint.toggle。#203）で置いたブレークポイントの印が、
 // バッファの左の印の列に出ることを確かめる（基本設計 6.4、6.7）。ブレークポイントを置くだけなので、デバッグアダプターは起動しない。
 //
-// req: FR-31
+// req: FR-31, FR-96
 func TestSignColumnInPTY(t *testing.T) {
 	xdg := t.TempDir()
 	installExtension(t, xdg, "dap")
@@ -187,7 +187,7 @@ func TestSignColumnInPTY(t *testing.T) {
 	p := startEditorIn(t, xdg, nil, path)
 	before := ptytest.Termios(t, p.tty)
 	p.out.WaitForString(t, "a.go")
-	p.write(t, ":dap.toggleBreakpoint\r")
+	p.write(t, " db")
 	p.out.WaitFor(t, "ブレークポイントの印", func(out string) bool { return signRe.MatchString(out) })
 	p.write(t, ":q\r")
 	if err := p.wait(t); err != nil {

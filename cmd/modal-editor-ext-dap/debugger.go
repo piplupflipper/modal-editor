@@ -18,16 +18,22 @@ import (
 	"github.com/piplupflipper/modal-editor/ext/server"
 )
 
-// コマンドの ID。宣言ファイル manifest.json の contributes.commands と揃える（基本設計 6.4。名前は仮）。
-const (
-	cmdStart            = "dap.start"
-	cmdStop             = "dap.stop"
-	cmdToggleBreakpoint = "dap.toggleBreakpoint"
-	cmdContinue         = "dap.continue"
-	cmdNext             = "dap.next"
-	cmdStepIn           = "dap.stepIn"
-	cmdStepOut          = "dap.stepOut"
-)
+// providedOps は、この拡張機能が引き受ける本体の操作である（基本設計 5.5。FR-94）。
+// 宣言ファイル manifest.json の provides と揃える（TestManifest）。
+// debug.toggleUI（DAP のペイン。FR-108）は、ペインを開く pane/open ができるまで引き受けない。
+var providedOps = []ext.Operation{
+	ext.OpBreakpointToggle, ext.OpBreakpointConditional, ext.OpBreakpointClear,
+	ext.OpDebugContinue, ext.OpDebugPause, ext.OpDebugTerminate, ext.OpDebugRestart, ext.OpDebugRunLast,
+	ext.OpDebugStepOver, ext.OpDebugStepIn, ext.OpDebugStepOut,
+}
+
+// resumeCommands は、続行とステップ実行の操作から、DAP の request の名前への対応である。
+var resumeCommands = map[ext.Operation]string{
+	ext.OpDebugContinue: "continue",
+	ext.OpDebugStepOver: "next",
+	ext.OpDebugStepIn:   "stepIn",
+	ext.OpDebugStepOut:  "stepOut",
+}
 
 // adapterConfig は、デバッグアダプターの起動の方法である。
 type adapterConfig struct {
@@ -35,7 +41,7 @@ type adapterConfig struct {
 	Command string `json:"command"`
 	// Args は、Command に渡す引数である。clientAddrPlaceholder を含めると、ソケットで話す。
 	Args []string `json:"args,omitempty"`
-	// Cwd は、子プロセスの作業ディレクトリである。省くと、dap.start を呼んだバッファのファイルのあるディレクトリにする。
+	// Cwd は、子プロセスの作業ディレクトリである。省くと、デバッグを始めた（debug.continue を呼んだ）バッファのファイルのあるディレクトリにする。
 	// そのバッファがファイルに対応しないか、ディレクトリが無ければ、拡張機能の作業ディレクトリ（本体の作業ディレクトリ）にする。
 	// dlv dap は、program のビルドを自分の作業ディレクトリで行い、program と出力の実行ファイルのパスを作業ディレクトリから解決する
 	// （https://github.com/go-delve/delve/blob/master/Documentation/usage/dlv_dap.md）。
@@ -58,7 +64,7 @@ type settings struct {
 	// AdapterID は、initialize の adapterID である。
 	AdapterID string `json:"adapterID"`
 	// Launch は、launch の引数である。中身はデバッグアダプターごとに違う（DAP の仕様の LaunchRequestArguments）。
-	// program を省くと、dap.start を呼んだバッファのファイルのあるディレクトリを program にする。
+	// program を省くと、デバッグを始めたバッファのファイルのあるディレクトリを program にする。
 	Launch map[string]any `json:"launch"`
 }
 
@@ -114,6 +120,15 @@ type bp struct {
 	// line は、0 から数えた行で、拡張機能の持つバッファの複製の現在のバージョン番号の位置を指す。
 	line  int
 	state bpState
+	// cond は、条件付きのブレークポイント（breakpoint.conditional）の条件の式である。条件の無いものは空。
+	// DAP の SourceBreakpoint の condition で送る。
+	cond string
+}
+
+// lastRun は、最後にデバッグを始めたときの launch の引数とデバッグアダプターの起動の方法である（debug.runLast と debug.restart）。
+type lastRun struct {
+	launch map[string]any
+	cfg    adapterConfig
 }
 
 // bufState は、開いているバッファの番号と、複製のバージョン番号である。
@@ -159,6 +174,10 @@ type debugger struct {
 	// configured は、sess の初期化で setBreakpoints を送る対象を決め終えたことを表す。
 	// これより後に変わったブレークポイントは、その都度送る。
 	configured bool
+	// last は、最後に始めたデバッグの設定である。まだ始めていなければ nil。
+	last *lastRun
+	// restartPending は、debug.restart で止めたセッションが終わったら、last で始め直すことを表す。
+	restartPending bool
 }
 
 func newDebugger() *debugger {
@@ -184,11 +203,16 @@ func (d *debugger) newServer() *server.Server {
 	s.OnBufferChange(d.onBufferChange)
 	s.OnBufferClose(d.onBufferClose)
 	s.OnBufferDidSave(d.onBufferDidSave)
-	s.Command(cmdStart, d.noArgs(cmdStart, d.start))
-	s.Command(cmdStop, d.noArgs(cmdStop, d.stop))
-	s.Command(cmdToggleBreakpoint, d.noArgs(cmdToggleBreakpoint, d.toggleBreakpoint))
-	for _, id := range []string{cmdContinue, cmdNext, cmdStepIn, cmdStepOut} {
-		s.Command(id, d.noArgs(id, d.resume))
+	s.Provider(ext.OpBreakpointToggle, d.noArgs(d.toggleBreakpoint))
+	s.Provider(ext.OpBreakpointConditional, d.conditionalBreakpoint)
+	s.Provider(ext.OpBreakpointClear, d.noArgs(d.clearBreakpoints))
+	s.Provider(ext.OpDebugContinue, d.noArgs(d.continueOrStart))
+	s.Provider(ext.OpDebugPause, d.noArgs(d.pause))
+	s.Provider(ext.OpDebugTerminate, d.noArgs(d.stop))
+	s.Provider(ext.OpDebugRestart, d.noArgs(d.restart))
+	s.Provider(ext.OpDebugRunLast, d.noArgs(d.runLast))
+	for _, op := range []ext.Operation{ext.OpDebugStepOver, ext.OpDebugStepIn, ext.OpDebugStepOut} {
+		s.Provider(op, d.noArgs(d.resume))
 	}
 	s.OnShutdown(func(context.Context, *server.ShutdownEvent) { d.shutdown() })
 	return s
@@ -233,31 +257,34 @@ func (d *debugger) showError(text string) {
 	}
 }
 
-// fail は、コマンドを失敗させ、理由を利用者へ表示する。
-func (d *debugger) fail(text string) (ext.CommandExecuteResult, error) {
+// fail は、操作を失敗させ、理由を利用者へ表示する。
+func (d *debugger) fail(text string) (ext.ProviderInvokeResult, error) {
 	d.showError(text)
-	return ext.CommandExecuteResult{OK: false}, nil
+	return ext.ProviderInvokeResult{OK: false}, nil
 }
 
-// commandArgs は、command/execute の args のうち、コマンドラインから呼んだときの引数の文字列 {"text":"..."} である
-// （ext の package の doc。仮）。キーで呼んだときの {"char":"x"} は読まない。
-type commandArgs struct {
-	Text string `json:"text"`
-}
-
-// noArgs は、引数を取らないコマンドのハンドラー h を包む。
-// コマンドラインから引数を付けて呼んだ（:dap.continue foo）ら、h を呼ばずに、引数を取らないことを知らせて失敗させる。
-// 引数の形は ACP の拡張機能（acp.prompt の {"text":"..."}）と揃える。
-func (d *debugger) noArgs(id string, h server.CommandHandler) server.CommandHandler {
-	return func(ctx context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
-		var a commandArgs
-		if len(p.Args) > 0 {
-			if err := json.Unmarshal(p.Args, &a); err != nil {
-				return d.fail(fmt.Sprintf("%s: 引数を読めない: %v", id, err))
-			}
+// argsText は、provider/invoke の args のうち、コマンドラインから呼んだときの引数の文字列（ext.ProviderArgs の Text）を返す。
+func argsText(p *ext.ProviderInvokeParams) (string, error) {
+	var a ext.ProviderArgs
+	if len(p.Args) > 0 {
+		if err := json.Unmarshal(p.Args, &a); err != nil {
+			return "", err
 		}
-		if strings.TrimSpace(a.Text) != "" {
-			return d.fail(id + ": 引数を取らない")
+	}
+	return a.Text, nil
+}
+
+// noArgs は、引数を取らない操作のハンドラー h を包む。
+// コマンドラインから引数を付けて呼んだ（:debug.continue foo）ら、h を呼ばずに、引数を取らないことを知らせて失敗させる。
+// 引数の形は ACP の拡張機能（acp.prompt の {"text":"..."}）と揃える。
+func (d *debugger) noArgs(h server.ProviderHandler) server.ProviderHandler {
+	return func(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+		text, err := argsText(p)
+		if err != nil {
+			return d.fail(fmt.Sprintf("%s: 引数を読めない: %v", p.Operation, err))
+		}
+		if strings.TrimSpace(text) != "" {
+			return d.fail(fmt.Sprintf("%s: 引数を取らない", p.Operation))
 		}
 		return h(ctx, b, p)
 	}
@@ -362,29 +389,56 @@ func (d *debugger) sendBreakpoints(s *session, path string) {
 	}
 }
 
-// toggleBreakpoint は、カーソルの行のブレークポイントを切り替える（基本設計 6.4）。
+// toggleBreakpoint は、カーソルの行のブレークポイントを切り替える（基本設計 6.4。本体の操作 breakpoint.toggle）。
 // 印は sign/set ですぐ送り、デバッグ中なら setBreakpoints も送る。
 //
-// req: FR-31
-func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+// req: FR-31, FR-94
+func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+	return d.editBreakpoints(b, func(bps []bp) []bp {
+		line := p.Cursor.Line
+		if i := slices.IndexFunc(bps, func(x bp) bool { return x.line == line }); i >= 0 {
+			return slices.Delete(bps, i, i+1)
+		}
+		return normalize(append(bps, bp{line: line, state: bpPending}))
+	})
+}
+
+// conditionalBreakpoint は、カーソルの行に、条件付きのブレークポイントを置く（本体の操作 breakpoint.conditional）。
+// 条件の式は、コマンドラインの引数（:breakpoint.conditional i > 3）で受け取る。
+// その行に既にブレークポイントがあれば、条件を置き換える。
+// キーで呼ばれて引数が無ければ、渡し方を知らせて失敗する（入力の行の部品（基本設計 1.4）ができるまでの仮の形）。
+//
+// req: FR-94
+func (d *debugger) conditionalBreakpoint(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+	text, err := argsText(p)
+	if err != nil {
+		return d.fail(fmt.Sprintf("%s: 引数を読めない: %v", p.Operation, err))
+	}
+	cond := strings.TrimSpace(text)
+	if cond == "" {
+		return d.fail("条件の式を :breakpoint.conditional 式 で渡す")
+	}
+	return d.editBreakpoints(b, func(bps []bp) []bp {
+		line := p.Cursor.Line
+		bps = slices.DeleteFunc(bps, func(x bp) bool { return x.line == line })
+		return normalize(append(bps, bp{line: line, state: bpPending, cond: cond}))
+	})
+}
+
+// editBreakpoints は、バッファ b のファイルのブレークポイントの列を edit で変え、印を送り、デバッグ中なら setBreakpoints を送る。
+func (d *debugger) editBreakpoints(b *server.Buffer, edit func([]bp) []bp) (ext.ProviderInvokeResult, error) {
 	if b == nil {
 		// 本体が不正な UTF-8 のためにバッファを送っていない（p.Withheld）。本体が理由を利用者へ知らせる。
-		return ext.CommandExecuteResult{OK: false}, nil
+		return ext.ProviderInvokeResult{OK: false}, nil
 	}
 	path := b.Path()
 	if path == "" {
 		return d.fail("ファイルに対応しないバッファにはブレークポイントを置けない")
 	}
-	line := p.Cursor.Line
 	d.mu.Lock()
 	d.buffers[path] = bufState{id: b.ID(), version: b.Version()}
 	d.paths[b.ID()] = path
-	bps := d.bps[path]
-	if i := slices.IndexFunc(bps, func(x bp) bool { return x.line == line }); i >= 0 {
-		bps = slices.Delete(bps, i, i+1)
-	} else {
-		bps = normalize(append(bps, bp{line: line, state: bpPending}))
-	}
+	bps := edit(slices.Clone(d.bps[path]))
 	if len(bps) == 0 {
 		delete(d.bps, path)
 	} else {
@@ -396,9 +450,102 @@ func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.
 	send := s != nil && d.configured
 	d.mu.Unlock()
 	if send {
-		go d.sendBreakpoints(s, path) //nolint:gosec // G118: ハンドラーとフックの ctx は戻ると無効になるので引き継がない
+		// ハンドラーの ctx は戻ると無効になるので引き継がない。
+		go d.sendBreakpoints(s, path)
 	}
-	return ext.CommandExecuteResult{OK: true}, nil
+	return ext.ProviderInvokeResult{OK: true}, nil
+}
+
+// clearBreakpoints は、すべてのファイルのブレークポイントを消す（本体の操作 breakpoint.clear）。
+// 印を消し、デバッグ中なら、消したファイルごとに空の setBreakpoints を送る。
+//
+// req: FR-94
+func (d *debugger) clearBreakpoints(context.Context, *server.Buffer, *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+	d.mu.Lock()
+	paths := slices.Sorted(maps.Keys(d.bps))
+	for _, path := range paths {
+		delete(d.bps, path)
+		d.gens[path]++
+		d.publishLocked(path)
+	}
+	s := d.sess
+	send := s != nil && d.configured
+	d.mu.Unlock()
+	if send {
+		for _, path := range paths {
+			go d.sendBreakpoints(s, path) //nolint:gosec // G118: ハンドラーの ctx は戻ると無効になるので引き継がない
+		}
+	}
+	d.showInfo(fmt.Sprintf("ブレークポイントを消した（%d ファイル）", len(paths)))
+	return ext.ProviderInvokeResult{OK: true}, nil
+}
+
+// continueOrStart は、本体の操作 debug.continue を処理する。デバッグ中なら続行し、始まっていなければ始める（要件定義 4.11）。
+//
+// req: FR-31, FR-94
+func (d *debugger) continueOrStart(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+	d.mu.Lock()
+	running := d.sess != nil
+	d.mu.Unlock()
+	if !running {
+		return d.start(ctx, b, p)
+	}
+	return d.resume(ctx, b, p)
+}
+
+// runLast は、前回と同じ launch の引数とデバッグアダプターで、デバッグを始める（本体の操作 debug.runLast）。
+// 前回が無いか、デバッグ中なら失敗する。
+//
+// req: FR-94
+func (d *debugger) runLast(context.Context, *server.Buffer, *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.last == nil {
+		return d.fail("前回のデバッグが無い")
+	}
+	return d.startLocked(*d.last)
+}
+
+// restart は、デバッグを終えてから、前回と同じ設定で始め直す（本体の操作 debug.restart）。
+// デバッグ中でなければ、runLast と同じく前回の設定で始める。
+// 終えるのは debug.terminate と同じ手順で、終わった後（sessionEnded）に始める。
+//
+// req: FR-94
+func (d *debugger) restart(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+	d.mu.Lock()
+	s := d.sess
+	if s != nil {
+		d.restartPending = true
+	}
+	d.mu.Unlock()
+	if s == nil {
+		return d.runLast(ctx, b, p)
+	}
+	s.stopping.Store(true)
+	go s.stop(context.Background(), killGrace) //nolint:gosec // ハンドラーが戻った後も止め終えるまで続けるので、ハンドラーの ctx は使わない
+	return ext.ProviderInvokeResult{OK: true}, nil
+}
+
+// pause は、実行中のデバッグ対象を一時停止する（本体の操作 debug.pause）。止まったことは stopped の event で知らせる。
+//
+// req: FR-94
+func (d *debugger) pause(context.Context, *server.Buffer, *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+	d.mu.Lock()
+	s := d.sess
+	ready := d.configured
+	d.mu.Unlock()
+	if s == nil || !ready {
+		return d.fail("デバッグを始めていない")
+	}
+	go func() { //nolint:gosec // G118: ハンドラーの ctx は応答すると取り消されるので引き継がない
+		ctx, cancel := context.WithTimeout(context.Background(), d.timeouts.request)
+		defer cancel()
+		if err := s.pause(ctx); err != nil && !errors.Is(err, errDAPClosed) {
+			d.logf("pause: %v", err)
+			d.showError(fmt.Sprintf("pause に失敗した: %v", err))
+		}
+	}()
+	return ext.ProviderInvokeResult{OK: true}, nil
 }
 
 // start は、デバッグアダプターを起動し、デバッグを始める（基本設計 6.4）。
@@ -406,7 +553,7 @@ func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.
 // 結果は message/show で知らせる。
 //
 // req: FR-31
-func (d *debugger) start(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+func (d *debugger) start(_ context.Context, b *server.Buffer, _ *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
 	launch := maps.Clone(d.settings.Launch)
 	if launch == nil {
 		launch = map[string]any{}
@@ -422,49 +569,57 @@ func (d *debugger) start(_ context.Context, b *server.Buffer, _ *ext.CommandExec
 		}
 		launch["program"] = filepath.Dir(path)
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.sess != nil {
-		return d.fail("デバッグは既に始まっている")
-	}
 	cfg := d.settings.Adapter
 	if cfg.Cwd == "" && path != "" {
 		if fi, err := os.Stat(filepath.Dir(path)); err == nil && fi.IsDir() {
 			cfg.Cwd = filepath.Dir(path)
 		}
 	}
-	s, err := spawn(d, cfg)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.startLocked(lastRun{launch: launch, cfg: cfg})
+}
+
+// startLocked は、run の設定でデバッグアダプターを起動し、デバッグを始め、run を前回の設定として覚える。mu を持って呼ぶ。
+func (d *debugger) startLocked(run lastRun) (ext.ProviderInvokeResult, error) {
+	if d.sess != nil {
+		return d.fail("デバッグは既に始まっている")
+	}
+	s, err := spawn(d, run.cfg)
 	if err != nil {
-		return d.fail(fmt.Sprintf("デバッグアダプター %s を起動できない: %v", d.settings.Adapter.Command, err))
+		return d.fail(fmt.Sprintf("デバッグアダプター %s を起動できない: %v", run.cfg.Command, err))
 	}
 	d.sess = s
 	d.configured = false
-	go s.run(launch)
-	return ext.CommandExecuteResult{OK: true}, nil
+	d.last = &run
+	go s.run(maps.Clone(run.launch))
+	return ext.ProviderInvokeResult{OK: true}, nil
 }
 
-// stop は、デバッグを終える（基本設計 6.4）。disconnect は別の goroutine で送る。
+// stop は、デバッグを終える（基本設計 6.4。本体の操作 debug.terminate）。disconnect は別の goroutine で送る。
 //
-// req: FR-31
-func (d *debugger) stop(_ context.Context, _ *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+// req: FR-31, FR-94
+func (d *debugger) stop(context.Context, *server.Buffer, *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
 	d.mu.Lock()
 	s := d.sess
+	d.restartPending = false
 	d.mu.Unlock()
 	if s == nil {
 		return d.fail("デバッグを始めていない")
 	}
 	s.stopping.Store(true)
 	go s.stop(context.Background(), killGrace) //nolint:gosec // ハンドラーが戻った後も止め終えるまで続けるので、ハンドラーの ctx は使わない
-	return ext.CommandExecuteResult{OK: true}, nil
+	return ext.ProviderInvokeResult{OK: true}, nil
 }
 
-// resume は、続行とステップ実行のコマンド（continue、next、stepIn、stepOut）を送る（基本設計 6.4）。
+// resume は、続行とステップ実行の操作（debug.continue、debug.stepOver、debug.stepIn、debug.stepOut）を、
+// DAP の continue、next、stepIn、stepOut で送る（基本設計 6.4）。
 // 送る前に実行位置の印を消す。DAP の仕様では、続行を意味する request の後に continued の event は届かないためである。
 // request が失敗したら、印を戻して利用者に知らせる。
 //
-// req: FR-31
-func (d *debugger) resume(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
-	command := map[string]string{cmdContinue: "continue", cmdNext: "next", cmdStepIn: "stepIn", cmdStepOut: "stepOut"}[p.ID]
+// req: FR-31, FR-94
+func (d *debugger) resume(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+	command := resumeCommands[p.Operation]
 	d.mu.Lock()
 	s := d.sess
 	ready := d.configured
@@ -486,7 +641,7 @@ func (d *debugger) resume(_ context.Context, _ *server.Buffer, p *ext.CommandExe
 			d.showError(fmt.Sprintf("%s に失敗した: %v", command, err))
 		}
 	}()
-	return ext.CommandExecuteResult{OK: true}, nil
+	return ext.ProviderInvokeResult{OK: true}, nil
 }
 
 // configure は、s の初期化で setBreakpoints を送るファイルの一覧を返し、以後の変更をその都度送るようにする。
@@ -500,15 +655,11 @@ func (d *debugger) configure(s *session) []string {
 	return slices.Sorted(maps.Keys(d.bps))
 }
 
-// snapshotBreakpoints は、path のブレークポイントの行と、列を変えた回数を返す。
-func (d *debugger) snapshotBreakpoints(path string) ([]int, uint64) {
+// snapshotBreakpoints は、path のブレークポイント（行と条件）の写しと、列を変えた回数を返す。
+func (d *debugger) snapshotBreakpoints(path string) ([]bp, uint64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	var lines []int
-	for _, x := range d.bps[path] {
-		lines = append(lines, x.line)
-	}
-	return lines, d.gens[path]
+	return slices.Clone(d.bps[path]), d.gens[path]
 }
 
 // applyBreakpoints は、setBreakpoints の応答を path のブレークポイントへ反映し、印を付け直す（基本設計 6.4）。
@@ -604,7 +755,7 @@ func (d *debugger) restoreExecution(prev *execPoint) {
 }
 
 // sessionEnded は、s の後始末の最後に呼ぶ。ブレークポイントを未検証に戻し、実行位置の印を消し、利用者に知らせる。
-// abnormal は、利用者の dap.stop でも terminated の event でもなく、デバッグアダプターが終わったことを表す。
+// abnormal は、利用者の debug.terminate でも terminated の event でもなく、デバッグアダプターが終わったことを表す。
 // quiet は、開始に失敗して既に知らせたので、終わりを知らせないことを表す。
 //
 // req: FR-31
@@ -626,6 +777,8 @@ func (d *debugger) sessionEnded(s *session, abnormal, quiet bool) {
 	for path := range d.buffers {
 		d.publishLocked(path)
 	}
+	restart := d.restartPending && d.last != nil
+	d.restartPending = false
 	d.mu.Unlock()
 	switch {
 	case quiet:
@@ -633,6 +786,12 @@ func (d *debugger) sessionEnded(s *session, abnormal, quiet bool) {
 		d.showError("デバッグアダプターが異常終了した")
 	default:
 		d.showInfo("デバッグを終了した")
+	}
+	if restart {
+		// debug.restart で止めたので、前回の設定で始め直す。失敗は startLocked が知らせる。
+		d.mu.Lock()
+		_, _ = d.startLocked(*d.last)
+		d.mu.Unlock()
 	}
 }
 

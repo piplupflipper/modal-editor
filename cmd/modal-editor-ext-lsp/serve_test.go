@@ -225,15 +225,27 @@ func (h *host) change(id ext.BufferID, edits ...ext.Edit) {
 	}
 }
 
-// command は、command/execute を送り、応答を返す。
-func (h *host) command(id ext.BufferID, cmd string, cursor ext.Position, sync bool) ext.CommandExecuteResult {
+// テストで問い合わせる本体の操作。段階 2 のコマンド（lsp.definition など）を置き換えたもの（#203）。
+const (
+	cmdDefinition = ext.OpDefinition
+	cmdHover      = ext.OpHover
+	cmdFormat     = ext.OpFormat
+)
+
+// command は、本体の操作 op の provider/invoke を送り、応答を返す。
+func (h *host) command(id ext.BufferID, op ext.Operation, cursor ext.Position, sync bool) ext.ProviderInvokeResult {
+	h.t.Helper()
+	return h.invoke(ext.ProviderInvokeParams{Operation: op, Buffer: id, Version: h.vers[id], Cursor: cursor, Sync: sync})
+}
+
+// invoke は、provider/invoke を p で送り、応答を返す。
+func (h *host) invoke(p ext.ProviderInvokeParams) ext.ProviderInvokeResult {
 	h.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
-	var res ext.CommandExecuteResult
-	p := ext.CommandExecuteParams{Buffer: id, Version: h.vers[id], ID: cmd, Cursor: cursor, Sync: sync}
-	if err := h.conn.Call(ctx, ext.MethodCommandExecute, p, &res); err != nil {
-		h.t.Fatalf("command/execute %s: %v", cmd, err)
+	var res ext.ProviderInvokeResult
+	if err := h.conn.Call(ctx, ext.MethodProviderInvoke, p, &res); err != nil {
+		h.t.Fatalf("provider/invoke %s: %v", p.Operation, err)
 	}
 	return res
 }
@@ -547,6 +559,37 @@ func TestDefinition(t *testing.T) {
 				t.Errorf("sync definition = %+v", res)
 			}
 		})
+	}
+}
+
+// TestDefinitionPeek は、args の peek が true なら、移らずに、移動先の行から下を見出しと一緒に popup/show で出すことを確かめる。
+// sync が true でも、表示は再生の結果を変えないので後から送る。
+//
+// req: FR-94
+func TestDefinitionPeek(t *testing.T) {
+	h := startHost(t, hostOptions{maxRestarts: -1})
+	text := "日𝄞 use TARGET\nnext line"
+	path := h.open(1, "a.go", text)
+	h.diagnosticsAt(1, 1)
+	for _, sync := range []bool{false, true} {
+		res := h.invoke(ext.ProviderInvokeParams{
+			Operation: ext.OpDefinition, Buffer: 1, Version: h.vers[1], Cursor: pos(1, 2),
+			Args: json.RawMessage(`{"peek":true}`), Sync: sync,
+		})
+		if !res.OK || res.Open != nil {
+			t.Fatalf("sync %v: peek = %+v", sync, res)
+		}
+		p := receive(t, h.popups, "popup/show")
+		at := positionOf(text, "TARGET", 0)
+		want := fmt.Sprintf("%s:%d:%d\n日𝄞 use TARGET\nnext line", path, at.Line+1, at.Byte+1)
+		if p.Buffer != 1 || p.Version != h.vers[1] || p.Position != pos(1, 2) || p.Text != want || p.Format != ext.PopupPlainText {
+			t.Errorf("sync %v: popup/show = %+v, want text %q", sync, p, want)
+		}
+	}
+	select {
+	case o := <-h.opens:
+		t.Errorf("peek moved: editor/open = %+v", o)
+	default:
 	}
 }
 
@@ -932,7 +975,7 @@ func TestPingWhileWaiting(t *testing.T) {
 		method string
 		params any
 	}{
-		{ext.MethodCommandExecute, ext.CommandExecuteParams{Buffer: 2, Version: 1, ID: cmdFormat, Sync: true}},
+		{ext.MethodProviderInvoke, ext.ProviderInvokeParams{Operation: cmdFormat, Buffer: 2, Version: 1, Sync: true}},
 		{ext.MethodBufferWillSave, ext.BufferWillSaveParams{Buffer: 2, Version: 1}},
 	} {
 		f, err := h.conn.Go(req.method, req.params)

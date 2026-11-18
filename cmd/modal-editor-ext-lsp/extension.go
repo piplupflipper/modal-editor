@@ -16,12 +16,13 @@ import (
 	"github.com/piplupflipper/modal-editor/ext/server"
 )
 
-// コマンドの ID（基本設計 6.3。名前は仮）。宣言ファイル manifest.json の contributes.commands と一致させる。
-const (
-	cmdDefinition = "lsp.definition"
-	cmdHover      = "lsp.hover"
-	cmdFormat     = "lsp.format"
-)
+// providedOps は、この拡張機能が引き受ける本体の操作である（基本設計 5.5。FR-94）。
+// 宣言ファイル manifest.json の provides と一致させる（TestManifest）。
+var providedOps = []ext.Operation{
+	ext.OpDefinition, ext.OpImplementation, ext.OpTypeDefinition, ext.OpHover,
+	ext.OpReferences, ext.OpDocumentSymbols, ext.OpWorkspaceSymbols,
+	ext.OpFormat, ext.OpRename,
+}
 
 // stopTimeout は、拡張機能が終わるときに、言語サーバーの shutdown と exit を待つ時間の上限である。
 // 超えたら言語サーバーを強制終了する。
@@ -78,9 +79,15 @@ func newExtension(ctx context.Context) *extension {
 			c.didSave(e)
 		}
 	})
-	x.srv.CommandAsync(cmdDefinition, x.definition)
-	x.srv.CommandAsync(cmdHover, x.hover)
-	x.srv.CommandAsync(cmdFormat, x.format)
+	x.srv.ProviderAsync(ext.OpDefinition, x.locate(locDefinition))
+	x.srv.ProviderAsync(ext.OpImplementation, x.locate(locImplementation))
+	x.srv.ProviderAsync(ext.OpTypeDefinition, x.locate(locTypeDefinition))
+	x.srv.ProviderAsync(ext.OpHover, x.hover)
+	x.srv.ProviderAsync(ext.OpReferences, x.references)
+	x.srv.ProviderAsync(ext.OpDocumentSymbols, x.documentSymbols)
+	x.srv.ProviderAsync(ext.OpWorkspaceSymbols, x.workspaceSymbols)
+	x.srv.ProviderAsync(ext.OpFormat, x.format)
+	x.srv.ProviderAsync(ext.OpRename, x.rename)
 	x.srv.BufferWillSaveAsync(x.willSave)
 	x.srv.OnShutdown(func(context.Context, *server.ShutdownEvent) { x.stop() })
 	return x
@@ -170,10 +177,10 @@ func (x *extension) bufferOpen(_ context.Context, e *server.BufferOpenEvent) {
 	c.open(b, e.Reopen && old != nil)
 }
 
-// sendFor は、コマンドの対象のバッファについて、言語サーバーへリクエストを送る。ループから呼ぶ。
+// sendFor は、操作の対象のバッファについて、言語サーバーへリクエストを送る。ループから呼ぶ。
 // 送れなければ、利用者に理由を表示して誤りを返す。
 func (x *extension) sendFor(
-	p *ext.CommandExecuteParams, what, method string,
+	p *ext.ProviderInvokeParams, what, method string,
 	has func(*serverCapabilities) bool,
 	params func(uri string, ls lines, enc encoding) any,
 ) (*request, error) {
@@ -210,90 +217,161 @@ func (x *extension) background() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(x.ctx, x.requestTimeout)
 }
 
-// definition は、コマンド lsp.definition を処理する（基本設計 6.3）。
-//
-// カーソル位置で textDocument/definition を送る。
-// sync が false なら、受け付けたことだけを ok で応答し、結果は後から送る。
-// 候補が 1 つなら editor/open でその位置へ移動し、複数なら choice/ask で利用者に選ばせる。候補が無ければ message/show で知らせる。
-// sync が true（マクロとドットリピートの再生中）なら、結果がそろってから、最初の候補への移動を応答の open で返す。
-// 本体は応答を待つ間、この拡張機能からの choice/ask を処理できないので、再生中は選ばせない。候補が無ければ ok を false にする。
-//
-// req: FR-30
-func (x *extension) definition(ctx context.Context, _ *server.Buffer, p *ext.CommandExecuteParams, reply func(ext.CommandExecuteResult, error)) {
-	r, err := x.sendFor(p, "定義へ移動", lspDefinition,
-		func(c *serverCapabilities) bool { return provides(c.DefinitionProvider) }, positionParams(p.Cursor))
-	if err != nil {
-		reply(ext.CommandExecuteResult{OK: false}, nil)
-		return
-	}
-	if p.Sync {
-		go func() {
-			targets, err := x.definitionTargets(ctx, r)
-			if err != nil || len(targets) == 0 {
-				if err != nil {
-					x.logf("%s: %v", lspDefinition, err)
-				}
-				reply(ext.CommandExecuteResult{OK: false}, nil)
-				return
-			}
-			open := targets[0].open
-			reply(ext.CommandExecuteResult{OK: true, Open: &open}, nil)
-		}()
-		return
-	}
-	reply(ext.CommandExecuteResult{OK: true}, nil)
-	go func() {
-		ctx, cancel := x.background()
-		defer cancel()
-		targets, err := x.definitionTargets(ctx, r)
-		if err != nil {
-			x.logf("%s: %v", lspDefinition, err)
-			x.showMessage(ext.MessageError, fmt.Sprintf("定義へ移動できない: %v", err))
-			return
-		}
-		var open ext.EditorOpenParams
-		switch len(targets) {
-		case 0:
-			x.showMessage(ext.MessageInfo, "定義が見つからない")
-			return
-		case 1:
-			open = targets[0].open
-		default:
-			choices := make([]ext.Choice, len(targets))
-			for i, t := range targets {
-				choices[i] = ext.Choice{ID: fmt.Sprint(i), Label: t.label}
-			}
-			// 利用者が選ぶのを待つので、requestTimeout の ctx ではなく拡張機能の寿命の ctx で待つ。
-			res, err := x.srv.AskChoice(x.ctx, ext.ChoiceAskParams{Title: "定義の候補", Choices: choices})
-			if err != nil || res.Cancelled {
-				if err != nil {
-					x.logf("choice/ask: %v", err)
-				}
-				return
-			}
-			i := slices.IndexFunc(choices, func(c ext.Choice) bool { return c.ID == res.Selected })
-			if i < 0 {
-				return
-			}
-			open = targets[i].open
-		}
-		ctx, cancel = x.background()
-		defer cancel()
-		if _, err := x.srv.OpenEditor(ctx, open); err != nil {
-			x.logf("editor/open: %v", err)
-			x.showMessage(ext.MessageError, fmt.Sprintf("定義へ移動できない: %v", err))
-		}
-	}()
+// locateKind は、移動の操作の種類（定義、実装、型の定義）である。
+type locateKind struct {
+	// what は、利用者へ出す操作の名前である（「定義」など）。
+	what   string
+	method string
+	has    func(*serverCapabilities) bool
 }
 
-// target は、定義へ移動の 1 つの候補である。
+// 移動の操作の種類（基本設計 5.5 の「移動」）。
+var (
+	locDefinition = locateKind{
+		what: "定義", method: lspDefinition,
+		has: func(c *serverCapabilities) bool { return provides(c.DefinitionProvider) },
+	}
+	locImplementation = locateKind{
+		what: "実装", method: lspImplementation,
+		has: func(c *serverCapabilities) bool { return provides(c.ImplementationProvider) },
+	}
+	locTypeDefinition = locateKind{
+		what: "型の定義", method: lspTypeDefinition,
+		has: func(c *serverCapabilities) bool { return provides(c.TypeDefinitionProvider) },
+	}
+)
+
+// locate は、移動の操作（definition、implementation、typeDefinition）のハンドラーを返す（基本設計 5.5、6.3）。
+//
+// カーソル位置で k.method を送る。
+// sync が false なら、受け付けたことだけを ok で応答し、結果は後から送る。
+// 候補が 1 つなら editor/open でその位置へ移動し、複数なら choice/ask で利用者に選ばせる。候補が無ければ message/show で知らせる。
+// args の peek が true なら、移らずに、移動先の周りの行を popup/show で出す（要件定義 4.11 の「ポップアップで見る」。
+// FR-110 のポップアップの部品ができるまでの仮の形）。
+// sync が true（マクロとドットリピートの再生中）で peek でなければ、結果がそろってから、最初の候補への移動を応答の open で返す。
+// 本体は応答を待つ間、この拡張機能からの choice/ask を処理できないので、再生中は選ばせない。候補が無ければ ok を false にする。
+//
+// req: FR-30, FR-94
+func (x *extension) locate(k locateKind) server.AsyncProviderHandler {
+	return func(ctx context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
+		r, err := x.sendFor(p, k.what+"へ移動", k.method, k.has, positionParams(p.Cursor))
+		if err != nil {
+			reply(ext.ProviderInvokeResult{OK: false}, nil)
+			return
+		}
+		peek := providerArgs(p).Peek
+		if p.Sync && !peek {
+			go func() {
+				targets, err := x.locationTargets(ctx, r)
+				if err != nil || len(targets) == 0 {
+					if err != nil {
+						x.logf("%s: %v", k.method, err)
+					}
+					reply(ext.ProviderInvokeResult{OK: false}, nil)
+					return
+				}
+				open := targets[0].open
+				reply(ext.ProviderInvokeResult{OK: true, Open: &open}, nil)
+			}()
+			return
+		}
+		reply(ext.ProviderInvokeResult{OK: true}, nil)
+		cursor := p.Cursor
+		go func() {
+			ctx, cancel := x.background()
+			defer cancel()
+			targets, err := x.locationTargets(ctx, r)
+			if err != nil {
+				x.logf("%s: %v", k.method, err)
+				x.showMessage(ext.MessageError, fmt.Sprintf("%sへ移動できない: %v", k.what, err))
+				return
+			}
+			if len(targets) == 0 {
+				x.showMessage(ext.MessageInfo, k.what+"が見つからない")
+				return
+			}
+			t, ok := x.pick(k.what+"の候補", targets)
+			if !ok {
+				return
+			}
+			if peek {
+				x.peek(r, cursor, t)
+				return
+			}
+			x.open(t.open, k.what+"へ移動できない")
+		}()
+	}
+}
+
+// providerArgs は、provider/invoke の args を読む。読めなければ空の値を返す。
+func providerArgs(p *ext.ProviderInvokeParams) ext.ProviderArgs {
+	var a ext.ProviderArgs
+	if len(p.Args) > 0 {
+		_ = json.Unmarshal(p.Args, &a)
+	}
+	return a
+}
+
+// pick は、候補が 1 つならそれを、複数なら choice/ask で利用者に選ばせたものを返す。取り消されたら ok は false である。
+// 利用者が選ぶのを待つので、requestTimeout の ctx ではなく拡張機能の寿命の ctx で待つ。
+func (x *extension) pick(title string, targets []target) (target, bool) {
+	if len(targets) == 1 {
+		return targets[0], true
+	}
+	choices := make([]ext.Choice, len(targets))
+	for i, t := range targets {
+		choices[i] = ext.Choice{ID: fmt.Sprint(i), Label: t.label}
+	}
+	res, err := x.srv.AskChoice(x.ctx, ext.ChoiceAskParams{Title: title, Choices: choices})
+	if err != nil || res.Cancelled {
+		if err != nil {
+			x.logf("choice/ask: %v", err)
+		}
+		return target{}, false
+	}
+	i := slices.IndexFunc(choices, func(c ext.Choice) bool { return c.ID == res.Selected })
+	if i < 0 {
+		return target{}, false
+	}
+	return targets[i], true
+}
+
+// open は、editor/open で移動する。失敗したら failText に理由を付けて知らせる。
+func (x *extension) open(open ext.EditorOpenParams, failText string) {
+	ctx, cancel := x.background()
+	defer cancel()
+	if _, err := x.srv.OpenEditor(ctx, open); err != nil {
+		x.logf("editor/open: %v", err)
+		x.showMessage(ext.MessageError, fmt.Sprintf("%s: %v", failText, err))
+	}
+}
+
+// peekLines は、「ポップアップで見る」で出す、移動先の行から下の行の数である（仮）。
+const peekLines = 10
+
+// peek は、移動先 t の行から peekLines 行を、問い合わせた位置 cursor の近くに popup/show で出す。
+// 先頭の行は「パス:行」の見出しにする。移動先の行が読めなければ、見出しだけを出す。
+func (x *extension) peek(r *request, cursor ext.Position, t target) {
+	text := t.label
+	if len(t.lines) > 0 {
+		text += "\n" + strings.Join(t.lines, "\n")
+	}
+	popup := ext.PopupShowParams{Buffer: r.buffer, Version: r.version, Position: cursor, Text: text, Format: ext.PopupPlainText}
+	if err := x.srv.ShowPopup(popup); err != nil {
+		x.logf("popup/show: %v", err)
+	}
+}
+
+// target は、移動の 1 つの候補である。
 type target struct {
 	open  ext.EditorOpenParams
 	label string
+	// lines は、移動先の行から peekLines 行である。ファイルを読めなければ nil。
+	lines []string
 }
 
-// definitionTargets は、textDocument/definition の応答を待ち、候補を本体の位置にして返す。
-func (x *extension) definitionTargets(ctx context.Context, r *request) ([]target, error) {
+// locationTargets は、Location、Location[]、LocationLink[] を返すリクエストの応答を待ち、候補を本体の位置にして返す。
+func (x *extension) locationTargets(ctx context.Context, r *request) ([]target, error) {
 	var raw json.RawMessage
 	if err := r.wait(ctx, &raw); err != nil {
 		return nil, err
@@ -358,24 +436,27 @@ func (c *client) resolve(r *request, path string, pos lspPosition) target {
 		at, _ := ls.fromLSP(pos, r.enc)
 		t.open.Position = &at
 		t.label = fmt.Sprintf("%s:%d:%d", path, at.Line+1, at.Byte+1)
+		if at.Line < len(ls) {
+			t.lines = slices.Clone(ls[at.Line:min(at.Line+peekLines, len(ls))])
+		}
 	}
 	return t
 }
 
-// hover は、コマンド lsp.hover を処理する（基本設計 6.3）。
+// hover は、本体の操作 hover を処理する（基本設計 5.5、6.3）。
 // カーソル位置で textDocument/hover を送り、受け付けたことだけを ok で応答する。
 // 結果の本文は popup/show で、問い合わせた版の番号とカーソル位置と一緒に送る。
 // 表示は再生の結果を変えないので、sync が true でも後から送る（基本設計 6 章の冒頭）。
 //
-// req: FR-30
-func (x *extension) hover(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams, reply func(ext.CommandExecuteResult, error)) {
+// req: FR-30, FR-94
+func (x *extension) hover(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
 	r, err := x.sendFor(p, "ホバー", lspHover,
 		func(c *serverCapabilities) bool { return provides(c.HoverProvider) }, positionParams(p.Cursor))
 	if err != nil {
-		reply(ext.CommandExecuteResult{OK: false}, nil)
+		reply(ext.ProviderInvokeResult{OK: false}, nil)
 		return
 	}
-	reply(ext.CommandExecuteResult{OK: true}, nil)
+	reply(ext.ProviderInvokeResult{OK: true}, nil)
 	cursor := p.Cursor
 	go func() {
 		ctx, cancel := x.background()
@@ -423,28 +504,61 @@ func formatTransaction(ctx context.Context, r *request) (*ext.Transaction, error
 // hasFormatting は、言語サーバーが textDocument/formatting に対応するかどうかを返す。
 func hasFormatting(c *serverCapabilities) bool { return provides(c.DocumentFormattingProvider) }
 
-// format は、コマンド lsp.format を処理する（基本設計 6.3）。
+// rangeFormattingParams は、範囲 rg の textDocument/rangeFormatting の params を作る関数を返す。
+func rangeFormattingParams(cfg *serverConfig, rg ext.Range) func(uri string, ls lines, enc encoding) any {
+	return func(uri string, ls lines, enc encoding) any {
+		return documentRangeFormattingParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Range:        lspRange{Start: ls.toLSP(rg.Start, enc), End: ls.toLSP(rg.End, enc)},
+			Options:      formattingOptions{TabSize: cfg.tabSize(), InsertSpaces: cfg.InsertSpaces},
+		}
+	}
+}
+
+// hasRangeFormatting は、言語サーバーが textDocument/rangeFormatting に対応するかどうかを返す。
+func hasRangeFormatting(c *serverCapabilities) bool {
+	return provides(c.DocumentRangeFormattingProvider)
+}
+
+// format は、本体の操作 format を処理する（基本設計 5.5、6.3）。
 //
-// textDocument/formatting を送る。sync が false なら、受け付けたことだけを ok で応答し、結果を buffer/edit で送る。
+// 範囲（gq{モーション} の p.Range）があり、言語サーバーが textDocument/rangeFormatting に対応すれば、その範囲を整形する。
+// 範囲が無いか、範囲の整形に対応しなければ、textDocument/formatting で全体を整形する。
+// 範囲の整形に対応しないときに全体を整形したことは message/show で知らせる（gopls v0.24.0 は範囲の整形に対応しない）。
+// sync が false なら、受け付けたことだけを ok で応答し、結果を buffer/edit で送る。
 // その間に利用者が編集していれば、本体は適用しない（FR-15）ので、message/show でそのことを知らせる。
 // sync が true なら、結果がそろってから、編集を応答の transaction で返す。
 //
-// req: FR-30
-func (x *extension) format(ctx context.Context, _ *server.Buffer, p *ext.CommandExecuteParams, reply func(ext.CommandExecuteResult, error)) {
+// req: FR-30, FR-94
+func (x *extension) format(ctx context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
 	if p.Withheld {
 		// sendFor と同じく、理由は本体が知らせる。
-		reply(ext.CommandExecuteResult{OK: false}, nil)
+		reply(ext.ProviderInvokeResult{OK: false}, nil)
 		return
 	}
 	c := x.byBuffer[p.Buffer]
 	if c == nil {
 		x.showMessage(ext.MessageWarning, "このバッファには言語サーバーが無い")
-		reply(ext.CommandExecuteResult{OK: false}, nil)
+		reply(ext.ProviderInvokeResult{OK: false}, nil)
 		return
 	}
-	r, err := x.sendFor(p, "整形", lspFormatting, hasFormatting, formattingParams(c.cfg))
+	var r *request
+	var err error
+	if p.Range != nil {
+		r, err = c.send(p.Buffer, p.Version, lspRangeFormatting, hasRangeFormatting, rangeFormattingParams(c.cfg, *p.Range))
+		if errors.Is(err, errUnsupported) {
+			r, err = nil, nil
+			x.showMessage(ext.MessageInfo, fmt.Sprintf("言語サーバー %s は範囲の整形に対応しないので、全体を整形する", c.name()))
+		} else if err != nil {
+			// 稼働していないなどの理由は、全体の整形でも同じなので、sendFor に知らせさせる。
+			r = nil
+		}
+	}
+	if r == nil {
+		r, err = x.sendFor(p, "整形", lspFormatting, hasFormatting, formattingParams(c.cfg))
+	}
 	if err != nil {
-		reply(ext.CommandExecuteResult{OK: false}, nil)
+		reply(ext.ProviderInvokeResult{OK: false}, nil)
 		return
 	}
 	if p.Sync {
@@ -452,14 +566,14 @@ func (x *extension) format(ctx context.Context, _ *server.Buffer, p *ext.Command
 			t, err := formatTransaction(ctx, r)
 			if err != nil {
 				x.logf("%s: %v", lspFormatting, err)
-				reply(ext.CommandExecuteResult{OK: false}, nil)
+				reply(ext.ProviderInvokeResult{OK: false}, nil)
 				return
 			}
-			reply(ext.CommandExecuteResult{OK: true, Transaction: t}, nil)
+			reply(ext.ProviderInvokeResult{OK: true, Transaction: t}, nil)
 		}()
 		return
 	}
-	reply(ext.CommandExecuteResult{OK: true}, nil)
+	reply(ext.ProviderInvokeResult{OK: true}, nil)
 	go func() {
 		ctx, cancel := x.background()
 		defer cancel()

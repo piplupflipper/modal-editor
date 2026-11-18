@@ -240,7 +240,8 @@ func (a *adapter) handle(m *message) {
 				Path string `json:"path"`
 			} `json:"source"`
 			Breakpoints []struct {
-				Line int `json:"line"`
+				Line      int    `json:"line"`
+				Condition string `json:"condition"`
 			} `json:"breakpoints"`
 		}
 		_ = json.Unmarshal(m.Arguments, &args)
@@ -249,6 +250,9 @@ func (a *adapter) handle(m *message) {
 		for _, b := range args.Breakpoints {
 			line := b.Line + a.opts.MoveBy
 			lines = append(lines, line)
+			if b.Condition != "" {
+				a.output("console", fmt.Sprintf("condition %d %q\n", line, b.Condition))
+			}
 			res = append(res, map[string]any{"verified": !slices.Contains(a.opts.Unverified, b.Line), "line": line})
 		}
 		a.bps[args.Source.Path] = lines
@@ -288,6 +292,10 @@ func (a *adapter) handle(m *message) {
 	case "stepIn", "stepOut":
 		a.respond(m, nil)
 		a.stopped("step")
+	case "pause":
+		a.respond(m, nil)
+		a.output("console", "pause\n")
+		a.stopped("pause")
 	case "terminate":
 		a.respond(m, nil)
 		a.output("console", "terminate requested\n")
