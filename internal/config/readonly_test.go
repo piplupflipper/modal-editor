@@ -31,6 +31,19 @@ func TestParseReadOnlyPaths(t *testing.T) {
 	})
 }
 
+// 末尾に "/" を付けたディレクトリの名前（"node_modules/"）は、付けないものと同じに扱う。
+//
+// req: FR-120
+func TestParseReadOnlyPathsTrailingSlash(t *testing.T) {
+	cfg, errs := Parse("config.jsonc", []byte(`{"readonlyPaths": ["node_modules/", "vendor//", "./", "a/b/"]}`))
+	if want := []string{"node_modules", "vendor"}; !reflect.DeepEqual(cfg.ReadOnlyPaths, want) {
+		t.Errorf("ReadOnlyPaths = %q, want %q", cfg.ReadOnlyPaths, want)
+	}
+	if len(errs) != 2 {
+		t.Errorf("errs = %v, want 2 (./ and a/b/)", errs)
+	}
+}
+
 // HOME が無いときの "~" と、配列でない値は誤りにする。
 //
 // req: FR-120

@@ -14,7 +14,8 @@ import (
 //
 //   - "/" で始まる絶対パス: そのディレクトリの下のファイルに当たる。filepath.Clean で整える
 //   - "~" か "~/" で始まるパス: "~" を利用者のホームのディレクトリ（環境変数 HOME）に展開した絶対パスとして扱う
-//   - "/" を含まないディレクトリの名前（"node_modules"）: ファイルのパスのどの階層のディレクトリの名前と一致しても当たる。そのまま返す
+//   - "/" を含まないディレクトリの名前（"node_modules"）: ファイルのパスのどの階層のディレクトリの名前と一致しても当たる。
+//     末尾の "/"（"node_modules/"）は除いて返す
 //
 // それ以外（"a/b" のような "/" を含む相対パス、空の文字列、"~user" の形、HOME が無いときの "~"）は誤りとして記録し、その項目を使わない。
 // 返す列の項目は、絶対パスかディレクトリの名前で、filepath.IsAbs で見分けられる。
@@ -59,11 +60,13 @@ func readOnlyPath(p string) (dir, problem string) {
 		return "", "~user の形（他の利用者のホーム）は展開しない。~/ で始めるか、絶対パスで書く"
 	case filepath.IsAbs(p):
 		return filepath.Clean(p), ""
-	case !strings.Contains(p, "/"):
-		if p == "." || p == ".." {
+	case !strings.Contains(strings.TrimRight(p, "/"), "/"):
+		// 末尾の "/"（"node_modules/"）はディレクトリであることを表すだけなので、除いて名前として扱う。
+		name := strings.TrimRight(p, "/")
+		if name == "." || name == ".." {
 			return "", ". と .. はディレクトリの名前として使えない"
 		}
-		return p, ""
+		return name, ""
 	}
 	return "", "/ を含む相対パスは使えない。絶対パスか ~/ で始まるパス、または / を含まないディレクトリの名前（node_modules など）にする"
 }
