@@ -138,29 +138,33 @@ func encodeRow(cells []ui.Cell) []wireRun {
 }
 
 // screenDecoder は、client の側で、届いた wireDraw を ui.Screen に戻す。接続ごとに 1 つ持つ。ゼロ値で使える。
+//
+// 格子は 1 つだけ持ち、届いた行をその上に書き換えて返す（描くたびに格子を作り直すと、client のメモリの割り当てとガベージコレクションが増えるため）。
+// このため、返した格子は次の decode まで（ソケットの接続では次の Recv まで）しか使えない。
+// client（internal/client の Run）は、Recv で受けた画面を次の Recv の前に端末へ出し終えるので、この制約に収まる。
 type screenDecoder struct {
-	prev *ui.Grid
+	grid  *ui.Grid
+	cells []ui.Cell // 行を組み立てる作業用
 }
 
-// decode は、d を手元の格子に当てて、新しい格子の ui.Screen を返す。前に返した格子は変えない。
-// 大きさが前回と違えば、載っていない行は空白にする（server はそのときすべての行を載せる）。
+// decode は、d を手元の格子に当てた ui.Screen を返す。
+// 大きさが前回と違えば格子を作り直し、載っていない行は空白にする（server はそのときすべての行を載せる）。
 func (dec *screenDecoder) decode(d wireDraw) ui.Screen {
-	g := ui.NewGrid(d.Width, d.Height)
-	if p := dec.prev; p != nil && p.Width() == g.Width() && p.Height() == g.Height() {
-		for r := range g.Height() {
-			g.SetRow(r, p.Row(r))
-		}
+	g := dec.grid
+	if g == nil || g.Width() != d.Width || g.Height() != d.Height {
+		g = ui.NewGrid(d.Width, d.Height)
+		dec.grid = g
 	}
 	for _, row := range d.Rows {
-		g.SetRow(row.Row, decodeRow(row.Runs, g.Width()))
+		dec.cells = decodeRow(dec.cells[:0], row.Runs)
+		g.SetRow(row.Row, dec.cells)
 	}
-	dec.prev = g
 	c := d.Cursor
 	return ui.Screen{Grid: g, Cursor: ui.Cursor{Row: c.Row, Col: c.Col, Shape: c.Shape, Visible: c.Visible}}
 }
 
-func decodeRow(runs []wireRun, width int) []ui.Cell {
-	cells := make([]ui.Cell, 0, width)
+// decodeRow は、runs のセルを cells に足して返す。
+func decodeRow(cells []ui.Cell, runs []wireRun) []ui.Cell {
 	for _, run := range runs {
 		a := fromWireAttr(run.Attr)
 		for _, r := range run.Text {

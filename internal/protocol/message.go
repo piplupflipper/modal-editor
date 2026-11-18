@@ -74,6 +74,7 @@ type ClientConn interface {
 	Send(m ClientMessage) error
 	// Recv は、server から届いたメッセージを、届いた順に 1 件返す。
 	// server が接続を閉じ、届いたものを読み終えたら io.EOF を返す。自分が閉じた後は ErrClosed を返す。
+	// Draw の格子は、次の Recv まで使える（ソケットの接続は、格子を使い回す。screen.go の screenDecoder）。
 	Recv() (ServerMessage, error)
 	// Close は、接続を閉じる。2 回目以降は何もしない。
 	Close() error
