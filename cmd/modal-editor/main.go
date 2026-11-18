@@ -3,6 +3,10 @@
 // 引数のファイルを開き、端末（標準入力と標準出力）でエディタを動かす。
 // 編集の状態を持つ server（internal/server）と、端末を持つ編集の client（internal/client）を 1 つのプロセスの中で組み立て、
 // 両者を internal/protocol の接続でつなぐ（基本設計 1.2。FR-60 の構成）。
+// このときも server のソケットを待ち受ける。
+//
+// 要件定義 8.1 の応答の計測のために、server と編集の client を別のプロセスで動かすオプションを持つ（利用者向けではない）。
+// -listen <パス> は server だけを起動し、-connect <パス> はそのパスの server に編集の client として繋ぐ。
 package main
 
 import (
@@ -12,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -62,6 +67,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	logPath := flags.String("log", "", "ログを追記するファイル。指定しなければログを書かない（画面を崩さないため、標準エラー出力には書かない）")
 	// req: FR-119
 	readOnly := flags.Bool("R", false, "引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）")
+	listen := flags.String("listen", "", "計測用（利用者向けではない）。端末を使わずに server だけを起動し、このパスのソケットで編集の client を待つ")
+	connect := flags.String("connect", "", "計測用（利用者向けではない）。このパスのソケットの server に編集の client として繋ぐ。ファイルの引数は取らない")
 
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("引数の解釈に失敗: %w", err)
@@ -71,13 +78,21 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
 	}
+	switch {
+	case *listen != "" && *connect != "":
+		return errors.New("-listen と -connect は同時に指定できない")
+	case *connect != "" && flags.NArg() > 0:
+		return errors.New("-connect ではファイルを指定できない（開くのは server の側）")
+	case *listen != "":
+		return serve(*listen, flags.Args(), *readOnly, *logPath)
+	}
 
 	in, inOK := stdin.(*os.File)
 	out, outOK := stdout.(*os.File)
 	if !inOK || !outOK {
 		return errNotTerminal
 	}
-	return edit(flags.Args(), *readOnly, in, out, *logPath)
+	return edit(flags.Args(), *readOnly, in, out, *logPath, *connect)
 }
 
 var errNotTerminal = errors.New("標準入力と標準出力が端末のときだけ起動できる")
@@ -100,7 +115,8 @@ var errNotTerminal = errors.New("標準入力と標準出力が端末のとき�
 // exthost の context.AfterFunc が取り消しの関数を呼ぶもの）の panic と、
 // SIGKILL で終わったときは戻せない。
 // readOnly は起動のオプション -R で、files を編集を禁止した状態で開く（editor.Config.ReadOnlyArgs）。
-func edit(files []string, readOnly bool, in, out *os.File, logPath string) (err error) {
+// connect が空でなければ、server を動かさずに、そのパスの server に編集の client として繋ぐ（runClient）。
+func edit(files []string, readOnly bool, in, out *os.File, logPath, connect string) (err error) {
 	logger, closeLog, err := openLog(logPath)
 	if err != nil {
 		return err
@@ -121,6 +137,9 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath string) (err 
 	}
 	defer func() { _ = tm.Close() }() // Close は誤りを返さない
 	return guard(tm.Restore, func() error {
+		if connect != "" {
+			return runClient(ctx, connect, tm, logger)
+		}
 		return runEditor(ctx, files, readOnly, tm, logger)
 	})
 }
@@ -152,20 +171,34 @@ func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Term
 	// editor、exthost、server が起こす goroutine の panic でも、その goroutine の上で端末を戻してから panic を続ける（基本設計 8 章）。
 	// 端末を持つのは client だが、同じプロセスの中なので server の側からも戻せる。
 	cfg.OnPanic = func() { _ = tm.Restore() } // panic を続けるので、戻す誤りは捨てる
+	// server のソケットは、MCP のソケットと同じディレクトリに置く（基本設計 1.2 の `<名前>/`）。
+	// 1 つのプロセスの構成の `<名前>` は、MCP のソケットと同じくプロセス ID と乱数から作る（FR-60）。
+	sock, err := exthost.NewMCPSocket()
+	if err != nil {
+		logger.Warn("server と MCP のソケットのディレクトリを作れない", "err", err)
+		sock = nil
+	} else {
+		cfg.MCPSocket = sock.Path
+	}
+	defer func() {
+		if rerr := sock.Remove(); rerr != nil { // 拡張機能を止めた後（closeServer の後）に消す
+			logger.Warn("ソケットのディレクトリを消せない", "err", rerr)
+		}
+	}()
 	srv, err := server.New(cfg)
 	if err != nil {
 		return fmt.Errorf("エディタを作れない: %w", err)
 	}
-	// Vim と同じく、引数の順にバッファの番号（:ls、:b N）を付け、最初のファイルをカーソルのあるバッファにする。
-	// Open は開いたバッファへ移るので、最後に最初のファイルをもう一度開いて移る（開いているファイルは開き直さない）。
-	order := files
-	if len(files) > 1 {
-		order = append(slices.Clone(files), files[0])
+	if err = openFiles(srv, files); err != nil {
+		closeServer(srv, logger)
+		return err
 	}
-	for _, f := range order {
-		if err := srv.Open(f); err != nil {
-			closeServer(srv, logger)
-			return fmt.Errorf("%s を開けない: %w", f, err)
+	// 1 つのプロセスの構成でも server のソケットを待ち受ける（FR-60。基本設計 1.2）。待ち受けられなくても編集は続ける。
+	var ln net.Listener
+	if sock != nil {
+		if ln, err = server.Listen(filepath.Join(filepath.Dir(sock.Path), server.SocketName)); err != nil {
+			logger.Warn("server のソケットで待ち受けられない", "err", err)
+			ln = nil
 		}
 	}
 
@@ -175,7 +208,7 @@ func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Term
 		defer tm.RestoreOnPanic()
 		clientDone <- client.Run(tm, clientConn, logger)
 	}()
-	runErr := srv.Run(ctx, serverConn)
+	runErr := srv.Serve(ctx, ln, serverConn)
 	// 拡張機能の終了は数秒かかることがあるので、先に client に端末を戻させる（editor.Editor.Close の doc）。
 	if err := <-clientDone; err != nil {
 		logger.Error("端末を戻せない", "err", err)
@@ -191,6 +224,76 @@ func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Term
 		return fmt.Errorf("シグナルを受けて終了した: %w", context.Cause(ctx))
 	}
 	return runErr
+}
+
+// openFiles は、files を srv で開く。
+// Vim と同じく、引数の順にバッファの番号（:ls、:b N）を付け、最初のファイルをカーソルのあるバッファにする。
+// Open は開いたバッファへ移るので、最後に最初のファイルをもう一度開いて移る（開いているファイルは開き直さない）。
+func openFiles(srv *server.Server, files []string) error {
+	order := files
+	if len(files) > 1 {
+		order = append(slices.Clone(files), files[0])
+	}
+	for _, f := range order {
+		if err := srv.Open(f); err != nil {
+			return fmt.Errorf("%s を開けない: %w", f, err)
+		}
+	}
+	return nil
+}
+
+// serve は、-listen のときの本体で、server だけを動かす（基本設計 1.2 の計測のためのオプション。利用者向けではない）。
+// 端末を使わない。path のソケットで待ち受け、files を開き、最初に繋いだ編集の client の終わり（:q か、接続が切れた）かシグナルで終わる。
+func serve(path string, files []string, readOnly bool, logPath string) error {
+	logger, closeLog, err := openLog(logPath)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	defer stop()
+
+	cfg := loadConfig(logger)
+	cfg.ReadOnlyArgs = readOnly
+	srv, err := server.New(cfg)
+	if err != nil {
+		return fmt.Errorf("エディタを作れない: %w", err)
+	}
+	defer closeServer(srv, logger)
+	if err = openFiles(srv, files); err != nil {
+		return err
+	}
+	ln, err := server.Listen(path)
+	if err != nil {
+		return fmt.Errorf("server のソケットで待ち受けられない: %w", err)
+	}
+	err = srv.Serve(ctx, ln, nil)
+	switch {
+	case err == nil, errors.Is(err, editor.ErrTerminalLost):
+		// 最後の編集の client が終わったら、server も終わる（FR-61）
+		return nil
+	case ctx.Err() != nil:
+		return fmt.Errorf("シグナルを受けて終了した: %w", context.Cause(ctx))
+	}
+	return err
+}
+
+// runClient は、-connect のときの本体で、path の server に編集の client として繋ぐ（基本設計 1.2 の計測のためのオプション。利用者向けではない）。
+// server が接続を閉じるか、端末の入力が終わるまで動かす。ctx が終わったら接続を閉じ、端末を戻して終わる。
+func runClient(ctx context.Context, path string, tm *term.Terminal, logger *slog.Logger) error {
+	conn, err := protocol.Dial(path)
+	if err != nil {
+		return fmt.Errorf("server に繋げない: %w", err)
+	}
+	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() }) // client.Run が端末を戻して戻る
+	defer stopClose()
+	if err := client.Run(tm, conn, logger); err != nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("シグナルを受けて終了した: %w", context.Cause(ctx))
+	}
+	return nil
 }
 
 // loadConfig は、設定ファイルと拡張機能の宣言ファイルを internal/config で読み、editor.Config に写す。

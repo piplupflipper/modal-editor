@@ -1,4 +1,4 @@
-// Package client は、端末を持つ側（編集の client）である（基本設計 1.2、2 章。FR-58 の 1 段目）。
+// Package client は、端末を持つ側（編集の client）である（基本設計 1.2、2 章。FR-58）。
 //
 // client は端末（internal/term）を持ち、端末から解読したキーを server へ送り、server から届いた画面を端末へ出す。
 // 編集の状態は持たない。キーの列の解釈、マクロ、ドットリピートは server の側にある（基本設計 1.2）。
@@ -37,7 +37,8 @@ type Terminal interface {
 
 // Run は、tm を conn の先の server に編集の client として繋ぎ、server が接続を閉じるか、端末の入力が終わるまで動かす。
 //
-// 最初に端末の大きさを server へ知らせ（protocol の接続の最初のメッセージ）、その後は次の 2 つを並行に行う。
+// 最初に、編集の client であることと端末の大きさを Hello で server へ知らせ（protocol の接続の最初のメッセージ）、その後は次の 2 つを並行に行う。
+// conn は、1 つのプロセスの中の接続（protocol.Pipe）でも、server のソケットの接続（protocol.Dial）でもよい。
 //
 //   - 端末のイベントを server へ送る（別の goroutine）。端末の入力が終わったら接続を閉じ、server に端末が失われたことを知らせる
 //   - server から届いた画面とクリップボードへの書き込みを、届いた順に端末へ出す（Run を呼んだ goroutine）
@@ -53,10 +54,9 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	w, h := tm.Size()
-	if err := conn.Send(protocol.Event{Resize: true, Width: w, Height: h}); err == nil {
+	if err := conn.Send(protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h}); err == nil {
 		go forward(tm, conn)
 	}
-	var dec protocol.ScreenDecoder
 	for {
 		m, err := conn.Recv()
 		if err != nil {
@@ -67,7 +67,7 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 		}
 		switch m := m.(type) {
 		case protocol.Draw:
-			if err := tm.Draw(dec.Decode(m)); err != nil {
+			if err := tm.Draw(m.Screen); err != nil {
 				logger.Error("描画に失敗", "err", err)
 			}
 		case protocol.SetClipboard:
