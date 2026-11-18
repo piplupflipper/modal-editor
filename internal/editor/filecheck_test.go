@@ -153,6 +153,10 @@ func TestNoFalseChangeAfterWrite(t *testing.T) {
 
 // writeExternal は、エディタの外から path を text に書き換える。
 // 更新時刻を読み込んだときより後へ進め、同じ大きさの書き換えも更新時刻の刻みによらず変更として見えるようにする。
+//
+// 中身と更新時刻を別のファイルで整えてから rename で置き換え、1 回の変更として見せる。
+// path へ直に書いてから更新時刻を変えると、定期的な確認（CheckInterval）が書いた直後と時刻を変えた後の 2 回の変更を見る。
+// 問いに OK と答えた後に 2 回目の変更が記録されると、同じ書き換えをもう一度問う（#202 で TestW12 の揺れとして見つけた）。
 func writeExternal(t *testing.T, path, text string) {
 	t.Helper()
 	fi, err := os.Stat(path)
@@ -162,11 +166,15 @@ func writeExternal(t *testing.T, path, text string) {
 	} else {
 		mtime = time.Now()
 	}
-	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+	tmp := path + ".external"
+	if err := os.WriteFile(tmp, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	mtime = mtime.Add(2 * time.Second)
-	if err := os.Chtimes(path, mtime, mtime); err != nil {
+	if err := os.Chtimes(tmp, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
 		t.Fatal(err)
 	}
 }

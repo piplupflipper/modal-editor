@@ -626,8 +626,12 @@ func (e *Editor) forwardInput() {
 		}
 		k := ev.Key.Normalize()
 		if k == interruptKey {
-			e.interrupt.Store(true)
+			// 印と <C-c> のキーは、列の錠の中で一緒に置く。印を先に見た afterKey の dropThrough が、
+			// まだ積んでいない <C-c> を捨て損ね、後でそれを <Esc> として処理して「中断しました」を消すのを防ぐ（#202）。
+			e.keys.pushInterrupt(keyInput{key: k}, &e.interrupt)
 			signal(e.intrCh)
+			e.forwarded.Add(1)
+			continue
 		}
 		e.keys.push(keyInput{key: k})
 		e.forwarded.Add(1)

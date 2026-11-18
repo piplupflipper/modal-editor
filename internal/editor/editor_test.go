@@ -571,14 +571,24 @@ func TestConfirm(t *testing.T) {
 	}
 }
 
-// 大きな回数の再生は <C-c> で止まる。
+// 大きな回数の再生は <C-c> で止まり、その後のキーはノーマルモードで解釈する。
+// <C-c> は再生のキーの間のどこにも当たりうる（":" の直後に当たるとコマンドラインモードで止まる。#202）。
+// どこで止まってもノーマルモードへ戻ることは、internal/command の TestMacroInterrupted で位置を決めて確かめる。
 func TestInterrupt(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
 	h := start(t, Config{WorkDir: dir}, "a.txt")
 	h.keys("qa:s/a/aa/<CR>q")
 	h.settle()
 	h.keys("999999999@a")
-	time.Sleep(100 * time.Millisecond)
+	// 再生が始まってから <C-c> を送る。再生の間はイベントループが Feed の中にいるので、e.do では待てない。
+	// 列が空になれば最後のキー（@a の a）を取り出したので、同じ handleKeys の中で再生が始まっている。
+	deadline := time.Now().Add(10 * time.Second)
+	for h.e.forwarded.Load() != h.sent || !h.e.keys.empty() {
+		if time.Now().After(deadline) {
+			t.Fatal("再生が始まらない")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	h.keys("<C-c>")
 	h.settle()
 	if msg := h.message(); msg != "中断しました" {
