@@ -99,6 +99,10 @@ type Config struct {
 	// ExtensionInstall は extensions.install の値で、取得する拡張機能の列である（基本設計 5.6）。
 	// 誤りのある項目は除いてある。呼び出し側が extmgr.Spec に写して extmgr.Sync に渡す。
 	ExtensionInstall []ExtensionInstall
+	// ExtensionInstallValid は、extensions.install を誤りなく読めたこと（項目が無いことと、設定ファイルが無いことを含む）である。
+	// 設定ファイルを読めないとき、構文の誤りのとき、extensions か extensions.install に誤りがあるときは false で、
+	// 呼び出し側は extmgr.Options.KeepUnlisted を true にして、書き損じで拡張機能を削除しない（FR-122）。
+	ExtensionInstallValid bool
 	// RegisterHistorySize は registers.historySize の値で、レジスターの履歴の件数である（FR-53）。
 	// 項目が無いか誤り（1 未満を含む）なら 0 で、command の既定値（command.DefaultHistorySize）を使う。
 	RegisterHistorySize int
@@ -136,7 +140,7 @@ const maxSyncTimeoutMs = math.MaxInt64 / int64(time.Millisecond)
 func Load(path string) (Config, []error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return Config{}, nil
+		return Config{ExtensionInstallValid: true}, nil
 	}
 	if err != nil {
 		return Config{}, []error{&Error{Path: path, Msg: "設定ファイルを読めない: " + err.Error()}}
@@ -157,6 +161,7 @@ func Parse(path string, data []byte) (Config, []error) {
 	var cfg Config
 	s := newSource(path, data)
 	if s.onlyExtra() {
+		cfg.ExtensionInstallValid = true
 		return cfg, nil
 	}
 	root, err := s.parseJSONC()
@@ -168,6 +173,7 @@ func Parse(path string, data []byte) (Config, []error) {
 		s.report(root.StartOffset, "設定ファイルの最上位はオブジェクトにする")
 		return cfg, s.problems
 	}
+	cfg.ExtensionInstallValid = true
 	for _, m := range s.members(obj, "") {
 		switch m.name {
 		case "keymap":
@@ -293,6 +299,7 @@ func (s *source) fileTypes(v *hujson.Value) map[string]string {
 func (s *source) extensions(v *hujson.Value, cfg *Config) {
 	obj, ok := s.object(v, "extensions")
 	if !ok {
+		cfg.ExtensionInstallValid = false
 		return
 	}
 	for _, m := range s.members(obj, "extensions") {
@@ -316,7 +323,7 @@ func (s *source) extensions(v *hujson.Value, cfg *Config) {
 		case "activation":
 			cfg.ExtensionActivation = s.extensionActivation(m.value, cfg)
 		case "install":
-			cfg.ExtensionInstall = s.extensionInstall(m.value)
+			cfg.ExtensionInstall, cfg.ExtensionInstallValid = s.extensionInstall(m.value)
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", path)
 		}

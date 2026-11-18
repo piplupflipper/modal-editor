@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,19 @@ func (e *env) sync(t *testing.T, specs ...Spec) []Outcome {
 	return out
 }
 
+// eventsString は、進み具合を「何番目/全体 名前 段階 [結果 ID]」の形で "," でつなぐ。
+func eventsString(evs []Event) string {
+	parts := make([]string, 0, len(evs))
+	for _, ev := range evs {
+		p := fmt.Sprintf("%d/%d %s %v", ev.Index, ev.Total, ev.Name, ev.Phase)
+		if ev.Outcome != nil {
+			p += fmt.Sprintf(" %v %s", ev.Outcome.Action, ev.Outcome.ID)
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // wantOutcomes は、結果の名前と Action と Commit を比べる。commit が空なら Commit を比べない。
 func wantOutcomes(t *testing.T, got []Outcome, want ...Outcome) {
 	t.Helper()
@@ -202,8 +216,8 @@ func TestSyncInstall(t *testing.T) {
 		t.Errorf("宣言ファイル = %q, %v", manifest, err)
 	}
 	e.wantLock(t, map[string]LockEntry{"hello": {Repo: r.dir, Version: "v1", Commit: c1}})
-	if want := []Event{{"hello", PhaseFetch}, {"hello", PhaseBuild}, {"hello", PhaseInstall}}; fmt.Sprint(e.events) != fmt.Sprint(want) {
-		t.Errorf("進み具合 = %v, want %v", e.events, want)
+	if got, want := eventsString(e.events), "1/1 hello 取得, 1/1 hello ビルド, 1/1 hello 入れ替え, 1/1 hello 完了 追加 hello"; got != want {
+		t.Errorf("進み具合 = %s, want %s", got, want)
 	}
 	data, err := os.ReadFile(e.opts.LockPath)
 	if err != nil {
@@ -216,8 +230,8 @@ func TestSyncInstall(t *testing.T) {
 
 	e.opts.Git, e.opts.Go = "/nonexistent/git", "/nonexistent/go"
 	wantOutcomes(t, e.sync(t, spec), Outcome{Name: "hello", Action: ActionUnchanged, Commit: c1})
-	if len(e.events) != 0 {
-		t.Errorf("進み具合 = %v, want なし", e.events)
+	if got, want := eventsString(e.events), "1/1 hello 完了 変更なし hello"; got != want {
+		t.Errorf("進み具合 = %s, want %s", got, want)
 	}
 }
 
@@ -258,12 +272,14 @@ func TestSyncUpdate(t *testing.T) {
 // assertNoLeftovers は、途中のディレクトリが残っていないことを確かめる。
 func assertNoLeftovers(t *testing.T, e *env) {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(filepath.Dir(e.opts.ExtensionsDir), "extmgr", "tmp"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Errorf("途中のディレクトリが残っている: %v", entries)
+	for _, d := range []string{"tmp", "old"} {
+		entries, err := os.ReadDir(filepath.Join(filepath.Dir(e.opts.ExtensionsDir), "extmgr", d))
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("途中のディレクトリ %s が残っている: %v", d, entries)
+		}
 	}
 }
 
@@ -298,6 +314,44 @@ func TestSyncSwapFailureKeepsOld(t *testing.T) {
 	e.wantRuns(t, "hello", "v1")
 	e.wantLock(t, map[string]LockEntry{"hello": {Repo: r.dir, Version: "v1", Commit: c1}})
 	assertNoLeftovers(t, e)
+
+	// 戻すのにも失敗したら、退けた前の版を消さずに残し、誤りの文言にそのパスを出す。Commit は空にする。
+	s = newSyncer(e.opts)
+	calls = 0
+	s.rename = func(oldpath, newpath string) error {
+		calls++
+		if calls >= 2 {
+			return os.ErrPermission
+		}
+		return os.Rename(oldpath, newpath)
+	}
+	out, err = s.sync(context.Background(), []Spec{{Name: "hello", Repo: r.dir, Version: "v2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOutcomes(t, out, Outcome{Name: "hello", Action: ActionFailed})
+	if out[0].Commit != "" || !errors.Is(out[0].Err, errOldNotRestored) {
+		t.Errorf("Commit = %q, Err = %v; want 空と errOldNotRestored", out[0].Commit, out[0].Err)
+	}
+	if _, err = os.Stat(filepath.Join(e.opts.ExtensionsDir, "hello")); !os.IsNotExist(err) {
+		t.Errorf("extensions/hello = %v, want 無い", err)
+	}
+	m := regexp.MustCompile(`前の版を (\S+) に残した`).FindStringSubmatch(out[0].Err.Error())
+	if m == nil {
+		t.Fatalf("Err = %v, want 残したパスを含む", out[0].Err)
+	}
+	marker, err := os.ReadFile(filepath.Join(m[1], MarkerFileName))
+	if err != nil || !strings.Contains(string(marker), c1) {
+		t.Errorf("残した前の版の印 = %q, %v; want %s を含む", marker, err, c1)
+	}
+	e.wantLock(t, map[string]LockEntry{"hello": {Repo: r.dir, Version: "v1", Commit: c1}})
+
+	// 次の Sync は入れ直す。残した前の版は消さない（利用者が戻すためのもの）。
+	wantOutcomes(t, e.sync(t, Spec{Name: "hello", Repo: r.dir, Version: "v1"}), Outcome{Name: "hello", Action: ActionInstalled, Commit: c1})
+	e.wantRuns(t, "hello", "v1")
+	if _, err := os.Stat(m[1]); err != nil {
+		t.Errorf("残した前の版が消えた: %v", err)
+	}
 }
 
 // ブランチの版は、ロックファイルの記録のコミットを取り出す。Update なら取得元で解決し直す。
@@ -392,8 +446,11 @@ func TestSyncGoNotFound(t *testing.T) {
 	if !errors.Is(err, ErrGoNotFound) {
 		t.Fatalf("err = %v, want ErrGoNotFound", err)
 	}
-	if _, err := os.Stat(filepath.Dir(e.opts.ExtensionsDir) + "/extmgr"); !os.IsNotExist(err) {
-		t.Errorf("作業のディレクトリを作った: %v", err)
+	if _, err := os.Stat(e.opts.ExtensionsDir); !os.IsNotExist(err) {
+		t.Errorf("拡張機能のディレクトリを作った: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(e.opts.ExtensionsDir), "extmgr", "src")); !os.IsNotExist(err) {
+		t.Errorf("取得した: %v", err)
 	}
 	if _, err := os.Stat(e.opts.LockPath); !os.IsNotExist(err) {
 		t.Errorf("ロックファイルを作った: %v", err)
@@ -407,17 +464,30 @@ func TestSyncInvalid(t *testing.T) {
 	out := e.sync(t,
 		Spec{Name: "../x", Repo: "r", Version: "v"},
 		Spec{Name: "x", Repo: "--upload-pack=touch", Version: "v"},
-		Spec{Name: "y", Repo: "r", Version: "-v"})
+		Spec{Name: "y", Repo: "/r", Version: "-v"},
+		Spec{Name: "z", Repo: "../r", Version: "v"})
 	wantOutcomes(t, out,
 		Outcome{Name: "../x", Action: ActionFailed},
 		Outcome{Name: "x", Action: ActionFailed},
-		Outcome{Name: "y", Action: ActionFailed})
-
-	if err := os.WriteFile(e.opts.LockPath, []byte(`{"version": 2, "extensions": {}}`), 0o600); err != nil {
-		t.Fatal(err)
+		Outcome{Name: "y", Action: ActionFailed},
+		Outcome{Name: "z", Action: ActionFailed})
+	if !strings.Contains(out[3].Err.Error(), "相対パス") {
+		t.Errorf("Err = %v", out[3].Err)
 	}
-	if _, err := Sync(context.Background(), nil, e.opts); err == nil || !strings.Contains(err.Error(), "形式の版 2") {
-		t.Errorf("err = %v", err)
+
+	for _, tc := range []struct{ lock, msg string }{
+		{`{"version": 2, "extensions": {}}`, "形式の版 2"},
+		{`{"version": 1, "extensions": {"a": {"repo": "/r", "version": "v", "commit": "6c46"}}}`, `commit "6c46"`},
+	} {
+		if err := os.WriteFile(e.opts.LockPath, []byte(tc.lock), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Sync(context.Background(), nil, e.opts); err == nil || !strings.Contains(err.Error(), tc.msg) {
+			t.Errorf("err = %v, want %s を含む", err, tc.msg)
+		}
+		if data, _ := os.ReadFile(e.opts.LockPath); string(data) != tc.lock {
+			t.Errorf("ロックファイルを書き換えた: %s", data)
+		}
 	}
 	if _, err := Sync(context.Background(), nil, Options{LockPath: e.opts.LockPath}); err == nil {
 		t.Error("ExtensionsDir が空でも誤りにならない")
@@ -460,7 +530,7 @@ func TestReadManifestCommand(t *testing.T) {
 		if err = os.WriteFile(filepath.Join(dir, ManifestFileName), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, _, err = readManifest(dir)
+		_, _, _, err = readManifest(dir)
 		if (err == nil) != tc.ok {
 			t.Errorf("command %q: err = %v, want ok=%v", tc.command, err, tc.ok)
 		}

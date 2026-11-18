@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 // LockFileName は、ロックファイルの名前である（仮。基本設計 5.6）。設定ファイルと同じディレクトリに置く（FR-103）。
@@ -71,8 +72,17 @@ func ReadLock(path string) (Lock, error) {
 	if l.Extensions == nil {
 		l.Extensions = map[string]LockEntry{}
 	}
+	for name, e := range l.Extensions {
+		if !fullHash.MatchString(e.Commit) {
+			return Lock{}, fmt.Errorf("ロックファイル %s の %s の commit %q は 40 桁か 64 桁の小文字の 16 進数にする", path, name, e.Commit)
+		}
+	}
 	return l, nil
 }
+
+// fullHash は、ロックファイルに書くコミットのハッシュ（SHA-1 の 40 桁か SHA-256 の 64 桁）である。
+// 短いハッシュは、取得元のコミットが増えると曖昧になりうるので受け入れない。
+var fullHash = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // encode は、l をロックファイルの中身にする。
 func (l *Lock) encode() ([]byte, error) {
@@ -86,7 +96,16 @@ func (l *Lock) encode() ([]byte, error) {
 // writeLock は、l を path に書く。
 // 中身が今のファイルと同じなら書かない。ファイルが無く、記録も無ければ作らない。
 // 途中で失敗しても前の中身が残るように、同じディレクトリの一時ファイルに書いてから名前を変える。
+// path が symlink なら（dotfiles のリポジトリへ GNU stow などでファイルごとに張ったもの）、symlink は残し、
+// リンク先のファイルのディレクトリに一時ファイルを書いて、リンク先の名前へ変える。
 func writeLock(path string, l *Lock) error {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		target, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return fmt.Errorf("ロックファイルの symlink の先を求められない: %w", err)
+		}
+		path = target
+	}
 	data, err := l.encode()
 	if err != nil {
 		return err

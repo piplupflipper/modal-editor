@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -15,7 +16,7 @@ type ExtensionInstall struct {
 	// Name は、拡張機能を置くディレクトリの名前（$XDG_DATA_HOME/modal-editor/extensions/<Name>/）である。
 	// 英数字で始まり、英数字と "."、"_"、"-" だけからなる。
 	Name string
-	// Repo は、取得元の git のリポジトリ（git clone に渡す URL かパス）である。"-" で始まらない。
+	// Repo は、取得元の git のリポジトリ（git clone に渡す URL か絶対パス）である。"-" で始まらず、相対パスでない。
 	Repo string
 	// Version は、取り出す版（タグ、ブランチ、コミットのハッシュ）である。"-" で始まらない。
 	Version string
@@ -27,14 +28,17 @@ var installName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // extensionInstall は、extensions.install の値を読む（基本設計 5.6）。
 // 各項目は name、repo、version の 3 つの文字列を持つオブジェクトで、どれも省けない。
-// 誤りのある項目（型の違い、項目の欠け、未知の項目、使えない名前、先の項目と重なる名前）は使わず、位置と内容を記録する。
-func (s *source) extensionInstall(v *hujson.Value) []ExtensionInstall {
+// 誤りのある項目（型の違い、項目の欠け、未知の項目、使えない名前、相対パスの repo、先の項目と重なる名前）は使わず、位置と内容を記録する。
+// valid は、誤りが 1 つも無かったことである（Config.ExtensionInstallValid）。
+func (s *source) extensionInstall(v *hujson.Value) (out []ExtensionInstall, valid bool) {
+	before := len(s.problems)
+	defer func() { valid = len(s.problems) == before }()
 	const path = "extensions.install"
 	arr, ok := s.array(v, path)
 	if !ok {
-		return nil
+		return nil, false
 	}
-	out := []ExtensionInstall{}
+	out = []ExtensionInstall{}
 	seen := map[string]bool{}
 	for i := range arr.Elements {
 		el := &arr.Elements[i]
@@ -51,7 +55,19 @@ func (s *source) extensionInstall(v *hujson.Value) []ExtensionInstall {
 			out = append(out, e)
 		}
 	}
-	return out
+	return out, true
+}
+
+// isRelativeRepo は、repo が git の相対パスの取得元かを返す（extmgr.IsRelativeRepo と同じ規則。同じ層なので import しない）。
+// "://" を含むものを URL、最初の "/" より前に ":" があるものを scp の形（user@host:path）として扱う。
+// 相対パスは、本体の作業ディレクトリによって指す先が変わるので使えない。
+func isRelativeRepo(repo string) bool {
+	if strings.Contains(repo, "://") || filepath.IsAbs(repo) {
+		return false
+	}
+	colon := strings.IndexByte(repo, ':')
+	slash := strings.IndexByte(repo, '/')
+	return colon < 0 || (slash >= 0 && slash < colon)
 }
 
 // installEntry は、extensions.install の 1 項目を読む。誤りがあれば記録して false を返す。
@@ -83,6 +99,9 @@ func (s *source) installEntry(el *hujson.Value, obj *hujson.Object) (ExtensionIn
 			ok = false
 		case m.name != "name" && (str == "" || strings.HasPrefix(str, "-")):
 			s.report(m.value.StartOffset, "%s は空にせず、- で始めない", join(path, m.name))
+			ok = false
+		case m.name == "repo" && isRelativeRepo(str):
+			s.report(m.value.StartOffset, "%s %q は相対パスにしない（URL か絶対パスにする）", join(path, m.name), str)
 			ok = false
 		}
 		*dst = str

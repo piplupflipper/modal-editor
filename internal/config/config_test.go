@@ -262,8 +262,8 @@ func TestParseExternalChange(t *testing.T) {
 func TestParseEmptyAndBOM(t *testing.T) {
 	for _, src := range []string{"", "\n  \n", "// {\n//   \"keymap\": {}\n// }\n", "/* {} */", "// 改行なし", "\xef\xbb\xbf", "\xef\xbb\xbf// x\n"} {
 		cfg, errs := Parse("c", []byte(src))
-		if len(errs) != 0 || !reflect.DeepEqual(cfg, Config{}) {
-			t.Errorf("%q: cfg = %+v, errs = %v; want ゼロ値で誤りなし", src, cfg, errs)
+		if len(errs) != 0 || !reflect.DeepEqual(cfg, Config{ExtensionInstallValid: true}) {
+			t.Errorf("%q: cfg = %+v, errs = %v; want 既定値で誤りなし", src, cfg, errs)
 		}
 	}
 	// 閉じていないブロックコメントは構文の誤りのまま。
@@ -436,8 +436,8 @@ func TestParseDuplicate(t *testing.T) {
 // 存在しないファイルは、誤りにせず既定値で動く。
 func TestLoadMissing(t *testing.T) {
 	cfg, errs := Load(filepath.Join(t.TempDir(), "none.jsonc"))
-	if len(errs) != 0 || !reflect.DeepEqual(cfg, Config{}) {
-		t.Fatalf("cfg = %+v, errs = %v; want ゼロ値で誤りなし", cfg, errs)
+	if len(errs) != 0 || !reflect.DeepEqual(cfg, Config{ExtensionInstallValid: true}) {
+		t.Fatalf("cfg = %+v, errs = %v; want 既定値で誤りなし", cfg, errs)
 	}
 }
 
