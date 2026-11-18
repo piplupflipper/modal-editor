@@ -1112,7 +1112,7 @@ Ex コマンドの確認の問い（逆順の範囲の E493）を出している
 
 | 向き | メソッド（仮） | 種類 | 内容 | 関係する要件 |
 |---|---|---|---|---|
-| 本体 → 拡張機能 | `provider/invoke` | リクエスト | 本体の操作（5.5）を提供者へ問い合わせる。params は操作の名前、バッファ、カーソル位置、操作ごとの引数 | FR-94 |
+| 本体 → 拡張機能 | `provider/invoke` | リクエスト | 本体の操作（5.5）を提供者へ問い合わせる。params は操作の名前、バッファ、カーソル位置、範囲（`gq` のとき）、操作ごとの引数。result は `command/execute` と同じ形（`ext/provider.go`。#203） | FR-94 |
 | 本体 → 拡張機能 | `input/change` | 通知 | 拡張機能が開いた入力の行（1.4）の中身が変わったことを知らせる | FR-106 |
 | 本体 → 拡張機能 | `view/select` | 通知 | 拡張機能が出した一覧か木の項目を、利用者が選んだことを知らせる | FR-105、FR-106 |
 | 拡張機能 → 本体 | `popup/open` | リクエスト | 表示の部品（1.4）を中身にしたポップアップを開く。応答はポップアップの ID | FR-115、FR-68 |
@@ -1187,13 +1187,26 @@ nvim の作りを調べた結果（#177 の「参考」。nvim v0.12.5 の runti
 診断の一覧（`<leader>le`、`<leader>lE`）と次と前の診断への移動（`<leader>lj`、`<leader>lk`）は、本体が持つ診断から作るので、提供者に問い合わせない。
 
 本体は、キーで操作が呼ばれたら、カーソルのあるバッファのファイルの種類で、その操作を名乗った稼働中か未起動の拡張機能を探し、`provider/invoke`（5.3）で問い合わせる（仮）。
-提供者が無ければ、メッセージの行に「この操作の提供者がありません」と出す（仮）。
+提供者が無ければ、メッセージの行に「hover の提供者がありません（ファイルの種類 text）」のように出す（仮）。
 同じ操作を複数の拡張機能が名乗ったときの選び方は 10 章の未決の項目で、それまでは先に読んだ拡張機能を使う（仮。6.7 の同じ ID のコマンドの扱いと同じ）。
 提供者への問い合わせは、段階 2 の LSP のコマンドと同じく受け付けたことだけを応答し、結果を後から届けてよい（6 章の冒頭）。
 `gq` は Vim のオペレーターなので、範囲を `format` の引数として渡し、提供者が範囲の整形を返す（仮）。提供者が無ければ、Vim の `gq` の既定の動作（行の折り返し）にするかは 10 章の未決の項目である。
 `<C-]>` は `definition` で移る。
 
 `completion`（補完）は、段階 2 から 10 章の未決の項目で、操作の名前だけを決めておく。
+
+#203 で、次のとおり実装した。
+
+- 操作の名前は `ext.Operation` の定数で、この版の API の知らない名前の `provides` は警告にして無視する（`ext.Manifest.Validate`）。`provides` だけを持つ拡張機能は `activation` を空にしてよく、操作が呼ばれた時点で起動する（`exthost.Host.Send`）
+- 提供者の候補は、操作を名乗り、ファイルの種類の契機を持たないか、その `pattern` のどれかがバッファのファイルの種類と一致する拡張機能である。候補のうち未起動か起動中か稼働中のものを、宣言ファイルを読んだ順に探す。停止中、再起動待ち、無効のものは飛ばす（`exthost.Host.Provider`）。DAP の拡張機能はファイルの種類の契機を持たないので、どのバッファでも提供者になる
+- 既定のキーは、操作の ID と、拡張機能の ID の代わりに `input.ProviderExtension` を入れた操作として、本体のキーマップに登録する（`input.DefaultKeymapLeader`）。`internal/command` からは拡張機能の操作に見え、問い合わせの口（`command.Extensions`）で `internal/editor` が提供者に置き換える（`internal/editor/provider.go`）。`gq` はオペレーター、他は対象を取らない操作である
+- 操作は、どれかの拡張機能が `provides` で名乗っていれば、コマンドラインから操作の名前で呼べる（`:hover`、`:rename 新しい名前`）。名前の後の文字列は、`command/execute` と同じく `args` の `text` で渡す。拡張機能のコマンドと同じ名前なら、拡張機能のコマンドを優先する
+- 「ポップアップで見る」（`<leader>ld` など）は、`args` の `peek` を true にした移動の操作で、提供者が移動先の行から 10 行を `popup/show` で出す。ポップアップの部品（FR-110）ができるまでの仮の形である
+- 名前の変更の新しい名前と、条件付きのブレークポイントの条件は、入力の行の部品（1.4）ができるまで、コマンドラインの引数（`args` の `text`）で渡す。キーで呼んで引数が無ければ、提供者が渡し方を知らせて失敗する
+- 一覧の操作（`references`、`documentSymbols`、`workspaceSymbols`）は、一覧の部品（FR-105）ができるまで、提供者が `choice/ask` で選ばせる
+- 診断の一覧（`<leader>le`、`<leader>lE`）は、一覧の部品ができるまで、カーソルの近くのポップアップにテキストで出す。次と前の診断への移動は、診断の範囲の開始の位置の順で、端で折り返す（nvim の `vim.diagnostic.jump` と同じ）
+- 提供者の操作は、拡張機能の操作と同じくドットリピートの記録の対象になる（`internal/command` の `repeatable`）。`K` の後の `.` はホバーを繰り返す。Vim の `K` と違うので、10 章に挙げた
+- `codeAction`、`debug.toggleUI`、`completion` は、標準の拡張機能がまだ引き受けない。キーは登録してあり、押すと提供者が無いと出る。`<leader>l?` と `<leader>d?`（キーの一覧。FR-90）はまだ登録しない
 
 ### 5.6 拡張機能の管理
 
@@ -1253,7 +1266,7 @@ Go が無ければ、その旨をメッセージに出して止める。
 |---|---|---|---|---|
 | tree-sitter | 構文ハイライト、構文に沿ったテキストオブジェクト（関数、クラス、引数） | バッファの同期、`decoration/set`、`textObject/resolve` | 無し | 6.1 |
 | MCP | FR-32 のツール（バッファの一覧と内容、カーソル位置、選択範囲、診断の取得、編集、ファイルを開く、保存） | バッファの同期、`buffer/edit` | `editor/state`、`editor/open`、`buffer/save`、`diagnostic/list` | 6.2 |
-| LSP | 診断の表示、定義へ移動、ホバー、整形（コマンドと保存の前） | バッファの同期、`command/execute`、`buffer/edit`、`message/show` | `buffer/willSave`、`buffer/didSave`、`diagnostic/set`、`editor/open`、`popup/show`、`choice/ask` | 6.3 |
+| LSP | 診断の表示、定義へ移動、ホバー、整形（コマンドと保存の前。段階 3 では本体の操作。5.5） | バッファの同期、`command/execute`、`buffer/edit`、`message/show` | `buffer/willSave`、`buffer/didSave`、`diagnostic/set`、`editor/open`、`popup/show`、`choice/ask` | 6.3 |
 | DAP | ブレークポイントの切り替え、デバッグの開始と終了、続行とステップ実行、停止位置の表示、デバッグ対象の出力の表示 | バッファの同期、`command/execute`、`message/show` | `buffer/didSave`、`sign/set`、`editor/open`、`output/append` | 6.4 |
 | ACP | エージェントの起動、プロンプトの送信、返答の表示、権限の確認、エディタの内容を通したファイルの読み書き | バッファの同期、`command/execute`、`buffer/edit`、`message/show` | `editor/open`、`buffer/save`、`output/append`、`choice/ask` | 6.5 |
 | スクリプト | スクリプトの拡張機能が、モーション、テキストオブジェクト、オペレーター、コマンドを追加する | 5.3 の既存のメソッドすべて | 無し。宣言ファイルに項目を足す | 6.6 |
@@ -1512,9 +1525,9 @@ LSP の拡張機能は、1 つのプロセスで、ファイルの種類ごと�
 |---|---|---|---|
 | 文書の同期 | バッファの同期 | `textDocument/didOpen`、`textDocument/didChange`、`textDocument/didClose` | `buffer/open`、`buffer/change`、`buffer/close` |
 | 診断の表示 | 言語サーバーからの通知 | `textDocument/publishDiagnostics` | `diagnostic/set` |
-| 定義へ移動 | コマンド `lsp.definition`（仮） | `textDocument/definition` | `command/execute`、`editor/open`。候補が複数なら `choice/ask` |
-| ホバー | コマンド `lsp.hover`（仮） | `textDocument/hover` | `command/execute`、`popup/show` |
-| 整形 | コマンド `lsp.format`（仮） | `textDocument/formatting` | `command/execute`、`buffer/edit` |
+| 定義へ移動 | 本体の操作 `definition`（段階 2 はコマンド `lsp.definition`。#203 で置き換えた） | `textDocument/definition` | `provider/invoke`、`editor/open`。候補が複数なら `choice/ask` |
+| ホバー | 本体の操作 `hover`（段階 2 はコマンド `lsp.hover`） | `textDocument/hover` | `provider/invoke`、`popup/show` |
+| 整形 | 本体の操作 `format`（段階 2 はコマンド `lsp.format`） | `textDocument/formatting`。`gq` の範囲があり、言語サーバーが対応すれば `textDocument/rangeFormatting` | `provider/invoke`、`buffer/edit` |
 | 保存の前の整形 | 保存 | `textDocument/formatting` | `buffer/willSave` |
 | 保存の通知 | 保存の後 | `textDocument/didSave` | `buffer/didSave` |
 
@@ -1523,6 +1536,13 @@ Vim の `gd` と `K` は Vim の標準の操作であり、本体の標準の操
 段階 3 では、2026-11-18 の裁定（#177）で、LSP の操作を本体の操作（5.5）にし、`<leader>l` で始まるキーと `K`、`gq`、`<C-]>` を既定で割り当てる（7.2。FR-95）。
 `K` と `gq` と `<C-]>` は Vim の標準の操作と重なるが、nvim が LSP の有効なバッファで同じキーを LSP の操作にしている（5.5）のに合わせる。
 LSP の拡張機能は、段階 2 のコマンド（`lsp.definition` など）に代えて、`provides` で操作を名乗る（5.5）。
+#203 で、表の 3 つに加えて、`implementation`（`textDocument/implementation`）、`typeDefinition`（`textDocument/typeDefinition`）、
+`references`（`textDocument/references`。宣言を含める）、`documentSymbols`（`textDocument/documentSymbol`）、`workspaceSymbols`（`workspace/symbol`）、
+`rename`（`textDocument/rename`）を引き受けるようにした。
+`rename` の結果の `WorkspaceEdit` は、文書ごとのトランザクションにして `buffer/edit` で適用する。
+編集が、拡張機能の同期していないファイル（本体で開いていないファイル）に及ぶか、ファイルの作成、名前の変更、削除を含むときは、何も適用せずに知らせる。
+一部のファイルだけを変えると、コードが壊れたまま残るためである。開いていないファイルの編集は、画面に出さないバッファ（FR-109）を作る issue で扱う。
+`codeAction` はまだ引き受けない。コードアクションは `WorkspaceEdit` に加えてコマンドの実行（`workspace/executeCommand`）を返しうるので、`rename` と同じ制限の上に別の取り決めが要る。
 
 位置の単位は、LSP の拡張機能の中で変換する（4.1）。
 LSP 3.17 では、位置の数え方の既定は UTF-16 で、クライアントは `general.positionEncodings` で `utf-8` などを申し出られ、サーバーは `capabilities.positionEncoding` で 1 つを選ぶ（[LSP 3.17 の仕様](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)）。
@@ -1549,7 +1569,7 @@ LSP の `TextEdit` の配列の範囲は、どれも計算のもとにした文�
 `BaseVersion` には、`textDocument/formatting` を送った時点のバージョン番号を書く。
 その間に利用者が編集していれば、本体は適用せず（FR-15）、拡張機能は `message/show` でそのことを知らせる。
 
-保存の前の整形には、コマンド `lsp.format` と同じ `textDocument/formatting` を使い、保存の前とコマンドで整形の結果をそろえる。
+保存の前の整形には、操作 `format`（段階 2 のコマンド `lsp.format`）と同じ `textDocument/formatting` を使い、保存の前と操作で整形の結果をそろえる。
 LSP には保存の前に編集を問い合わせる `textDocument/willSaveWaitUntil` もあり、仕様は、編集の計算に時間がかかったときクライアントが結果を捨てうるとしている（同仕様）。
 `buffer/willSave` の期限（6.7）も同じ考え方を取る。
 
@@ -1560,13 +1580,15 @@ LSP には保存の前に編集を問い合わせる `textDocument/willSaveWaitU
 
 ### 6.4 DAP
 
-DAP の拡張機能は、デバッグを始めるコマンドで起動し、設定に書いたデバッグアダプターを子プロセスとして起動する。
+DAP の拡張機能は、`provides` で名乗った本体の操作（5.5）が呼ばれたときに起動し、デバッグを始める操作で、設定に書いたデバッグアダプターを子プロセスとして起動する。
+表の契機は、#203 で段階 2 のコマンド（括弧の中）から本体の操作に置き換えた。
 
 | 機能 | 契機 | 本体との取り決め |
 |---|---|---|
-| ブレークポイントの切り替え | コマンド `dap.toggleBreakpoint`（仮） | `command/execute`（カーソルの行）、`sign/set` |
-| デバッグの開始と終了 | コマンド `dap.start`、`dap.stop`（仮） | `command/execute` |
-| 続行、ステップ実行 | コマンド `dap.continue`、`dap.next`、`dap.stepIn`、`dap.stepOut`（仮） | `command/execute` |
+| ブレークポイントの切り替え | 操作 `breakpoint.toggle`（`dap.toggleBreakpoint`） | `provider/invoke`（カーソルの行）、`sign/set` |
+| 条件付きのブレークポイント、すべて消す | 操作 `breakpoint.conditional`（条件は `args` の `text`）、`breakpoint.clear` | `provider/invoke`、`sign/set`。条件は DAP の `SourceBreakpoint` の `condition` で送る |
+| デバッグの開始と終了 | 操作 `debug.continue`（始まっていなければ開始。`dap.start`）、`debug.terminate`（`dap.stop`）、`debug.restart`、`debug.runLast` | `provider/invoke` |
+| 続行、一時停止、ステップ実行 | 操作 `debug.continue`、`debug.pause`、`debug.stepOver`、`debug.stepIn`、`debug.stepOut`（`dap.continue`、`dap.next`、`dap.stepIn`、`dap.stepOut`） | `provider/invoke` |
 | 停止位置の表示 | DAP の `stopped` イベント | `editor/open`、`sign/set`、`message/show` |
 | デバッグ対象の出力 | DAP の `output` イベント | `output/append` |
 | ブレークポイントの位置の追従 | 編集と保存 | `buffer/change`、`buffer/didSave` |
@@ -1601,7 +1623,11 @@ DAP の拡張機能は、`pane/open`（5.3）で、変数（木の部品）、�
 端末多重化ソフトの外では、変数、スタック、デバッグ対象の出力のペインを、編集の client の画面の中央の 1 枚のポップアップに代える（FR-123。#179 の 2 つのコメントの裁定。まとめ方は仮。1.2）。
 拡張機能は外かどうかを区別せず、同じく `pane/open` を送る。
 利用者が閉じたら、本体は `view/closed`（5.3）で知らせ、拡張機能は `<leader>du` で開き直す（仮。1.2）。
-DAP の操作は、段階 2 のコマンド（`dap.toggleBreakpoint` など）に代えて、`provides` で名乗る本体の操作（5.5）にする。
+DAP の操作は、段階 2 のコマンド（`dap.toggleBreakpoint` など）に代えて、`provides` で名乗る本体の操作（5.5）にする（#203）。
+`debug.runLast` と `debug.restart` の「前回の設定」は、拡張機能が最後にデバッグを始めたときの launch の引数とデバッグアダプターの起動の方法である。
+`debug.restart` は、`debug.terminate` と同じ手順で終えてから、前回の設定で始め直す。
+`debug.pause` は、`threads` の最初のスレッドを対象に DAP の `pause` を送る。
+`debug.toggleUI` は、ペインを開く `pane/open` ができるまで引き受けない。
 
 ### 6.5 ACP
 
@@ -2043,7 +2069,7 @@ ACP の拡張機能は、エージェントが書いた内容をそのまま書�
 |---|---|---|
 | キーで呼び、操作の後に 1 文字を取る | `{"char": "x"}` | surround の `ysiw)` の `)` |
 | コマンドラインから ID で呼び、ID の後に引数を書く（`command/execute` だけ） | `{"text": "..."}` | `:acp.prompt この関数を説明して` の「この関数を説明して」 |
-| 引数が無い | 省く | `:dap.start`、`\u` |
+| 引数が無い | 省く | `:acp.cancel`、`\u` |
 
 宣言ファイルの `contributes.commands` のコマンドは、キーのほかに、Ex のコマンドラインで `:<コマンドの ID> <引数の文字列>` と書いて呼べる（#130）。
 規則は次のとおりである（`internal/command/ex` の `runExtCommand`）。
@@ -2305,6 +2331,8 @@ Vim の `mapleader` はマッピングを定義した時点の値で置き換え
 
 LSP と DAP の既定のキーは要件定義 4.11 の表のとおりで、どれも 5.5 の本体の操作に割り当てる（FR-95、FR-96）。
 利用者のキーマップは、既定のキーを上書きする。
+表は `internal/input` の `providerKeys` で、`<leader>` は起動の時点の `leader` に置き換える（`input.DefaultKeymapLeader`。#203）。
+拡張機能の宣言ファイルの `contributes` の `keys` が既定のキーと同じキーの列なら、拡張機能の操作を登録せずに設定の誤りとして知らせる（本体の既定のキーを優先する）。
 ノーマルモードの `<Tab>` と `<S-Tab>` はタブの移動（4.4。FR-98）、`<` と `>` は行をずらす操作（FR-76、FR-77）にする。
 ノーマルモードの `<` と `>` は次のキーを待たずにすぐずらすので、`<<` と打つと 2 回ずれる（#177 のコメントの決定。オーナーの nvim の `vim.keymap.set("n", "<", "<<")` と同じ動き）。
 F キーとオーナーの nvim の設定の小物の割り当ては、本体の既定にせず、配布物に同梱する設定の例（仮に `config.example.jsonc`）に書く（要件定義 4.11）。
@@ -2434,7 +2462,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-| 拡張機能 API のバージョンの付け方（いまは 0.3.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
+| 拡張機能 API のバージョンの付け方（いまは 0.4.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
 | 不正な UTF-8 を含むファイルのパスを拡張機能へ送るときの扱い（JSON の文字列では U+FFFD に置き換わる） | 4.1、5.3 |
 | 未保存のバッファを本体の panic から守る仕組み | 8 |
 | 補完の候補の表示と、インサートモードの入力ごとに言語サーバーへ問い合わせる契機 | 6.3 |
@@ -2461,6 +2489,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 | `doas` が、標準入力をパイプにしてもパスワードを端末から読むか | 4.7 |
 | `:!` の子孫が起動した待つだけの client のために、親の client が端末を取り戻すときの、子プロセスとの端末の取り合い | 4.9 |
 | 同じ操作を複数の拡張機能が `provides` で名乗ったときの選び方 | 5.5 |
+| 提供者の操作（`K`、`<leader>lr` など）をドットリピートの記録の対象から外すか（今は拡張機能の操作と同じく記録し、`K` の後の `.` がホバーを繰り返す。Vim の `K` は記録しない。外すには `internal/command` の `repeatable` が操作の種類を知る必要がある。#203） | 5.5 |
 | 提供者が無いときの `gq` を、Vim の既定の整形（行の折り返し）にするか | 5.5 |
 | MCP の `get_editor_state` が返すカーソルを、どの client のものにするか（仮に、操作中の client） | 6.7 |
 | `:help` の引き方と、`docs/usage.md` から埋め込む形への変換 | 7.2 |

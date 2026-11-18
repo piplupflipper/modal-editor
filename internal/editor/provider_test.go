@@ -103,6 +103,17 @@ func TestProviderKeys(t *testing.T) {
 	waitMsg("<Space>lh", "lspx hover cursor=0:1 range=- args= withheld=false")
 	h.keys("K")
 	waitMsg("K", "lspx hover cursor=0:1 range=- args= withheld=false")
+	// 提供者の操作は、拡張機能の操作と同じくドットリピートが記録する（docs/vim-differences.md。Vim の K は記録しない）。
+	h.keys("xK")
+	waitMsg("xK", "lspx hover cursor=0:1 range=- args= withheld=false")
+	h.e.do(func() { h.e.message.Text = "" })
+	h.keys(".")
+	waitMsg(". の後の K", "lspx hover cursor=0:1 range=- args= withheld=false")
+	if got := h.text(); got != "ac\ndef\nghi" {
+		t.Errorf("xK. の後: text = %q", got)
+	}
+	h.keys("u")
+	h.settle()
 
 	// <C-]> と <Space>lD は定義へ移り、<Space>ld は peek を付けて問い合わせ、移らない。
 	h.keys("<C-]>")
