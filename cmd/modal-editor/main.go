@@ -1,8 +1,12 @@
 // Command modal-editor は、エディタ本体の実行ファイルである。
 //
 // 引数のファイルを開き、端末（標準入力と標準出力）でエディタを動かす。
-// 編集の状態を持つ server（internal/server）と、端末を持つ編集の client（internal/client）を 1 つのプロセスの中で組み立て、
-// 両者を internal/protocol の接続でつなぐ（基本設計 1.2。FR-60 の構成）。
+// 編集の状態を持つのは server（internal/server）で、端末を持つのは編集の client（internal/client）である（基本設計 1.2）。
+//
+// tmux と herdr の中では、server を window（タブ）ごとに別のプロセスで動かす（FR-59）。
+// 起動したらソケットのパスを決め（autostart.go の connectAuto）、そのパスの server に編集の client として繋ぐ。
+// server がいなければ、自分の子として -server で起動してから繋ぐ。
+// それ以外（FR-60）では、server と編集の client を 1 つのプロセスの中で組み立て、両者を internal/protocol の接続でつなぐ。
 // このときも server のソケットを待ち受ける。
 //
 // 要件定義 8.1 の応答の計測のために、server と編集の client を別のプロセスで動かすオプションを持つ（利用者向けではない）。
@@ -29,6 +33,7 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/config"
 	"github.com/piplupflipper/modal-editor/internal/editor"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/mux"
 	"github.com/piplupflipper/modal-editor/internal/protocol"
 	"github.com/piplupflipper/modal-editor/internal/server"
 	"github.com/piplupflipper/modal-editor/internal/term"
@@ -69,6 +74,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	readOnly := flags.Bool("R", false, "引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）")
 	listen := flags.String("listen", "", "計測用（利用者向けではない）。端末を使わずに server だけを起動し、このパスのソケットで編集の client を待つ")
 	connect := flags.String("connect", "", "計測用（利用者向けではない）。このパスのソケットの server に編集の client として繋ぐ。ファイルの引数は取らない")
+	serverPath := flags.String("server", "", "内部用（利用者は指定しない）。tmux と herdr の中で起動した編集の client が、このパスのソケットの server として自分の子に起動する")
 
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("引数の解釈に失敗: %w", err)
@@ -79,12 +85,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 	switch {
-	case *listen != "" && *connect != "":
-		return errors.New("-listen と -connect は同時に指定できない")
+	case countSet(*listen, *connect, *serverPath) > 1:
+		return errors.New("-listen、-connect、-server は同時に指定できない")
 	case *connect != "" && flags.NArg() > 0:
 		return errors.New("-connect ではファイルを指定できない（開くのは server の側）")
 	case *listen != "":
 		return serve(*listen, flags.Args(), *readOnly, *logPath)
+	case *serverPath != "":
+		return serveAuto(*serverPath, flags.Args(), *readOnly, *logPath)
 	}
 
 	in, inOK := stdin.(*os.File)
@@ -96,6 +104,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 }
 
 var errNotTerminal = errors.New("標準入力と標準出力が端末のときだけ起動できる")
+
+// countSet は、values のうち空でないものの数を返す。
+func countSet(values ...string) int {
+	n := 0
+	for _, v := range values {
+		if v != "" {
+			n++
+		}
+	}
+	return n
+}
 
 // edit は、端末を開いてエディタを動かし、終わったら端末を元に戻す。
 //
@@ -138,9 +157,23 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 	defer func() { _ = tm.Close() }() // Close は誤りを返さない
 	return guard(tm.Restore, func() error {
 		if connect != "" {
-			return runClient(ctx, connect, tm, logger)
+			conn, err := protocol.Dial(connect)
+			if err != nil {
+				return fmt.Errorf("server に繋げない: %w", err)
+			}
+			return runClient(ctx, conn, tm, logger)
 		}
-		return runEditor(ctx, files, readOnly, tm, logger)
+		start := func(path string) (*serverChild, error) {
+			return startServerProcess(path, startOptions{files: files, readOnly: readOnly, logPath: logPath})
+		}
+		conn, problem := connectAuto(ctx, os.Getenv, mux.Detect(os.Getenv), start, logger)
+		if conn != nil {
+			return runClient(ctx, conn, tm, logger)
+		}
+		if problem != nil {
+			logger.Warn("server を使えない", "err", problem)
+		}
+		return runEditor(ctx, files, readOnly, tm, logger, problem)
 	})
 }
 
@@ -165,9 +198,13 @@ func guard(restore func() error, f func() error) (err error) {
 // server と client の間は protocol.Pipe でつなぐ。server の Run はこの goroutine で、client の Run は別の goroutine で動かす。
 // server の Run が戻ると接続が閉じ、client が端末を戻す。それを待ってから拡張機能を止める（editor.Editor.Close の doc の順序）。
 // ctx はシグナルで取り消される。起動の途中で取り消されていれば、Run は直ちに戻る。
-func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Terminal, logger *slog.Logger) error {
+// problem が nil でなければ、端末多重化ソフトの中なのに server を使えなかった理由で、起動後のメッセージで知らせる（基本設計 1.2）。
+func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Terminal, logger *slog.Logger, problem error) error {
 	cfg := loadConfig(logger)
 	cfg.ReadOnlyArgs = readOnly
+	if problem != nil {
+		cfg.Problems = append(cfg.Problems, problem)
+	}
 	// editor、exthost、server が起こす goroutine の panic でも、その goroutine の上で端末を戻してから panic を続ける（基本設計 8 章）。
 	// 端末を持つのは client だが、同じプロセスの中なので server の側からも戻せる。
 	cfg.OnPanic = func() { _ = tm.Restore() } // panic を続けるので、戻す誤りは捨てる
@@ -280,13 +317,10 @@ func serve(path string, files []string, readOnly bool, logPath string) error {
 	return err
 }
 
-// runClient は、-connect のときの本体で、path の server に編集の client として繋ぐ（基本設計 1.2 の計測のためのオプション。利用者向けではない）。
+// runClient は、server のソケットの接続 conn で、編集の client として動く（基本設計 1.2）。
+// tmux と herdr の中で server に繋いだときと、-connect（計測のためのオプション。利用者向けではない）のときに使う。
 // server が接続を閉じるか、端末の入力が終わるまで動かす。ctx が終わったら接続を閉じ、端末を戻して終わる。
-func runClient(ctx context.Context, path string, tm *term.Terminal, logger *slog.Logger) error {
-	conn, err := protocol.Dial(path)
-	if err != nil {
-		return fmt.Errorf("server に繋げない: %w", err)
-	}
+func runClient(ctx context.Context, conn protocol.ClientConn, tm *term.Terminal, logger *slog.Logger) error {
 	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() }) // client.Run が端末を戻して戻る
 	defer stopClose()
 	if err := client.Run(tm, conn, logger); err != nil {

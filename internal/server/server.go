@@ -8,7 +8,8 @@
 //
 // 編集の client は 1 つだけ繋ぐ。1 つのプロセスの中の接続（protocol.Pipe。FR-60 の構成）でも、
 // server のソケット（protocol.NewServerSocket。Listen で待ち受ける）でもよい（Serve）。
-// 1 つのプロセスの構成でも server のソケットを待ち受けるが（基本設計 1.2）、2 つ目からの接続は、受け付けてすぐ閉じる。
+// 1 つのプロセスの構成でも server のソケットを待ち受けるが（基本設計 1.2）、2 つ目からの接続は、
+// 理由（BusyReason）付きの終わりの知らせを送って閉じる。
 // 複数の編集の client、部品の client、待つだけの client、client ごとのタブの並びは後の段で足す。
 // それに備えて、client ごとに識別子（editor.ClientID）を割り当て、キーのイベントに付けてイベントループへ渡す（基本設計 2.1）。
 //
@@ -95,7 +96,7 @@ func (s *Server) Run(ctx context.Context, conn protocol.ServerConn) error {
 //
 // first が nil でなければ、それを編集の client にする（1 つのプロセスの構成）。
 // first が nil なら、ln で受け付けた接続のうち、最初に編集の client の Hello を送ったものを編集の client にする（server だけのプロセス）。
-// ln が nil でなければ、Serve の間 ln で待ち受け、編集の client を繋いだ後に届いた接続は受け付けてすぐ閉じる（今は 2 つ目の client に応えない）。
+// ln が nil でなければ、Serve の間 ln で待ち受け、編集の client を繋いだ後に届いた接続は、理由 BusyReason の終わりの知らせを送って閉じる（今は 2 つ目の client に応えない）。
 // Serve は戻る前に ln を閉じる。
 //
 // 戻り値は editor.Editor.Run と同じで、:q で nil、client が接続を閉じたら editor.ErrTerminalLost、ctx の終わりで ctx.Err() である。
@@ -228,8 +229,8 @@ func (s *Server) startAccept(ln net.Listener, busy bool) *acceptor {
 			}
 			conn := protocol.NewServerSocket(c)
 			if !a.busy.CompareAndSwap(false, true) {
-				s.log.Info("2 つ目の client には応えないので、接続を閉じた")
-				_ = conn.Close()
+				s.log.Info("2 つ目の client には応えないので、接続を閉じる")
+				go s.reject(conn)
 				continue
 			}
 			select {
@@ -241,6 +242,26 @@ func (s *Server) startAccept(ln net.Listener, busy bool) *acceptor {
 		}
 	}()
 	return a
+}
+
+// BusyReason は、2 つ目の編集の client を断るときに、終わりの知らせ（protocol.Exit）の理由に載せる文言である。
+// 今の server は編集の client を 1 つだけ繋ぐ（複数の編集の client は後の段で足す。パッケージの doc）。
+const BusyReason = "この server には別の編集の client が繋いでいる（同じ window の 2 つ目の編集の client はまだ使えない）"
+
+// rejectTimeout は、断る client へ終わりの知らせを送るのを待つ上限である。超えたら送らずに閉じる。
+const rejectTimeout = time.Second
+
+// reject は、受け付けない接続 conn に、理由 BusyReason の終わりの知らせを送ってから閉じる。
+// client は、server が異常終了したとみなさずに、理由を出して終わる（基本設計 1.2）。
+// 読まない接続で受け付けの goroutine が止まらないよう、別の goroutine で呼ぶ。
+func (s *Server) reject(conn protocol.ServerConn) {
+	defer s.client.recoverPanic()
+	timer := time.AfterFunc(rejectTimeout, func() { _ = conn.Close() }) // 送り終えなければ閉じて Send を戻す
+	defer timer.Stop()
+	if err := conn.Send(protocol.Exit{Reason: BusyReason}); err != nil && !errors.Is(err, protocol.ErrClosed) {
+		s.log.Warn("断る client へ終わりの知らせを送れない", "err", err)
+	}
+	_ = conn.Close() // 閉じる誤りは、client の側の Recv で分かる
 }
 
 func (a *acceptor) stop() {

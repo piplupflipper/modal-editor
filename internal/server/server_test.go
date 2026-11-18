@@ -492,7 +492,7 @@ func TestRunFlushesClipboardBeforeClose(t *testing.T) {
 }
 
 // server のソケットで待ち受けた Serve は、最初に Hello を送った編集の client を繋ぎ、その接続で編集して :q で終わる。
-// 編集の client を繋いだ後に届いた接続は、受け付けてすぐ閉じる。Serve はソケットのファイルを消して戻る。
+// 編集の client を繋いだ後に届いた接続は、理由 BusyReason の終わりの知らせを送って閉じる。Serve はソケットのファイルを消して戻る。
 func TestServeOverSocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.txt")
 	srv := newServer(t)
@@ -527,8 +527,11 @@ func TestServeOverSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if m, rerr := second.Recv(); rerr != nil || m != (protocol.Exit{Reason: BusyReason}) {
+		t.Fatalf("second client Recv = %#v, %v; want an Exit with BusyReason", m, rerr)
+	}
 	if _, err = second.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("second client Recv = %v, want io.EOF (closed by the server)", err)
+		t.Fatalf("second client Recv after Exit = %v, want io.EOF (closed by the server)", err)
 	}
 	_ = second.Close()
 

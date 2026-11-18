@@ -118,8 +118,8 @@ func measureFootprint(t *testing.T, bin, path string) footprintSample {
 	t.Helper()
 	tmp := t.TempDir()
 	master, tty := ptytest.Open(t, 80, 24)
-	cmd := exec.Command(bin, path) //nolint:gosec // make build の本体をエディタとして起動する
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd := exec.Command(bin, path)                        //nolint:gosec // make build の本体をエディタとして起動する
+	cmd.Env = append(muxFreeEnv(), "TERM=xterm-256color") // 1 つのプロセスの構成（FR-60）を測る
 	for _, name := range []string{"CONFIG", "DATA", "STATE", "CACHE"} {
 		d := filepath.Join(tmp, strings.ToLower(name))
 		if err := os.Mkdir(d, 0o700); err != nil {

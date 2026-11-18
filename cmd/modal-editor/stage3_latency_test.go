@@ -269,7 +269,7 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		t.Fatal(err)
 	}
 	xdg := t.TempDir()
-	env := append(os.Environ(), "TERM=xterm-256color", "XDG_RUNTIME_DIR="+filepath.Join(xdg, "run"))
+	env := append(muxFreeEnv(), "TERM=xterm-256color", "XDG_RUNTIME_DIR="+filepath.Join(xdg, "run"))
 	for _, name := range []string{"CONFIG", "DATA", "STATE", "CACHE"} {
 		env = append(env, "XDG_"+name+"_HOME="+filepath.Join(xdg, strings.ToLower(name)))
 	}
