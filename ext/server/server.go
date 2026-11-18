@@ -234,7 +234,8 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 // 本体はループの応答を待つ間 buffer/edit を処理できず、ループは Edit の応答を待つので、本体の期限まで詰まる。
 // Server が渡した ctx（またはそれから作った ctx）で、ループの上から呼ぶと、送らずに ErrEditInHandler を返す。
 // 問い合わせの編集は OperatorApplyResult と CommandExecuteResult の Transaction で返し、
-// フックから編集したいときは、go で別の goroutine を起こしてその中で呼ぶ。
+// フックから編集したいときは、go で別の goroutine を起こし、その中で Server が渡したのとは別の ctx で呼ぶ（Server の doc）。
+// Server が渡した ctx（またはそれから作った ctx）は、フックが戻るまで、別の goroutine から渡しても ErrEditInHandler になる（loopMark の doc）。
 // 非同期のハンドラーの reply の前に、その結果を待つ本体へ Edit するのも同じ理由で詰まる。
 func (s *Server) Edit(ctx context.Context, p ext.BufferEditParams) (ext.BufferEditResult, error) {
 	var res ext.BufferEditResult
@@ -272,6 +273,7 @@ type loopKey struct{}
 
 // loopMark は、ループの上の呼び出しの印である。呼び出しが戻ると active を false にする。
 // 非同期のハンドラーが ctx を別の goroutine へ持ち出しても、戻った後は印が効かない。
+// 印は goroutine を区別しないので、戻る前は、持ち出した先の goroutine から呼んでもループの上からの呼び出しとみなす（#214）。
 type loopMark struct {
 	s      *Server
 	active atomic.Bool

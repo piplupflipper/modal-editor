@@ -681,10 +681,16 @@ func TestAsyncHandler(t *testing.T) {
 }
 
 // フックの中から、渡された ctx で Edit を呼ぶと、待たずに ErrEditInHandler を返し、後続の問い合わせは詰まらない。
-// フックが起こした goroutine からは、同じ ctx でも Edit が送られる。
+// フックが戻った後は、フックが起こした goroutine から同じ ctx で Edit を呼んでも送られる。
+//
+// フックが戻る前に goroutine が同じ ctx で Edit を呼ぶと、印がまだ有効なので ErrEditInHandler になる（loopMark の doc）。
+// このため goroutine は、ループがフックの次のメッセージ（motion/resolve）を処理するまで待ってから Edit を呼ぶ（#214）。
 func TestEditInHook(t *testing.T) {
 	s := server.New()
+	// released は、ループが motion/resolve を処理した、つまり buffer/change のフックから戻って印を外し終えたことを表す。
+	released := make(chan struct{})
 	s.Motion("m", func(context.Context, *server.Buffer, *ext.MotionResolveParams) (ext.MotionResolveResult, error) {
+		close(released)
 		return ext.MotionResolveResult{OK: true}, nil
 	})
 	inHook := make(chan error, 1)
@@ -694,6 +700,12 @@ func TestEditInHook(t *testing.T) {
 		_, err := s.Edit(ctx, p)
 		inHook <- err
 		go func() {
+			select {
+			case <-released:
+			case <-time.After(timeout):
+				background <- errors.New("motion/resolve was not handled")
+				return
+			}
 			bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 			defer cancel()
 			_, err := s.Edit(bctx, p)
@@ -712,14 +724,28 @@ func TestEditInHook(t *testing.T) {
 	if err := h.conn.Call(ctx, ext.MethodMotionResolve, ext.MotionResolveParams{Buffer: 1, Version: 2, ID: "m"}, nil); err != nil {
 		t.Errorf("motion/resolve after Edit in hook: %v", err)
 	}
-	if err := <-inHook; !errors.Is(err, server.ErrEditInHandler) {
+	// 受け取りには期限を置く。届かないときに、テスト全体の期限（10 分）まで止まらずに、どこで止まったかを示して落とす。
+	if err := recvWithin(t, inHook, "Edit in hook"); !errors.Is(err, server.ErrEditInHandler) {
 		t.Errorf("Edit in hook = %v, want ErrEditInHandler", err)
 	}
-	if err := <-background; err != nil {
-		t.Errorf("Edit from a goroutine = %v", err)
+	if err := recvWithin(t, background, "Edit from a goroutine"); err != nil {
+		t.Fatalf("Edit from a goroutine = %v", err)
 	}
-	if p := <-h.edits; p.Transaction.BaseVersion != 2 {
+	if p := recvWithin(t, h.edits, "buffer/edit on the host"); p.Transaction.BaseVersion != 2 {
 		t.Errorf("host received %+v", p)
+	}
+}
+
+// recvWithin は、ch から 1 つ受け取って返す。timeout までに届かなければテストを落とす。
+func recvWithin[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(timeout):
+		t.Fatalf("%s: nothing received within %v", what, timeout)
+		var zero T
+		return zero
 	}
 }
 
