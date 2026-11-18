@@ -97,9 +97,10 @@ func (e *Editor) stateChange(ev *exthost.StateChange) {
 	switch ev.State {
 	case exthost.StateRestartWait, exthost.StateDisabled:
 		e.clearExtension(ev.Extension)
-		if ev.State == exthost.StateDisabled && ev.Err == nil {
-			// 利用者の指示で止めた（:ext sync が削除の後に止めた。exthost.Host.Disable）。
+		if ev.State == exthost.StateDisabled && ev.Err == nil && e.extStopped[ev.Extension] {
+			// :ext sync が削除の後に止めた（exthost.Host.Disable）。
 			// 異常ではないので知らせず、:ext sync の結果のメッセージを残す。
+			delete(e.extStopped, ev.Extension)
 			break
 		}
 		text := fmt.Sprintf("拡張機能 %s が異常終了しました", ev.Extension)

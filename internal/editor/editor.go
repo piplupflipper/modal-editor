@@ -213,10 +213,12 @@ type Editor struct {
 	shell     *shellJob
 	shellDone chan shellOutcome
 	// extSync は、実行中の :ext sync である。無ければ nil。進み具合と結果は inspect で届く（extsync.go）。
-	extSync   *extSyncJob
-	resizeCh  chan struct{}
-	size      atomic.Value // [2]int
-	inputDone chan struct{}
+	extSync *extSyncJob
+	// extStopped は、:ext sync が削除の後に Disable で止めた拡張機能の ID である。無効になった知らせを異常として出さない（stateChange）。
+	extStopped map[string]bool
+	resizeCh   chan struct{}
+	size       atomic.Value // [2]int
+	inputDone  chan struct{}
 	// inspect は、別の goroutine から関数をイベントループの goroutine で実行させる。テストが状態を読むのと（do）、
 	// :ext sync の進み具合と結果を渡すのに使う（extsync.go）。
 	inspect chan func()

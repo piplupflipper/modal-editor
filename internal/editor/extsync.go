@@ -28,8 +28,10 @@ import (
 //
 // 終わった後の扱いは次のとおりにする（仮）。宣言ファイルは読み直さない。
 //
-//   - 更新したもの（extmgr.ActionUpdated）が本体の使っている拡張機能なら、exthost.Host.Reload で止め、次の起動の契機で新しい実行ファイルを起動する。
-//     宣言ファイルの中身が変わったとき（キー、コマンド、起動の契機）と ID が変わったときは、本体を起動し直すまで反映しない
+//   - 更新したもの（extmgr.ActionUpdated）が本体の使っている拡張機能なら、exthost.Host.Reload で止め、新しい実行ファイルを起動し直す
+//     （開いているバッファのファイルの種類で起動するものはすぐに、それ以外は次の起動の契機で）。
+//     宣言ファイルの中身が変わったとき（キー、コマンド、起動の契機）は Reload せずに前の版を動かし続け、本体を起動し直すまで反映しない。
+//     ID が変わったときは前の ID の拡張機能を止め、本体を起動し直すまで新しい版は使えない
 //   - 新しく入れたもの（extmgr.ActionInstalled）は、本体を起動し直すと使える
 //   - 削除したもの（extmgr.ActionRemoved）が本体の使っている拡張機能なら、exthost.Host.Disable で止める
 //
@@ -259,16 +261,19 @@ func (e *Editor) extSyncFinished(res extSyncResult) {
 		dir := filepath.Join(res.extDir, o.Name)
 		switch o.Action {
 		case extmgr.ActionUpdated:
-			if e.usedSpec(o.PreviousID, dir) {
-				if o.ID == o.PreviousID {
-					e.stopExtension(o.PreviousID, e.host.Reload)
-				} else {
-					e.stopExtension(o.PreviousID, e.host.Disable)
-				}
+			manifestChanged := !bytes.Equal(res.before[o.Name], res.after[o.Name])
+			switch {
+			case !e.usedSpec(o.PreviousID, dir):
+			case o.ID != o.PreviousID:
+				e.stopExtension(o.PreviousID, e.host.Disable)
+			case !manifestChanged:
+				e.stopExtension(o.PreviousID, e.host.Reload)
 			}
-			if o.ID != o.PreviousID || !bytes.Equal(res.before[o.Name], res.after[o.Name]) {
+			// 宣言ファイルが変わったら（command のパスが変わりうる）、Reload すると前の宣言のまま新しい版を起動して失敗しうるので、
+			// 前の版のプロセスを動かし続け、起動し直しを求める（PR #220 のレビューの推奨 3）。
+			if o.ID != o.PreviousID || manifestChanged {
 				restart = true
-				report = append(report, fmt.Sprintf("%s: 宣言ファイルが変わったので、本体を起動し直すと反映する", o.Name))
+				report = append(report, fmt.Sprintf("%s: 宣言ファイルが変わったので、本体を起動し直すと反映する（それまでは前の版が動く）", o.Name))
 			}
 		case extmgr.ActionInstalled:
 			restart = true
@@ -318,14 +323,21 @@ func (e *Editor) extSyncFinished(res extSyncResult) {
 	}
 	e.message = ui.Message{Text: summary, Level: level}
 	if len(report) > 0 && e.cur != nil {
-		// 1 行に収まらない内訳（失敗の理由、警告、起動し直しの要るもの）は、ホバーと同じポップアップに出す。カーソルを動かすと消える。
-		e.popup = &popupState{bs: e.cur, cursor: e.cur.state.Cursor(), text: summary + "\n\n" + strings.Join(report, "\n")}
+		// 1 行に収まらない内訳（失敗の理由、警告、起動し直しの要るもの）は、画面の中央のポップアップに出す。カーソルを動かすと消える。
+		// #179 の裁定の ACP と DAP の出力と同じ扱い（オーケストレータの仮の決定）で、端末多重化ソフトの中ではペインに出すが、
+		// ペインを開く口がまだ無いので、中でも外の規則（client の画面の中央）で出す。
+		e.popup = &popupState{bs: e.cur, cursor: e.cur.state.Cursor(), text: summary + "\n\n" + strings.Join(report, "\n"), center: true}
 	}
 	e.log.Info("ext sync finished", "summary", summary, "details", strings.Join(report, "; "))
 }
 
 // stopExtension は、拡張機能 id を stop（exthost.Host.Reload か Disable）で止める。誤りはログに記録するだけにする。
+// 止めた ID を extStopped に記録し、無効になった知らせを異常として出さないようにする。
 func (e *Editor) stopExtension(id string, stop func(string) error) {
+	if e.extStopped == nil {
+		e.extStopped = map[string]bool{}
+	}
+	e.extStopped[id] = true
 	if err := stop(id); err != nil && !errors.Is(err, exthost.ErrClosed) {
 		e.log.Warn("拡張機能を止められない", "extension", id, "err", err)
 	}

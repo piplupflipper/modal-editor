@@ -293,6 +293,29 @@ func TestReload(t *testing.T) {
 	}
 }
 
+// ファイルの種類で起動する拡張機能は、Reload で止めた後、開いたままのバッファのファイルの種類で起動し直し、全文を受け取り直す
+// （PR #220 のレビューの必須 1）。
+func TestReloadFileType(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "lsp", modeNormal, "go")}, nil, true)
+	if err := hs.h.OpenBuffer(BufferSnapshot{ID: 1, Version: 1, Text: "package main", FileType: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("lsp", StateRunning)
+	if err := hs.h.Reload("lsp"); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("lsp", StateNotStarted)
+	hs.waitState("lsp", StateStarting)
+	hs.waitState("lsp", StateRunning)
+	var s fakeState
+	if err := hs.h.Call(ctx, "lsp", methodState, nil, callTimeout, &s); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Buffers[1].Text; got != "package main" {
+		t.Errorf("起動し直した拡張機能のバッファ 1 = %q, want %q", got, "package main")
+	}
+}
+
 func TestDisableNotRunning(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "idle", modeNormal, ""), fakeSpec(t, "crash", modeExit, "")}, func(c *Config) {
 		c.RestartDelay = time.Hour

@@ -61,6 +61,7 @@ func stripCodeFences(s string) string {
 // （6.7 の format は、整形するかを ui が決めてよいとしている）。
 //
 // 枠線の記号（SymbolPopupBorder）があれば、窓の周りに 1 列と 1 行ずつ枠線を描く。幅と行数の上限は枠線を含めて数える。
+// curRow が負なら、カーソルの位置に依らず、窓をバッファの表示領域の縦と横の中央に置く（Frame.PopupCenter）。
 func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol int) {
 	lines := textLines(text)
 	chars, bordered := r.border()
@@ -82,6 +83,7 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 		}
 	}
 	textRows := r.textRows()
+	center := curRow < 0
 	// 上と下に本文を置ける行数は、枠線の 2 行を除いて数える（枠線を数えずに決めると、下に枠線しか入らない行で何も出なかった。PR #206 のレビュー）。
 	below, above := textRows-curRow-1-2*b, curRow-2*b
 	useAbove := len(rows) > below && above > below
@@ -89,12 +91,18 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 	if useAbove {
 		space = above
 	}
+	if center {
+		space = textRows - 2*b
+	}
 	h := min(len(rows), popupMaxRows-2*b, space)
 	if h <= 0 {
 		return
 	}
 	top := curRow + 1 + b
-	if useAbove {
+	switch {
+	case center:
+		top = (textRows-h-2*b)/2 + b
+	case useAbove:
 		top = curRow - h - b
 	}
 	note := ""
@@ -104,6 +112,9 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 	}
 	boxW := min(width+2, maxW)
 	x0 := max(min(curCol, r.Width-boxW-2*b), 0) + b
+	if center {
+		x0 = max((r.Width-boxW-2*b)/2, 0) + b
+	}
 	a := theme.attr(StylePopup)
 	special := theme.attr(StyleSpecialKey)
 	if bordered {

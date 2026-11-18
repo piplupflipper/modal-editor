@@ -51,6 +51,21 @@
 // 同じ節の GIT_NAMESPACE と GIT_CEILING_DIRECTORIES、GIT_DISCOVERY_ACROSS_FILESYSTEM を足したものである。
 // 認証の問い合わせで止まらないように、GIT_TERMINAL_PROMPT=0 を渡す。
 //
+// go のビルドの結果が、本体を起動したシェルの環境に依らないように、次の環境変数（goEnvVars）も本体の環境から外し、
+// 決まった値を渡す（PR #220 のレビュー）。Options.Env に書いたものは外さない（テストが GOFLAGS などを渡すため）。
+//
+//   - GOROOT: 外す。go は自分の場所から GOROOT を決める。シェルに別の版の GOROOT が残っていると
+//     （mise などが作業ディレクトリで版を選ぶとき、PATH の go と食い違う）、compile の版が合わずに失敗する
+//   - GOOS、GOARCH: 本体が動いている OS とアーキテクチャ（runtime.GOOS、runtime.GOARCH）を渡す。
+//     go env -w で書いた値より環境変数が優先されるので、それも上書きする。別の値だと、入れた実行ファイルを起動できない
+//   - GOARM、GOARM64、GOAMD64、GO386、GOMIPS、GOMIPS64、GOPPC64、GORISCV64、GOWASM（アーキテクチャの副変数）: 外し、既定にする
+//   - GOWORK: off を渡す。利用者の go.work に拡張機能のソースのディレクトリが入っていないと、ビルドが失敗する
+//   - GOFLAGS: 外す。go build には -mod=readonly を明示し、go env -w で書いた -mod=vendor なども上書きする
+//
+// GOTOOLCHAIN は外さない。ext/server を使う拡張機能の go.mod は本体と同じ版の Go を要するので、
+// 利用者の go が古ければ、既定の auto で新しい版に切り替える必要がある。
+// GOPATH、GOCACHE、GOMODCACHE、GOPROXY、GOPRIVATE、CGO_ENABLED も、利用者の設定のまま使う。
+//
 // # テストの環境
 //
 // テストはネットワークに出ず、利用者の Go のキャッシュと GOPATH を汚さない。
@@ -78,6 +93,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -766,7 +782,7 @@ func (s *syncer) build(ctx context.Context, src string, entry LockEntry) (stagin
 	if err = os.Mkdir(out, 0o755); err != nil { //nolint:gosec // G301: ExtensionsDir の下の拡張機能のディレクトリになるので、同梱の拡張機能（make dist）と同じ許可属性にする
 		return staging, "", err
 	}
-	if _, err = s.run(ctx, src, s.opts.Go, "build", "-trimpath", "-o", filepath.Join(out, command), "."); err != nil {
+	if _, err = s.run(ctx, src, s.opts.Go, "build", "-trimpath", "-mod=readonly", "-o", filepath.Join(out, command), "."); err != nil {
 		return staging, "", err
 	}
 	marker, err := json.MarshalIndent(entry, "", "  ")
@@ -900,17 +916,30 @@ func (s *syncer) git(ctx context.Context, dir string, args ...string) (string, e
 const waitDelay = 5 * time.Second
 
 // childEnv は、git と go の子プロセスの環境変数を返す（package の doc の「子プロセスの環境変数」）。
+// 同じ名前が複数あれば、os/exec は後のものを使う。
 func (s *syncer) childEnv() []string {
-	all := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	all = append(all, s.opts.Env...)
-	env := make([]string, 0, len(all))
-	for _, kv := range all {
+	env := make([]string, 0, len(os.Environ())+len(s.opts.Env)+4)
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if !repoEnvVars[k] && !goEnvVars[k] {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "GIT_TERMINAL_PROMPT=0", "GOWORK=off", "GOOS="+runtime.GOOS, "GOARCH="+runtime.GOARCH)
+	for _, kv := range s.opts.Env {
 		k, _, _ := strings.Cut(kv, "=")
 		if !repoEnvVars[k] {
 			env = append(env, kv)
 		}
 	}
 	return env
+}
+
+// goEnvVars は、go の子プロセスに本体の環境から渡さない環境変数である（package の doc の「子プロセスの環境変数」）。
+var goEnvVars = map[string]bool{
+	"GOROOT": true, "GOOS": true, "GOARCH": true, "GOWORK": true, "GOFLAGS": true,
+	"GOARM": true, "GOARM64": true, "GOAMD64": true, "GO386": true, "GOMIPS": true, "GOMIPS64": true,
+	"GOPPC64": true, "GORISCV64": true, "GOWASM": true,
 }
 
 // run は、dir で name を実行し、標準出力を返す。

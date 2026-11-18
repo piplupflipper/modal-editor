@@ -53,12 +53,17 @@ func extSyncRepo(t *testing.T, env []string) string {
 		}
 	}
 	git("init", "--quiet", "--initial-branch=main")
-	for _, v := range []string{"v1", "v2"} {
+	for _, v := range []string{"v1", "v2", "v3"} {
+		cmds := `[{"id": "hello.run"}]`
+		if v == "v3" {
+			// v3 は宣言ファイルを変える（コマンドを足す）。
+			cmds = `[{"id": "hello.run"}, {"id": "hello.more"}]`
+		}
 		files := map[string]string{
 			"go.mod":  "module example.com/hello\n\ngo 1.21\n",
 			"main.go": fmt.Sprintf("package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Print(%q) }\n", v),
 			extmgr.ManifestFileName: `{"id": "hello", "command": "./` + extSyncCommand + `",
-  "activation": [{"on": "command", "id": "hello.run"}], "contributes": {"commands": [{"id": "hello.run"}]}}
+  "activation": [{"on": "command", "id": "hello.run"}], "contributes": {"commands": ` + cmds + `}}
 `,
 		}
 		for name, body := range files {
@@ -150,15 +155,26 @@ func TestExtSync(t *testing.T) {
 		t.Errorf("宣言ファイルが同じなのに起動し直しを求めた: %q", msg)
 	}
 
+	// 宣言ファイルが変わったら、前の版を止めずに動かし続け、起動し直しを求める。
+	h.keys(":fake.upper<CR>")
+	h.eventually("hello の起動", func() bool { return h.state("hello") == exthost.StateRunning })
+	writeConfig(entry("v3"))
+	h.keys(":ext sync<CR>")
+	h.waitMessage("拡張機能: 追加 0、更新 1、削除 0、変更なし 0、失敗 0。本体を起動し直すと反映します")
+	runs("v3")
+	if st := h.state("hello"); st != exthost.StateRunning {
+		t.Errorf("宣言ファイルが変わった hello の状態 = %v, want 稼働中のまま", st)
+	}
+
 	// 書き損じ（version が空）では、設定から外れても削除しない。
 	writeConfig(fmt.Sprintf(`{"name": "hello", "repo": %q, "version": ""}`, repo))
 	h.keys(":ext sync<CR>")
 	h.waitMessage("拡張機能: 追加 0、更新 0、削除 0、変更なし 0、失敗 0")
-	runs("v2")
+	runs("v3")
 	lockHas(true)
 	h.e.do(func() {
-		if h.e.popup == nil || !strings.Contains(h.e.popup.text, "削除しなかった") {
-			t.Errorf("ポップアップ = %+v; want 削除しなかったことを知らせる", h.e.popup)
+		if h.e.popup == nil || !strings.Contains(h.e.popup.text, "削除しなかった") || !h.e.popup.center {
+			t.Errorf("ポップアップ = %+v; want 削除しなかったことを画面の中央に知らせる", h.e.popup)
 		}
 	})
 

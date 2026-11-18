@@ -3,6 +3,7 @@ package extmgr
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -112,6 +113,37 @@ func TestSyncShadowWarnings(t *testing.T) {
 	if out[0].Action != ActionUnchanged || out[0].Warning == nil || !strings.Contains(out[0].Warning.Error(), "拡張機能 0hand と重なるので、本体は hello を使わない") {
 		t.Errorf("%v Warning = %v; want 0hand との重なり", out[0].Action, out[0].Warning)
 	}
+}
+
+// 本体の環境の GOROOT、GOOS、GOARCH、GOWORK、GOFLAGS は go build に渡さず、本体の動く OS とアーキテクチャの実行ファイルを作る
+// （PR #220 のレビューの必須 2）。t.Setenv を使うので並行にしない。
+func TestSyncIgnoresGoEnv(t *testing.T) {
+	r := newRepo(t)
+	r.commitExt("v1")
+	e := newEnv(t)
+	// テストの Options.Env の GOWORK=off を除き、本体の環境の GOWORK が外れることを確かめる。
+	e.opts.Env = nil
+	for _, kv := range testEnv {
+		if !strings.HasPrefix(kv, "GOWORK=") {
+			e.opts.Env = append(e.opts.Env, kv)
+		}
+	}
+	work := filepath.Join(t.TempDir(), "go.work")
+	if err := os.WriteFile(work, []byte("go 1.21\n\nuse ./other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOWORK", work)
+	t.Setenv("GOROOT", filepath.Join(t.TempDir(), "no-goroot"))
+	other := "darwin"
+	if runtime.GOOS == other {
+		other = "linux"
+	}
+	t.Setenv("GOOS", other)
+	t.Setenv("GOARCH", "arm")
+	t.Setenv("GOARM", "5")
+
+	wantOutcomes(t, e.sync(t, Spec{Name: "hello", Repo: r.dir, Version: "main"}), Outcome{Name: "hello", Action: ActionInstalled})
+	e.wantRuns(t, "hello", "v1")
 }
 
 func writeManifest(t *testing.T, dir, id string) {

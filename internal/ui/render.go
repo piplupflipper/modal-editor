@@ -188,7 +188,11 @@ func (r *Renderer) Render(f *Frame) Screen {
 		if f.PopupMarkdown {
 			text = stripCodeFences(text)
 		}
-		r.drawPopup(g, theme, text, cur.line-r.top, r.textLeft()+cur.col-r.left)
+		if f.PopupCenter {
+			r.drawPopup(g, theme, text, -1, -1)
+		} else {
+			r.drawPopup(g, theme, text, cur.line-r.top, r.textLeft()+cur.col-r.left)
+		}
 	}
 	screen := Screen{Grid: g, Cursor: Cursor{
 		Row: cur.line - r.top, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,
