@@ -139,8 +139,8 @@ type Config struct {
 	// ReadOnlyArgs は、Open で開くファイル（起動の引数のファイル）を、編集を禁止した状態で開くことを表す（起動のオプション -R。FR-119）。
 	// :e などで後から開くファイルには効かない（基本設計 4.6）。
 	ReadOnlyArgs bool
-	// ReadOnlyPaths は、開いた時点で編集を禁止にするファイルの置き場所のディレクトリの絶対パスである（設定の readonlyPaths。FR-120）。
-	// 開くファイルの絶対パスが、どれかのディレクトリの下にあれば禁止にする（underReadOnlyPath）。
+	// ReadOnlyPaths は、開いた時点で編集を禁止にするファイルの置き場所である（設定の readonlyPaths。FR-120）。
+	// 各項目はディレクトリの絶対パスか、"/" を含まないディレクトリの名前（"node_modules"）で、照合の規則は underReadOnlyPath にある。
 	ReadOnlyPaths []string
 	// Problems は、呼び出し側が設定ファイルと宣言ファイルを読んだときの誤り（位置と内容）である（基本設計 8 章）。
 	// New は、すべてをログに記録し、New 自身が見つけた設定の誤りより先に並べて、最初の 1 件を起動後のメッセージで知らせる。

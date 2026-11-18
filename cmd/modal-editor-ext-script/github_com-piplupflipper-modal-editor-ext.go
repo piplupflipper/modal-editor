@@ -22,6 +22,7 @@ func init() {
 		"EnvExtensionDir":          reflect.ValueOf(constant.MakeFromLiteral("\"MODAL_EDITOR_EXTENSION_DIR\"", token.STRING, 0)),
 		"EnvMCPSocket":             reflect.ValueOf(constant.MakeFromLiteral("\"MODAL_EDITOR_MCP_SOCKET\"", token.STRING, 0)),
 		"EnvSocketFDs":             reflect.ValueOf(constant.MakeFromLiteral("\"MODAL_EDITOR_SOCKET_FDS\"", token.STRING, 0)),
+		"ErrorCodeReadOnly":        reflect.ValueOf(ext.ErrorCodeReadOnly),
 		"MessageError":             reflect.ValueOf(ext.MessageError),
 		"MessageInfo":              reflect.ValueOf(ext.MessageInfo),
 		"MessageWarning":           reflect.ValueOf(ext.MessageWarning),

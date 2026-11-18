@@ -48,6 +48,7 @@ const (
 
 	// MethodBufferEdit は、拡張機能から本体へのリクエストである。
 	// params は BufferEditParams、result は BufferEditResult。
+	// 編集を禁止したバッファ（基本設計 4.6）への要求は、result ではなく、code が ErrorCodeReadOnly の誤りの応答で断る。
 	MethodBufferEdit = "buffer/edit"
 	// MethodDecorationSet は、拡張機能から本体への通知である。params は DecorationSetParams。
 	MethodDecorationSet = "decoration/set"
@@ -355,7 +356,15 @@ type BufferEditParams struct {
 	EndOfLine *bool `json:"endOfLine,omitempty"`
 }
 
+// ErrorCodeReadOnly は、編集を禁止したバッファ（基本設計 4.6。FR-118）への buffer/edit を本体が断るときの、誤りの応答の code である。
+// JSON-RPC 2.0 で実装が定める誤りの範囲（-32000〜-32099）の値である。message は画面に出すものと同じ E21 の文言である。
+// 編集の無い（NoLines と EndOfLine だけの）要求も断る。
+// 版の不一致（BufferEditResult の Applied が false）と違い、新しい版で作り直しても通らないので、拡張機能は繰り返さない。
+// ext/server を使う拡張機能は、server.IsReadOnly で見分けられる。
+const ErrorCodeReadOnly int64 = -32001
+
 // BufferEditResult は、buffer/edit の result である。
+// 編集を禁止したバッファへの要求では result を返さず、ErrorCodeReadOnly の誤りの応答を返す。
 type BufferEditResult struct {
 	// Applied は、本体がトランザクションを適用したかどうかである。
 	// BaseVersion が現在のバージョン番号と一致しなければ false。

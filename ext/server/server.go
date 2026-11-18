@@ -25,6 +25,13 @@ var ErrNotRunning = errors.New("server: not serving")
 // 待つと詰まるので、これらはリクエストを送らずにこの誤りを返す（Edit と WaitBuffer の doc を参照）。
 var ErrEditInHandler = errors.New("server: request to the host called from a handler or hook; it would block the message loop")
 
+// IsReadOnly は、err が、編集を禁止したバッファへの buffer/edit を本体が断った誤りの応答（code が ext.ErrorCodeReadOnly）かを返す。
+// Edit が返した誤りに使う。
+func IsReadOnly(err error) bool {
+	var re *rpc.Error
+	return errors.As(err, &re) && re.Code == ext.ErrorCodeReadOnly
+}
+
 // shutdownFlushTimeout は、shutdown を処理した後に、送信の列を本体へ書き出すのを待つ上限である（仮）。
 const shutdownFlushTimeout = time.Second
 
@@ -217,6 +224,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 
 // Edit は、本体へ buffer/edit を送り、応答を待つ。
 // 補完の確定や整形のように、拡張機能の側から始める編集に使う。
+// 編集を禁止したバッファへの要求は、本体が誤りの応答で断るので、IsReadOnly が true を返す誤りになる。作り直しても通らない。
 // 適用されると、本体は buffer/change を送り、複製はループがそれを処理した時点で更新される（Edit が戻った時点ではまだ古いことがある）。
 //
 // ループの上（同期のハンドラー、非同期のハンドラーの同期の部分、フック）で Edit の応答を待ってはならない。

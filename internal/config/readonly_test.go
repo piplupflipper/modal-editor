@@ -5,16 +5,17 @@ import (
 	"testing"
 )
 
-// readonlyPaths は、"~" をホームのディレクトリに展開した絶対パスの列として読み、相対パスや空のパスは誤りとして除く。
+// readonlyPaths は、"~" をホームのディレクトリに展開した絶対パスと、"/" を含まないディレクトリの名前の列として読む。
+// "/" を含む相対パス、空のパス、"~user" の形は誤りとして除く。
 //
 // req: FR-120
 func TestParseReadOnlyPaths(t *testing.T) {
 	t.Setenv("HOME", "/home/u")
 	src := `{
-  "readonlyPaths": ["~/go/pkg/mod", "~", "/usr/include/", "node_modules", "", 3, "~other/x"]
+  "readonlyPaths": ["~/go/pkg/mod", "~", "/usr/include/", "node_modules", "", 3, "~other/x", "a/b", ".."]
 }`
 	cfg, errs := Parse("config.jsonc", []byte(src))
-	want := []string{"/home/u/go/pkg/mod", "/home/u", "/usr/include"}
+	want := []string{"/home/u/go/pkg/mod", "/home/u", "/usr/include", "node_modules"}
 	if !reflect.DeepEqual(cfg.ReadOnlyPaths, want) {
 		t.Errorf("ReadOnlyPaths = %q, want %q", cfg.ReadOnlyPaths, want)
 	}
@@ -22,10 +23,11 @@ func TestParseReadOnlyPaths(t *testing.T) {
 		line, col int
 		msg       string
 	}{
-		{2, 59, "絶対パスか ~ で始まる"},
 		{2, 75, "パスが空"},
 		{2, 79, "文字列にする"},
-		{2, 82, "絶対パスか ~ で始まる"},
+		{2, 82, "~user の形"},
+		{2, 94, "/ を含む相対パス"},
+		{2, 101, ". と .."},
 	})
 }
 

@@ -49,7 +49,7 @@ import (
 //	  "autoread": true,
 //	  "checkIntervalMs": 1000,
 //	  "fileTypes": { ".tmpl": "html", "Justfile": "make" },
-//	  "readonlyPaths": ["~/go/pkg/mod", "/usr/include"],
+//	  "readonlyPaths": ["~/go/pkg/mod", "/usr/include", "node_modules"],
 //	  "extensions": {
 //	    "syncTimeoutMs": 50,
 //	    "startSyncTimeoutMs": 1000,
@@ -117,7 +117,8 @@ type Config struct {
 	// ClipboardOSC52 か ClipboardOff で、項目が無いか誤りなら空で、既定の ClipboardOSC52 として扱う。
 	RegisterClipboard string
 	// ReadOnlyPaths は readonlyPaths の値で、開いた時点で編集を禁止にするファイルの置き場所のディレクトリである（基本設計 4.6。FR-120）。
-	// どれも絶対パスで、"~" はホームのディレクトリに展開してある。誤りのある項目は除いてある。
+	// 各項目は、絶対パス（"~" はホームのディレクトリに展開してある）か、"/" を含まないディレクトリの名前（"node_modules"）である。
+	// 誤りのある項目は除いてある。
 	// editor.Config.ReadOnlyPaths にそのまま渡す。
 	ReadOnlyPaths []string
 

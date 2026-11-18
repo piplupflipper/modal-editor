@@ -181,7 +181,8 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 // 応答を待つ間は入れ子の待ち（wait）なので、画面の描画は続き、キー入力と拡張機能からのリクエストは待ちが終わってから処理する。
 func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 	var notes []string
-	if !skipHooks {
+	// 編集を禁止したバッファ（FR-85）では、保存の前の編集を適用できないので、buffer/willSave を送らない（整形のたびの警告と無駄な問い合わせを避ける）。
+	if !skipHooks && !bs.buf.ReadOnly() {
 		for _, id := range e.host.SaveHookExtensions() {
 			e.tagSeq++
 			tag := queryTag(e.tagSeq)

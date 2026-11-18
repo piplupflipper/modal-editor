@@ -69,6 +69,12 @@ func (s *State) Paste(text string) Result {
 			s.fail(failf("paste while a command is pending"))
 			return s.take()
 		}
+		if s.buf.ReadOnly() {
+			// 編集を禁止したバッファでは、貼ったテキストを捨てて E21 で断る（FR-85）。
+			// ドットリピートとマクロの記録も、モードも変えない（Vim 9.1 の nv_edit が 'modifiable' の切れたバッファで貼り付けを捨てるのと同じ）。
+			s.fail(buffer.ErrReadOnly)
+			return s.take()
+		}
 		if s.mode == ModeNormal {
 			s.pasteNormal(text)
 		} else {

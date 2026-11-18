@@ -109,6 +109,42 @@ func TestKeepsTextActionsExist(t *testing.T) {
 	}
 }
 
+// 禁止中の端末からの貼り付けは E21 で断り、貼ったテキストを捨てる。ドットリピートとマクロの記録は変えない（PR #199 のレビューの必須 1）。
+// Vim 9.1 を tmux 3.4 の paste-buffer -p で動かした結果: abc、def で x、禁止して ZZZ を貼り、解いて j. の後は bc、ef。
+//
+// req: FR-85
+func TestReadOnlyPaste(t *testing.T) {
+	s := setup(t, "|abc\ndef")
+	feedKeys(s, "x")
+	s.buf.SetReadOnly(true)
+	feedKeys(s, "qa")
+	if res := s.Paste("ZZZ"); !errors.Is(res.Err, buffer.ErrReadOnly) {
+		t.Fatalf("Paste err = %v", res.Err)
+	}
+	feedKeys(s, "q")
+	if s.Mode() != ModeNormal || s.buf.Text() != "bc\ndef" {
+		t.Errorf("after paste: mode %v text %q", s.Mode(), s.buf.Text())
+	}
+	if reg, _ := s.registers.Get('a'); reg.Text != "" {
+		t.Errorf("recorded macro = %q, want empty", reg.Text)
+	}
+	s.buf.SetReadOnly(false)
+	feedKeys(s, "j.")
+	if got := s.buf.Text(); got != "bc\nef" {
+		t.Errorf("text after j. = %q, want %q", got, "bc\nef")
+	}
+
+	// ビジュアルモードの貼り付けも断り、モードと選択は残る。
+	s.buf.SetReadOnly(true)
+	feedKeys(s, "vl")
+	if res := s.Paste("ZZZ"); !errors.Is(res.Err, buffer.ErrReadOnly) {
+		t.Errorf("visual Paste err = %v", res.Err)
+	}
+	if s.Mode() != ModeVisual || s.buf.Text() != "bc\nef" {
+		t.Errorf("after visual paste: mode %v text %q", s.Mode(), s.buf.Text())
+	}
+}
+
 // 禁止を解けば、禁止の前のアンドゥの履歴で戻れ、編集できる。
 //
 // req: FR-85
