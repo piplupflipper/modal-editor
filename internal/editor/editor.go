@@ -169,6 +169,8 @@ type Config struct {
 	// FR-82 の server のソケットのパス（仮に MODAL_EDITOR_SOCKET）と、EDITOR、GIT_EDITOR を入れる口で、
 	// 値は server のソケットができてから呼び出し側が入れる（#190）。
 	ChildEnv []string
+	// ExtManager は、:ext sync（拡張機能の管理。基本設計 5.6）の設定である。ゼロ値は本体の既定の置き場所を使う（extsync.go）。
+	ExtManager ExtManagerConfig
 }
 
 // Editor は、イベントループと、編集の状態の全体である。New で作り、Run で動かし、Close で終える。
@@ -210,10 +212,14 @@ type Editor struct {
 	// shell は、実行中の外部のコマンド（:{range}! と :r !）である。無ければ nil。shellDone へ結果が届く（shell.go）。
 	shell     *shellJob
 	shellDone chan shellOutcome
+	// extSync は、実行中の :ext sync である。無ければ nil。進み具合と結果は inspect で届く（extsync.go）。
+	extSync   *extSyncJob
 	resizeCh  chan struct{}
 	size      atomic.Value // [2]int
 	inputDone chan struct{}
-	inspect   chan func()
+	// inspect は、別の goroutine から関数をイベントループの goroutine で実行させる。テストが状態を読むのと（do）、
+	// :ext sync の進み具合と結果を渡すのに使う（extsync.go）。
+	inspect chan func()
 	// decoDone は、別の goroutine で作り終えた構文の色の表を、イベントループへ渡す（rebuildDecorations）。
 	decoDone chan decoBuilt
 	// checkDone は、別の goroutine で確かめた外での変更の結果を、イベントループへ渡す（startCheck）。
@@ -400,6 +406,9 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	var w3 []error
 	e.exCommands, w3 = buildExCommands(cfg.Extensions)
 	warnings = append(warnings, w3...)
+	if err := addExtManagerCommand(e.exCommands); err != nil {
+		warnings = append(warnings, err)
+	}
 	warnings = append(warnings, removedCommandWarnings(cfg.Keymap, e.exCommands)...)
 	var w2 []error
 	e.remap, w2 = newRemapper(cfg.Keymap, leader)

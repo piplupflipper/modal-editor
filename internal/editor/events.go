@@ -97,6 +97,11 @@ func (e *Editor) stateChange(ev *exthost.StateChange) {
 	switch ev.State {
 	case exthost.StateRestartWait, exthost.StateDisabled:
 		e.clearExtension(ev.Extension)
+		if ev.State == exthost.StateDisabled && ev.Err == nil {
+			// 利用者の指示で止めた（:ext sync が削除の後に止めた。exthost.Host.Disable）。
+			// 異常ではないので知らせず、:ext sync の結果のメッセージを残す。
+			break
+		}
 		text := fmt.Sprintf("拡張機能 %s が異常終了しました", ev.Extension)
 		if ev.State == exthost.StateDisabled {
 			text = fmt.Sprintf("拡張機能 %s は失敗が続いたので無効にしました", ev.Extension)
@@ -105,7 +110,10 @@ func (e *Editor) stateChange(ev *exthost.StateChange) {
 			text += ": " + ev.Err.Error()
 		}
 		e.message = ui.Message{Text: text, Level: ui.MessageError}
-	case exthost.StateNotStarted, exthost.StateStarting, exthost.StateRunning, exthost.StateStopping:
+	case exthost.StateNotStarted:
+		// 起動した後に未起動へ戻るのは、:ext sync が入れ替えの後に止めたとき（exthost.Host.Reload）だけである。
+		e.clearExtension(ev.Extension)
+	case exthost.StateStarting, exthost.StateRunning, exthost.StateStopping:
 	}
 }
 

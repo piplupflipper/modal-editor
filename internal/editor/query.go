@@ -458,6 +458,9 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 	if ref.Extension == input.ProviderExtension {
 		return x.providerAction(ref, b, q, info)
 	}
+	if ref.Extension == extManagerExtension {
+		return extManagerTx(b), x.e.extManagerAction(q.Text)
+	}
 	p := ext.CommandExecuteParams{
 		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
 		Cursor: toExtPos(q.Cursor), Count: count(q.Count, q.CountGiven), Args: commandArgs(q), Sync: info.Replaying,

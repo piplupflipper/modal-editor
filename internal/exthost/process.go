@@ -79,13 +79,13 @@ func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 		}
 
 		h.mu.Lock()
-		// Disable の後なら、プロセスがどの理由で終わっても、無効へ移す（再起動しない）。
+		// Disable の後なら、プロセスがどの理由で終わっても、無効へ移す（再起動しない）。Reload の後なら未起動へ移す。
 		if errors.Is(err, errStopped) || e.stopping {
 			e.run = nil
 			// 止めている間に届き、まだ渡していないイベントは捨てる（Close と同じ扱い）。
 			h.purgeLocked(r)
 			h.dropPendingLocked(e)
-			h.setStateLocked(e, StateDisabled, nil)
+			h.stoppedLocked(e)
 			h.mu.Unlock()
 			return
 		}
@@ -119,7 +119,7 @@ func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 			h.mu.Lock()
 			if !h.closing {
 				h.dropPendingLocked(e)
-				h.setStateLocked(e, StateDisabled, nil)
+				h.stoppedLocked(e)
 			}
 			h.mu.Unlock()
 			return
@@ -130,7 +130,7 @@ func (h *Host) supervise(e *extension, r *run, stop <-chan struct{}) {
 		if !h.waitConnectionLocked(e, stop) {
 			if !h.closing {
 				h.dropPendingLocked(e)
-				h.setStateLocked(e, StateDisabled, nil)
+				h.stoppedLocked(e)
 			}
 			h.mu.Unlock()
 			return
