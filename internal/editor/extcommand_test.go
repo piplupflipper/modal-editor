@@ -67,7 +67,11 @@ func TestExtCommandLine(t *testing.T) {
 	if err := h.e.host.Disable("fake"); err != nil {
 		t.Fatal(err)
 	}
-	h.eventually("無効", func() bool { st, _ := h.e.host.State("fake"); return st == exthost.StateDisabled })
+	// 状態は exthost の側で先に変わり、その知らせ（StateChange）は後からイベントループへ届く。
+	// 知らせの処理はメッセージを書き換えるので、host.State ではなく、イベントループが知らせを処理し終えたことを待ってからキーを送る（#212）。
+	h.eventually("無効の知らせ", func() bool {
+		return h.e.message.Text == "拡張機能 fake は失敗が続いたので無効にしました"
+	})
 	h.keys(":fake.echo x<CR>")
 	h.settle()
 	if want := "拡張機能 fake の fake.echo は使えません: 拡張機能が動いていません（無効か、異常終了の後の再起動の待ち）"; h.message() != want {
