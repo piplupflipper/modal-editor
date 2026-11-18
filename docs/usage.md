@@ -65,6 +65,34 @@ dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor main.
 設定ファイルの他の項目（`fixendofline`、`fileTypes`、`extensions.syncTimeoutMs` など）は `go doc ./internal/config Config` にある。
 設定に誤りがあると、起動後にコマンドラインの行へ位置と内容を出し、誤りのある項目だけを既定値にする。
 
+### `<Leader>` と `leader`
+
+`keymap` の左辺と右辺には、`<Leader>` と書ける（FR-97）。
+`<Leader>` は、設定の `leader` に書いたキーの列に置き換わる。
+`leader` の既定は `<Space>` なので、`"<Leader>d"` は `"<Space>d"` と同じである。
+`<Leader>` の大文字と小文字は区別しない（`<leader>` でもよい）。
+
+```jsonc
+{
+  // <Leader> を , にする。既定は "<Space>"
+  "leader": ",",
+  "keymap": {
+    "normal": {
+      "<Leader>d": ":lsp.definition<CR>",
+      "<Leader>h": ":lsp.hover<CR>",
+    },
+  },
+}
+```
+
+`leader` は `keymap` と同じ表記のキーの列で、`","`、`"<Space>"`、`"<C-k>"` のように書く。
+空の値と `<Leader>` を含む値は誤りで、既定の `<Space>` を使う。
+拡張機能の宣言ファイル（`manifest.json`）の `contributes` の `keys` に書いた `<Leader>` も、同じく置き換わる。
+
+`leader` を変えると、`<Leader>` を書いたキーの割り当てがすべて新しい `leader` で始まる。
+設定のどこに `leader` を書いても結果は同じである。
+Vim の `mapleader` は、マッピングを定義した時点の値で置き換えるので、この点が違う（[vim-differences.md](vim-differences.md)）。
+
 ## 拡張機能のコマンドを呼ぶ
 
 拡張機能のコマンドは、コマンドラインで `:` の後にコマンドの ID を打って呼ぶ（`:lsp.hover`、`:dap.start`）。

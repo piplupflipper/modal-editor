@@ -47,8 +47,10 @@ type remapper struct {
 // newRemapper は、設定のキーマップから remapper を作る。表記の誤りのある項目は捨て、誤りを返す。
 // キーマップは本体が持つので、拡張機能の起動を待たずに効く（FR-41）。
 //
-// req: FR-41
-func newRemapper(cfg map[string]map[string]string) (*remapper, []error) {
+// 左辺と右辺の <Leader> は leader に置き換える（FR-97。editcmd.ParseKeysLeader）。leader が空なら editcmd.DefaultLeader を使う。
+//
+// req: FR-41, FR-97
+func newRemapper(cfg map[string]map[string]string, leader []editcmd.Key) (*remapper, []error) {
 	r := &remapper{maps: map[mapMode][]mapping{}}
 	var errs []error
 	names := make([]string, 0, len(cfg))
@@ -63,7 +65,7 @@ func newRemapper(cfg map[string]map[string]string) (*remapper, []error) {
 			continue
 		}
 		for lhsText, rhsText := range cfg[name] {
-			lhs, err := editcmd.ParseKeys(lhsText)
+			lhs, err := editcmd.ParseKeysLeader(lhsText, leader)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("keymap.%s: キーの列 %q を読めない: %w", name, lhsText, err))
 				continue
@@ -72,7 +74,7 @@ func newRemapper(cfg map[string]map[string]string) (*remapper, []error) {
 				errs = append(errs, fmt.Errorf("keymap.%s: キーの列が空です", name))
 				continue
 			}
-			rhs, err := editcmd.ParseKeys(rhsText)
+			rhs, err := editcmd.ParseKeysLeader(rhsText, leader)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("keymap.%s: 展開する列 %q を読めない: %w", name, rhsText, err))
 				continue
@@ -81,6 +83,20 @@ func newRemapper(cfg map[string]map[string]string) (*remapper, []error) {
 		}
 	}
 	return r, errs
+}
+
+// leaderKeys は、設定の leader（editor.Config.Leader）をキーの列にする。
+// 空なら editcmd.DefaultLeader を使う。読めないときは誤りを返し、既定の leader を返す。
+func leaderKeys(s string) ([]editcmd.Key, error) {
+	def := editcmd.MustParseKeys(editcmd.DefaultLeader)
+	if s == "" {
+		return def, nil
+	}
+	keys, err := editcmd.ParseLeader(s)
+	if err != nil {
+		return def, fmt.Errorf("leader: %w。既定の %s を使う", err, editcmd.DefaultLeader)
+	}
+	return keys, nil
 }
 
 // pendingKeys は、登録の接頭辞を溜めているかを返す。

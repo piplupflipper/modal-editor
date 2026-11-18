@@ -2166,6 +2166,9 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 `<leader>` は設定の `leader`（既定は `<Space>`）に当たるキーで、キーマップの記法で `<Leader>` と書く（FR-97）。
 `<Leader>` は大文字と小文字を区別しない（仮。Vim と同じ）。
 本体の既定のキーのうち `<leader>` で始まるものは、`leader` を変えればそのキーで始まる。
+`<Leader>` は、本体の起動の時点の `leader` で、利用者のキーマップの左辺と右辺、拡張機能の宣言ファイルの `contributes` の `keys` のすべてで置き換える（`editcmd.ParseKeysLeader`。#192）。
+Vim の `mapleader` はマッピングを定義した時点の値で置き換えるが、設定ファイルの項目の順には意味を持たせないので、`leader` を変えれば `<Leader>` を書いた割り当てはすべて追従する（`docs/vim-differences.md`）。
+`leader` の値は `keymap` と同じキーの列の表記で読み、空の列と `<Leader>` を含む値は誤りとして既定の `<Space>` を使う。
 
 LSP と DAP の既定のキーは要件定義 4.11 の表のとおりで、どれも 5.5 の本体の操作に割り当てる（FR-95、FR-96）。
 利用者のキーマップは、既定のキーを上書きする。

@@ -94,6 +94,9 @@ type Config struct {
 	// 展開した列は、もう一度キーマップで展開しない（Vim の noremap と同じ）。
 	// 拡張機能の起動を待たずに反映する（FR-41）。
 	Keymap map[string]map[string]string
+	// Leader は、キーの表記の <Leader> に当たるキーの列の表記である（基本設計 7.2 の leader。FR-97）。
+	// 空なら editcmd.DefaultLeader（<Space>）を使う。Keymap と、拡張機能の宣言の keys の <Leader> をこの値に置き換える。
+	Leader string
 	// SyncTimeout は、キー入力ごとに結果が要る問い合わせの期限（基本設計 7 章の syncTimeoutMs）である。
 	// nil なら DefaultSyncTimeout を使う。0 は「待たない」（FR-18）。
 	SyncTimeout *time.Duration
@@ -362,14 +365,18 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	}
 	e.fixEOL = cfg.FixEndOfLine == nil || *cfg.FixEndOfLine
 	warnings := slices.Clone(cfg.Problems)
+	leader, err := leaderKeys(cfg.Leader)
+	if err != nil {
+		warnings = append(warnings, err)
+	}
 	var w1 []error
-	e.keymap, w1 = buildKeymap(cfg.Extensions)
+	e.keymap, w1 = buildKeymap(cfg.Extensions, leader)
 	warnings = append(warnings, w1...)
 	var w3 []error
 	e.exCommands, w3 = buildExCommands(cfg.Extensions)
 	warnings = append(warnings, w3...)
 	var w2 []error
-	e.remap, w2 = newRemapper(cfg.Keymap)
+	e.remap, w2 = newRemapper(cfg.Keymap, leader)
 	warnings = append(warnings, w2...)
 	for _, w := range warnings {
 		lg.Warn("設定の誤り", "err", w)
@@ -387,7 +394,8 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 
 // buildKeymap は、本体の操作に、拡張機能が宣言した操作（contributes）を足したキーマップを作る（FR-11）。
 // 登録できない操作（キーの衝突など）は捨て、誤りを返す。
-func buildKeymap(specs []exthost.Spec) (*input.Keymap, []error) {
+// 宣言の keys の <Leader> は leader に置き換える（FR-97）。
+func buildKeymap(specs []exthost.Spec, leader []editcmd.Key) (*input.Keymap, []error) {
 	km := input.DefaultKeymap()
 	var errs []error
 	for _, s := range specs {
@@ -406,7 +414,7 @@ func buildKeymap(specs []exthost.Spec) (*input.Keymap, []error) {
 				if c.Keys == "" {
 					continue
 				}
-				keys, err := editcmd.ParseKeys(c.Keys)
+				keys, err := editcmd.ParseKeysLeader(c.Keys, leader)
 				if err == nil {
 					err = km.Bind(input.Binding{Kind: g.kind, Keys: keys, Ref: editcmd.Ref{ID: c.ID, Extension: m.ID}})
 				}
