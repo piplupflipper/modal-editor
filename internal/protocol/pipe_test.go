@@ -55,15 +55,15 @@ func TestPipeDrainsBeforeEOF(t *testing.T) {
 	if err != nil || m != (SetClipboard{Text: "last"}) {
 		t.Fatalf("client Recv = %#v, %v; want the message sent before Close", m, err)
 	}
-	if _, err := c.Recv(); !errors.Is(err, io.EOF) {
+	if _, err = c.Recv(); !errors.Is(err, io.EOF) {
 		t.Fatalf("client Recv after drain: err = %v, want io.EOF", err)
 	}
-	if err := c.Send(Event{}); !errors.Is(err, ErrClosed) {
+	if err = c.Send(Event{}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("client Send after server Close: err = %v, want ErrClosed", err)
 	}
 
 	c, s = Pipe()
-	if err := c.Send(Event{Paste: "p"}); err != nil {
+	if err = c.Send(Event{Paste: "p"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = c.Close()
