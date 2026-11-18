@@ -63,14 +63,15 @@ var visualEOLCases = []vimCase{
 	{"ab|c", "vld", "ab", "0:1", "v:c", "v:U", ":", "v:c", "v:A"},
 	{"ab|c\nd", "vl<Esc>x", "ab\nd", "0:1", "v:c", "v:U", ":", "v:c", "v:A"},
 	// > と < は、選択の終わりの行まで字下げする（改行まで選んでいても次の行は字下げしない）。
-	{"ab|c\nd\ne", "vj>", "\tabc\n\td\ne", "0:1", "v:U", "v:U", ":", ":", "v:A"},
-	{"ab|c\nd\ne", "vl>", "\tabc\nd\ne", "0:1", "v:U", "v:U", ":", ":", "v:A"},
-	{"\tab|c\n\td\n\te", "vj<", "abc\nd\n\te", "0:0", "v:U", "v:U", ":", ":", "v:A"},
-	{"ab|c\nd\ne", "v$>", "\tabc\nd\ne", "0:1", "v:U", "v:U", ":", ":", "v:A"},
-	{"ab|c\n\ncd", "vj>", "\tabc\n\ncd", "0:1", "v:U", "v:U", ":", ":", "v:A"},
-	{"ab|c\nd\ne\nf", "vj>.", "\t\tabc\n\t\td\ne\nf", "0:2", "v:U", "v:U", ":", ":", "v:A"},
-	{"ab|c\nd\ne\nf\ng", "vj>j.", "\tabc\n\t\td\n\te\nf\ng", "1:2", "v:U", "v:U", ":", ":", "v:A"},
-	{"ab|c\nd\ne", "vj>u", "abc\nd\ne", "0:2", "v:U", "v:U", ":", ":", "v:A"},
+	// ずらした後もビジュアルモードと選択を保つ（FR-77）ので、期待値は Vim に xnoremap > >gv と xnoremap < <gv を割り当てて取った。
+	{"ab|c\nd\ne", "vj><Esc>", "\tabc\n\td\ne", "1:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne", "vl><Esc>", "\tabc\nd\ne", "0:3", "v:U", "v:U", ":", ":", "v:A"},
+	{"\tab|c\n\td\n\te", "vj<lt><Esc>", "abc\nd\n\te", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne", "v$><Esc>", "\tabc\nd\ne", "0:3", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\n\ncd", "vj><Esc>", "\tabc\n\ncd", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne\nf", "vj><Esc>.", "\tabc\n\t\td\n\te\nf", "1:2", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne\nf\ng", "vj><Esc>j.", "\tabc\n\td\n\te\n\tf\ng", "2:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"ab|c\nd\ne", "vj><Esc>u", "abc\nd\ne", "0:2", "v:U", "v:U", ":", ":", "v:A"},
 	// 複数の行の選択のドットリピートは、終わりの列が繰り返す先の行の長さ以上のときだけ、その行の改行まで消す。
 	{"ab|c\nx\nfoo\nbar\nbaz\nqux", "vjdj.", "abfoo\nbaz\nqux", "1:2", "v:r\nba", "v:U", "v:r\nba", ":", "v:A"},
 	{"ab|c\nx\nfoo\nbar\nbazzz\nqux", "vjdj.", "abfoo\nbazzz\nqux", "1:2", "v:r\nba", "v:U", "v:r\nba", ":", "v:A"},

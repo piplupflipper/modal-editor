@@ -11,8 +11,10 @@ type spec struct {
 	keys      string // ParseKeys の表記
 	id        string
 	takesChar bool
-	next      editcmd.Mode // 実行の後のモード
-	modes     MapMode      // 有効なモード。0 なら種類ごとの既定（defaultModes）
+	// takesChar2 は、操作が 2 つ目の文字の引数を取るかである（Binding.TakesSecondChar）。
+	takesChar2 bool
+	next       editcmd.Mode // 実行の後のモード
+	modes      MapMode      // 有効なモード。0 なら種類ごとの既定（defaultModes）
 }
 
 // 本体の操作の一覧。
@@ -74,11 +76,16 @@ var (
 		{keys: "d", id: "delete"},
 		{keys: "c", id: "change", next: editcmd.ModeInsert},
 		{keys: "y", id: "yank"},
-		{keys: ">", id: "indent"},
-		{keys: "<", id: "dedent"},
 		{keys: "g~", id: "toggle-case"},
 		{keys: "gu", id: "lowercase"},
 		{keys: "gU", id: "uppercase"},
+		// 囲みを足す（vim-sandwich の sa。FR-73、基本設計 4.8）。対象の後に囲みの文字を 1 つ取る。
+		// 囲みのキーはノーマルモードだけに置く。ビジュアルモードの s は、選択を消して入力するオペレーターのまま残す。
+		{keys: "sa", id: "surround-add", takesChar: true, modes: MapNormal},
+		// > と < は、ビジュアルモードだけのオペレーターである。ノーマルモードの > と < は、モーションを待たずに
+		// 行をずらす操作（操作の表の indent-line と dedent-line。FR-76、要件定義 1.1）にする。
+		{keys: ">", id: "indent", modes: MapVisual},
+		{keys: "<", id: "dedent", modes: MapVisual},
 		// ビジュアルモードだけの別名。x は d、s は c に当たる。~、u、U は選択の大文字と小文字を変える。
 		{keys: "x", id: "delete", modes: MapVisual},
 		{keys: "s", id: "change", next: editcmd.ModeInsert, modes: MapVisual},
@@ -130,14 +137,21 @@ var (
 		{keys: "x", id: "delete-char"},
 		{keys: "X", id: "delete-char-before"},
 		{keys: "r", id: "replace-char", takesChar: true},
-		// 省略形のコマンド。D は d$、C は c$、S は cc、s は cl、Y は yy に当たり、実行の側（internal/command）が
+		// 省略形のコマンド。D は d$、C は c$、S は cc、Y は yy に当たり、実行の側（internal/command）が
 		// オペレーターと対象の組に置き換えて実行する。オペレーターの表ではなく操作の表に置くのは、
 		// 対象を待たずに 1 キーで完結するからである。ビジュアルモードの D、C、S、Y は、オペレーターの表のビジュアルモードだけの行である。
+		// ノーマルモードの s（cl）は、囲みの操作（sa、sd、sr）に使うので割り当てない（要件定義 1.1）。
 		{keys: "D", id: "delete-to-line-end"},
 		{keys: "C", id: "change-to-line-end", next: editcmd.ModeInsert},
 		{keys: "S", id: "substitute-line", next: editcmd.ModeInsert},
-		{keys: "s", id: "substitute-char", next: editcmd.ModeInsert},
 		{keys: "Y", id: "yank-line"},
+		// ノーマルモードの > と < は、Vim の >> と << と同じく、回数の行数だけ行をずらす（FR-76）。次のキーを待たないので、
+		// >> と打つと 2 回ずれる（#177 のコメントの決定）。
+		{keys: ">", id: "indent-line"},
+		{keys: "<", id: "dedent-line"},
+		// 囲みを消す（sd{文字}）と替える（sr{前の文字}{後の文字}）。vim-sandwich の sd と sr に当たる（FR-74、FR-75、基本設計 4.8）。
+		{keys: "sd", id: "surround-delete", takesChar: true},
+		{keys: "sr", id: "surround-replace", takesChar: true, takesChar2: true},
 		{keys: "J", id: "join-lines"},
 		{keys: "o", id: "open-below", next: editcmd.ModeInsert},
 		{keys: "O", id: "open-above", next: editcmd.ModeInsert},
@@ -200,12 +214,13 @@ func DefaultKeymap() *Keymap {
 	for _, t := range tables {
 		for _, s := range t.specs {
 			err := m.Bind(Binding{
-				Kind:      t.kind,
-				Modes:     s.modes,
-				Keys:      editcmd.MustParseKeys(s.keys),
-				Ref:       editcmd.Ref{ID: s.id},
-				TakesChar: s.takesChar,
-				NextMode:  s.next,
+				Kind:            t.kind,
+				Modes:           s.modes,
+				Keys:            editcmd.MustParseKeys(s.keys),
+				Ref:             editcmd.Ref{ID: s.id},
+				TakesChar:       s.takesChar,
+				TakesSecondChar: s.takesChar2,
+				NextMode:        s.next,
 			})
 			if err != nil {
 				// 表の誤りはプログラムの誤りで、テストで検出する。

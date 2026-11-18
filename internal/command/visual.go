@@ -259,10 +259,11 @@ var linewiseVisualOperators = map[string]string{
 }
 
 // visualOperator は、ビジュアルモードの選択に対してオペレーターを実行し、ノーマルモードへ戻る。
+// ただし > と < は、ビジュアルモードと選択の範囲を保つ（FR-77。Vim で >gv と打ったときと同じ）。
 // 回数は、> と < では字下げを繰り返す回数で、それ以外のオペレーターでは使わない。
 // D、C、S、Y（linewiseVisualOperators）は、選択を行単位に切り替えてから働く。
 //
-// req: FR-01, FR-02
+// req: FR-01, FR-02, FR-77
 func (s *State) visualOperator(cmd editcmd.Command) error {
 	if base, ok := linewiseVisualOperators[cmd.Operator.ID]; ok && cmd.Operator.Builtin() {
 		// D、C、S、Y は、選択を行単位に切り替えてから、もとのオペレーターとして働く（Vim の nv_visop は
@@ -270,10 +271,23 @@ func (s *State) visualOperator(cmd editcmd.Command) error {
 		s.mode = ModeVisualLine
 		cmd.Operator.ID = base
 	}
+	keep := cmd.Operator.Builtin() && (cmd.Operator.ID == "indent" || cmd.Operator.ID == "dedent")
+	mode, anchor, cursor, want := s.mode, s.visual.anchor, s.cursor, s.want
 	rg := s.visualRegion()
 	ext := s.extentOf(rg)
 	s.exitVisual()
 	err := s.change(cmd, func() error { return s.regionOperator(cmd, rg) })
+	if keep && err == nil {
+		// > と < は、ずらした後もビジュアルモードと選択を保つ（FR-77）。Vim の >gv と同じく、選択の両端は
+		// ずらす前の行とバイトの位置に戻し、行が短くなっていれば行末の後へ寄せる。
+		s.mode = mode
+		s.visual.anchor = s.clampPos(anchor)
+		s.cursor = s.clampPos(cursor)
+		// 望みの列は、Vim の >gv と同じく、ビジュアルモードの中ではずらす前の値を保つ（v>j は前の列へ移る）。
+		// ビジュアルモードを抜けると、exitVisual が戻したカーソルの表示の列から計算し直す（v><Esc>j は字下げの後の列へ移る）。
+		s.want = want
+		s.parser.SetVisual(true)
+	}
 	// 範囲の大きさは、. が繰り返す値（s.dot）と組で使うので、. の対象になる値のときだけ記録する。
 	// ヤンクや失敗したオペレーターで上書きすると、直前の変更の . が別の大きさの範囲に働く（Vim の vld0vllly0. は 2 文字を消す。#167）。
 	// c のようにインサートモードへ移る値は、s.dot をインサートモードを抜けるときに記録するが、範囲の大きさはここで記録しておく。

@@ -11,6 +11,7 @@ import "testing"
 //
 // 文字単位（v）と行単位（V）の選択、選択の向き（カーソルが始まりか終わりか）、字下げのある行、1 行だけのバッファ、
 // 行の無いバッファの境界と、レジスター、ドットリピート、アンドゥを含む。
+// > はずらした後もビジュアルモードと選択を保つ（FR-77）ので、期待値は Vim に xnoremap > >gv を割り当てて取った。
 var visualLinesCases = []vimCase{
 	{"a|bc\nde\nfg", "vD", "de\nfg", "0:0", "V:abc\n", "v:U", "V:abc\n", ":", "v:A"},
 	{"a|bc\nde\nfg", "vjD", "fg", "0:0", "V:abc\nde\n", "v:U", "V:abc\nde\n", ":", "v:A"},
@@ -130,10 +131,10 @@ var visualLinesCases = []vimCase{
 	{"a|bc\nde\nfg", "VjU", "ABC\nDE\nfg", "0:0", "v:U", "v:U", ":", ":", "v:A"},
 	{"a|bc\nde\nfg", "jVkd", "fg", "0:0", "V:abc\nde\n", "v:U", "V:abc\nde\n", ":", "v:A"},
 	{"a|bc\nde\nfg", "jVkcX<Esc>", "X\nfg", "0:0", "V:abc\nde\n", "v:U", "V:abc\nde\n", ":", "v:A"},
-	{"a|bc\nde\nfg", "jVk>", "\tabc\n\tde\nfg", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"a|bc\nde\nfg", "jVk><Esc>", "\tabc\n\tde\nfg", "0:1", "v:U", "v:U", ":", ":", "v:A"},
 	{"a|bc\nde\nfg", "jVkdu", "abc\nde\nfg", "0:1", "V:abc\nde\n", "v:U", "V:abc\nde\n", ":", "v:A"},
 	{"a|bc\nde\nfg", "jVkUu", "abc\nde\nfg", "0:1", "v:U", "v:U", ":", ":", "v:A"},
-	{"a|bc\nde\nfg", "jVk>u", "abc\nde\nfg", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"a|bc\nde\nfg", "jVk><Esc>u", "abc\nde\nfg", "0:1", "v:U", "v:U", ":", ":", "v:A"},
 	{"a|bc\nde\nfg", "Vjdj.", "", "0:0", "V:fg\n", "v:U", "V:fg\n", ":", "v:A"},
 	{"a|bc\nde\nfg", "jVkdj.", "", "0:0", "V:fg\n", "v:U", "V:fg\n", ":", "v:A"},
 	{"a|bc\nde\nfg", "jVkd.u", "fg", "0:0", "V:fg\n", "v:U", "V:fg\n", ":", "v:A"},
@@ -145,10 +146,10 @@ var visualLinesCases = []vimCase{
 	{"  ab|cd\n  efgh\n  ijkl", "VjU", "  ABCD\n  EFGH\n  ijkl", "0:0", "v:U", "v:U", ":", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "jVkd", "  ijkl", "0:2", "V:  abcd\n  efgh\n", "v:U", "V:  abcd\n  efgh\n", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "jVkcX<Esc>", "X\n  ijkl", "0:0", "V:  abcd\n  efgh\n", "v:U", "V:  abcd\n  efgh\n", ":", "v:A"},
-	{"  ab|cd\n  efgh\n  ijkl", "jVk>", "\t  abcd\n\t  efgh\n  ijkl", "0:3", "v:U", "v:U", ":", ":", "v:A"},
+	{"  ab|cd\n  efgh\n  ijkl", "jVk><Esc>", "\t  abcd\n\t  efgh\n  ijkl", "0:4", "v:U", "v:U", ":", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "jVkdu", "  abcd\n  efgh\n  ijkl", "0:4", "V:  abcd\n  efgh\n", "v:U", "V:  abcd\n  efgh\n", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "jVkUu", "  abcd\n  efgh\n  ijkl", "0:4", "v:U", "v:U", ":", ":", "v:A"},
-	{"  ab|cd\n  efgh\n  ijkl", "jVk>u", "  abcd\n  efgh\n  ijkl", "0:4", "v:U", "v:U", ":", ":", "v:A"},
+	{"  ab|cd\n  efgh\n  ijkl", "jVk><Esc>u", "  abcd\n  efgh\n  ijkl", "0:4", "v:U", "v:U", ":", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "Vjdj.", "", "0:0", "V:  ijkl\n", "v:U", "V:  ijkl\n", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "jVkdj.", "", "0:0", "V:  ijkl\n", "v:U", "V:  ijkl\n", ":", "v:A"},
 	{"  ab|cd\n  efgh\n  ijkl", "jVkd.u", "  ijkl", "0:2", "V:  ijkl\n", "v:U", "V:  ijkl\n", ":", "v:A"},

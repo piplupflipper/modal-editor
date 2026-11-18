@@ -2,7 +2,7 @@ package command
 
 import "testing"
 
-// shorthandCases は、省略形のコマンド（D、C、S、s、Y）の、Vim 9.1 と突き合わせたケースである。
+// shorthandCases は、省略形のコマンド（D、C、S、Y）の、Vim 9.1 と突き合わせたケースである。
 //
 // 期待値の形と入力の前のレジスターは vimCase と同じである。ただし Vim は Ex モードでない起動
 // （`vim -Nu NONE -n --not-a-term -c 'source <script>'`）で動かし、keys を feedkeys(keys, "xt") で入力した。
@@ -65,26 +65,25 @@ var shorthandCases = []vimCase{
 	{"a\n  b|c\nd", "S<Esc>", "a\n\nd", "1:0", "V:  bc\n", "v:U", "V:  bc\n", ":", "v:A"},
 	{"|c d", "ddSX<Esc>", "X", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
 	{"a|bc", "\"_SX<Esc>", "X", "0:0", "v:U", "v:U", ":", ":", "v:A"},
-	{"a|bc", "sX<Esc>", "aXc", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
-	{"a|bc", "2sX<Esc>", "aX", "0:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
-	{"a|bc", "5sX<Esc>", "aX", "0:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
-	{"ab|c", "sX<Esc>", "abX", "0:2", "v:c", "v:U", ":", "v:c", "v:A"},
-	{"|", "sX<Esc>", "X", "0:0", "v:U", "v:U", ":", ":", "v:A"},
-	{"a\n|\nb", "sX<Esc>", "a\nX\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
-	{"a\n|\nb", "3sX<Esc>", "a\nX\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
-	{"a|bc", "\"asX<Esc>", "aXc", "0:1", "v:b", "v:U", ":", ":", "v:b"},
-	{"a|bc", "\"_sX<Esc>", "aXc", "0:1", "v:U", "v:U", ":", ":", "v:A"},
-	{"a|bc", "s<Esc>", "ac", "0:0", "v:b", "v:U", ":", "v:b", "v:A"},
-	{"|abcdef", "sX<Esc>l.", "XXcdef", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
-	{"|abcdefgh", "2sX<Esc>l3.", "XXfgh", "0:1", "v:cde", "v:U", ":", "v:cde", "v:A"},
+	// ノーマルモードの s（cl）は囲みの操作に使うので既定に無い（要件定義 1.1）。もとの s のケースは cl で確かめる。
+	{"a|bc", "clX<Esc>", "aXc", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
+	{"a|bc", "2clX<Esc>", "aX", "0:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
+	{"a|bc", "5clX<Esc>", "aX", "0:1", "v:bc", "v:U", ":", "v:bc", "v:A"},
+	{"ab|c", "clX<Esc>", "abX", "0:2", "v:c", "v:U", ":", "v:c", "v:A"},
+	{"a\n|\nb", "3clX<Esc>", "a\nX\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
+	{"a|bc", "\"aclX<Esc>", "aXc", "0:1", "v:b", "v:U", ":", ":", "v:b"},
+	{"a|bc", "\"_clX<Esc>", "aXc", "0:1", "v:U", "v:U", ":", ":", "v:A"},
+	{"a|bc", "cl<Esc>", "ac", "0:0", "v:b", "v:U", ":", "v:b", "v:A"},
+	{"|abcdef", "clX<Esc>l.", "XXcdef", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
+	{"|abcdefgh", "2clX<Esc>l3.", "XXfgh", "0:1", "v:cde", "v:U", ":", "v:cde", "v:A"},
 	{"|", "clX<Esc>", "X", "0:0", "v:U", "v:U", ":", ":", "v:A"},
 	{"a\n|\nb", "clX<Esc>", "a\nX\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
 	{"a\n|\nb", "dl", "a\n\nb", "1:0", "v:U", "v:U", ":", ":", "v:A"},
 	{"|c d", "ddccX<Esc>", "X", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
-	{"a|bc", "sX<Esc>u", "abc", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
-	{"日|本語", "sX<Esc>", "日X語", "0:3", "v:本", "v:U", ":", "v:本", "v:A"},
-	{"日|本語", "2sX<Esc>", "日X", "0:3", "v:本語", "v:U", ":", "v:本語", "v:A"},
-	{"|c d", "ddsX<Esc>", "X", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
+	{"a|bc", "clX<Esc>u", "abc", "0:1", "v:b", "v:U", ":", "v:b", "v:A"},
+	{"日|本語", "clX<Esc>", "日X語", "0:3", "v:本", "v:U", ":", "v:本", "v:A"},
+	{"日|本語", "2clX<Esc>", "日X", "0:3", "v:本語", "v:U", ":", "v:本語", "v:A"},
+	{"|c d", "ddclX<Esc>", "X", "0:0", "V:c d\n", "v:U", "V:c d\n", ":", "v:A"},
 	{"a\nb|c\nd", "Y", "a\nbc\nd", "1:1", "V:bc\n", "V:bc\n", ":", ":", "v:A"},
 	{"a\nb|c\nd", "2Y", "a\nbc\nd", "1:1", "V:bc\nd\n", "V:bc\nd\n", ":", ":", "v:A"},
 	{"a\nb|c\nd", "5Y", "a\nbc\nd", "1:1", "V:bc\nd\n", "V:bc\nd\n", ":", ":", "v:A"},
@@ -99,7 +98,7 @@ var shorthandCases = []vimCase{
 	{"|ab cd", "xY.", " cd", "0:0", "v:b", "V:b cd\n", ":", "v:b", "v:A"},
 	{"|ab\ncd\nef", "qaDjq@a", "\n\nef", "2:0", "v:cd", "v:U", ":", "v:cd", "v:Dj"},
 	{"|ab\ncd\nef", "qaSX<Esc>jq2@a", "X\nX\nX", "2:0", "V:ef\n", "v:U", "V:ef\n", ":", "v:SX\u001bj"},
-	{"|ab\ncd\nef", "qasX<Esc>jq@a", "Xb\nXd\nef", "2:0", "v:c", "v:U", ":", "v:c", "v:sX\u001bj"},
+	{"|ab\ncd\nef", "qaclX<Esc>jq@a", "Xb\nXd\nef", "2:0", "v:c", "v:U", ":", "v:c", "v:clX\u001bj"},
 	{"a\nb|c\nd", "2\"aY", "a\nbc\nd", "1:1", "V:bc\nd\n", "v:U", ":", ":", "V:bc\nd\n"},
 	{"a|bc\nde", "2Du", "abc\nde", "0:1", "v:bc\nde", "v:U", "v:bc\nde", ":", "v:A"},
 	{"a\n  b|c\nd", "SX<Esc>u", "a\n  bc\nd", "1:2", "V:  bc\n", "v:U", "V:  bc\n", ":", "v:A"},

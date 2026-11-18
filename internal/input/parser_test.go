@@ -63,9 +63,6 @@ func TestParserBuiltin(t *testing.T) {
 			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("change"), Mode: editcmd.ModeInsert,
 			Target: editcmd.Target{Kind: editcmd.TargetLine},
 		})}},
-		{"<< の < は文字", "<<", []editcmd.Result{done(editcmd.Command{
-			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("dedent"), Target: editcmd.Target{Kind: editcmd.TargetLine},
-		})}},
 		{"3<Down> は 3j", "3<Down>", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindMotion, Count: 3, CountGiven: true, Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("down")},
 		})}},
@@ -120,9 +117,6 @@ func TestParserBuiltin(t *testing.T) {
 		})}},
 		{"省略形の S はインサートモードへ", "S", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindAction, Count: 1, Action: builtin("substitute-line"), Mode: editcmd.ModeInsert,
-		})}},
-		{"ノーマルモードの s は操作", `2"_s`, []editcmd.Result{done(editcmd.Command{
-			Kind: editcmd.KindAction, Register: '_', Count: 2, CountGiven: true, Action: builtin("substitute-char"), Mode: editcmd.ModeInsert,
 		})}},
 		{"省略形の Y", "Y", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindAction, Count: 1, Action: builtin("yank-line"),
@@ -193,6 +187,73 @@ func TestParserBuiltin(t *testing.T) {
 				t.Errorf("%s: 結果を返した後も解釈の途中である", tt.keys)
 			}
 		})
+	}
+}
+
+// ノーマルモードの > と < は次のキーを待たない操作で、>> は 2 回ずらす（FR-76）。
+// 囲みの sa は対象の後に文字を 1 つ取るオペレーター、sd は文字を 1 つ、sr は文字を 2 つ取る操作である（FR-73〜FR-75）。
+// ノーマルモードの s は、それだけでは何にも当たらない（要件定義 1.1）。
+//
+// req: FR-73, FR-74, FR-75, FR-76
+func TestParserShiftAndSurround(t *testing.T) {
+	invalid := editcmd.Result{Status: editcmd.StatusInvalid}
+	shift := func(id string, n int) editcmd.Result {
+		return done(editcmd.Command{Kind: editcmd.KindAction, Count: n, CountGiven: n != 1, Action: builtin(id)})
+	}
+	tests := []struct {
+		name string
+		keys string
+		want []editcmd.Result
+	}{
+		{"> は待たずに完成する", ">", []editcmd.Result{shift("indent-line", 1)}},
+		{"3< は 3 行", "3<lt>", []editcmd.Result{shift("dedent-line", 3)}},
+		{">> は 2 回", ">>", []editcmd.Result{shift("indent-line", 1), shift("indent-line", 1)}},
+		{"<< は 2 回", "<lt><lt>", []editcmd.Result{shift("dedent-line", 1), shift("dedent-line", 1)}},
+		{"d> は誤り", "d>", []editcmd.Result{invalid}},
+		{"saiw)", "saiw)", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 1, Operator: builtin("surround-add"), Char: ')',
+			Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-word")},
+		})}},
+		{"2sa3w(", "2sa3w(", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindOperator, Count: 6, CountGiven: true, Operator: builtin("surround-add"), Char: '(',
+			Target: editcmd.Target{Kind: editcmd.TargetMotion, Ref: builtin("word-next")},
+		})}},
+		{"sd(", "sd(", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("surround-delete"), Char: '(',
+		})}},
+		{"2sd\"", `2sd"`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 2, CountGiven: true, Action: builtin("surround-delete"), Char: '"',
+		})}},
+		{"sr\"'", `sr"'`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("surround-replace"), Char: '"', Char2: '\'',
+		})}},
+		{"sr の後の文字に <Tab>", "sr(<Tab>", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("surround-replace"), Char: '(', Char2: '\t',
+		})}},
+		{"sr の後の文字に矢印は誤り", "sr(<Up>", []editcmd.Result{invalid}},
+		{"sr の途中の Esc", "sr(<Esc>", []editcmd.Result{{Status: editcmd.StatusCanceled}}},
+		{"s の後の x は誤り", "sx", []editcmd.Result{invalid}},
+		{"s の後の Esc", "s<Esc>", []editcmd.Result{{Status: editcmd.StatusCanceled}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewParser(DefaultKeymap())
+			got := feed(p, tt.keys)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("%s:\n got  %+v\n want %+v", tt.keys, got, tt.want)
+			}
+			if len(tt.want) > 0 && p.Pending() {
+				t.Errorf("%s: 結果を返した後も解釈の途中である", tt.keys)
+			}
+		})
+	}
+	// sa の対象の後と、sr の 1 つ目の文字の後は、解釈の途中である。
+	p := NewParser(DefaultKeymap())
+	for _, keys := range []string{"saiw", "sr(", "s"} {
+		if rs := feed(p, keys); len(rs) != 0 || !p.Pending() {
+			t.Errorf("%s: got %+v, Pending %v", keys, rs, p.Pending())
+		}
+		feed(p, "<Esc>")
 	}
 }
 
