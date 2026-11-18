@@ -32,6 +32,12 @@
 //	:qa[ll][!]           エディタを閉じる ActionQuitAll を返す。未保存のバッファの確認は呼び出し側が行う
 //	:wqa[ll][!]、:xa[ll][!]  ActionWriteAll と ActionQuitAll を返す
 //	:bd[elete][!] [N|名前]  バッファを閉じる ActionBufferDelete を返す。未保存の変更の確認は呼び出し側が行う
+//	:{range}!{cmd}       範囲の行を cmd の標準入力へ渡し、出力で範囲を置き換える（FR-81。State.Shell で実行する）
+//	:[N]r[ead] !{cmd}    cmd の出力を N 行目（省くとカーソルの行）の後に入れる。:0r は 1 行目の前に入れる（FR-81。:r! も同じ）
+//
+// :{range}! と :r ! は、"|" を含めて行末までを cmd としてシェルへ渡す（Vim と同じ）。
+// Vim と違い、cmd の中の "!"（直前のコマンド）、"%"、"#"（ファイル名）は展開しない。
+// 範囲の無い :!{cmd}（端末を渡す実行。FR-80）と、ファイルを読み込む :r {file} はまだ無く、E319 にする。
 //
 // :b、:bn、:bp の番号と回数は引数でだけ書け、Vim の範囲で書く形（:2b、:3bn）は E481 にする。
 // :b、:bn、:bp、:e は、移った先のバッファでは "|" の後のコマンドを続けない。後のコマンドは移る前のバッファで実行する
@@ -236,6 +242,21 @@ type State struct {
 	// ExtCommand は、コマンドの ID が拡張機能のコマンド（宣言ファイルの contributes.commands）であれば、
 	// それを宣言した拡張機能の ID と true を返す。nil なら、拡張機能のコマンドは呼べない（E492 にする）。
 	ExtCommand func(id string) (extension string, ok bool)
+	// Shell は、外部のコマンド cmd を、端末を渡さずにパイプでつないで実行する（:{range}! と :r !。FR-81）。
+	// input を標準入力へ渡し（nil なら何も渡さない）、標準出力と標準エラー出力を書かれた順に合わせたものを output で返す
+	// （Vim の 'shellredir' の既定 ">%s 2>&1" と同じく、標準エラー出力もバッファへ入る）。
+	// status はシェルの終了コードである。0 でなくても、Vim と同じく output でバッファを変える。
+	// 起動できない、中断された、期限を超えたときは err を返し、バッファは変えない。
+	// nil なら、:{range}! と :r ! は E319 にする。
+	Shell func(cmd string, input []byte) (output []byte, status int, err error)
+}
+
+// Notice は、Ex コマンドが利用者に知らせる 1 行の通知である（"3 行をフィルターしました" など）。
+type Notice struct {
+	// Text は通知の文言である。空なら通知は無い。
+	Text string
+	// Warning は、警告として出すことを表す（シェルの終了コードが 0 でないとき）。
+	Warning bool
 }
 
 // Substitution は、:s の 1 回分のパターン、置換の文字列、フラグである。
@@ -270,6 +291,8 @@ type Result struct {
 	// 呼び出し側は、Execute を呼ぶ前のカーソルの位置をジャンプリストに記録する（Vim 9.1 の setpcmark と同じ）。
 	// :g の cmd の中のコマンドは、:g の 1 回のほかには記録しない（Vim の global_busy の間と同じ）。
 	Jumped bool
+	// Notice は、最後に通知を出したコマンドの通知である（:{range}! と :r ! の行の数と、シェルの終了コード）。
+	Notice Notice
 }
 
 // Confirm は、Ex コマンドの続きを実行する前に、利用者に確認を求めることを表す。
@@ -344,6 +367,8 @@ type execCtx struct {
 	confirm *Confirm
 	// jumped は、ジャンプに当たるコマンドを実行したかである（Result.Jumped）。
 	jumped bool
+	// notice は、最後に通知を出したコマンドの通知である（Result.Notice）。
+	notice Notice
 }
 
 // markJump は、ジャンプに当たるコマンドを実行したことを記録する。:g の cmd の中では記録しない。
@@ -359,7 +384,7 @@ type lineReplace struct {
 }
 
 func (c *execCtx) res() Result {
-	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions, Confirm: c.confirm, Jumped: c.jumped}
+	return Result{Cursor: c.cursor, Move: c.move, Actions: c.actions, Changes: c.changes, Deletions: c.deletions, Confirm: c.confirm, Jumped: c.jumped, Notice: c.notice}
 }
 
 // setCursor は、カーソルを line 行目（0 始まり）へ移し、列の置き方を記録する。
@@ -432,20 +457,28 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 	}
 
 	namePos := s.pos()
-	name := s.letters()
-	if name == "" {
-		return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
-	}
-	cmd := lookup(name)
-	if cmd == nil {
-		return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
+	var name string
+	var cmd *command
+	if s.peek() == '!' {
+		// :{range}!{cmd} は、"!" をコマンド名として読む。直後の "!" は cmd の一部である。
+		s.next()
+		name, cmd = "!", &filterCommand
+	} else {
+		name = s.letters()
+		if name == "" {
+			return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
+		}
+		cmd = lookup(name)
+		if cmd == nil {
+			return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
+		}
 	}
 	if c.inGlobal && !cmd.inGlobal {
 		return "", 0, false, errAt(namePos, codeNotAvailable, ":global の中では使えません: %s", cmd.name)
 	}
 
 	inv := invocation{name: name, namePos: namePos}
-	if s.peek() == '!' {
+	if cmd != &filterCommand && s.peek() == '!' {
 		if !cmd.bang {
 			return "", 0, false, errAt(s.pos(), codeNoBang, "! は使えません")
 		}
@@ -488,6 +521,8 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 			return "", 0, false, err
 		}
 		if cmd.rng != rangeWindow {
+			// :0r は 1 行目の前を指すので、0 だったことを覚えておく。
+			inv.zero = r.count > 0 && r.line2 == 0
 			// 行番号 0 は、範囲を取るコマンドでは 1 行目として扱う（Vim と同じ）。
 			r.line1, r.line2 = max(r.line1, 1)-1, max(r.line2, 1)-1
 		}

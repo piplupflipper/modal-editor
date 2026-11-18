@@ -151,6 +151,11 @@ type Config struct {
 	// NoClipboard は、レジスターの履歴の先頭をホストのクリップボードへ送らないことを表す（基本設計 7 章の registers.clipboard が "off"）。
 	// ゼロ値の false は既定の "osc52" で、履歴の先頭が変わるたびに Terminal.SetClipboard で送る（FR-56）。
 	NoClipboard bool
+	// ChildEnv は、本体が起動する外部のコマンド（:{range}! と :r ! のシェル）の環境変数に、本体の環境の後に足す "名前=値" の列である。
+	// 同じ名前は後のものが勝つ（os/exec の決まり）。
+	// FR-82 の server のソケットのパス（仮に MODAL_EDITOR_SOCKET）と、EDITOR、GIT_EDITOR を入れる口で、
+	// 値は server のソケットができてから呼び出し側が入れる（#190）。
+	ChildEnv []string
 }
 
 // Editor は、イベントループと、編集の状態の全体である。New で作り、Run で動かし、Close で終える。
@@ -689,6 +694,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand
+	bs.state.Ex.Shell = e.runShell
 	bs.state.Interrupted = e.interrupt.Load
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
 		ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text(),

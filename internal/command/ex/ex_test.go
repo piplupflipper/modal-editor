@@ -623,7 +623,8 @@ func TestExecuteActions(t *testing.T) {
 		// req: FR-54
 		{name: ":reg", cmdline: "reg", want: []Action{{Kind: ActionRegisterList}}},
 		{name: ":registers", cmdline: "registers", want: []Action{{Kind: ActionRegisterList}}},
-		{name: ":re は :registers にならない", cmdline: "re", wantCode: "E492"},
+		// :re は Vim と同じく :read で、:r {file} はまだ無いので E319 にする。
+		{name: ":re は :registers にならない", cmdline: "re", wantCode: "E319"},
 		{name: ":reg の余分な文字", cmdline: "reg a", wantCode: "E488"},
 		{name: ":2reg は範囲を取らない", cmdline: "2reg", wantCode: "E481"},
 	}

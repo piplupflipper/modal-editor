@@ -103,6 +103,10 @@ func (s *State) applyExResult(res ex.Result, err error) {
 		s.markJump()
 	}
 	s.res.Changes = append(s.res.Changes, res.Changes...)
+	if res.Notice.Text != "" {
+		// :{range}! と :r ! の行の数と、シェルの終了コードの通知（FR-81）。
+		s.res.Message = Message{Text: res.Notice.Text, Warning: res.Notice.Warning}
+	}
 	var extCmds []ex.Action
 	for _, a := range res.Actions {
 		if a.Kind == ex.ActionExtCommand {

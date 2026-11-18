@@ -3,7 +3,9 @@ package editor
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/piplupflipper/modal-editor/ext"
@@ -145,10 +147,14 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 			return errFileExists
 		}
 		if bs.path != "" {
+			made, err := makeParentDir(path)
+			if err != nil {
+				return err
+			}
 			if err := bs.buf.WriteFile(path); err != nil {
 				return fmt.Errorf("E212: %s を書けません: %w", path, err)
 			}
-			e.message = infoMessage(fmt.Sprintf("\"%s\" を書き込みました", path))
+			e.message = infoMessage(writtenText(path, made))
 			return nil
 		}
 		bs.path = path
@@ -197,6 +203,10 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 			}
 		}
 	}
+	made, err := makeParentDir(path)
+	if err != nil {
+		return err
+	}
 	if err := bs.buf.WriteFile(path); err != nil {
 		return fmt.Errorf("E212: %s を書けません: %w", path, err)
 	}
@@ -207,12 +217,41 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 	if err := e.host.DidSave(ext.BufferDidSaveParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Path: path}); err != nil {
 		e.log.Error("buffer/didSave を送れない", "err", err)
 	}
-	if len(notes) > 0 {
+	switch {
+	case len(notes) > 0 && made != "":
+		e.message = ui.Message{Text: fmt.Sprintf("%s（ディレクトリ \"%s\" を作りました）", notes[0], made), Level: ui.MessageWarning}
+	case len(notes) > 0:
 		e.message = ui.Message{Text: notes[0], Level: ui.MessageWarning}
-	} else {
-		e.message = infoMessage(fmt.Sprintf("\"%s\" を書き込みました", path))
+	default:
+		e.message = infoMessage(writtenText(path, made))
 	}
 	return nil
+}
+
+// makeParentDir は、書き出す先 path の親のディレクトリが無ければ、利用者に聞かずに作る（FR-78。基本設計 4.7）。
+// 作ったら、そのディレクトリ（path の親）を返す。あれば何もせずに空を返す。
+// 権限は os.MkdirAll に 0o777 を渡して umask に任せる（シェルの mkdir -p と同じ）。
+// 作れなければ E212 の誤りを返す。権限の不足（EACCES）で作れないときに権限を上げて作る（FR-116）のは、まだ無い。
+// 親が無いか分からない（stat が ENOENT 以外の誤りを返した。途中がファイルなど）ときは作らず、書き出しの誤りに任せる。
+//
+// req: FR-78
+func makeParentDir(path string) (string, error) {
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err := os.MkdirAll(dir, 0o777); err != nil { //nolint:gosec // 基本設計 4.7 で、mkdir -p と同じく umask に任せると決めている
+		return "", fmt.Errorf("E212: ディレクトリ %s を作れません: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// writtenText は、書き出した後のメッセージの行の文言である。made が空でなければ、作ったディレクトリを同じ 1 行に入れる（FR-78）。
+func writtenText(path, made string) string {
+	if made != "" {
+		return fmt.Sprintf("ディレクトリ \"%s\" を作り、\"%s\" を書き込みました", made, path)
+	}
+	return fmt.Sprintf("\"%s\" を書き込みました", path)
 }
 
 // edit は、:e を行う。引数が無ければ、バッファのファイルを読み直す（未保存の変更の確認は ex が済ませている）。

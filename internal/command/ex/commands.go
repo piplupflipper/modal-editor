@@ -48,6 +48,7 @@ type invocation struct {
 	line1, line2 int
 	rangeCount   int    // 書かれていたアドレスの数。0 なら範囲は省略されている
 	rangePos     int    // 範囲の始まりの位置
+	zero         bool   // 範囲の最後のアドレスが 0 だったか（:0r）。line2 は 0 に丸めてある
 	arg          string // コマンド名と "!" の後の、先頭の空白を除いた引数。barSplit のコマンドでは "|" の手前まで
 	argPos       int
 	// next と nextPos は、"|" の後に続くコマンドとその位置である。hasNext が false なら続くコマンドは無い。
@@ -83,6 +84,8 @@ func init() {
 		{name: "buffers", min: 7, bang: true, rng: rangeNone, run: runBufferList},
 		{name: "ls", min: 2, bang: true, rng: rangeNone, run: runBufferList},
 		{name: "jumps", min: 2, rng: rangeNone, run: runJumps},
+		// "read" を "registers" より前に置き、:r と :re を :read にする（Vim と同じ）。
+		{name: "read", min: 1, bang: true, rng: rangeCurrent, inGlobal: true, bar: barNone, run: runRead},
 		{name: "registers", min: 3, rng: rangeNone, run: runRegisters},
 		{name: "wall", min: 2, bang: true, rng: rangeNone, run: runAll(true, false)},
 		{name: "qall", min: 2, bang: true, rng: rangeNone, run: runAll(false, true)},
