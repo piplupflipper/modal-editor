@@ -1252,7 +1252,7 @@ Go が無ければ、その旨をメッセージに出して止める。
 - 入れ替えで退けた前の版は `extmgr/old/` に置き、入れ替えが済めば消す。前の版を戻せなかったときは消さずに残し、メッセージにパスを出す
 - 同じ `extmgr/` を使う `:ext sync` は、`extmgr/lock` の flock で 1 つずつにする。server は window ごとにあるので（FR-59）、別の server の `:ext sync` が動いていれば、待たずにその旨を返す
 - git と go の子プロセスには、本体の環境の `GIT_DIR`、`GIT_WORK_TREE`、`GIT_INDEX_FILE` など、git のリポジトリの場所を変える環境変数を渡さない。本体を `GIT_EDITOR` にして `git commit` から起動すると、これらが本体の環境に残るためである
-- go の子プロセスには、本体の環境の `GOROOT`、`GOOS`、`GOARCH`、アーキテクチャの副変数（`GOARM`、`GOAMD64` など）、`GOWORK`、`GOFLAGS` を渡さず、`GOOS` と `GOARCH` に本体の動く OS とアーキテクチャを、`GOWORK` に `off` を渡し、`go build` に `-mod=readonly` を付ける（PR #220 のレビュー）。ビルドの成否と、できる実行ファイルが、本体を起動したシェルの環境（mise などが入れた別の版の `GOROOT`、利用者の `go.work`）に依らないようにするためである。`GOTOOLCHAIN` は外さない（拡張機能の `go.mod` が新しい版の Go を要するとき、既定の `auto` で切り替える）。一覧と理由は `internal/extmgr` の package の doc にある
+- go の子プロセスには、本体の環境の `GOROOT`、`GOOS`、`GOARCH`、アーキテクチャの副変数（`GOARM`、`GOAMD64` など）、`GOWORK`、`GOFLAGS` を渡さず、`GOOS` と `GOARCH` に本体の動く OS とアーキテクチャを、`GOWORK` に `off` を渡し、`go build` に `-mod=readonly` を付ける（PR #220 のレビュー）。ビルドの成否と、できる実行ファイルが、本体を起動したシェルの環境（mise などが入れた別の版の `GOROOT`、利用者の `go.work`）に依らないようにするためである。`GOTOOLCHAIN` は外さない（拡張機能の `go.mod` が新しい版の Go を要するとき、既定の `auto` で切り替える）。利用者が `go env -w` で書いた設定は読む（`GOPROXY` などを使うため）ので、そこに書いたアーキテクチャの副変数と `-mod` 以外の `GOFLAGS` は効く。一覧と理由は `internal/extmgr` の package の doc にある
 - ロックファイルが symlink（dotfiles のリポジトリへのもの）なら、symlink を残してリンク先を書き換える。リンク先がまだ無い（切れた symlink）ときは、リンクの指す先に作る（#213）
 - ロックファイルは `{"version": 1, "extensions": {"<名前>": {"repo", "version", "commit"}}}` の形の JSON で、名前の順に 2 文字の字下げで書く。ロックファイルの記録を使わずに版を解決し直す指定（`extmgr.Options.Update`）を持つ。ブランチの版を最新にするときに使う。本体のコマンドでは `:ext update` で指定する（#218）
 - 版は、タグ、ブランチ、コミットのハッシュ（4 桁以上の 16 進数）の順に探す

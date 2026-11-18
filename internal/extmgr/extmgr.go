@@ -58,9 +58,14 @@
 //     （mise などが作業ディレクトリで版を選ぶとき、PATH の go と食い違う）、compile の版が合わずに失敗する
 //   - GOOS、GOARCH: 本体が動いている OS とアーキテクチャ（runtime.GOOS、runtime.GOARCH）を渡す。
 //     go env -w で書いた値より環境変数が優先されるので、それも上書きする。別の値だと、入れた実行ファイルを起動できない
-//   - GOARM、GOARM64、GOAMD64、GO386、GOMIPS、GOMIPS64、GOPPC64、GORISCV64、GOWASM（アーキテクチャの副変数）: 外し、既定にする
+//   - GOARM、GOARM64、GOAMD64、GO386、GOMIPS、GOMIPS64、GOPPC64、GORISCV64、GOWASM（アーキテクチャの副変数）: 本体の環境からは外す
 //   - GOWORK: off を渡す。利用者の go.work に拡張機能のソースのディレクトリが入っていないと、ビルドが失敗する
-//   - GOFLAGS: 外す。go build には -mod=readonly を明示し、go env -w で書いた -mod=vendor なども上書きする
+//   - GOFLAGS: 本体の環境からは外す。go build には -mod=readonly を明示し、GOFLAGS の -mod=vendor なども上書きする
+//
+// 利用者が go env -w で書いた設定（GOENV のファイル）は読む。GOPROXY、GOPRIVATE などの利用者の設定を使うためである。
+// このため、go env -w で書いたアーキテクチャの副変数（GOAMD64=v3 など）と、-mod 以外の GOFLAGS（-tags など）は効いたままになる
+// （go1.27.4 の go env で確かめた）。GOOS、GOARCH、GOWORK は環境変数で値を渡すので、go env -w の値より優先される。
+// GOROOT は go env -w で書けない（go: GOROOT cannot be modified）。
 //
 // GOTOOLCHAIN は外さない。ext/server を使う拡張機能の go.mod は本体と同じ版の Go を要するので、
 // 利用者の go が古ければ、既定の auto で新しい版に切り替える必要がある。
