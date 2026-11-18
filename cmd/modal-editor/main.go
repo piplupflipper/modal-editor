@@ -196,7 +196,7 @@ func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Term
 	// 1 つのプロセスの構成でも server のソケットを待ち受ける（FR-60。基本設計 1.2）。待ち受けられなくても編集は続ける。
 	var ln net.Listener
 	if sock != nil {
-		if ln, err = server.Listen(filepath.Join(filepath.Dir(sock.Path), server.SocketName)); err != nil {
+		if ln, err = server.ListenInOwnDir(filepath.Join(filepath.Dir(sock.Path), server.SocketName)); err != nil {
 			logger.Warn("server のソケットで待ち受けられない", "err", err)
 			ln = nil
 		}
@@ -210,7 +210,9 @@ func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Term
 	}()
 	runErr := srv.Serve(ctx, ln, serverConn)
 	// 拡張機能の終了は数秒かかることがあるので、先に client に端末を戻させる（editor.Editor.Close の doc）。
-	if err := <-clientDone; err != nil {
+	// server の終わり方（client.ErrServerLost など）は、同じプロセスの server の runErr で知らせるので、ここでは端末を戻す誤りだけを見る。
+	var exitErr *client.ServerExitError
+	if err := <-clientDone; err != nil && !errors.Is(err, client.ErrServerLost) && !errors.As(err, &exitErr) {
 		logger.Error("端末を戻せない", "err", err)
 	}
 	closeServer(srv, logger)

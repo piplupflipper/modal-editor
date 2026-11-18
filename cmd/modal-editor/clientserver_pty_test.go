@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,7 +83,7 @@ func (p *serverProc) wait(t *testing.T) error {
 // req: FR-58
 func TestClientServerProcessesInPTY(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.txt")
-	sock := filepath.Join(t.TempDir(), "srv", server.SocketName)
+	sock := socketPath(t)
 	srv := startServer(t, os.Args[0], sock, nil, path)
 
 	p := startEditor(t, "-connect", sock)
@@ -113,9 +114,45 @@ func TestClientServerProcessesInPTY(t *testing.T) {
 	p.checkRestored(t, before)
 }
 
+// TestServerKilledInPTY は、server が SIGKILL で終わったら、client は端末を戻し、そのことを 1 行出して、0 でない終了コードで終わることを確かめる
+// （PR #200 のレビューの推奨 2）。
+func TestServerKilledInPTY(t *testing.T) {
+	sock := socketPath(t)
+	srv := startServer(t, os.Args[0], sock, nil)
+	p := startEditor(t, "-connect", sock)
+	before := ptytest.Termios(t, p.tty)
+	p.out.WaitForString(t, "NORMAL")
+	if err := srv.cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.wait(t); err == nil {
+		t.Fatal("SIGKILL の server が正常終了になった")
+	}
+	err := p.wait(t)
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() == 0 {
+		t.Fatalf("client の終了 = %v, want 0 でない終了コード", err)
+	}
+	p.checkRestored(t, before)
+	out := p.out.String()
+	if i := strings.LastIndex(out, "\x1b[?1049l"); !strings.Contains(out[i:], "server との接続が切れた") {
+		t.Errorf("端末を戻した後に、server の異常終了の知らせが無い: %q", out[i:])
+	}
+}
+
+// socketPath は、親も権限 0700 のディレクトリの下の、server のソケットのパスを返す（server.Listen は親も検査する）。
+func socketPath(t *testing.T) string {
+	t.Helper()
+	d := filepath.Join(t.TempDir(), "p")
+	if err := os.Mkdir(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(d, "srv", server.SocketName)
+}
+
 // TestClientKilledEndsServerInPTY は、編集の client が SIGKILL で終わって接続が切れたら、server も終わることを確かめる（基本設計 1.2）。
 func TestClientKilledEndsServerInPTY(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "srv", server.SocketName)
+	sock := socketPath(t)
 	srv := startServer(t, os.Args[0], sock, nil)
 	p := startEditor(t, "-connect", sock)
 	p.out.WaitForString(t, "NORMAL")

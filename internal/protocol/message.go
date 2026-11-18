@@ -29,6 +29,25 @@ const (
 	KindWait ClientKind = "wait"
 )
 
+// MaxWidth と MaxHeight は、端末の大きさとして受け付ける列数と行数の上限である。
+// server は Hello と大きさの変化の Event の大きさで格子（ui.Grid）を作り、client は届いた画面の大きさで格子を作るので、
+// 上限が無いと、壊れたか悪意のある相手が送った巨大な値でメモリを使い切り、プロセスごと落ちる（PR #200 のレビュー。
+// Go の out of memory は recover できず、server では未保存の変更を失う）。
+//
+// 値の根拠: 8K の画面（7680 × 4320 ピクセル）を 6 × 12 ピクセルの小さな文字で埋めても 1280 列 360 行である。
+// その上に余裕を見て 2000 列 1000 行とした（仮）。
+// このときの格子は 200 万セルで、1 セルが約 48 バイトなので 1 つの格子で約 96 MB になる。
+// server と client はそれぞれ数個の格子を持つが、16 GiB 級のマシンで落ちない大きさに収まる。
+const (
+	MaxWidth  = 2000
+	MaxHeight = 1000
+)
+
+// ValidSize は、width と height が、どちらも 1 以上で上限以下かを返す。
+func ValidSize(width, height int) bool {
+	return width >= 1 && width <= MaxWidth && height >= 1 && height <= MaxHeight
+}
+
 // Hello は、client が接続の最初に送るメッセージである。client の種類と端末の大きさを知らせる（基本設計 1.2）。
 // server は、最初のメッセージが Hello でなければ、その接続を受け付けない。
 // ペインの ID（FR-63）、部品の client の元の client（FR-67、FR-115）、待つだけの client の開くファイル（FR-83）は、
@@ -55,7 +74,7 @@ type Event struct {
 
 func (Event) clientMessage() {}
 
-// ServerMessage は、server から client へ送るメッセージである。Draw と SetClipboard のどちらかである。
+// ServerMessage は、server から client へ送るメッセージである。Draw、SetClipboard、Exit のどれかである。
 type ServerMessage interface {
 	serverMessage()
 }
@@ -67,6 +86,15 @@ type SetClipboard struct {
 }
 
 func (SetClipboard) serverMessage() {}
+
+// Exit は、server が接続を閉じる前に送る、終わりの知らせである（PR #200 のレビューの推奨 2）。
+// client は、Exit を受けずに接続が閉じたら、server が異常終了したとみなす。
+type Exit struct {
+	// Reason は、終わった理由である。空なら正常な終わり（:q など）で、空でなければ利用者に知らせる理由（シグナルなど）である。
+	Reason string
+}
+
+func (Exit) serverMessage() {}
 
 // ClientConn は、client の側から見た接続である。どの goroutine から呼んでもよい。
 type ClientConn interface {

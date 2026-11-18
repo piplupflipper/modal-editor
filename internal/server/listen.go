@@ -23,11 +23,25 @@ const staleDialTimeout = 500 * time.Millisecond
 
 // Listen は、path で server のソケットを待ち受ける（基本設計 1.2）。
 //
-// path を置くディレクトリは、無ければ権限 0700 で作る。
-// 既にあれば、シンボリックリンクでないディレクトリで、持ち主が実効ユーザー ID で、他の利用者の権限が無いことを確かめ、満たさなければ待ち受けない。
+// path を置くディレクトリ（基本設計 1.2 の `<名前>/`）とその親（`$XDG_RUNTIME_DIR/modal-editor/` か `modal-editor-<利用者 ID>/`）は、
+// 無ければ権限 0700 で作る。
+// どちらも、シンボリックリンクでないディレクトリで、持ち主が実効ユーザー ID で、他の利用者の権限が無いことを確かめ、満たさなければ待ち受けない。
+// 親を他の利用者が書けると、検査の後に `<名前>/` を入れ替えられるためである。
 // path に繋げない古いソケット（server が SIGKILL で終わった後に残ったもの）があれば消してから待ち受け、繋げるソケットがあれば誤りにする。
 // 返す net.Listener は、Close でソケットのファイルを消す。
 func Listen(path string) (net.Listener, error) {
+	return listen(path, true)
+}
+
+// ListenInOwnDir は、呼び出し側が os.MkdirTemp で排他的に作ったディレクトリ（権限 0700）の中の path で待ち受ける。
+// そのディレクトリは他の利用者が先に作れず、入れ替えもできないので、親のディレクトリは検査しない
+// （1 つのプロセスの構成で、MCP のソケットと同じディレクトリに置く場合。親は一時ディレクトリでありうる）。
+// それ以外は Listen と同じである。
+func ListenInOwnDir(path string) (net.Listener, error) {
+	return listen(path, false)
+}
+
+func listen(path string, checkParent bool) (net.Listener, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("server: listen: %w", err)
@@ -38,6 +52,11 @@ func Listen(path string) (net.Listener, error) {
 	dir := filepath.Dir(path)
 	if err = os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("server: listen: %w", err)
+	}
+	if checkParent {
+		if err = checkPrivateDir(filepath.Dir(dir)); err != nil {
+			return nil, err
+		}
 	}
 	if err = checkPrivateDir(dir); err != nil {
 		return nil, err
@@ -85,7 +104,7 @@ func checkPrivateDir(path string) error {
 		return fmt.Errorf("server: socket directory: %s is not a directory (mode %v)", path, fi.Mode())
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("server: socket directory: %s is accessible by other users (mode %v)", path, fi.Mode().Perm())
+		return fmt.Errorf("server: socket directory: %s is accessible by other users (mode %v)", path, fi.Mode())
 	}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Geteuid() {
 		return fmt.Errorf("server: socket directory: %s is owned by uid %d, not %d", path, st.Uid, os.Geteuid())

@@ -98,6 +98,9 @@ func TestRunForwardsAndApplies(t *testing.T) {
 	if err := s.Send(protocol.SetClipboard{Text: "yank"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.Send(protocol.Exit{}); err != nil {
+		t.Fatal(err)
+	}
 	_ = s.Close()
 	wait(t, done)
 
@@ -111,6 +114,50 @@ func TestRunForwardsAndApplies(t *testing.T) {
 	}
 	if tm.restored != 1 {
 		t.Errorf("Restore called %d times, want 1", tm.restored)
+	}
+}
+
+// server が終わりの知らせ（Exit）を送らずに接続を閉じたら、client は端末を戻してから ErrServerLost を返す。
+// 理由付きの Exit なら、その理由の ServerExitError を返す（PR #200 のレビューの推奨 2）。
+func TestRunReportsServerEnd(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		last []protocol.ServerMessage
+		want func(error) bool
+	}{
+		{"lost", nil, func(err error) bool { return errors.Is(err, ErrServerLost) }},
+		{"reason", []protocol.ServerMessage{protocol.Exit{Reason: "stopped"}}, func(err error) bool {
+			var e *ServerExitError
+			return errors.As(err, &e) && e.Reason == "stopped"
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := newFakeTerm()
+			c, s := protocol.Pipe()
+			done := runClient(tm, c)
+			if _, err := s.Recv(); err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range tt.last {
+				if err := s.Send(m); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_ = s.Close()
+			select {
+			case err := <-done:
+				if !tt.want(err) {
+					t.Fatalf("Run = %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Run did not return")
+			}
+			tm.mu.Lock()
+			defer tm.mu.Unlock()
+			if tm.restored != 1 {
+				t.Errorf("Restore called %d times, want 1", tm.restored)
+			}
+		})
 	}
 }
 

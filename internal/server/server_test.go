@@ -105,6 +105,9 @@ func TestRunEditsThroughConnection(t *testing.T) {
 	if draws == 0 {
 		t.Fatal("no Draw was sent")
 	}
+	if m := ms[len(ms)-1]; m != (protocol.Exit{}) {
+		t.Errorf("last message = %#v, want Exit without a reason", m)
+	}
 	if g := last.Screen.Grid; g.Width() != 40 || g.Height() != 10 {
 		t.Errorf("screen size = %dx%d, want the size the client sent (40x10)", g.Width(), g.Height())
 	}
@@ -199,6 +202,17 @@ func TestRunReturnsOnContextDoneBeforeFirstMessage(t *testing.T) {
 	}
 }
 
+// privateDir は、権限 0700 の一時ディレクトリを返す。Listen は、ソケットのディレクトリの親も検査するので、
+// t.TempDir()（権限は umask による）の下に 0700 のディレクトリを 1 段挟む。
+func privateDir(t *testing.T) string {
+	t.Helper()
+	d := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
 func newClientTerm() *clientTerm {
 	return &clientTerm{log: slog.New(slog.DiscardHandler), events: make(chan editor.TermEvent)}
 }
@@ -224,7 +238,7 @@ func TestClientTermAttach(t *testing.T) {
 	if _, ok := <-ct.Input(); ok {
 		t.Error("Input is not closed after the client closed")
 	}
-	ct.finish()
+	ct.finish("")
 
 	_, s = protocol.Pipe()
 	ct = newClientTerm()
@@ -233,15 +247,49 @@ func TestClientTermAttach(t *testing.T) {
 		t.Errorf("Size = %dx%d, want the default %dx%d", w, h, defaultWidth, defaultHeight)
 	}
 	_ = s.Close()
-	ct.finish()
+	ct.finish("")
+}
+
+// 大きさの変化の Event の大きさが範囲の外なら、イベントループへ渡さずに捨てる（PR #200 のレビューの推奨 1）。
+func TestClientTermDropsBadResize(t *testing.T) {
+	key := editcmd.Key{Code: editcmd.CodeRune, Rune: 'x'}
+	c, s := protocol.Pipe()
+	ct := newClientTerm()
+	for _, ev := range []protocol.Event{
+		{Resize: true, Width: 100000, Height: 100000},
+		{Resize: true, Width: 0, Height: 24},
+		{Resize: true, Width: 120, Height: 40},
+		{Key: key},
+	} {
+		if err := c.Send(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ct.attach(1, s, protocol.Hello{Kind: protocol.KindEdit, Width: 80, Height: 24})
+	if ev := <-ct.Input(); !ev.Resize || ev.Width != 120 || ev.Height != 40 {
+		t.Errorf("first event = %+v, want the valid resize 120x40", ev)
+	}
+	if ev := <-ct.Input(); ev.Key != key {
+		t.Errorf("second event = %+v, want key x", ev)
+	}
+	_ = c.Close()
+	ct.finish("")
 }
 
 // 最初のメッセージが編集の client の Hello でなければ、Run は ErrUnexpectedHello で戻り、接続を閉じる。
+// Hello の大きさが上限を超えていれば、格子を作らずに ErrBadSize で戻る（PR #200 のレビューの推奨 1）。
 func TestRunRejectsNonHello(t *testing.T) {
-	for _, first := range []protocol.ClientMessage{
-		protocol.Event{Resize: true, Width: 80, Height: 24},
-		protocol.Hello{Kind: protocol.KindWait},
+	for _, tt := range []struct {
+		first protocol.ClientMessage
+		want  error
+	}{
+		{protocol.Event{Resize: true, Width: 80, Height: 24}, ErrUnexpectedHello},
+		{protocol.Hello{Kind: protocol.KindWait}, ErrUnexpectedHello},
+		{protocol.Hello{Kind: protocol.KindEdit, Width: 100000, Height: 100000}, ErrBadSize},
+		{protocol.Hello{Kind: protocol.KindEdit, Width: protocol.MaxWidth + 1, Height: 24}, ErrBadSize},
+		{protocol.Hello{Kind: protocol.KindEdit, Width: 80, Height: protocol.MaxHeight + 1}, ErrBadSize},
 	} {
+		first := tt.first
 		srv := newServer(t)
 		c, s := protocol.Pipe()
 		done := make(chan error, 1)
@@ -251,8 +299,8 @@ func TestRunRejectsNonHello(t *testing.T) {
 		}
 		select {
 		case err := <-done:
-			if !errors.Is(err, ErrUnexpectedHello) {
-				t.Fatalf("first %#v: Run = %v, want ErrUnexpectedHello", first, err)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("first %#v: Run = %v, want %v", first, err, tt.want)
 			}
 		case <-time.After(10 * time.Second):
 			t.Fatal("Run did not return")
@@ -303,7 +351,7 @@ func (b *blockingConn) Close() error {
 }
 
 // 読み取りの遅い client があっても、Draw と SetClipboard はイベントループを待たせない。
-// 送れるようになったら、client には最新の画面だけと、すべてのクリップボードへの書き込みが順に届く（PR #187 のレビューの推奨 2）。
+// 送れるようになったら、client には最新の画面と、最新のクリップボードへの書き込みだけが届く（PR #187 のレビューの推奨 2）。
 func TestClientTermDoesNotBlockOnSlowClient(t *testing.T) {
 	conn := newBlockingConn()
 	ct := newClientTerm()
@@ -334,7 +382,7 @@ func TestClientTermDoesNotBlockOnSlowClient(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		ct.out.mu.Lock()
-		empty := ct.out.screen == nil && len(ct.out.clips) == 0
+		empty := ct.out.screen == nil && ct.out.clip == nil
 		ct.out.mu.Unlock()
 		conn.mu.Lock()
 		n := len(conn.sent)
@@ -351,7 +399,7 @@ func TestClientTermDoesNotBlockOnSlowClient(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	ct.finish()
+	ct.finish("")
 	_ = conn.Close()
 
 	conn.mu.Lock()
@@ -369,7 +417,8 @@ func TestClientTermDoesNotBlockOnSlowClient(t *testing.T) {
 	if draws > 3 {
 		t.Errorf("%d screens were sent, want at most 3 (the one in flight, and the latest)", draws)
 	}
-	want := []string{"0", "10", "20", "30", "40", "50", "60", "70", "80", "90"}
+	// 止まっている間の書き込みは、最新の 1 つにまとめる（PR #200 のレビューの推奨 7）。
+	want := []string{"90"}
 	if !slices.Equal(clips, want) {
 		t.Errorf("clipboard = %q, want %q", clips, want)
 	}
@@ -408,7 +457,7 @@ func TestServeOverSocket(t *testing.T) {
 	if err := srv.Open(path); err != nil {
 		t.Fatal(err)
 	}
-	sock := filepath.Join(t.TempDir(), "s", SocketName)
+	sock := filepath.Join(privateDir(t), "s", SocketName)
 	ln, err := Listen(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -468,7 +517,7 @@ func TestServeOverSocket(t *testing.T) {
 // 待つ間に ctx が終わったら ctx.Err() で戻る。
 func TestServeSkipsBadCandidates(t *testing.T) {
 	srv := newServer(t)
-	sock := filepath.Join(t.TempDir(), "s", SocketName)
+	sock := filepath.Join(privateDir(t), "s", SocketName)
 	ln, err := Listen(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -514,7 +563,7 @@ func TestServeSkipsBadCandidates(t *testing.T) {
 // Listen は、ソケットのディレクトリを 0700 で作り、他の利用者の権限があるディレクトリでは待ち受けない（基本設計 1.2）。
 // 繋げない古いソケットは消して待ち受け、繋げるソケットがあれば誤りにする。
 func TestListen(t *testing.T) {
-	base := t.TempDir()
+	base := privateDir(t)
 	sock := filepath.Join(base, "new", SocketName)
 	ln, err := Listen(sock)
 	if err != nil {
@@ -546,15 +595,29 @@ func TestListen(t *testing.T) {
 	_ = ln.Close()
 
 	open := filepath.Join(base, "open")
-	if err := os.Mkdir(open, 0o700); err != nil {
+	if err = os.Mkdir(open, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(open, 0o755); err != nil { //nolint:gosec // 他の利用者の権限があるディレクトリを、検査が断ることを確かめる
+	if err = os.Chmod(open, 0o755); err != nil { //nolint:gosec // 他の利用者の権限があるディレクトリを、検査が断ることを確かめる
 		t.Fatal(err)
 	}
-	if _, err := Listen(filepath.Join(open, SocketName)); err == nil {
+	if _, err = Listen(filepath.Join(open, SocketName)); err == nil {
 		t.Error("Listen in a directory readable by other users succeeded")
 	}
+	// 親のディレクトリを他の利用者が書けるなら、`<名前>/` が 0700 でも断る（基本設計 1.2。PR #200 のレビューの推奨 5）。
+	if _, err = Listen(filepath.Join(open, "d", SocketName)); err == nil {
+		t.Error("Listen under a parent directory accessible by other users succeeded")
+	}
+	// ListenInOwnDir は、呼び出し側が排他的に作ったディレクトリなので、親を検査しない。
+	own, err := os.MkdirTemp(open, "own")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err = ListenInOwnDir(filepath.Join(own, SocketName))
+	if err != nil {
+		t.Fatalf("ListenInOwnDir: %v", err)
+	}
+	_ = ln.Close()
 	link := filepath.Join(base, "link")
 	if err := os.Symlink(filepath.Join(base, "new"), link); err != nil {
 		t.Fatal(err)

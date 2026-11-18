@@ -22,6 +22,7 @@ const (
 	methodEvent     = "client/event"  // client → server。Event
 	methodDraw      = "screen/draw"   // server → client。Draw（格子の差分。screen.go）
 	methodClipboard = "clipboard/set" // server → client。SetClipboard
+	methodExit      = "server/exit"   // server → client。Exit（接続を閉じる前の、終わりの知らせ）
 )
 
 // maxSocketMessageSize は、ソケットから受ける 1 件のメッセージの本文の上限である（拡張機能との接続と同じ）。
@@ -159,6 +160,8 @@ func (ss *serverSocket) Send(m ServerMessage) error {
 		return ss.s.send(methodDraw, ss.enc.encode(m.Screen))
 	case SetClipboard:
 		return ss.s.send(methodClipboard, wireClipboard(m))
+	case Exit:
+		return ss.s.send(methodExit, wireExit(m))
 	}
 	return fmt.Errorf("protocol: unknown server message %T", m)
 }
@@ -166,25 +169,28 @@ func (ss *serverSocket) Send(m ServerMessage) error {
 func (ss *serverSocket) Recv() (ClientMessage, error) {
 	ss.s.rmu.Lock()
 	defer ss.s.rmu.Unlock()
-	m, err := ss.s.recv()
-	if err != nil {
-		return nil, err
-	}
-	switch m.Method {
-	case methodHello:
-		var h wireHello
-		if err := decodeParams(m, &h); err != nil {
+	for {
+		m, err := ss.s.recv()
+		if err != nil {
 			return nil, err
 		}
-		return Hello(h), nil
-	case methodEvent:
-		var ev wireEvent
-		if err := decodeParams(m, &ev); err != nil {
-			return nil, err
+		switch m.Method {
+		case methodHello:
+			var h wireHello
+			if err := decodeParams(m, &h); err != nil {
+				return nil, err
+			}
+			return Hello(h), nil
+		case methodEvent:
+			var ev wireEvent
+			if err := decodeParams(m, &ev); err != nil {
+				return nil, err
+			}
+			return ev.event(), nil
 		}
-		return ev.event(), nil
+		// 知らないメソッドの通知は読み飛ばす（JSON-RPC 2.0 の通知と同じく応答しない）。
+		// 新しい client が古い server に繋いでも、接続を切らずに編集を続けられるようにする。
 	}
-	return nil, fmt.Errorf("protocol: unknown client message %q", m.Method)
 }
 
 func (ss *serverSocket) Close() error { return ss.s.close() }
@@ -209,25 +215,37 @@ func (cs *clientSocket) Send(m ClientMessage) error {
 func (cs *clientSocket) Recv() (ServerMessage, error) {
 	cs.s.rmu.Lock()
 	defer cs.s.rmu.Unlock()
-	m, err := cs.s.recv()
-	if err != nil {
-		return nil, err
-	}
-	switch m.Method {
-	case methodDraw:
-		var d wireDraw
-		if err := decodeParams(m, &d); err != nil {
+	for {
+		m, err := cs.s.recv()
+		if err != nil {
 			return nil, err
 		}
-		return Draw{Screen: cs.dec.decode(d)}, nil
-	case methodClipboard:
-		var c wireClipboard
-		if err := decodeParams(m, &c); err != nil {
-			return nil, err
+		switch m.Method {
+		case methodDraw:
+			var d wireDraw
+			if err := decodeParams(m, &d); err != nil {
+				return nil, err
+			}
+			scr, err := cs.dec.decode(d)
+			if err != nil {
+				return nil, err
+			}
+			return Draw{Screen: scr}, nil
+		case methodClipboard:
+			var c wireClipboard
+			if err := decodeParams(m, &c); err != nil {
+				return nil, err
+			}
+			return SetClipboard(c), nil
+		case methodExit:
+			var e wireExit
+			if err := decodeParams(m, &e); err != nil {
+				return nil, err
+			}
+			return Exit(e), nil
 		}
-		return SetClipboard(c), nil
+		// 知らないメソッドの通知は読み飛ばす（serverSocket.Recv と同じ）。
 	}
-	return nil, fmt.Errorf("protocol: unknown server message %q", m.Method)
 }
 
 func (cs *clientSocket) Close() error { return cs.s.close() }
@@ -240,6 +258,10 @@ type wireHello struct {
 
 type wireClipboard struct {
 	Text string `json:"text"`
+}
+
+type wireExit struct {
+	Reason string `json:"reason,omitempty"`
 }
 
 type wireKey struct {

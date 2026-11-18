@@ -57,6 +57,9 @@ const helloTimeout = 5 * time.Second
 // ErrUnexpectedHello は、client の最初のメッセージが、編集の client の Hello でなかったことを表す。
 var ErrUnexpectedHello = errors.New("server: first message is not a hello from an edit client")
 
+// ErrBadSize は、client が Hello で知らせた端末の大きさが、受け付ける上限（protocol.MaxWidth、protocol.MaxHeight）を超えたことを表す。
+var ErrBadSize = errors.New("server: terminal size out of range")
+
 // Server は、編集の状態を持つ側である。New で作り、Open で起動の引数のファイルを開き、Run か Serve で client を繋いで動かし、Close で拡張機能を止める。
 type Server struct {
 	ed *editor.Editor
@@ -118,8 +121,20 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, first protocol.Serv
 	s.nextID++
 	s.client.attach(s.nextID, conn, hello)
 	err = s.ed.Run(ctx)
-	s.client.finish()
+	s.client.finish(exitReason(ctx, err))
 	return err
+}
+
+// exitReason は、イベントループが err で終わったときに、client へ知らせる終わりの理由を返す。:q などの正常な終わりは空である。
+func exitReason(ctx context.Context, err error) string {
+	switch {
+	case err == nil, errors.Is(err, editor.ErrTerminalLost):
+		// client の側が終わった。知らせる相手はもう読んでいない
+		return ""
+	case ctx.Err() != nil:
+		return "server が止められた: " + context.Cause(ctx).Error()
+	}
+	return "server が誤りで終わった: " + err.Error()
 }
 
 // firstClient は、編集の client の接続と、その Hello を返す。
@@ -191,6 +206,10 @@ func handshake(ctx context.Context, conn protocol.ServerConn) (protocol.Hello, e
 	if !ok || h.Kind != protocol.KindEdit {
 		return protocol.Hello{}, fmt.Errorf("%w: %#v", ErrUnexpectedHello, r.m)
 	}
+	// 大きさを知らせない（0 以下）なら既定の大きさにする。知らせた大きさが上限を超えれば断る。
+	if h.Width > 0 && h.Height > 0 && !protocol.ValidSize(h.Width, h.Height) {
+		return protocol.Hello{}, fmt.Errorf("%w: %dx%d", ErrBadSize, h.Width, h.Height)
+	}
 	return h, nil
 }
 
@@ -258,10 +277,19 @@ type clientTerm struct {
 
 // outbox は、client へ送るのを待つ画面とクリップボードへの書き込みの置き場である。
 // イベントループが入れ、送る goroutine（clientTerm.send）が取り出す。
+//
+// 画面もクリップボードへの書き込みも、まだ送っていない最新の 1 つだけを置く。
+// クリップボードは OSC 52 でホストのクリップボードに残るのが最後の 1 つなので、まとめても利用者から見て変わらない。
+// 読まない client（端末の出力を <C-s> で止めた、固まったペイン）の間にヤンクを繰り返しても、置き場は大きくならない（PR #200 のレビューの推奨 7）。
+//
+// 送る順序は「クリップボード、画面」だけを気にしている。画面と他のメッセージの前後を保つ必要のあるメッセージ
+// （:! の端末の受け渡し。FR-80、FR-117）を足すときは、置き場を順序を保つ列にし、画面だけを列の中の直前の画面と置き換える形に変える
+// （PR #200 のレビューの推奨 4）。
 type outbox struct {
 	mu     sync.Mutex
 	screen *ui.Screen // まだ送っていない最新の画面。nil なら無い
-	clips  []string   // まだ送っていないクリップボードへの書き込み。古い順
+	clip   *string    // まだ送っていない最新のクリップボードへの書き込み。nil なら無い
+	exit   string     // finish で決めた、終わりの知らせ（protocol.Exit）の理由
 
 	wake chan struct{} // 置き場に入れたことを送る goroutine に知らせる。溜めは 1
 	stop chan struct{} // Run の終わりで閉じる
@@ -289,9 +317,12 @@ func defaultSize(w, h int) (int, int) {
 	return w, h
 }
 
-// finish は、イベントループが終わった後に呼ぶ。まだ送っていないクリップボードへの書き込みを送り終えるのを、flushTimeout まで待つ。
-// 画面は送らない（client はこの後に端末を戻す）。
-func (t *clientTerm) finish() {
+// finish は、イベントループが終わった後に呼ぶ。まだ送っていないクリップボードへの書き込みと、終わりの知らせ（理由 reason）を
+// 送り終えるのを、flushTimeout まで待つ。画面は送らない（client はこの後に端末を戻す）。
+func (t *clientTerm) finish(reason string) {
+	t.out.mu.Lock()
+	t.out.exit = reason
+	t.out.mu.Unlock()
 	close(t.out.stop)
 	select {
 	case <-t.out.done:
@@ -318,12 +349,16 @@ func (t *clientTerm) read() {
 			t.log.Warn("client から 2 回目の Hello が届いた。無視する")
 			continue
 		}
+		if ev.Resize && !protocol.ValidSize(ev.Width, ev.Height) {
+			t.log.Warn("client が知らせた端末の大きさが範囲の外なので、無視する", "width", ev.Width, "height", ev.Height)
+			continue
+		}
 		t.events <- t.termEvent(ev)
 	}
 }
 
 // send は、置き場の画面とクリップボードへの書き込みを client へ送る。
-// Run が終わったら、残ったクリップボードへの書き込みだけを送って終わる。接続が閉じても終わる。
+// Run が終わったら、残ったクリップボードへの書き込みと終わりの知らせを送って終わる。接続が閉じても終わる。
 func (t *clientTerm) send() {
 	defer close(t.out.done)
 	defer t.recoverPanic()
@@ -335,15 +370,14 @@ func (t *clientTerm) send() {
 			stopping = true
 		}
 		t.out.mu.Lock()
-		scr, clips := t.out.screen, t.out.clips
-		t.out.screen, t.out.clips = nil, nil
+		scr, clip, reason := t.out.screen, t.out.clip, t.out.exit
+		t.out.screen, t.out.clip = nil, nil
 		t.out.mu.Unlock()
-		for _, c := range clips {
-			if !t.sent(t.conn.Send(protocol.SetClipboard{Text: c})) {
-				return
-			}
+		if clip != nil && !t.sent(t.conn.Send(protocol.SetClipboard{Text: *clip})) {
+			return
 		}
 		if stopping {
+			t.sent(t.conn.Send(protocol.Exit{Reason: reason}))
 			return
 		}
 		if scr != nil && !t.sent(t.conn.Send(protocol.Draw{Screen: *scr})) {
@@ -411,10 +445,10 @@ func (t *clientTerm) Draw(s ui.Screen) error {
 }
 
 // SetClipboard は、text をホストのクリップボードへ送るよう client に頼む（FR-56）。送り終えるのを待たない。
-// 前の書き込みを置き換えずに、届いた順に送る。
+// まだ送っていない前の書き込みがあれば、text で置き換える（outbox の doc）。
 func (t *clientTerm) SetClipboard(text string) error {
 	t.out.mu.Lock()
-	t.out.clips = append(t.out.clips, text)
+	t.out.clip = &text
 	t.out.mu.Unlock()
 	t.wakeSender()
 	return nil

@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -149,7 +150,11 @@ type screenDecoder struct {
 
 // decode は、d を手元の格子に当てた ui.Screen を返す。
 // 大きさが前回と違えば格子を作り直し、載っていない行は空白にする（server はそのときすべての行を載せる）。
-func (dec *screenDecoder) decode(d wireDraw) ui.Screen {
+// 大きさが上限（MaxWidth、MaxHeight）を超えていれば、格子を作らずに誤りを返す。
+func (dec *screenDecoder) decode(d wireDraw) (ui.Screen, error) {
+	if d.Width < 0 || d.Height < 0 || d.Width > MaxWidth || d.Height > MaxHeight {
+		return ui.Screen{}, fmt.Errorf("protocol: screen size %dx%d out of range", d.Width, d.Height)
+	}
 	g := dec.grid
 	if g == nil || g.Width() != d.Width || g.Height() != d.Height {
 		g = ui.NewGrid(d.Width, d.Height)
@@ -160,7 +165,7 @@ func (dec *screenDecoder) decode(d wireDraw) ui.Screen {
 		g.SetRow(row.Row, dec.cells)
 	}
 	c := d.Cursor
-	return ui.Screen{Grid: g, Cursor: ui.Cursor{Row: c.Row, Col: c.Col, Shape: c.Shape, Visible: c.Visible}}
+	return ui.Screen{Grid: g, Cursor: ui.Cursor{Row: c.Row, Col: c.Col, Shape: c.Shape, Visible: c.Visible}}, nil
 }
 
 // decodeRow は、runs のセルを cells に足して返す。

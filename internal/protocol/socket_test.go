@@ -9,8 +9,86 @@ import (
 	"time"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/modal-editor/internal/rpc"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
+
+// writeRaw は、c へ本文 bodies を Content-Length の区切りで順に書く goroutine を起こす（net.Pipe は読む側が読むまで書き込みが止まるため）。
+func writeRaw(t *testing.T, c net.Conn, bodies ...string) {
+	t.Helper()
+	go func() {
+		for _, b := range bodies {
+			if err := rpc.WriteMessage(c, []byte(b)); err != nil {
+				return
+			}
+		}
+	}()
+}
+
+// 知らないメソッドの通知は、接続を切らずに読み飛ばす（PR #200 のレビューの推奨 6）。壊れた JSON は誤りにする。
+func TestSocketSkipsUnknownMethods(t *testing.T) {
+	a, b := net.Pipe()
+	s := NewServerSocket(a)
+	defer func() { _ = s.Close() }()
+	writeRaw(t, b,
+		`{"jsonrpc":"2.0","method":"client/future","params":{"x":1}}`,
+		`{"jsonrpc":"2.0","method":"client/event","params":{"paste":"p"}}`,
+		`{not json`,
+	)
+	if m, err := s.Recv(); err != nil || m != (Event{Paste: "p"}) {
+		t.Fatalf("server Recv = %#v, %v; want the event after the unknown method", m, err)
+	}
+	if _, err := s.Recv(); err == nil {
+		t.Fatal("server Recv of broken JSON succeeded")
+	}
+
+	a, b = net.Pipe()
+	c := NewClientSocket(a)
+	defer func() { _ = c.Close() }()
+	writeRaw(t, b,
+		`{"jsonrpc":"2.0","method":"server/future"}`,
+		`{"jsonrpc":"2.0","method":"server/exit","params":{"reason":"r"}}`,
+	)
+	if m, err := c.Recv(); err != nil || m != (Exit{Reason: "r"}) {
+		t.Fatalf("client Recv = %#v, %v; want Exit after the unknown method", m, err)
+	}
+}
+
+// 上限（MaxWidth、MaxHeight）を超える大きさの画面は、格子を作らずに誤りにする（PR #200 のレビューの推奨 1）。
+func TestSocketRejectsHugeScreen(t *testing.T) {
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","method":"screen/draw","params":{"width":100000,"height":100000,"cursor":{}}}`,
+		`{"jsonrpc":"2.0","method":"screen/draw","params":{"width":-1,"height":24,"cursor":{}}}`,
+	} {
+		a, b := net.Pipe()
+		c := NewClientSocket(a)
+		writeRaw(t, b, body)
+		if m, err := c.Recv(); err == nil {
+			t.Errorf("client Recv = %#v, want an error for %s", m, body)
+		}
+		_ = c.Close()
+	}
+}
+
+func TestValidSize(t *testing.T) {
+	for _, tt := range []struct {
+		w, h int
+		want bool
+	}{
+		{80, 24, true},
+		{1, 1, true},
+		{MaxWidth, MaxHeight, true},
+		{0, 24, false},
+		{80, 0, false},
+		{MaxWidth + 1, 24, false},
+		{80, MaxHeight + 1, false},
+		{-1, -1, false},
+	} {
+		if got := ValidSize(tt.w, tt.h); got != tt.want {
+			t.Errorf("ValidSize(%d, %d) = %v, want %v", tt.w, tt.h, got, tt.want)
+		}
+	}
+}
 
 // socketPair は、一時ディレクトリの Unix ドメインソケットで繋いだ client と server の両端を返す。
 func socketPair(t *testing.T) (ClientConn, ServerConn) {

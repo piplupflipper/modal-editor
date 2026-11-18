@@ -46,6 +46,8 @@ type Terminal interface {
 // 送る向きと受ける向きを別の goroutine にするのは、server が画面を送り終えるのを待つ間も、キーを送れるようにするためである。
 //
 // 接続が閉じたら、端末を戻し、接続を閉じて戻る。戻す誤りを返す。
+// 端末を戻せたときは、server の終わり方を返す。終わりの知らせ（protocol.Exit）を理由なしで受けたか、自分の側で閉じたなら nil、
+// 理由付きで受けたなら *ServerExitError、知らせを受けずに接続が閉じたなら ErrServerLost である。
 // 端末への出力の誤りは logger に記録し、続ける（editor.Terminal の Draw と同じ扱い）。
 // 送る goroutine は、端末の入力（Terminal.Input）が閉じるまで残る。呼び出し側は、Run の後に端末の入力を止める（term.Terminal.Close）。
 // 送る goroutine が panic したら、端末を戻してから panic を続ける（基本設計 8 章）。
@@ -57,15 +59,31 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 	if err := conn.Send(protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h}); err == nil {
 		go forward(tm, conn)
 	}
+	// endErr は、server の終わり方による Run の戻り値である（端末を戻した後に返す）。
+	var endErr error
+	exited := false
+recv:
 	for {
 		m, err := conn.Recv()
 		if err != nil {
-			if !errors.Is(err, io.EOF) && !errors.Is(err, protocol.ErrClosed) {
+			switch {
+			case errors.Is(err, protocol.ErrClosed):
+				// 自分の側で閉じた（端末の入力が終わった、呼び出し側が閉じた）
+			case exited:
+			case errors.Is(err, io.EOF):
+				endErr = ErrServerLost
+			default:
 				logger.Error("server からの受信に失敗", "err", err)
+				endErr = fmt.Errorf("%w: %w", ErrServerLost, err)
 			}
-			break
+			break recv
 		}
 		switch m := m.(type) {
+		case protocol.Exit:
+			exited = true
+			if m.Reason != "" {
+				endErr = &ServerExitError{Reason: m.Reason}
+			}
 		case protocol.Draw:
 			if err := tm.Draw(m.Screen); err != nil {
 				logger.Error("描画に失敗", "err", err)
@@ -83,8 +101,19 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 	if rerr != nil {
 		return fmt.Errorf("client: %w", rerr)
 	}
-	return nil
+	return endErr
 }
+
+// ErrServerLost は、server が終わりの知らせ（protocol.Exit）を送らずに接続が閉じたこと、つまり server が異常終了したことを表す。
+// 未保存の変更を失ったかもしれないことを利用者が気づけるよう、呼び出し側は端末を戻した後に知らせて、0 でない終了コードで終わる。
+var ErrServerLost = errors.New("server との接続が切れた（server が異常終了したかもしれない）")
+
+// ServerExitError は、server が理由を添えて終わったこと（シグナルで止められたなど）を表す。
+type ServerExitError struct {
+	Reason string
+}
+
+func (e *ServerExitError) Error() string { return e.Reason }
 
 // forward は、端末のイベントを server へ送る。端末の入力が終わったら接続を閉じる。
 // server が接続を閉じた後も、端末の入力が閉じるまで読み捨てる（端末の読み取りを止めないため）。
