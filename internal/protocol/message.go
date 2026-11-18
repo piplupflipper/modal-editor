@@ -70,6 +70,12 @@ type Hello struct {
 	Kind ClientKind
 	// Width と Height は、端末の列数と行数である。端末を持たない client（KindWait）では 0 である。
 	Width, Height int
+	// Files は、編集の client の起動の引数のファイルの絶対パスである（#201）。
+	// server は、この client を繋いだ後、イベントループを動かす前に、引数の順に開く（server を起動した client の引数ではなく、
+	// 繋いだ client の引数を開くため。同じ window でほぼ同時に起動した 2 つの client のファイルを取り違えない）。
+	Files []string
+	// ReadOnly は、Files を編集を禁止した状態で開くことを表す（起動のオプション -R。FR-119）。
+	ReadOnly bool
 }
 
 func (Hello) clientMessage() {}

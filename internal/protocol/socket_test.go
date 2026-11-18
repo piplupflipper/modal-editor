@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -174,7 +175,7 @@ func TestSocketRoundTrip(t *testing.T) {
 	c, s := socketPair(t)
 
 	sent := []ClientMessage{
-		Hello{Kind: KindEdit, Width: 80, Height: 24},
+		Hello{Kind: KindEdit, Width: 80, Height: 24, Files: []string{"/a b.txt", "/c"}, ReadOnly: true},
 		Event{Key: editcmd.Key{Code: editcmd.CodeRune, Rune: 'j'}},
 		Event{Key: editcmd.Key{Code: editcmd.CodeRune, Rune: 'w', Mod: editcmd.ModCtrl}},
 		Event{Key: editcmd.Key{Code: editcmd.CodeEsc}},
@@ -188,7 +189,7 @@ func TestSocketRoundTrip(t *testing.T) {
 	}
 	for _, want := range sent {
 		got, err := s.Recv()
-		if err != nil || got != want {
+		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("server Recv = %#v, %v; want %#v", got, err, want)
 		}
 	}

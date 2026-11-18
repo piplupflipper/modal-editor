@@ -31,7 +31,7 @@ func startServer(t *testing.T, bin, sock string, files ...string) *serverProc {
 	t.Helper()
 	xdg := t.TempDir()
 	cmd := exec.Command(bin, append([]string{"-listen", sock}, files...)...) //nolint:gosec // テストの実行ファイルか make build の本体を server として起動する
-	cmd.Env = append(os.Environ(), envRunMain+"=1",
+	cmd.Env = append(muxFreeEnv(), envRunMain+"=1",
 		"XDG_CONFIG_HOME="+filepath.Join(xdg, "config"), "XDG_DATA_HOME="+filepath.Join(xdg, "data"))
 	out := &bytes.Buffer{}
 	cmd.Stdout, cmd.Stderr = out, out
@@ -212,7 +212,7 @@ func TestClientKilledEndsServerInPTY(t *testing.T) {
 }
 
 // TestSingleProcessListensInPTY は、1 つのプロセスの構成でも、MCP のソケットと同じディレクトリで server のソケットを待ち受けることを確かめる（FR-60。基本設計 1.2）。
-// 今は 2 つ目の client に応えないので、繋いだ接続はすぐ閉じられ、編集は続く。終了でディレクトリは消える。
+// 今は 2 つ目の client に応えないので、繋いだ接続は理由付きの終わりの知らせで閉じられ、編集は続く。終了でディレクトリは消える。
 func TestSingleProcessListensInPTY(t *testing.T) {
 	runtime := t.TempDir()
 	p := startEditorIn(t, t.TempDir(), []string{"XDG_RUNTIME_DIR=" + runtime})
@@ -236,8 +236,11 @@ func TestSingleProcessListensInPTY(t *testing.T) {
 	if err := c.Send(protocol.Hello{Kind: protocol.KindEdit, Width: 80, Height: 24}); err != nil && !errors.Is(err, protocol.ErrClosed) {
 		t.Fatal(err)
 	}
+	if m, err := c.Recv(); err != nil || m != (protocol.Exit{Reason: server.BusyReason}) {
+		t.Errorf("2 つ目の client の Recv = %#v, %v; want 理由 BusyReason の Exit", m, err)
+	}
 	if _, err := c.Recv(); !errors.Is(err, io.EOF) {
-		t.Errorf("2 つ目の client の Recv = %v, want io.EOF", err)
+		t.Errorf("2 つ目の client の 2 回目の Recv = %v, want io.EOF", err)
 	}
 	_ = c.Close()
 	p.write(t, ":q\r")

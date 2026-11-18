@@ -25,8 +25,14 @@ const envRunMain = "MODAL_EDITOR_TEST_RUN_MAIN"
 // それを記録するロガーの中で panic させる環境変数である。拡張機能の goroutine の panic で端末が戻ることを確かめるのに使う（#114）。
 const envPanicOnStderr = "MODAL_EDITOR_TEST_PANIC_ON_STDERR"
 
+// envFirstClientTimeout は、エディタとして起動したテストの実行ファイルで、firstClientTimeout を置き換える環境変数である（time.ParseDuration の形）。
+const envFirstClientTimeout = "MODAL_EDITOR_TEST_FIRST_CLIENT_TIMEOUT"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(envRunMain) == "1" {
+		if d, err := time.ParseDuration(os.Getenv(envFirstClientTimeout)); err == nil {
+			firstClientTimeout = d
+		}
 		if marker := os.Getenv(envPanicOnStderr); marker != "" {
 			wrapLogHandler = func(h slog.Handler) slog.Handler { return panicHandler{Handler: h, marker: marker} }
 		}
@@ -34,6 +40,13 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// muxFreeEnv は、テストを動かす環境から、tmux と herdr の中であることを表す環境変数と MODAL_EDITOR_SOCKET を除いたものを返す。
+// テストを tmux か herdr の中で動かしても、起動したエディタが端末多重化ソフトの外の構成（FR-60）で動き、
+// 利用者の tmux と herdr に server の単位を問い合わせないようにする。
+func muxFreeEnv() []string {
+	return withoutEnv(os.Environ(), "TMUX", "TMUX_PANE", "HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_SOCKET_PATH", envSocket)
 }
 
 // panicHandler は、拡張機能の標準エラー出力の記録（exthost の "extension stderr"）の行が marker なら panic するロガーである。
@@ -98,7 +111,7 @@ func startEditorSized(t *testing.T, cols, rows uint16, xdg string, env []string,
 	t.Helper()
 	master, tty := ptytest.Open(t, cols, rows)
 	cmd := exec.Command(os.Args[0], args...) //nolint:gosec // テストの実行ファイル自身をエディタとして起動する
-	cmd.Env = append(os.Environ(), envRunMain+"=1",
+	cmd.Env = append(muxFreeEnv(), envRunMain+"=1",
 		"XDG_CONFIG_HOME="+filepath.Join(xdg, "config"), "XDG_DATA_HOME="+filepath.Join(xdg, "data"))
 	cmd.Env = append(cmd.Env, env...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty

@@ -508,9 +508,15 @@ func (e *Editor) MCPSocket() string { return e.cfg.MCPSocket }
 // 起動の引数のファイルを開くためのもので、ジャンプリストと裏のバッファ（<C-^> の移り先）には記録しない
 // （Vim が引数のファイルを開いたときと同じ）。バッファの番号は、開いた順に 1 から付ける。
 func (e *Editor) Open(path string) error {
+	return e.OpenWith(path, e.cfg.ReadOnlyArgs)
+}
+
+// OpenWith は Open と同じく起動の引数のファイルを開く。Config.ReadOnlyArgs に代えて、readOnly で編集を禁止するかを決める。
+// 段階 3 の server が、繋いだ編集の client の引数のファイルを、その client の -R に従って開くのに使う（#201）。
+func (e *Editor) OpenWith(path string, readOnly bool) error {
 	bs, err := e.openFile(path, true)
 	e.jumps, e.jumpIdx, e.alt = nil, 0, nil
-	if err == nil && e.cfg.ReadOnlyArgs {
+	if err == nil && readOnly {
 		// req: FR-119
 		bs.buf.SetReadOnly(true)
 	}

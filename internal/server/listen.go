@@ -49,16 +49,7 @@ func listen(path string, checkParent bool) (net.Listener, error) {
 	if len(path) > maxSocketPath {
 		return nil, fmt.Errorf("server: listen: socket path %s is too long (%d bytes, max %d)", path, len(path), maxSocketPath)
 	}
-	dir := filepath.Dir(path)
-	if err = os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("server: listen: %w", err)
-	}
-	if checkParent {
-		if err = checkPrivateDir(filepath.Dir(dir)); err != nil {
-			return nil, err
-		}
-	}
-	if err = checkPrivateDir(dir); err != nil {
+	if err = prepareDir(filepath.Dir(path), checkParent); err != nil {
 		return nil, err
 	}
 	if err = removeStaleSocket(path); err != nil {
@@ -69,6 +60,25 @@ func listen(path string, checkParent bool) (net.Listener, error) {
 		return nil, fmt.Errorf("server: listen: %w", err)
 	}
 	return ln, nil
+}
+
+// PrepareDir は、server のディレクトリ dir（基本設計 1.2 の `<名前>/`）とその親を、無ければ権限 0700 で作り、
+// どちらもシンボリックリンクでないディレクトリで、持ち主が実効ユーザー ID で、他の利用者の権限が無いことを確かめる（Listen と同じ検査）。
+// ロックのファイル（Lock）を置く前と、client がソケットのパスを決めるとき（SocketPathForUnit）に使う。
+func PrepareDir(dir string) error {
+	return prepareDir(dir, true)
+}
+
+func prepareDir(dir string, checkParent bool) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("server: socket directory: %w", err)
+	}
+	if checkParent {
+		if err := checkPrivateDir(filepath.Dir(dir)); err != nil {
+			return err
+		}
+	}
+	return checkPrivateDir(dir)
 }
 
 // removeStaleSocket は、path に繋げないソケットのファイルがあれば消す。繋げるソケットか、ソケットでないファイルがあれば誤りを返す。

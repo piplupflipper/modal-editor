@@ -52,11 +52,41 @@ type Terminal interface {
 // 送る goroutine は、端末の入力（Terminal.Input）が閉じるまで残る。呼び出し側は、Run の後に端末の入力を止める（term.Terminal.Close）。
 // 送る goroutine が panic したら、端末を戻してから panic を続ける（基本設計 8 章）。
 func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
+	w, h := tm.Size()
+	sent := conn.Send(protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h}) == nil
+	return run(tm, conn, logger, sent, nil)
+}
+
+// Start は、conn へ hello を送り、server から最初に届いたメッセージを返す。端末には何も出さない。
+// 呼び出し側は、最初のメッセージを見て、編集の client として続けるか（Continue）、接続を閉じて別の形で動くかを決める
+// （server が理由 server.BusyReason の終わりの知らせで断ったときに、1 つのプロセスで動かす。基本設計 1.2 の FR-62 までの扱い）。
+// 送れないか、最初のメッセージの前に接続が閉じたら誤りを返す。
+//
+// hello を送れなくても、server が先に送った終わりの知らせ（Hello を読まずに断るとき）を読むために、最初のメッセージを読みにいく。
+func Start(conn protocol.ClientConn, hello protocol.Hello) (protocol.ServerMessage, error) {
+	serr := conn.Send(hello)
+	m, err := conn.Recv()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrServerLost, errors.Join(serr, err))
+	}
+	if _, exit := m.(protocol.Exit); serr != nil && !exit {
+		return nil, fmt.Errorf("client: %w", serr)
+	}
+	return m, nil
+}
+
+// Continue は、Start で hello を送って最初のメッセージ first を受けた conn で、Run と同じく編集の client として動く。
+// first を、届いた最初のメッセージとして端末に出してから続ける。戻り値は Run と同じである。
+func Continue(tm Terminal, conn protocol.ClientConn, first protocol.ServerMessage, logger *slog.Logger) error {
+	return run(tm, conn, logger, true, first)
+}
+
+// run は、Run と Continue の本体である。sent は Hello を送れたか、first は Start で受けた最初のメッセージ（無ければ nil）である。
+func run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger, sent bool, first protocol.ServerMessage) error {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	w, h := tm.Size()
-	if err := conn.Send(protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h}); err == nil {
+	if sent {
 		go forward(tm, conn)
 	}
 	// endErr は、server の終わり方による Run の戻り値である（端末を戻した後に返す）。
@@ -64,7 +94,11 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 	exited := false
 recv:
 	for {
-		m, err := conn.Recv()
+		m, err := first, error(nil)
+		first = nil
+		if m == nil {
+			m, err = conn.Recv()
+		}
 		if err != nil {
 			switch {
 			case errors.Is(err, protocol.ErrClosed):

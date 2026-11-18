@@ -8,7 +8,8 @@
 //
 // 編集の client は 1 つだけ繋ぐ。1 つのプロセスの中の接続（protocol.Pipe。FR-60 の構成）でも、
 // server のソケット（protocol.NewServerSocket。Listen で待ち受ける）でもよい（Serve）。
-// 1 つのプロセスの構成でも server のソケットを待ち受けるが（基本設計 1.2）、2 つ目からの接続は、受け付けてすぐ閉じる。
+// 1 つのプロセスの構成でも server のソケットを待ち受けるが（基本設計 1.2）、2 つ目からの接続は、
+// 理由（BusyReason）付きの終わりの知らせを送って閉じる。
 // 複数の編集の client、部品の client、待つだけの client、client ごとのタブの並びは後の段で足す。
 // それに備えて、client ごとに識別子（editor.ClientID）を割り当て、キーのイベントに付けてイベントループへ渡す（基本設計 2.1）。
 //
@@ -37,6 +38,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,8 +59,17 @@ const helloTimeout = 5 * time.Second
 // ErrUnexpectedHello は、client の最初のメッセージが、編集の client の Hello でなかったことを表す。
 var ErrUnexpectedHello = errors.New("server: first message is not a hello from an edit client")
 
+// ErrNoClient は、Serve が FirstClientTimeout の間に編集の client を 1 つも繋げなかったことを表す。
+var ErrNoClient = errors.New("server: no edit client connected in time")
+
 // Server は、編集の状態を持つ側である。New で作り、Open で起動の引数のファイルを開き、Run か Serve で client を繋いで動かし、Close で拡張機能を止める。
 type Server struct {
+	// FirstClientTimeout は、ソケットだけで待つ Serve（first が nil）が、最初の編集の client の Hello を待つ上限である。
+	// 超えたら ErrNoClient で戻る。0 なら待ち続ける。
+	// client が自動で起動した server（-server）が、起動の途中で client が終わったとき（kill -9、ペインを閉じた）に、
+	// 誰も繋がないまま残らないようにする（FR-61。PR #207 のレビューの必須 2）。Serve の前に設定する。
+	FirstClientTimeout time.Duration
+
 	ed *editor.Editor
 	// client は、繋いだ編集の client である。今は 1 つだけで、Run か Serve で繋ぐ。
 	client *clientTerm
@@ -86,6 +97,26 @@ func (s *Server) Open(path string) error {
 	return s.ed.Open(path)
 }
 
+// OpenArgs は、起動の引数のファイル files を開き、最初のファイルをカーソルのあるバッファにする。readOnly なら編集を禁止した状態で開く（FR-119）。
+// Vim と同じく、引数の順にバッファの番号（:ls、:b N）を付ける。Open は開いたバッファへ移るので、最後に最初のファイルをもう一度開いて移る
+// （開いているファイルは開き直さない）。Run の前に呼ぶ。
+func (s *Server) OpenArgs(files []string, readOnly bool) error {
+	return s.openArgs(files, readOnly)
+}
+
+func (s *Server) openArgs(files []string, readOnly bool) error {
+	order := files
+	if len(files) > 1 {
+		order = append(slices.Clone(files), files[0])
+	}
+	for _, f := range order {
+		if err := s.ed.OpenWith(f, readOnly); err != nil {
+			return fmt.Errorf("%s を開けない: %w", f, err)
+		}
+	}
+	return nil
+}
+
 // Run は、conn を編集の client として繋ぎ、イベントループを動かす。Serve(ctx, nil, conn) と同じである。
 func (s *Server) Run(ctx context.Context, conn protocol.ServerConn) error {
 	return s.Serve(ctx, nil, conn)
@@ -95,7 +126,10 @@ func (s *Server) Run(ctx context.Context, conn protocol.ServerConn) error {
 //
 // first が nil でなければ、それを編集の client にする（1 つのプロセスの構成）。
 // first が nil なら、ln で受け付けた接続のうち、最初に編集の client の Hello を送ったものを編集の client にする（server だけのプロセス）。
-// ln が nil でなければ、Serve の間 ln で待ち受け、編集の client を繋いだ後に届いた接続は受け付けてすぐ閉じる（今は 2 つ目の client に応えない）。
+// FirstClientTimeout の間に来なければ ErrNoClient で戻る。
+// 編集の client を繋いだら、その Hello の Files を Hello.ReadOnly に従って開いてから（OpenArgs と同じ順）、イベントループを動かす。
+// 開けなければ、その理由の終わりの知らせを送り、誤りで戻る。
+// ln が nil でなければ、Serve の間 ln で待ち受け、編集の client を繋いだ後に届いた接続は、理由 BusyReason の終わりの知らせを送って閉じる（今は 2 つ目の client に応えない）。
 // Serve は戻る前に ln を閉じる。
 //
 // 戻り値は editor.Editor.Run と同じで、:q で nil、client が接続を閉じたら editor.ErrTerminalLost、ctx の終わりで ctx.Err() である。
@@ -117,6 +151,10 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, first protocol.Serv
 	defer func() { _ = conn.Close() }() // 閉じる誤りは、client の側の Recv の誤りで分かる
 	s.nextID++
 	s.client.attach(s.nextID, conn, hello)
+	if err = s.openArgs(hello.Files, hello.ReadOnly); err != nil {
+		s.client.finish(err.Error())
+		return err
+	}
 	err = s.ed.Run(ctx)
 	s.client.finish(exitReason(ctx, err))
 	return err
@@ -153,10 +191,18 @@ func (s *Server) firstClient(ctx context.Context, a *acceptor, first protocol.Se
 	if a == nil {
 		return nil, protocol.Hello{}, errors.New("server: no client and no listener")
 	}
+	var expired <-chan time.Time
+	if s.FirstClientTimeout > 0 {
+		timer := time.NewTimer(s.FirstClientTimeout)
+		defer timer.Stop()
+		expired = timer.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, protocol.Hello{}, ctx.Err()
+		case <-expired:
+			return nil, protocol.Hello{}, ErrNoClient
 		case conn := <-a.candidates:
 			hctx, cancel := context.WithTimeout(ctx, helloTimeout)
 			h, err := handshake(hctx, conn)
@@ -228,8 +274,8 @@ func (s *Server) startAccept(ln net.Listener, busy bool) *acceptor {
 			}
 			conn := protocol.NewServerSocket(c)
 			if !a.busy.CompareAndSwap(false, true) {
-				s.log.Info("2 つ目の client には応えないので、接続を閉じた")
-				_ = conn.Close()
+				s.log.Info("2 つ目の client には応えないので、接続を閉じる")
+				go s.reject(conn)
 				continue
 			}
 			select {
@@ -241,6 +287,26 @@ func (s *Server) startAccept(ln net.Listener, busy bool) *acceptor {
 		}
 	}()
 	return a
+}
+
+// BusyReason は、2 つ目の編集の client を断るときに、終わりの知らせ（protocol.Exit）の理由に載せる文言である。
+// 今の server は編集の client を 1 つだけ繋ぐ（複数の編集の client は後の段で足す。パッケージの doc）。
+const BusyReason = "この server には別の編集の client が繋いでいる（同じ window の 2 つ目の編集の client はまだ使えない）"
+
+// rejectTimeout は、断る client へ終わりの知らせを送るのを待つ上限である。超えたら送らずに閉じる。
+const rejectTimeout = time.Second
+
+// reject は、受け付けない接続 conn に、理由 BusyReason の終わりの知らせを送ってから閉じる。
+// client は、server が異常終了したとみなさずに、理由を出して終わる（基本設計 1.2）。
+// 読まない接続で受け付けの goroutine が止まらないよう、別の goroutine で呼ぶ。
+func (s *Server) reject(conn protocol.ServerConn) {
+	defer s.client.recoverPanic()
+	timer := time.AfterFunc(rejectTimeout, func() { _ = conn.Close() }) // 送り終えなければ閉じて Send を戻す
+	defer timer.Stop()
+	if err := conn.Send(protocol.Exit{Reason: BusyReason}); err != nil && !errors.Is(err, protocol.ErrClosed) {
+		s.log.Warn("断る client へ終わりの知らせを送れない", "err", err)
+	}
+	_ = conn.Close() // 閉じる誤りは、client の側の Recv で分かる
 }
 
 func (a *acceptor) stop() {
