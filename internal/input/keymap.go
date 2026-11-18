@@ -84,6 +84,10 @@ type Binding struct {
 	// モーション（f、t）と操作（r）ではキーの列の直後に、オペレーターでは対象の後に取る
 	// （拡張機能の surround の ysiw) の ')'）。テキストオブジェクトではキーの列の直後に取る。
 	TakesChar bool
+	// TakesSecondChar は、操作（BindAction）が TakesChar の文字に続けて、2 つ目の文字の引数を取るかを表す
+	// （本体の sr{前の文字}{後の文字}）。2 つ目の文字は Command.Char2 に入る。
+	// TakesChar が false の登録と、操作でない登録では使わない（Bind が拒む）。
+	TakesSecondChar bool
 	// NextMode は、実行の後に移るモードである（i や c ならインサートモード）。
 	NextMode editcmd.Mode
 }
@@ -129,6 +133,9 @@ func (m *Keymap) Bind(b Binding) error {
 	}
 	if len(b.Keys) == 0 || b.Ref.ID == "" {
 		return fmt.Errorf("キーの列と ID は空にできない: %q %q", editcmd.KeysString(b.Keys), b.Ref.ID)
+	}
+	if b.TakesSecondChar && (b.Kind != BindAction || !b.TakesChar) {
+		return fmt.Errorf("2 つ目の文字の引数は、文字の引数を取る操作にだけ付けられる: %q", editcmd.KeysString(b.Keys))
 	}
 	if reservedFirstKey(b.Keys[0], b.Modes) {
 		return fmt.Errorf("%q は、回数、レジスター、マクロ、ドットリピートとして先に読まれるキーで始まる", editcmd.KeysString(b.Keys))

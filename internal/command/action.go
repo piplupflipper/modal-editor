@@ -28,6 +28,10 @@ var repeatableActions = map[string]bool{
 	"put-after":          true,
 	"put-before":         true,
 	"delete-to-line-end": true,
+	"indent-line":        true,
+	"dedent-line":        true,
+	"surround-delete":    true,
+	"surround-replace":   true,
 }
 
 func init() {
@@ -39,7 +43,10 @@ func init() {
 		"delete-to-line-end": actShorthand("delete", editcmd.Target{Kind: editcmd.TargetMotion, Ref: editcmd.Ref{ID: "line-end"}}),
 		"change-to-line-end": actShorthand("change", editcmd.Target{Kind: editcmd.TargetMotion, Ref: editcmd.Ref{ID: "line-end"}}),
 		"substitute-line":    actShorthand("change", editcmd.Target{Kind: editcmd.TargetLine}),
-		"substitute-char":    actShorthand("change", editcmd.Target{Kind: editcmd.TargetMotion, Ref: editcmd.Ref{ID: "right"}}),
+		"indent-line":        actShorthand("indent", editcmd.Target{Kind: editcmd.TargetLine}),
+		"dedent-line":        actShorthand("dedent", editcmd.Target{Kind: editcmd.TargetLine}),
+		"surround-delete":    actSurroundDelete,
+		"surround-replace":   actSurroundReplace,
 		"yank-line":          actShorthand("yank", editcmd.Target{Kind: editcmd.TargetLine}),
 		"toggle-case":        actToggleCase,
 		"join-lines":         actJoin,
@@ -108,15 +115,16 @@ func (s *State) extAction(cmd editcmd.Command) error {
 	return nil
 }
 
-// actShorthand は、省略形のコマンドである。D は d$、C は c$、S は cc、s は cl、Y は yy に当たる（Vim の nv_optrans()）。
+// actShorthand は、省略形のコマンドである。D は d$、C は c$、S は cc、Y は yy、ノーマルモードの > と < は >> と << に当たる
+// （Vim の nv_optrans()。> と < は FR-76）。
 // 回数とレジスターをそのまま渡し、本体のオペレーター op と対象 tg の組として実行する。
-// 3D は d3$（カーソルから行末までと、続く 2 行）、3s は 3cl、3S は 3cc である。
+// 3D は d3$（カーソルから行末までと、続く 2 行）、3S は 3cc、3> は 3>> である。
 //
-// ドットリピートには、D は省略形の値のまま記録する（回数を付けた . は、記録した値の回数を置き換える）。
-// C、S、s は、インサートモードを抜けた時点で、置き換えた後の c の値を記録する。どちらも繰り返す内容は Vim と同じである。
+// ドットリピートには、D、>、< は省略形の値のまま記録する（回数を付けた . は、記録した値の回数を置き換える）。
+// C、S は、インサートモードを抜けた時点で、置き換えた後の c の値を記録する。どちらも繰り返す内容は Vim と同じである。
 // Y はヤンクなので記録しない。
 //
-// req: FR-02
+// req: FR-02, FR-76
 func actShorthand(op string, tg editcmd.Target) actionFunc {
 	return func(s *State, cmd editcmd.Command) error {
 		oc := cmd

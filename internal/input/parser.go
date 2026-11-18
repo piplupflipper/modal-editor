@@ -22,10 +22,11 @@ const (
 type charFor int
 
 const (
-	charTarget  charFor = iota // Target.Char（f、t と、文字を取るテキストオブジェクト）
-	charCommand                // Command.Char（r と、対象の後に文字を取るオペレーター）
-	charRecord                 // Command.Char に入るレジスターの名前（q）
-	charPlay                   // Command.Char に入るレジスターの名前（@）
+	charTarget   charFor = iota // Target.Char（f、t と、文字を取るテキストオブジェクト）
+	charCommand                 // Command.Char（r と、対象の後に文字を取るオペレーター）
+	charCommand2                // Command.Char2（sr の後の文字）
+	charRecord                  // Command.Char に入るレジスターの名前（q）
+	charPlay                    // Command.Char に入るレジスターの名前（@）
 )
 
 // Parser は、キーを 1 個ずつ受け取り、編集コマンドの値を組み立てる状態機械である（基本設計 3 章）。
@@ -38,6 +39,7 @@ const (
 //	q{reg}、q（記録中）、[count]@{reg}、[count]@@、[count].
 //
 // f、t、r の後と、TakesChar のオペレーターの対象の後には、文字の引数が 1 つ付く。
+// TakesSecondChar の操作（sr）の後には、文字の引数が 2 つ付く。
 // 回数を 2 か所に書いた場合は積を回数にする（2d3w は 6 回）。
 //
 // あるキーの列が登録済みの操作であり、かつより長い登録の接頭辞でもある場合（y と、拡張機能の ys）、
@@ -56,6 +58,7 @@ type Parser struct {
 	seq         []editcmd.Key // 操作を引くために溜めているキーの列
 	opKeys      []editcmd.Key // stOperator のときのオペレーターのキーの列
 	opTakesChar bool          // オペレーターが対象の後に文字を取り、まだ受け取っていないか
+	takesChar2  bool          // 操作が 1 つ目の文字の後に 2 つ目の文字を取り、まだ受け取っていないか
 	charFor     charFor
 
 	count int // 終わった回数の積。0 は回数の指定なし
@@ -214,15 +217,23 @@ func (p *Parser) takeChar(k editcmd.Key) []editcmd.Result {
 			return p.fail()
 		}
 		p.cmd.Char = k.Rune
-	case charTarget, charCommand:
+	case charTarget, charCommand, charCommand2:
 		r, ok := charArg(k)
 		if !ok {
 			return p.fail()
 		}
-		if p.charFor == charTarget {
+		switch p.charFor {
+		case charTarget:
 			p.cmd.Target.Char = r
-		} else {
+		case charCommand2:
+			p.cmd.Char2 = r
+		case charCommand, charRecord, charPlay:
 			p.cmd.Char = r
+			if p.takesChar2 {
+				p.takesChar2 = false
+				p.charFor = charCommand2
+				return nil
+			}
 		}
 	}
 	p.st = stNormal
@@ -304,6 +315,7 @@ func (p *Parser) apply(b Binding) []editcmd.Result {
 		p.cmd.Mode = b.NextMode
 		if b.TakesChar {
 			p.st, p.charFor = stChar, charCommand
+			p.takesChar2 = b.TakesSecondChar
 			return nil
 		}
 	case bindLine:

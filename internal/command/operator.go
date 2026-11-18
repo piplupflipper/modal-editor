@@ -48,14 +48,15 @@ type operatorFunc func(s *State, cmd editcmd.Command, rg region, o opOptions) er
 //
 // req: FR-02
 var operators = map[string]operatorFunc{
-	"delete":      opDelete,
-	"change":      opChange,
-	"yank":        opYank,
-	"indent":      opShift(1),
-	"dedent":      opShift(-1),
-	"toggle-case": opCase(toggleCase),
-	"lowercase":   opCase(unicode.ToLower),
-	"uppercase":   opCase(unicode.ToUpper),
+	"delete":       opDelete,
+	"change":       opChange,
+	"yank":         opYank,
+	"indent":       opShift(1),
+	"dedent":       opShift(-1),
+	"toggle-case":  opCase(toggleCase),
+	"lowercase":    opCase(unicode.ToLower),
+	"uppercase":    opCase(unicode.ToUpper),
+	"surround-add": opSurroundAdd,
 }
 
 // moveMotion は、モーションだけの移動を実行する。
