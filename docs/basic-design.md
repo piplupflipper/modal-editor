@@ -243,7 +243,7 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 | `internal/input` | キーの列から編集コマンドの値への解釈 | バッファの変更、端末のバイト列の解読（`internal/term`） |
 | `internal/command` | 編集コマンドの値の実行、レジスター、ドットリピートとマクロの記録 | キーの解釈、画面 |
 | `internal/ui` | 端末への描画（バッファの表示領域、印の列、ステータス行、コマンドラインの行、出力の欄、浮かべた窓。6.7 の表示のデータの描き方） | バッファの変更、表示のデータの保持と位置のずらし（`internal/editor`） |
-| `internal/term` | 端末の制御（raw モード、代替画面、端末のバイト列からキーへの解読、`internal/ui` の格子の差分の出力）。`internal/ui` を import するので `internal/editor` と同じ層に置き、`internal/editor` へは `cmd/modal-editor` がつなぐ | 画面の内容の組み立て、編集の状態 |
+| `internal/term` | 端末の制御（raw モード、代替画面、端末のバイト列からキーへの解読、`internal/ui` の格子の差分の出力）。`internal/ui` を import するので `internal/editor` と同じ層に置き、`internal/editor` を import しない。使うのは編集の client（`internal/client`）である | 画面の内容の組み立て、編集の状態 |
 | `internal/exthost` | 拡張機能のプロセスの起動、監視、期限、再起動、差分の送信 | 個々の拡張機能の機能 |
 | `internal/config` | 設定ファイルと、拡張機能の宣言ファイルの読み込み | 設定の適用 |
 | `internal/editor` | イベントループ。上の部品をつなぎ、キー入力と拡張機能からのメッセージを 1 件ずつ処理する | 個々の部品の中身 |
@@ -257,6 +257,15 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 | `internal/client` | server への接続、キーの送信、画面の内容の受信と端末への出力（1.2） | 編集の状態 |
 | `internal/diff` | 2 つのバッファの差分の計算と、行の対応の表（6.8）。`github.com/aymanbagabas/go-udiff` を使う | 表示 |
 | `internal/extmgr` | 拡張機能の取得、ビルド、更新、削除と、ロックファイル（5.6） | 拡張機能のプロセスの管理（`internal/exthost`） |
+| `internal/protocol` | server と client の間のメッセージ（キー、画面の内容、クリップボードへの書き込み）と、接続の口。1 つのプロセスの中の接続（チャネル）。画面を送る単位を決める部分（10 章の未決の項目） | メッセージの意味の処理 |
+
+`internal/server`、`internal/client`、`internal/protocol` の層は、#182 で次のとおりに決めた。
+
+- `internal/protocol` は `internal/editcmd` と `internal/ui` を import するので、「組み立て」の層（`internal/editor`、`internal/term` と同じ層）に置く
+- `internal/server` は `internal/editor` を、`internal/client` は `internal/term` を import するので、「組み立て」と「入口」の間に層を 1 つ足して置く。2 つは同じ層で、互いに import しない。両方が `internal/protocol` を import し、`cmd/modal-editor` が両者をつなぐ
+- client から届いたキーには、server が接続ごとに割り当てた識別子（`editor.ClientID`）を付けてイベントループへ渡す（2.1）
+
+図 2 は段階 2 までの層で、この 3 つはまだ描いていない。
 
 Go は、パッケージが互いを import する循環を、コンパイルエラーにする。
 層を決めておくのは、実装の途中で循環に行き当たるのを避けるためである。
@@ -2237,7 +2246,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-| server から client へ送る画面の単位（`internal/ui` の格子の差分か、表示のデータか）。client と server の往復を、要件定義 8.1 の基準で測ってから決める | 1.2 |
+| server から client へ送る画面の単位（`internal/ui` の格子の差分か、表示のデータか）。client と server の往復を、要件定義 8.1 の基準で測ってから決める。#182 では仮に `internal/ui` の格子（`ui.Screen`）をそのまま送り、client の `internal/term` が差分を出力する形にした。単位に関わる処理は `internal/protocol` の `screen.go` に寄せてあるが、その箇所だけで差し替えられるのは格子の全体と格子の差分の間だけである。表示のデータの案を測るには、格子への描画（`internal/editor` の render）を境目より後ろ（client の側）へ移す必要がある（2 段目の issue で扱う） | 1.2、2 |
 | herdr の中のプロセスが、自分のタブの ID と、ペインの分割とフォーカスの移動の操作を得る手段 | 1.2、1.3 |
 | server と MCP のソケットのディレクトリが異常終了で残ったときの掃除の規則 | 1.2、6.2 |
 | 位置に結びつかない一覧（参照の一覧、キーの一覧など）を中央のポップアップに出すこと（仮）。ホバーと「ポップアップで見る」をカーソルの近くに出すことは裁定済み | 1.4 |

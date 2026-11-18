@@ -1,7 +1,8 @@
 // Command modal-editor は、エディタ本体の実行ファイルである。
 //
 // 引数のファイルを開き、端末（標準入力と標準出力）でエディタを動かす。
-// 端末の制御は internal/term、編集のイベントループは internal/editor が担い、このコマンドは両者をつなぐ。
+// 編集の状態を持つ server（internal/server）と、端末を持つ編集の client（internal/client）を 1 つのプロセスの中で組み立て、
+// 両者を internal/protocol の接続でつなぐ（基本設計 1.2。FR-60 の構成）。
 package main
 
 import (
@@ -18,10 +19,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/piplupflipper/modal-editor/internal/client"
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/config"
 	"github.com/piplupflipper/modal-editor/internal/editor"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/protocol"
+	"github.com/piplupflipper/modal-editor/internal/server"
 	"github.com/piplupflipper/modal-editor/internal/term"
 	"github.com/piplupflipper/modal-editor/internal/version"
 )
@@ -85,8 +89,9 @@ var errNotTerminal = errors.New("標準入力と標準出力が端末のとき�
 //     シグナルの受け付けは端末を開く前に始めるので、起動の途中（設定とファイルの読み込み）に受けても、
 //     既定の動作で終わらずに、読み込みを終えてから Run が直ちに戻り、端末を戻す
 //   - 本体の goroutine で panic したとき（その goroutine の上で戻してから panic を続ける。#114）。
-//     この goroutine（イベントループ）は guard、internal/term と terminal の goroutine は term.Terminal.RestoreOnPanic、
-//     internal/editor と internal/exthost（拡張機能との接続の internal/rpc を含む）の goroutine は editor.Config.OnPanic で戻す
+//     この goroutine（イベントループ）は guard、internal/term の goroutine と client を動かす goroutine は term.Terminal.RestoreOnPanic、
+//     client がキーを送る goroutine は internal/client の中の recover、
+//     internal/editor、internal/server、internal/exthost（拡張機能との接続の internal/rpc を含む）の goroutine は editor.Config.OnPanic で戻す
 //
 // Go の panic は他の goroutine の recover で捕まえられないので、戻すのは panic した goroutine 自身である。
 // 標準ライブラリの関数だけを呼ぶ goroutine（signal.NotifyContext の中のもの、exthost の子プロセスの回収の cmd.Wait、
@@ -134,14 +139,16 @@ func guard(restore func() error, f func() error) (err error) {
 	return err
 }
 
-// runEditor は、エディタを作って files を開き、Run が戻るまで動かす。
-// Run が戻ったら、端末を戻してから拡張機能を止める（editor.Editor.Close の doc の順序）。
+// runEditor は、server と編集の client を 1 つのプロセスの中で組み立て（FR-60 の構成。基本設計 1.2）、files を開いて、server の Run が戻るまで動かす。
+// server と client の間は protocol.Pipe でつなぐ。server の Run はこの goroutine で、client の Run は別の goroutine で動かす。
+// server の Run が戻ると接続が閉じ、client が端末を戻す。それを待ってから拡張機能を止める（editor.Editor.Close の doc の順序）。
 // ctx はシグナルで取り消される。起動の途中で取り消されていれば、Run は直ちに戻る。
 func runEditor(ctx context.Context, files []string, tm *term.Terminal, logger *slog.Logger) error {
 	cfg := loadConfig(logger)
-	// editor と exthost が起こす goroutine の panic でも、その goroutine の上で端末を戻してから panic を続ける（基本設計 8 章）。
+	// editor、exthost、server が起こす goroutine の panic でも、その goroutine の上で端末を戻してから panic を続ける（基本設計 8 章）。
+	// 端末を持つのは client だが、同じプロセスの中なので server の側からも戻せる。
 	cfg.OnPanic = func() { _ = tm.Restore() } // panic を続けるので、戻す誤りは捨てる
-	ed, err := editor.New(newTerminal(tm), cfg)
+	srv, err := server.New(cfg)
 	if err != nil {
 		return fmt.Errorf("エディタを作れない: %w", err)
 	}
@@ -152,18 +159,24 @@ func runEditor(ctx context.Context, files []string, tm *term.Terminal, logger *s
 		order = append(slices.Clone(files), files[0])
 	}
 	for _, f := range order {
-		if err := ed.Open(f); err != nil {
-			closeEditor(ed, logger)
+		if err := srv.Open(f); err != nil {
+			closeServer(srv, logger)
 			return fmt.Errorf("%s を開けない: %w", f, err)
 		}
 	}
 
-	runErr := ed.Run(ctx)
-	// 拡張機能の終了は数秒かかることがあるので、先に端末を戻す（editor.Editor.Close の doc）。
-	if err := tm.Restore(); err != nil {
+	clientConn, serverConn := protocol.Pipe()
+	clientDone := make(chan error, 1)
+	go func() {
+		defer tm.RestoreOnPanic()
+		clientDone <- client.Run(tm, clientConn, logger)
+	}()
+	runErr := srv.Run(ctx, serverConn)
+	// 拡張機能の終了は数秒かかることがあるので、先に client に端末を戻させる（editor.Editor.Close の doc）。
+	if err := <-clientDone; err != nil {
 		logger.Error("端末を戻せない", "err", err)
 	}
-	closeEditor(ed, logger)
+	closeServer(srv, logger)
 
 	switch {
 	case runErr == nil:
@@ -252,10 +265,10 @@ func shortProblem(err error) error {
 	return &short
 }
 
-func closeEditor(ed *editor.Editor, logger *slog.Logger) {
+func closeServer(srv *server.Server, logger *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 	defer cancel()
-	if err := ed.Close(ctx); err != nil {
+	if err := srv.Close(ctx); err != nil {
 		logger.Error("拡張機能の終了に失敗", "err", err)
 	}
 }
@@ -271,25 +284,3 @@ func openLog(path string) (*slog.Logger, func(), error) {
 	}
 	return slog.New(slog.NewTextHandler(f, nil)), func() { _ = f.Close() }, nil // 閉じる誤りは記録する先が無い
 }
-
-// terminal は、term.Terminal を editor.Terminal の口に合わせる。
-// term は editor と同じ層にあり editor を import しないので、イベントの型の変換をここで行う。
-type terminal struct {
-	*term.Terminal
-	events chan editor.TermEvent
-}
-
-func newTerminal(tm *term.Terminal) *terminal {
-	t := &terminal{Terminal: tm, events: make(chan editor.TermEvent)}
-	go func() {
-		defer close(t.events)
-		defer tm.RestoreOnPanic()
-		for ev := range tm.Input() {
-			t.events <- editor.TermEvent(ev)
-		}
-	}()
-	return t
-}
-
-// Input は、term.Terminal のイベントを editor.TermEvent にして送るチャネルを返す。
-func (t *terminal) Input() <-chan editor.TermEvent { return t.events }

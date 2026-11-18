@@ -33,7 +33,7 @@ const (
 	seqLeave = "\x1b[0m\x1b[0 q\x1b[?25h\x1b[?7h\x1b[?2004l\x1b[?1049l"
 )
 
-// Event は、端末からのイベント 1 件である。internal/editor の TermEvent と同じ形で、型の変換で渡せる。
+// Event は、端末からのイベント 1 件である。internal/protocol の Event と同じ形で、型の変換で渡せる。
 type Event struct {
 	// Key は、押されたキーである。Resize が true か Paste が空でなければ読まない。
 	Key editcmd.Key
