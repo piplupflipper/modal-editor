@@ -178,6 +178,134 @@ type debugger struct {
 	last *lastRun
 	// restartPending は、debug.restart で止めたセッションが終わったら、last で始め直すことを表す。
 	restartPending bool
+	// stopWaiter は、再生中（sync）に呼ばれた、デバッグ対象を動かす操作の応答の受け口である（waitStopLocked）。
+	// 次の停止（showStopped、stoppedWithoutSource）かデバッグの終わり（sessionEnded）で結果を届ける。無ければ nil。
+	stopWaiter *waiter
+}
+
+// opHandler は、この拡張機能の操作のハンドラーである。
+// w が nil でなければ、provider/invoke の応答を、w に結果が届くまで遅らせる（asyncProvider）。
+// w を返すのは、本体がマクロかドットリピートを再生している（p.Sync）ときだけである。
+type opHandler func(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (res ext.ProviderInvokeResult, w *waiter)
+
+// waiter は、再生中（p.Sync）の provider/invoke の応答を、操作の完了まで遅らせるための結果の受け口である（基本設計 6 章の冒頭。FR-19）。
+// 本体は再生中に応答を待ってから次の操作へ進むので、応答を遅らせれば、次の操作（2 回目のステップ実行など）は前の操作の完了の後に届く。
+type waiter struct {
+	ch chan ext.ProviderInvokeResult
+
+	mu sync.Mutex
+	// resolved は、resolve を呼んだことを表す。abandoned は、本体が待つのをやめた（abandon）ことを表す。
+	resolved, abandoned bool
+}
+
+func newWaiter() *waiter { return &waiter{ch: make(chan ext.ProviderInvokeResult, 1)} }
+
+// resolve は、結果を届け、本体へ応答として届く見込みがあるかを返す。2 回目からは捨てて true を返す。
+// 本体が既に待つのをやめていれば（abandon の後）、届けずに false を返す。呼び出し側は、結果の open を editor/open で送り直す。
+// w が nil なら何もせずに true を返す。どこから呼んでもよい。
+func (w *waiter) resolve(r ext.ProviderInvokeResult) bool {
+	if w == nil {
+		return true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.resolved {
+		return true
+	}
+	w.resolved = true
+	if w.abandoned {
+		return false
+	}
+	w.ch <- r
+	return true
+}
+
+// abandon は、本体が待つのをやめたことを記録する。既に届いていて応答に使っていない結果があれば、それを返す。
+func (w *waiter) abandon() (ext.ProviderInvokeResult, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.abandoned = true
+	select {
+	case r := <-w.ch:
+		return r, true
+	default:
+		return ext.ProviderInvokeResult{}, false
+	}
+}
+
+// asyncProvider は、h を provider/invoke のハンドラーにする。
+// h が waiter を返したら、別の goroutine でその結果を待ってから応答する。Server のループは止めない。
+// 本体が待つのをやめた（期限を超えて $/cancel を送った）ら、waiter を外して取り消しで応答する。
+// その後の停止は、再生中でないときと同じく editor/open で知らせる。
+// 期限とほぼ同時に止まり、結果が既に届いていたときも、本体はその応答を捨てるので、結果の open を editor/open で送り直す（#217 のレビュー）。
+func (d *debugger) asyncProvider(h opHandler) server.AsyncProviderHandler {
+	return func(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
+		res, w := h(ctx, b, p)
+		if w == nil {
+			reply(res, nil)
+			return
+		}
+		go func() {
+			select {
+			case r := <-w.ch:
+				if ctx.Err() == nil {
+					reply(r, nil)
+					return
+				}
+				d.openLater(r.Open)
+			case <-ctx.Done():
+				d.dropStopWaiter(w)
+				if r, ok := w.abandon(); ok {
+					d.openLater(r.Open)
+				}
+			}
+			reply(ext.ProviderInvokeResult{}, ctx.Err())
+		}()
+	}
+}
+
+// openLater は、本体が捨てた応答の open を、再生中でないときと同じく editor/open で送る。open が nil なら何もしない。
+// Server のループの外から呼ぶ。
+func (d *debugger) openLater(open *ext.EditorOpenParams) {
+	if open == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), d.timeouts.request)
+	defer cancel()
+	if _, err := d.srv.OpenEditor(ctx, *open); err != nil {
+		d.logf("editor/open: %v", err)
+	}
+}
+
+// waitStopLocked は、デバッグ対象の次の停止かデバッグの終わりに結果を届ける waiter を置いて返す。mu を持って呼ぶ。
+// 前の waiter が残っていれば（本体が待つのをやめた後の取り消しがまだ届いていないなど）、失敗を届けて置き換える。
+func (d *debugger) waitStopLocked() *waiter {
+	d.stopWaiter.resolve(ext.ProviderInvokeResult{OK: false})
+	d.stopWaiter = newWaiter()
+	return d.stopWaiter
+}
+
+// takeStopWaiterLocked は、置いてある waiter を外して返す。無ければ nil。mu を持って呼ぶ。
+func (d *debugger) takeStopWaiterLocked() *waiter {
+	w := d.stopWaiter
+	d.stopWaiter = nil
+	return w
+}
+
+// takeStopWaiter は、takeStopWaiterLocked の mu を取る版である。
+func (d *debugger) takeStopWaiter() *waiter {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.takeStopWaiterLocked()
+}
+
+// dropStopWaiter は、w が置いてある waiter なら外す。
+func (d *debugger) dropStopWaiter(w *waiter) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stopWaiter == w {
+		d.stopWaiter = nil
+	}
 }
 
 func newDebugger() *debugger {
@@ -203,16 +331,16 @@ func (d *debugger) newServer() *server.Server {
 	s.OnBufferChange(d.onBufferChange)
 	s.OnBufferClose(d.onBufferClose)
 	s.OnBufferDidSave(d.onBufferDidSave)
-	s.Provider(ext.OpBreakpointToggle, d.noArgs(d.toggleBreakpoint))
-	s.Provider(ext.OpBreakpointConditional, d.conditionalBreakpoint)
-	s.Provider(ext.OpBreakpointClear, d.noArgs(d.clearBreakpoints))
-	s.Provider(ext.OpDebugContinue, d.noArgs(d.continueOrStart))
-	s.Provider(ext.OpDebugPause, d.noArgs(d.pause))
-	s.Provider(ext.OpDebugTerminate, d.noArgs(d.stop))
-	s.Provider(ext.OpDebugRestart, d.noArgs(d.restart))
-	s.Provider(ext.OpDebugRunLast, d.noArgs(d.runLast))
+	s.ProviderAsync(ext.OpBreakpointToggle, d.asyncProvider(d.noArgs(d.toggleBreakpoint)))
+	s.ProviderAsync(ext.OpBreakpointConditional, d.asyncProvider(d.conditionalBreakpoint))
+	s.ProviderAsync(ext.OpBreakpointClear, d.asyncProvider(d.noArgs(d.clearBreakpoints)))
+	s.ProviderAsync(ext.OpDebugContinue, d.asyncProvider(d.noArgs(d.continueOrStart)))
+	s.ProviderAsync(ext.OpDebugPause, d.asyncProvider(d.noArgs(d.pause)))
+	s.ProviderAsync(ext.OpDebugTerminate, d.asyncProvider(d.noArgs(d.stop)))
+	s.ProviderAsync(ext.OpDebugRestart, d.asyncProvider(d.noArgs(d.restart)))
+	s.ProviderAsync(ext.OpDebugRunLast, d.asyncProvider(d.noArgs(d.runLast)))
 	for _, op := range []ext.Operation{ext.OpDebugStepOver, ext.OpDebugStepIn, ext.OpDebugStepOut} {
-		s.Provider(op, d.noArgs(d.resume))
+		s.ProviderAsync(op, d.asyncProvider(d.noArgs(d.resume)))
 	}
 	s.OnShutdown(func(context.Context, *server.ShutdownEvent) { d.shutdown() })
 	return s
@@ -258,10 +386,13 @@ func (d *debugger) showError(text string) {
 }
 
 // fail は、操作を失敗させ、理由を利用者へ表示する。
-func (d *debugger) fail(text string) (ext.ProviderInvokeResult, error) {
+func (d *debugger) fail(text string) (ext.ProviderInvokeResult, *waiter) {
 	d.showError(text)
 	return ext.ProviderInvokeResult{OK: false}, nil
 }
+
+// ok は、すぐに成功で応答する結果である。
+func ok() (ext.ProviderInvokeResult, *waiter) { return ext.ProviderInvokeResult{OK: true}, nil }
 
 // argsText は、provider/invoke の args のうち、コマンドラインから呼んだときの引数の文字列（ext.ProviderArgs の Text）を返す。
 func argsText(p *ext.ProviderInvokeParams) (string, error) {
@@ -277,8 +408,8 @@ func argsText(p *ext.ProviderInvokeParams) (string, error) {
 // noArgs は、引数を取らない操作のハンドラー h を包む。
 // コマンドラインから引数を付けて呼んだ（:debug.continue foo）ら、h を呼ばずに、引数を取らないことを知らせて失敗させる。
 // 引数の形は ACP の拡張機能（acp.prompt の {"text":"..."}）と揃える。
-func (d *debugger) noArgs(h server.ProviderHandler) server.ProviderHandler {
-	return func(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+func (d *debugger) noArgs(h opHandler) opHandler {
+	return func(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 		text, err := argsText(p)
 		if err != nil {
 			return d.fail(fmt.Sprintf("%s: 引数を読めない: %v", p.Operation, err))
@@ -393,8 +524,8 @@ func (d *debugger) sendBreakpoints(s *session, path string) {
 // 印は sign/set ですぐ送り、デバッグ中なら setBreakpoints も送る。
 //
 // req: FR-31, FR-94
-func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
-	return d.editBreakpoints(b, func(bps []bp) []bp {
+func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
+	return d.editBreakpoints(b, p.Sync, func(bps []bp) []bp {
 		line := p.Cursor.Line
 		if i := slices.IndexFunc(bps, func(x bp) bool { return x.line == line }); i >= 0 {
 			return slices.Delete(bps, i, i+1)
@@ -409,7 +540,7 @@ func (d *debugger) toggleBreakpoint(_ context.Context, b *server.Buffer, p *ext.
 // キーで呼ばれて引数が無ければ、渡し方を知らせて失敗する（入力の行の部品（基本設計 1.4）ができるまでの仮の形）。
 //
 // req: FR-94
-func (d *debugger) conditionalBreakpoint(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+func (d *debugger) conditionalBreakpoint(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	text, err := argsText(p)
 	if err != nil {
 		return d.fail(fmt.Sprintf("%s: 引数を読めない: %v", p.Operation, err))
@@ -418,7 +549,7 @@ func (d *debugger) conditionalBreakpoint(_ context.Context, b *server.Buffer, p 
 	if cond == "" {
 		return d.fail("条件の式を :breakpoint.conditional 式 で渡す")
 	}
-	return d.editBreakpoints(b, func(bps []bp) []bp {
+	return d.editBreakpoints(b, p.Sync, func(bps []bp) []bp {
 		line := p.Cursor.Line
 		bps = slices.DeleteFunc(bps, func(x bp) bool { return x.line == line })
 		return normalize(append(bps, bp{line: line, state: bpPending, cond: cond}))
@@ -426,7 +557,9 @@ func (d *debugger) conditionalBreakpoint(_ context.Context, b *server.Buffer, p 
 }
 
 // editBreakpoints は、バッファ b のファイルのブレークポイントの列を edit で変え、印を送り、デバッグ中なら setBreakpoints を送る。
-func (d *debugger) editBreakpoints(b *server.Buffer, edit func([]bp) []bp) (ext.ProviderInvokeResult, error) {
+// sync（再生中）なら、setBreakpoints の応答を受け取ってから応答する。
+// 再生の次の操作（続行など）が、置いたブレークポイントより先にデバッグアダプターへ届かないようにするためである。
+func (d *debugger) editBreakpoints(b *server.Buffer, sync bool, edit func([]bp) []bp) (ext.ProviderInvokeResult, *waiter) {
 	if b == nil {
 		// 本体が不正な UTF-8 のためにバッファを送っていない（p.Withheld）。本体が理由を利用者へ知らせる。
 		return ext.ProviderInvokeResult{OK: false}, nil
@@ -449,18 +582,37 @@ func (d *debugger) editBreakpoints(b *server.Buffer, edit func([]bp) []bp) (ext.
 	s := d.sess
 	send := s != nil && d.configured
 	d.mu.Unlock()
-	if send {
-		// ハンドラーの ctx は戻ると無効になるので引き継がない。
-		go d.sendBreakpoints(s, path)
+	if !send {
+		return ok()
 	}
-	return ext.ProviderInvokeResult{OK: true}, nil
+	// ハンドラーの ctx は戻ると無効になるので引き継がない。
+	return d.sendBreakpointsAll(s, []string{path}, sync)
+}
+
+// sendBreakpointsAll は、paths のブレークポイントをループの外で setBreakpoints で送る。
+// sync なら、すべて送り終えてから成功を届ける waiter を返す。
+func (d *debugger) sendBreakpointsAll(s *session, paths []string, sync bool) (ext.ProviderInvokeResult, *waiter) {
+	if !sync {
+		for _, path := range paths {
+			go d.sendBreakpoints(s, path)
+		}
+		return ok()
+	}
+	w := newWaiter()
+	go func() {
+		for _, path := range paths {
+			d.sendBreakpoints(s, path)
+		}
+		w.resolve(ext.ProviderInvokeResult{OK: true})
+	}()
+	return ext.ProviderInvokeResult{}, w
 }
 
 // clearBreakpoints は、すべてのファイルのブレークポイントを消す（本体の操作 breakpoint.clear）。
 // 印を消し、デバッグ中なら、消したファイルごとに空の setBreakpoints を送る。
 //
 // req: FR-94
-func (d *debugger) clearBreakpoints(context.Context, *server.Buffer, *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+func (d *debugger) clearBreakpoints(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	d.mu.Lock()
 	paths := slices.Sorted(maps.Keys(d.bps))
 	for _, path := range paths {
@@ -471,19 +623,17 @@ func (d *debugger) clearBreakpoints(context.Context, *server.Buffer, *ext.Provid
 	s := d.sess
 	send := s != nil && d.configured
 	d.mu.Unlock()
-	if send {
-		for _, path := range paths {
-			go d.sendBreakpoints(s, path) //nolint:gosec // G118: ハンドラーの ctx は戻ると無効になるので引き継がない
-		}
-	}
 	d.showInfo(fmt.Sprintf("ブレークポイントを消した（%d ファイル）", len(paths)))
-	return ext.ProviderInvokeResult{OK: true}, nil
+	if !send {
+		return ok()
+	}
+	return d.sendBreakpointsAll(s, paths, p.Sync)
 }
 
 // continueOrStart は、本体の操作 debug.continue を処理する。デバッグ中なら続行し、始まっていなければ始める（要件定義 4.11）。
 //
 // req: FR-31, FR-94
-func (d *debugger) continueOrStart(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+func (d *debugger) continueOrStart(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	d.mu.Lock()
 	running := d.sess != nil
 	d.mu.Unlock()
@@ -497,25 +647,31 @@ func (d *debugger) continueOrStart(ctx context.Context, b *server.Buffer, p *ext
 // 前回が無いか、デバッグ中なら失敗する。
 //
 // req: FR-94
-func (d *debugger) runLast(context.Context, *server.Buffer, *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+func (d *debugger) runLast(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.last == nil {
 		return d.fail("前回のデバッグが無い")
 	}
-	return d.startLocked(*d.last)
+	return d.startLocked(*d.last, p.Sync)
 }
 
 // restart は、デバッグを終えてから、前回と同じ設定で始め直す（本体の操作 debug.restart）。
 // デバッグ中でなければ、runLast と同じく前回の設定で始める。
 // 終えるのは debug.terminate と同じ手順で、終わった後（sessionEnded）に始める。
+// 再生中（sync）なら、始め直したデバッグ対象が最初に止まるまで応答を遅らせる（start と同じ）。
 //
 // req: FR-94
-func (d *debugger) restart(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+func (d *debugger) restart(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	d.mu.Lock()
 	s := d.sess
+	var w *waiter
 	if s != nil {
 		d.restartPending = true
+		if p.Sync {
+			// 始め直すのは sessionEnded なので、waiter は終わりでは外さずに、始め直した後の停止まで残す。
+			w = d.waitStopLocked()
+		}
 	}
 	d.mu.Unlock()
 	if s == nil {
@@ -523,37 +679,57 @@ func (d *debugger) restart(ctx context.Context, b *server.Buffer, p *ext.Provide
 	}
 	s.stopping.Store(true)
 	go s.stop(context.Background(), killGrace) //nolint:gosec // ハンドラーが戻った後も止め終えるまで続けるので、ハンドラーの ctx は使わない
-	return ext.ProviderInvokeResult{OK: true}, nil
+	if w != nil {
+		return ext.ProviderInvokeResult{}, w
+	}
+	return ok()
 }
 
 // pause は、実行中のデバッグ対象を一時停止する（本体の操作 debug.pause）。止まったことは stopped の event で知らせる。
+// 再生中（sync）なら、止まるまで応答を遅らせる。
+// 再生中で既に止まっていれば、pause を送らずにすぐに応答する。送ると、デバッグアダプターによっては stopped の event が後から届き、
+// 再生の次の操作（続行など）の停止として取り違えるためである。
 //
-// req: FR-94
-func (d *debugger) pause(context.Context, *server.Buffer, *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+// req: FR-94, FR-19
+func (d *debugger) pause(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	d.mu.Lock()
 	s := d.sess
 	ready := d.configured
+	stopped := d.exec != nil
+	var w *waiter
+	if s != nil && ready && p.Sync && !stopped {
+		w = d.waitStopLocked()
+	}
 	d.mu.Unlock()
 	if s == nil || !ready {
 		return d.fail("デバッグを始めていない")
+	}
+	if p.Sync && stopped {
+		return ok()
 	}
 	go func() { //nolint:gosec // G118: ハンドラーの ctx は応答すると取り消されるので引き継がない
 		ctx, cancel := context.WithTimeout(context.Background(), d.timeouts.request)
 		defer cancel()
 		if err := s.pause(ctx); err != nil && !errors.Is(err, errDAPClosed) {
 			d.logf("pause: %v", err)
+			d.dropStopWaiter(w)
+			w.resolve(ext.ProviderInvokeResult{OK: false})
 			d.showError(fmt.Sprintf("pause に失敗した: %v", err))
 		}
 	}()
-	return ext.ProviderInvokeResult{OK: true}, nil
+	if w != nil {
+		return ext.ProviderInvokeResult{}, w
+	}
+	return ok()
 }
 
 // start は、デバッグアダプターを起動し、デバッグを始める（基本設計 6.4）。
 // 子プロセスの起動までをハンドラーの中で行い、DAP の初期化は別の goroutine で行う。
 // 結果は message/show で知らせる。
+// 再生中（sync）なら、デバッグ対象が最初に止まるか、止まらずに終わるまで応答を遅らせる（startLocked）。
 //
-// req: FR-31
-func (d *debugger) start(_ context.Context, b *server.Buffer, _ *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+// req: FR-31, FR-19
+func (d *debugger) start(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	launch := maps.Clone(d.settings.Launch)
 	if launch == nil {
 		launch = map[string]any{}
@@ -577,11 +753,13 @@ func (d *debugger) start(_ context.Context, b *server.Buffer, _ *ext.ProviderInv
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.startLocked(lastRun{launch: launch, cfg: cfg})
+	return d.startLocked(lastRun{launch: launch, cfg: cfg}, p.Sync)
 }
 
 // startLocked は、run の設定でデバッグアダプターを起動し、デバッグを始め、run を前回の設定として覚える。mu を持って呼ぶ。
-func (d *debugger) startLocked(run lastRun) (ext.ProviderInvokeResult, error) {
+// sync なら、デバッグ対象が最初に止まるか、デバッグが終わるまで応答を遅らせる waiter を返す。
+// waiter は mu を持ったまま、セッションを動かし始める前に置くので、最初の停止を取りこぼさない。
+func (d *debugger) startLocked(run lastRun, sync bool) (ext.ProviderInvokeResult, *waiter) {
 	if d.sess != nil {
 		return d.fail("デバッグは既に始まっている")
 	}
@@ -592,14 +770,22 @@ func (d *debugger) startLocked(run lastRun) (ext.ProviderInvokeResult, error) {
 	d.sess = s
 	d.configured = false
 	d.last = &run
+	var w *waiter
+	if sync {
+		w = d.waitStopLocked()
+	}
 	go s.run(maps.Clone(run.launch))
-	return ext.ProviderInvokeResult{OK: true}, nil
+	if w != nil {
+		return ext.ProviderInvokeResult{}, w
+	}
+	return ok()
 }
 
 // stop は、デバッグを終える（基本設計 6.4。本体の操作 debug.terminate）。disconnect は別の goroutine で送る。
+// 再生中（sync）なら、終え終わる（session.stop が戻る）まで応答を遅らせる。
 //
 // req: FR-31, FR-94
-func (d *debugger) stop(context.Context, *server.Buffer, *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+func (d *debugger) stop(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	d.mu.Lock()
 	s := d.sess
 	d.restartPending = false
@@ -608,8 +794,16 @@ func (d *debugger) stop(context.Context, *server.Buffer, *ext.ProviderInvokePara
 		return d.fail("デバッグを始めていない")
 	}
 	s.stopping.Store(true)
-	go s.stop(context.Background(), killGrace) //nolint:gosec // ハンドラーが戻った後も止め終えるまで続けるので、ハンドラーの ctx は使わない
-	return ext.ProviderInvokeResult{OK: true}, nil
+	if !p.Sync {
+		go s.stop(context.Background(), killGrace) //nolint:gosec // ハンドラーが戻った後も止め終えるまで続けるので、ハンドラーの ctx は使わない
+		return ok()
+	}
+	w := newWaiter()
+	go func() { //nolint:gosec // G118: 応答した後も止め終えるまで続けるので、ハンドラーの ctx は使わない
+		s.stop(context.Background(), killGrace)
+		w.resolve(ext.ProviderInvokeResult{OK: true})
+	}()
+	return ext.ProviderInvokeResult{}, w
 }
 
 // resume は、続行とステップ実行の操作（debug.continue、debug.stepOver、debug.stepIn、debug.stepOut）を、
@@ -617,12 +811,21 @@ func (d *debugger) stop(context.Context, *server.Buffer, *ext.ProviderInvokePara
 // 送る前に実行位置の印を消す。DAP の仕様では、続行を意味する request の後に continued の event は届かないためである。
 // request が失敗したら、印を戻して利用者に知らせる。
 //
-// req: FR-31, FR-94
-func (d *debugger) resume(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+// 再生中（sync）なら、デバッグ対象が次に止まるか、デバッグが終わるまで応答を遅らせ、止まった位置を応答の open で返す
+// （showStopped）。DAP の request の応答は、デバッグ対象が動き始めたことしか表さない（next の応答の後に stopped の event が届く）ので、
+// request の応答で答えると、再生の次のステップ実行が、まだ動いているデバッグ対象へ届いて失敗する（#210）。
+//
+// req: FR-31, FR-94, FR-19
+func (d *debugger) resume(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, *waiter) {
 	command := resumeCommands[p.Operation]
 	d.mu.Lock()
 	s := d.sess
 	ready := d.configured
+	var w *waiter
+	if s != nil && ready && p.Sync {
+		// request を送る前に置き、request の応答より先に届く stopped の event も取りこぼさない。
+		w = d.waitStopLocked()
+	}
 	d.mu.Unlock()
 	if s == nil || !ready {
 		return d.fail("デバッグを始めていない")
@@ -634,14 +837,19 @@ func (d *debugger) resume(_ context.Context, _ *server.Buffer, p *ext.ProviderIn
 		if err := s.resume(ctx, command); err != nil {
 			d.logf("%s: %v", command, err)
 			if errors.Is(err, errDAPClosed) {
-				// デバッグアダプターが終わった。知らせるのは後始末（sessionEnded）である。
+				// デバッグアダプターが終わった。知らせるのは後始末（sessionEnded）で、waiter もそこで結果を受け取る。
 				return
 			}
+			d.dropStopWaiter(w)
+			w.resolve(ext.ProviderInvokeResult{OK: false})
 			d.restoreExecution(prev)
 			d.showError(fmt.Sprintf("%s に失敗した: %v", command, err))
 		}
 	}()
-	return ext.ProviderInvokeResult{OK: true}, nil
+	if w != nil {
+		return ext.ProviderInvokeResult{}, w
+	}
+	return ok()
 }
 
 // configure は、s の初期化で setBreakpoints を送るファイルの一覧を返し、以後の変更をその都度送るようにする。
@@ -695,13 +903,29 @@ func (d *debugger) applyBreakpoints(path string, gen uint64, res []breakpoint) {
 // editor/open でカーソルを移し、sign/set で実行位置の印を付け、message/show で止まった理由を知らせる。
 // session の event の goroutine から呼ぶ。
 //
-// req: FR-31
+// 再生中（sync）の操作がこの停止を待っていれば（stopWaiter）、editor/open を送らずに、止まった位置をその操作の応答の open で返す。
+// 本体は応答を待つ間 editor/open を処理しないので、送ると応答の期限まで互いに待つうえ、
+// 移動が再生の次の操作より後になる（基本設計 6 章の冒頭、6.4）。
+//
+// req: FR-31, FR-19
 func (d *debugger) showStopped(ctx context.Context, path string, line, column int, reason string) {
 	d.mu.Lock()
 	d.exec = &execPoint{path: path, line: line}
 	d.publishLocked(path)
+	w := d.takeStopWaiterLocked()
+	buf, opened := d.buffers[path]
 	d.mu.Unlock()
 	d.showInfo(fmt.Sprintf("停止した（%s）: %s:%d", reason, path, line+1))
+	if w != nil {
+		if !replayStopReason(reason) {
+			// 記録したときと違う止まり方なので、再生を止める（仮。基本設計 6 章の冒頭）。止まった位置へは下で editor/open で移る。
+			w.resolve(ext.ProviderInvokeResult{OK: false})
+			d.showError(fmt.Sprintf("再生の途中でデバッグ対象が止まった（%s）ので、再生を止めた", reason))
+		} else if w.resolve(ext.ProviderInvokeResult{OK: true, Open: d.stopOpen(ctx, path, line, column, buf, opened)}) {
+			return
+		}
+		// 本体が待つのをやめた後に止まったなら、再生中でないときと同じく editor/open で移る。
+	}
 
 	res, err := d.srv.OpenEditor(ctx, ext.EditorOpenParams{Path: path, Focus: true})
 	if err != nil {
@@ -727,6 +951,49 @@ func (d *debugger) showStopped(ctx context.Context, path string, line, column in
 	if _, err := d.srv.OpenEditor(ctx, ext.EditorOpenParams{Buffer: &id, Position: &pos, Version: &version, Focus: true}); err != nil {
 		d.logf("editor/open buffer %d: %v", id, err)
 	}
+}
+
+// stopOpen は、再生中の操作の応答で返す、止まった位置へのカーソルの移動を作る。
+// path のバッファを開いていれば（opened）、複製の行から DAP の列をバイトの位置にし、バッファの番号とバージョン番号で指す。
+// 開いていなければ、パスと行の先頭で指す（本体が開いてから移る）。
+func (d *debugger) stopOpen(ctx context.Context, path string, line, column int, buf bufState, opened bool) *ext.EditorOpenParams {
+	if opened {
+		// 本体は応答を待つ間バッファを変えないので、複製は buf.version に既にあるはずである。
+		b, err := d.srv.WaitBuffer(ctx, buf.id, buf.version)
+		switch {
+		case err != nil:
+			d.logf("wait buffer %d: %v", buf.id, err)
+		case b.LineCount() > 0:
+			line = min(line, b.LineCount()-1)
+			pos := ext.Position{Line: line, Byte: utf16ColumnToByte(b.Line(line), column, linesStartAt1)}
+			id, version := b.ID(), b.Version()
+			return &ext.EditorOpenParams{Buffer: &id, Position: &pos, Version: &version, Focus: true}
+		}
+	}
+	// 開いていないファイルは、本体が開く前なので、ファイルの中身から列をバイトの位置にする。読めなければ行の先頭にする。
+	pos := ext.Position{Line: line}
+	if data, err := os.ReadFile(path); err == nil {
+		ls := strings.Split(string(data), "\n")
+		if line < len(ls) {
+			pos.Byte = utf16ColumnToByte(strings.TrimSuffix(ls[line], "\r"), column, linesStartAt1)
+		}
+	}
+	return &ext.EditorOpenParams{Path: path, Position: &pos, Focus: true}
+}
+
+// replayStopReasons は、再生中の続行、ステップ実行、開始、一時停止が待つ停止の理由（DAP の stopped の reason）である（仮）。
+// 記録したときと同じく、ブレークポイントかステップ実行か一時停止で止まったものとして再生を続ける。
+// それ以外（exception、goto など。delve の panic は exception）は、記録したときと違う止まり方として再生を止める（#217 のレビュー）。
+var replayStopReasons = []string{"step", "breakpoint", "function breakpoint", "data breakpoint", "instruction breakpoint", "pause", "entry"}
+
+// replayStopReason は、reason が再生を続けてよい停止の理由かを返す。
+func replayStopReason(reason string) bool { return slices.Contains(replayStopReasons, reason) }
+
+// stoppedWithoutSource は、止まった位置（ソースのパス）が分からない停止を知らせる。
+// 再生中の操作がこの停止を待っていれば、カーソルを動かさずに成功を返す。
+func (d *debugger) stoppedWithoutSource(reason string) {
+	d.takeStopWaiter().resolve(ext.ProviderInvokeResult{OK: true})
+	d.showInfo("停止した（" + reason + "）")
 }
 
 // clearExecution は、実行位置の印を消し、消す前の位置を返す（基本設計 6.4 の continued と terminated）。
@@ -779,7 +1046,15 @@ func (d *debugger) sessionEnded(s *session, abnormal, quiet bool) {
 	}
 	restart := d.restartPending && d.last != nil
 	d.restartPending = false
+	// 再生中の操作が停止を待っていれば、止まらずに終わったので、カーソルを動かさずに応答させる。
+	// 開始に失敗したか、デバッグアダプターが異常終了したなら失敗にして、再生を止める（FR-19）。
+	// debug.restart で始め直すときは、始め直した後の停止まで待たせる。
+	var w *waiter
+	if !restart {
+		w = d.takeStopWaiterLocked()
+	}
 	d.mu.Unlock()
+	w.resolve(ext.ProviderInvokeResult{OK: !quiet && !abnormal})
 	switch {
 	case quiet:
 	case abnormal:
@@ -790,7 +1065,9 @@ func (d *debugger) sessionEnded(s *session, abnormal, quiet bool) {
 	if restart {
 		// debug.restart で止めたので、前回の設定で始め直す。失敗は startLocked が知らせる。
 		d.mu.Lock()
-		_, _ = d.startLocked(*d.last)
+		if res, _ := d.startLocked(*d.last, false); !res.OK {
+			d.takeStopWaiterLocked().resolve(ext.ProviderInvokeResult{OK: false})
+		}
 		d.mu.Unlock()
 	}
 }

@@ -249,6 +249,7 @@ var (
 // args の peek が true なら、移らずに、移動先の周りの行を popup/show で出す（要件定義 4.11 の「ポップアップで見る」。
 // FR-110 のポップアップの部品ができるまでの仮の形）。
 // sync が true（マクロとドットリピートの再生中）で peek でなければ、結果がそろってから、最初の候補への移動を応答の open で返す。
+// peek なら、最初の候補を popup/show で出してから応答する（hover と同じ）。
 // 本体は応答を待つ間、この拡張機能からの choice/ask を処理できないので、再生中は選ばせない。候補が無ければ ok を false にする。
 //
 // req: FR-30, FR-94
@@ -260,7 +261,8 @@ func (x *extension) locate(k locateKind) server.AsyncProviderHandler {
 			return
 		}
 		peek := providerArgs(p).Peek
-		if p.Sync && !peek {
+		cursor := p.Cursor
+		if p.Sync {
 			go func() {
 				targets, err := x.locationTargets(ctx, r)
 				if err != nil || len(targets) == 0 {
@@ -270,13 +272,18 @@ func (x *extension) locate(k locateKind) server.AsyncProviderHandler {
 					reply(ext.ProviderInvokeResult{OK: false}, nil)
 					return
 				}
+				if peek {
+					// hover と同じく、popup/show を送り終えてから応答する。
+					x.peek(r, cursor, targets[0])
+					reply(ext.ProviderInvokeResult{OK: true}, nil)
+					return
+				}
 				open := targets[0].open
 				reply(ext.ProviderInvokeResult{OK: true, Open: &open}, nil)
 			}()
 			return
 		}
 		reply(ext.ProviderInvokeResult{OK: true}, nil)
-		cursor := p.Cursor
 		go func() {
 			ctx, cancel := x.background()
 			defer cancel()
@@ -446,40 +453,57 @@ func (c *client) resolve(r *request, path string, pos lspPosition) target {
 // hover は、本体の操作 hover を処理する（基本設計 5.5、6.3）。
 // カーソル位置で textDocument/hover を送り、受け付けたことだけを ok で応答する。
 // 結果の本文は popup/show で、問い合わせた版の番号とカーソル位置と一緒に送る。
-// 表示は再生の結果を変えないので、sync が true でも後から送る（基本設計 6 章の冒頭）。
 //
-// req: FR-30, FR-94
-func (x *extension) hover(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
+// sync が true（マクロとドットリピートの再生中）なら、popup/show を送り終えてから応答する（FR-19）。
+// 本体は popup/show を再生の後に処理し、その時点のカーソルが問い合わせた位置から動いていれば出さない（基本設計 6.7）。
+// このため、再生の途中のホバーは、記録したときと同じく次の移動で消えたものとして扱われ、再生の後に残らない（#210）。
+// 結果を得られなければ ok を false にして、再生を止める。
+//
+// req: FR-30, FR-94, FR-19
+func (x *extension) hover(ctx context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
 	r, err := x.sendFor(p, "ホバー", lspHover,
 		func(c *serverCapabilities) bool { return provides(c.HoverProvider) }, positionParams(p.Cursor))
 	if err != nil {
 		reply(ext.ProviderInvokeResult{OK: false}, nil)
 		return
 	}
-	reply(ext.ProviderInvokeResult{OK: true}, nil)
 	cursor := p.Cursor
+	if p.Sync {
+		go func() {
+			reply(ext.ProviderInvokeResult{OK: x.showHover(ctx, r, cursor)}, nil)
+		}()
+		return
+	}
+	reply(ext.ProviderInvokeResult{OK: true}, nil)
 	go func() {
 		ctx, cancel := x.background()
 		defer cancel()
-		var res *hoverResult
-		if err := r.wait(ctx, &res); err != nil {
-			x.logf("%s: %v", lspHover, err)
-			x.showMessage(ext.MessageError, fmt.Sprintf("ホバーの情報を得られない: %v", err))
-			return
-		}
-		var text, format string
-		if res != nil {
-			text, format = hoverText(res.Contents)
-		}
-		if strings.TrimSpace(text) == "" {
-			x.showMessage(ext.MessageInfo, "ホバーの情報が無い")
-			return
-		}
-		popup := ext.PopupShowParams{Buffer: r.buffer, Version: r.version, Position: cursor, Text: text, Format: ext.PopupFormat(format)}
-		if err := x.srv.ShowPopup(popup); err != nil {
-			x.logf("popup/show: %v", err)
-		}
+		x.showHover(ctx, r, cursor)
 	}()
+}
+
+// showHover は、textDocument/hover の応答を待ち、本文を popup/show で出す。情報が無ければそのことを知らせる。
+// 応答を得られなければ知らせて false を返す。
+func (x *extension) showHover(ctx context.Context, r *request, cursor ext.Position) bool {
+	var res *hoverResult
+	if err := r.wait(ctx, &res); err != nil {
+		x.logf("%s: %v", lspHover, err)
+		x.showMessage(ext.MessageError, fmt.Sprintf("ホバーの情報を得られない: %v", err))
+		return false
+	}
+	var text, format string
+	if res != nil {
+		text, format = hoverText(res.Contents)
+	}
+	if strings.TrimSpace(text) == "" {
+		x.showMessage(ext.MessageInfo, "ホバーの情報が無い")
+		return true
+	}
+	popup := ext.PopupShowParams{Buffer: r.buffer, Version: r.version, Position: cursor, Text: text, Format: ext.PopupFormat(format)}
+	if err := x.srv.ShowPopup(popup); err != nil {
+		x.logf("popup/show: %v", err)
+	}
+	return true
 }
 
 // formattingParams は、textDocument/formatting の params を作る関数を返す。

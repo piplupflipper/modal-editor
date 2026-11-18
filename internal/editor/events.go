@@ -181,13 +181,28 @@ func (e *Editor) applyExternal(bs *bufferState, tx buffer.Transaction) (buffer.C
 	return ch, nil
 }
 
-// showPopup は、popup/show を、カーソルのあるバッファで、バージョン番号が現在と一致する場合だけ表示する。
+// popupMark は、拡張機能の操作を問い合わせた State と、その時点で State が解釈していたキーの数である。
+type popupMark struct {
+	state *command.State
+	keys  uint64
+}
+
+// showPopup は、popup/show を、カーソルのあるバッファで、バージョン番号が現在と一致し、
+// カーソルが表示の基準の位置（Position）にあり、最後の拡張機能の操作の問い合わせの後に次のキーを解釈していない場合だけ表示する。
 // 本文は、ui がカーソルの近くに浮かべて描く（ui.Frame.Popup）。
 //
-// req: FR-30
+// 表示は次のキー入力かカーソルの移動で消す（基本設計 6.7）ので、届いた時点でそのどちらかが起きていれば、既に消えたものとして出さない。
+// マクロの再生の途中のホバー（FR-19。#210）は、再生を終えてからこの関数に届く（待つ間のイベントは hold で取っておく）。
+// 記録したときは次のキー（j、zz など）で消えていたので、再生の後に残さないためである。
+// 再生のキーも command.State.KeysFed が数えるので、移動しないキー（zz）や動いて戻るキー（jk）が続いても出さない（#217 のレビュー）。
+//
+// req: FR-30, FR-19
 func (e *Editor) showPopup(p ext.PopupShowParams) {
 	bs := e.cur
-	if bs.id != p.Buffer || uint64(p.Version) != bs.buf.Version() {
+	if bs.id != p.Buffer || uint64(p.Version) != bs.buf.Version() || bs.state.Cursor() != fromExtPos(p.Position) {
+		return
+	}
+	if m := e.popupMark; m.state == bs.state && m.keys != bs.state.KeysFed() {
 		return
 	}
 	e.popup = &popupState{bs: bs, cursor: bs.state.Cursor(), text: p.Text, markdown: p.Format == ext.PopupMarkdown}

@@ -251,6 +251,42 @@ func (h *host) invoke(buf ext.BufferID, op ext.Operation, line int, args string)
 	return res
 }
 
+// replay は、本体がマクロを再生しているときと同じく、sync を true にして本体の操作 op を呼ぶ（FR-19）。
+// 本体は再生中、応答が届くまで次の操作を送らないので、この呼び出しも応答まで待つ。
+func (h *host) replay(op ext.Operation, line int) ext.ProviderInvokeResult {
+	h.t.Helper()
+	h.mu.Lock()
+	v := h.versions[1]
+	h.mu.Unlock()
+	var res ext.ProviderInvokeResult
+	p := ext.ProviderInvokeParams{Operation: op, Buffer: 1, Version: v, Cursor: ext.Position{Line: line}, Sync: true}
+	if err := h.conn.Call(h.ctx(), ext.MethodProviderInvoke, p, &res); err != nil {
+		h.t.Fatalf("provider/invoke %s (sync): %v", op, err)
+	}
+	return res
+}
+
+// noOpen は、editor/open が届いていないことを確かめる。
+func (h *host) noOpen(what string) {
+	h.t.Helper()
+	select {
+	case p := <-h.opens:
+		h.t.Errorf("%s: editor/open %+v was sent; want the stop in the result", what, p)
+	default:
+	}
+}
+
+// drainOpens は、届いた editor/open を読み捨てる。
+func (h *host) drainOpens() {
+	for {
+		select {
+		case <-h.opens:
+		default:
+			return
+		}
+	}
+}
+
 // mustExec は、exec の結果の ok が true であることを確かめる。
 // テストで編集するバッファは 1 つなので、バッファは 1 に決めている。
 func (h *host) mustExec(op ext.Operation, line int) {
@@ -610,6 +646,165 @@ func TestProviderOperations(t *testing.T) {
 	h.waitEnded()
 	h.mustExec(ext.OpDebugRunLast, 0)
 	h.waitSigns(bp2, exec2)
+}
+
+// TestReplayWaitsForStop は、マクロの再生中（sync）のステップ実行が、デバッグ対象が止まるまで応答せず、
+// 止まった位置を応答の open で返すことを確かめる（#210）。
+// <Space>dn を 2 回記録したマクロの再生は、本体から sync の debug.stepOver が、前の応答を待って 2 回届く形になる。
+//
+// テスト用のデバッグアダプターは、ステップ実行の応答から 200 ms の間デバッグ対象が動いていることにし、その間のステップ実行を断る。
+// 再生中でない呼び出しは受け付けたことだけを応答するので、続けて 2 回呼ぶと 2 回目が断られる（#210 の症状）。
+//
+// req: FR-19, FR-94
+func TestReplayWaitsForStop(t *testing.T) {
+	h := newHost(t, fakeSettings(t, nil, map[string]any{"stopDelayMs": 200}))
+	h.open(1, srcPath, srcText)
+	if res := h.replay(cmdToggleBreakpoint, 2); !res.OK || res.Open != nil {
+		t.Fatalf("toggle (sync) = %+v, want ok without open", res)
+	}
+	h.waitSigns(bp2)
+
+	// 始める操作は、最初に止まるまで待ち、止まった位置を返す。
+	res := h.replay(cmdStart, 0)
+	if !res.OK || res.Open == nil || res.Open.Buffer == nil || *res.Open.Buffer != 1 || res.Open.Position.Line != 2 || !res.Open.Focus {
+		t.Fatalf("start (sync) = %+v, want ok with open at buffer 1 line 2", res)
+	}
+	h.noOpen("start (sync)")
+	h.waitSigns(bp2, exec2)
+
+	// 再生中でなければ、2 回目は動いている間に届いて断られる。
+	h.mustExec(cmdNext, 0)
+	h.exec(1, cmdNext, 0)
+	h.waitMessage("debuggee is running")
+	h.waitSigns(bp2, ext.Sign{Line: 3, Kind: ext.SignExecutionPoint})
+	h.waitOpen()
+	h.drainOpens()
+
+	// 再生中は、止まるまで待つので 2 回とも進む。
+	for _, want := range []int{4, 5} {
+		start := time.Now()
+		res := h.replay(cmdNext, 0)
+		if !res.OK || res.Open == nil || res.Open.Position == nil || res.Open.Position.Line != want {
+			t.Fatalf("next (sync) = %+v, want ok with open at line %d", res, want)
+		}
+		if d := time.Since(start); d < 150*time.Millisecond {
+			t.Errorf("next (sync) replied after %v, before the debuggee stopped", d)
+		}
+	}
+	h.noOpen("next (sync)")
+	h.waitSigns(bp2, exec5)
+
+	// 既に止まっていれば、一時停止はすぐに応答する。
+	if res := h.replay(ext.OpDebugPause, 0); !res.OK || res.Open != nil {
+		t.Errorf("pause while stopped (sync) = %+v, want ok without open", res)
+	}
+
+	// 止まらずに終われば、カーソルを動かさずに応答する。
+	if res := h.replay(cmdContinue, 0); !res.OK || res.Open != nil {
+		t.Errorf("continue to the end (sync) = %+v, want ok without open", res)
+	}
+	h.waitEnded()
+
+	// 終えた後の runLast は最初の停止まで待ち、終える操作は終え終わってから応答する。
+	if res := h.replay(ext.OpDebugRunLast, 0); !res.OK || res.Open == nil || res.Open.Position.Line != 2 {
+		t.Fatalf("runLast (sync) = %+v, want ok with open at line 2", res)
+	}
+	if res := h.replay(cmdStop, 0); !res.OK {
+		t.Errorf("terminate (sync) = %+v, want ok", res)
+	}
+	h.d.mu.Lock()
+	ended := h.d.sess == nil
+	h.d.mu.Unlock()
+	if !ended {
+		t.Error("terminate (sync) replied before the session ended")
+	}
+	h.noOpen("runLast (sync)")
+}
+
+// TestReplayStepFailure は、再生中のステップ実行が失敗したら、止まるのを待たずに ok を false で返す（本体が再生を止める）ことを確かめる。
+//
+// req: FR-19
+func TestReplayStepFailure(t *testing.T) {
+	h := newHost(t, fakeSettings(t, nil, map[string]any{"ignore": []string{"stepOut"}}))
+	h.d.timeouts.request = 300 * time.Millisecond
+	h.open(1, srcPath, srcText)
+	h.mustExec(cmdToggleBreakpoint, 2)
+	if res := h.replay(cmdStart, 0); !res.OK {
+		t.Fatalf("start (sync) = %+v", res)
+	}
+	if res := h.replay(cmdStepOut, 0); res.OK {
+		t.Errorf("stepOut without a response (sync) = %+v, want ok = false", res)
+	}
+	// 始める前の操作は待たずに失敗する。
+	h2 := newHost(t, fakeSettings(t, nil, nil))
+	h2.open(1, srcPath, srcText)
+	if res := h2.replay(cmdNext, 0); res.OK {
+		t.Errorf("next before start (sync) = %+v, want ok = false", res)
+	}
+}
+
+// TestReplayStopsOnException は、再生中の続行で、デバッグ対象がブレークポイントとステップ実行以外の理由（exception）で止まったら、
+// ok を false で返して再生を止め、止まった位置へは editor/open で移すことを確かめる（仮。#217 のレビュー）。
+//
+// req: FR-19
+func TestReplayStopsOnException(t *testing.T) {
+	h := newHost(t, fakeSettings(t, nil, map[string]any{"exceptionOnContinue": true}))
+	h.open(1, srcPath, srcText)
+	h.mustExec(cmdToggleBreakpoint, 2)
+	if res := h.replay(cmdStart, 0); !res.OK {
+		t.Fatalf("start (sync) = %+v", res)
+	}
+	if res := h.replay(cmdContinue, 0); res.OK {
+		t.Errorf("continue stopped by an exception (sync) = %+v, want ok = false", res)
+	}
+	h.waitMessage("再生を止めた")
+	if p := h.waitOpen(); p.Buffer == nil || *p.Buffer != 1 || p.Position.Line != 2 {
+		t.Errorf("editor/open = %+v, want buffer 1 line 2", p)
+	}
+}
+
+// TestReplayStopInUnopenedFile は、再生中の停止の位置が開いていないファイルにあれば、ファイルの中身から列をバイトの位置にして
+// パスで返すことを確かめる（#217 のレビュー）。
+//
+// req: FR-19
+func TestReplayStopInUnopenedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "main.go")
+	if err := os.WriteFile(path, []byte("x\na𝄞b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// DAP の列 4（1 から数える）は、"a𝄞b" の b の前（5 バイト目）。
+	h := newHost(t, fakeSettings(t, nil, map[string]any{"column": 4}))
+	h.open(2, path, "x\na𝄞b")
+	if res := h.invoke(2, cmdToggleBreakpoint, 1, ""); !res.OK {
+		t.Fatal("toggle: ok = false")
+	}
+	if err := h.conn.Notify(ext.MethodBufferClose, ext.BufferCloseParams{Buffer: 2}); err != nil {
+		t.Fatal(err)
+	}
+	h.open(1, srcPath, srcText)
+	res := h.replay(cmdStart, 0)
+	if !res.OK || res.Open == nil || res.Open.Path != path || res.Open.Buffer != nil || res.Open.Position == nil || *res.Open.Position != (ext.Position{Line: 1, Byte: 5}) {
+		t.Errorf("start (sync) = %+v, want open %s at 1:5", res, path)
+	}
+}
+
+// waiter は、本体が待つのをやめた後の結果を届けず、やめる前に届いていた結果を返す。
+func TestWaiterAbandon(t *testing.T) {
+	w := newWaiter()
+	want := ext.ProviderInvokeResult{OK: true}
+	if !w.resolve(want) {
+		t.Error("resolve before abandon = false")
+	}
+	if r, ok := w.abandon(); !ok || r.OK != want.OK {
+		t.Errorf("abandon after resolve = %+v, %v", r, ok)
+	}
+	w = newWaiter()
+	if _, ok := w.abandon(); ok {
+		t.Error("abandon before resolve returned a result")
+	}
+	if w.resolve(want) {
+		t.Error("resolve after abandon = true")
+	}
 }
 
 // TestManifest は、宣言ファイルが検査を通り、provides が引き受ける操作と一致することを確かめる。

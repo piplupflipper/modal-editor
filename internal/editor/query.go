@@ -473,6 +473,7 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 func (x *extQuery) invokeResult(ref editcmd.Ref, method string, params any, b *buffer.Buffer, q command.ActionQuery, info command.QueryInfo) (buffer.Transaction, error) {
 	var r ext.CommandExecuteResult
 	x.e.extRan = true
+	x.e.popupMark = popupMark{state: x.bs.state, keys: x.bs.state.KeysFed()}
 	err := x.call(ref, method, params, info, &r)
 	if (err != nil || !r.OK) && x.e.host.Withheld(x.bs.id) && !errors.Is(err, context.Canceled) && !errors.Is(err, command.ErrDeferred) {
 		// 送っていないバッファでは、バッファを使うコマンドは失敗する。拡張機能の返す理由より、送っていないことを知らせる。

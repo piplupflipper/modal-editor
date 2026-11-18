@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // fakeOptions は、launch の引数の fake の項目である。
@@ -47,6 +48,11 @@ type fakeOptions struct {
 	LaunchBeforeInitialized bool `json:"launchBeforeInitialized"`
 	// Ignore は、受け取っても応答も処理もしない request のコマンドの名前である（止まったデバッグアダプターの代役）。
 	Ignore []string `json:"ignore"`
+	// StopDelayMs は、continue、next、stepIn、stepOut の応答から stopped の event までの時間（ミリ秒）である。
+	// 0 でなければ、その間はデバッグ対象が動いていることにし、続行とステップ実行の request に失敗を返す（delve と同じ。#210）。
+	StopDelayMs int `json:"stopDelayMs"`
+	// ExceptionOnContinue は、continue で次のブレークポイントへ進まずに、その場で reason が exception の stopped を送る（panic の代役）。
+	ExceptionOnContinue bool `json:"exceptionOnContinue"`
 }
 
 type message struct {
@@ -73,12 +79,17 @@ type adapter struct {
 	// seq は、送ったメッセージの番号である。
 	seq int
 
-	opts       fakeOptions
-	launchSeq  int
-	bps        map[string][]int
-	stops      []location
-	cur        int
-	terminate  bool
+	opts      fakeOptions
+	launchSeq int
+	bps       map[string][]int
+	terminate bool
+
+	// stateMu は、stops、cur、running を守る。StopDelayMs の停止は別の goroutine で起きる。
+	stateMu sync.Mutex
+	stops   []location
+	cur     int
+	// running は、StopDelayMs の間、デバッグ対象が動いていることを表す。
+	running bool
 
 	childMu sync.Mutex
 	child   *exec.Cmd
@@ -273,7 +284,9 @@ func (a *adapter) handle(m *message) {
 	case "threads":
 		a.respond(m, map[string]any{"threads": []map[string]any{{"id": 1, "name": "main"}}})
 	case "stackTrace":
+		a.stateMu.Lock()
 		loc := a.stops[a.cur]
+		a.stateMu.Unlock()
 		col := a.opts.Column
 		if col == 0 {
 			col = 1
@@ -282,17 +295,35 @@ func (a *adapter) handle(m *message) {
 			"id": 1000, "name": "main.main", "line": loc.line, "column": col,
 			"source": map[string]any{"name": filepath.Base(loc.path), "path": loc.path},
 		}}})
-	case "continue":
-		a.respond(m, map[string]any{"allThreadsContinued": true})
-		a.next("breakpoint")
-	case "next":
-		a.respond(m, nil)
-		a.stops[a.cur].line++
-		a.stopped("step")
-	case "stepIn", "stepOut":
-		a.respond(m, nil)
-		a.stopped("step")
+	case "continue", "next", "stepIn", "stepOut":
+		a.stateMu.Lock()
+		running := a.running
+		a.running = a.opts.StopDelayMs > 0
+		a.stateMu.Unlock()
+		if running {
+			a.respondError(m, "debuggee is running")
+			return
+		}
+		var body any
+		if m.Command == "continue" {
+			body = map[string]any{"allThreadsContinued": true}
+		}
+		a.respond(m, body)
+		if a.opts.StopDelayMs == 0 {
+			a.resume(m.Command)
+			return
+		}
+		command := m.Command
+		time.AfterFunc(time.Duration(a.opts.StopDelayMs)*time.Millisecond, func() {
+			a.stateMu.Lock()
+			a.running = false
+			a.stateMu.Unlock()
+			a.resume(command)
+		})
 	case "pause":
+		a.stateMu.Lock()
+		a.running = false
+		a.stateMu.Unlock()
 		a.respond(m, nil)
 		a.output("console", "pause\n")
 		a.stopped("pause")
@@ -339,6 +370,25 @@ func (a *adapter) killChild() {
 	}
 }
 
+// resume は、続行かステップ実行（command）の後に止まる。next は 1 行進み、stepIn と stepOut はその場で止まる。
+func (a *adapter) resume(command string) {
+	switch command {
+	case "continue":
+		if a.opts.ExceptionOnContinue {
+			a.stopped("exception")
+			return
+		}
+		a.next("breakpoint")
+	case "next":
+		a.stateMu.Lock()
+		a.stops[a.cur].line++
+		a.stateMu.Unlock()
+		a.stopped("step")
+	default:
+		a.stopped("step")
+	}
+}
+
 // run は、ブレークポイントの位置を止まる順に並べ、最初の位置で止まる。
 func (a *adapter) run() {
 	paths := make([]string, 0, len(a.bps))
@@ -346,18 +396,23 @@ func (a *adapter) run() {
 		paths = append(paths, p)
 	}
 	slices.Sort(paths)
+	a.stateMu.Lock()
 	for _, p := range paths {
 		for _, l := range a.bps[p] {
 			a.stops = append(a.stops, location{p, l})
 		}
 	}
+	a.stateMu.Unlock()
 	a.next("breakpoint")
 }
 
 // next は、次のブレークポイントで止まる。無ければ終了する。
 func (a *adapter) next(reason string) {
+	a.stateMu.Lock()
 	a.cur++
-	if a.cur >= len(a.stops) {
+	done := a.cur >= len(a.stops)
+	a.stateMu.Unlock()
+	if done {
 		a.event("exited", map[string]any{"exitCode": 0})
 		a.event("terminated", nil)
 		return

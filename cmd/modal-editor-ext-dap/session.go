@@ -594,7 +594,7 @@ func (s *session) stopped(body *stoppedEvent) {
 		id, err := s.threadID(ctx)
 		if err != nil {
 			s.d.logf("threads: %v", err)
-			s.d.showInfo("停止した（" + body.Reason + "）")
+			s.d.stoppedWithoutSource(body.Reason)
 			return
 		}
 		tid = id
@@ -606,7 +606,7 @@ func (s *session) stopped(body *stoppedEvent) {
 		s.d.logf("stackTrace: %v", err)
 	}
 	if err != nil || len(st.StackFrames) == 0 || st.StackFrames[0].Source == nil || st.StackFrames[0].Source.Path == "" {
-		s.d.showInfo("停止した（" + body.Reason + "）")
+		s.d.stoppedWithoutSource(body.Reason)
 		return
 	}
 	f := st.StackFrames[0]
