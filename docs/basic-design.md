@@ -96,7 +96,8 @@ server のソケットのパスは、次の順に決める（仮。FR-59）。
 tmux のセッションと window の ID は、1 つの tmux のサーバーの中で一意である（同じく `tmux(1)` の「Sessions, window and panes are each numbered with a unique ID」）。
 `tmux -L` で別の tmux のサーバーを動かすと ID が重なりうるので、名前には tmux のサーバーのソケットのパス（書式の `socket_path`）も含める（仮）。
 名前は、これらの文字列のハッシュで作る（仮。パスの長さの上限 103 バイト（6.2）に収めるため）。
-herdr のプロセスが自分のタブの ID を知る手段は、実装のときに確かめる（10 章）。
+herdr のプロセスは、自分のペインの ID（`HERDR_PANE_ID`）を herdr の socket API の `pane.get` で引き、返るペインの `tab_id` で自分のタブの ID を知る（1.3。#184 で確かめた）。
+名前には、tmux と同じく herdr のソケットのパス（`HERDR_SOCKET_PATH`）も含める（仮）。
 2026-11-18 に herdr 0.9.0 で確かめた時点で、ポップアップの中のプロセスには `HERDR_PANE_ID` などの環境変数が入らなかった（#177 の「参考」）。
 
 server ごとにディレクトリ `<名前>/` を作り、その下に server のソケット `server.sock` と MCP のソケット `mcp.sock`（6.2）を置く（仮）。
@@ -159,20 +160,47 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 層は、ペインを分割して開く、ポップアップを開く、ペインとポップアップを閉じる、フォーカスを移すの操作をまとめた口（interface）で、tmux 用と herdr 用の 2 つの実装を持つ。
 どちらの実装を使うかは、server を起動したときの環境（1.2 のソケットのパスの規則と同じ判定）で決める。
 
+層は `internal/mux` にある（#184）。
+操作ごとの手段は次のとおりである（tmux 3.4 と herdr 0.9.0 で、2026-11-18 に確かめた）。
+
 | 操作 | tmux | herdr |
 |---|---|---|
-| ペインを分割して開く | `split-window -t <元の client のペイン>`（仮） | `herdr pane` の操作（仮。実装のときに確かめる） |
-| 中央のポップアップを開く | `display-popup -t <元の client のペイン>`（仮） | 同梱するプラグインの `[[panes]]`（`placement = "popup"`）を `plugin.pane.open` で開く |
-| ポップアップを閉じる | `display-popup -E` で開き、中の client が終わると閉じる（tmux 3.4 の `tmux(1)` の `-E`） | 中の client が終わると閉じる。外から閉じるときは `popup.close` か `plugin.pane.close` |
-| フォーカスを移す | `select-pane`（仮） | `herdr pane` の操作（仮。実装のときに確かめる） |
+| ペインを分割して開く | `split-window -t <元の client のペイン>`。フォーカスを移さないときは `-d` | 同梱するプラグインの entrypoint を、`placement` を `split` にして `plugin.pane.open` で開く（`target_pane_id` に元の client のペイン） |
+| 中央のポップアップを開く | `display-popup -E -c <tmux の client> -t <元の client のペイン>` | 同梱するプラグインの entrypoint を、`placement` を `popup` にして `plugin.pane.open` で開く |
+| ポップアップを閉じる | 中の client が終わると閉じる（`-E`）。外から閉じるときは `display-popup -C -c <tmux の client>` | 中の client が終わると閉じる。外から閉じるときは `popup.close` |
+| フォーカスを移す | `select-window -t <ペイン> ; select-pane -t <ペイン>` | `pane.focus`。ペインが別のタブにあれば、そのタブへ移る |
+| ペインを閉じる | `kill-pane` | `pane.close` |
+| 自分のペイン | `TMUX_PANE` | `HERDR_PANE_ID` を `pane.get` で引いた今の ID |
+| server の単位の識別子 | `display -p -t "$TMUX_PANE" '#{socket_path}:#{session_id}:#{window_id}'` | `HERDR_SOCKET_PATH` と、`pane.get` で引いた自分のペインの `tab_id` |
 
 tmux 3.4 に `display-popup` があることは、2026-11-18 に `tmux list-commands` で確かめた（#177 の「参考」）。
-herdr 0.9.0 のプラグインのポップアップの開き方と閉じ方、大きさの指定は、2026-11-18 に仮のプラグインで確かめた（#177 の「参考」）。
-herdr のポップアップは、コマンドが終わると閉じた。
-`80%` の大きさは端末全体に対する割合で、`--env` で渡した環境変数はポップアップの中から読めた。
 server は tmux のペインの中のプロセスではないので、tmux のコマンドには、元の client のペイン（`TMUX_PANE`）を `-t` で渡す。
 `-t` を省いたときの対象はアクティブなものになると推測され（1.2 の `display -p` と同じ）、別の window に開くおそれがあるためである。
-`display-popup` の `-c`（どの tmux の client の上に出すか）の要否は、実装のときに確かめる。
+
+`display-popup` には `-c`（どの tmux の client の上に出すか）が要る。
+tmux の client に繋いでいないプロセスから `-c` を省いて打つと、tmux の client が 1 つも無いときは `no current client` で失敗した（2026-11-18、tmux 3.4）。
+client があれば `-c` を省いても開いたが、tmux の client が複数あるときにどれの上に出るかを、元の client のペインから決められない。
+このため層は、`list-clients` で、元の client のペインの window を表示している tmux の client を選び（無ければ同じセッションのもの、複数なら最後に操作されたもの）、`-c` に渡す。
+`display-popup` は、ポップアップが閉じるまで戻らなかった。
+層はこのプロセスを起動したら終わりを待たずに戻るので、起動した後に tmux が返した誤りは呼び出し側に返らない。
+
+herdr の層は、CLI ではなく socket API（`HERDR_SOCKET_PATH` のソケットに、改行で区切った JSON のリクエストを送る。protocol 22）を使う。
+herdr 0.9.0 の CLI には、ペインの ID を指定してフォーカスを移す操作が無く（`herdr pane focus` は向きだけを受け付ける）、socket API には `pane.focus` があるためである。
+socket API の `pane.split` は起動するコマンドを受け付けないので、コマンドを起動するペインは、ポップアップと同じく同梱するプラグインの entrypoint を `plugin.pane.open` で開く。
+2026-11-18 に herdr 0.9.0 で確かめた結果は次のとおりである（仮のプラグインと、`internal/mux` の `TestHerdrLive`）。
+
+- `plugin.pane.open` の `placement` は、宣言ファイルの値を開くたびに上書きできた。`split` では応答に新しいペインの ID が入り、`target_pane_id` と `direction` のとおりに開いた。中のプロセスには `HERDR_PANE_ID` と `HERDR_TAB_ID` が入った
+- `split` では `width` と `height` を受け付けなかった（`invalid_params`）。このため herdr では、分割したペインの大きさを指定できない
+- `popup` では `target_pane_id` を受け付けなかった（`overlay and popup plugin panes target the active pane`）。ポップアップは、アクティブなペインの上に開く。元の client のペインでキーを受けて開くときは、そのペインがアクティブである
+- `popup` の応答には、ペインの ID が入らなかった。外から閉じるには `popup.close` を使い、開いていなければ `popup_not_open` が返った
+- `80%` の大きさは端末全体に対する割合で、`env` で渡した環境変数はポップアップの中から読めた。ポップアップと分割したペインは、中のコマンドが終わると閉じた
+- `pane.focus` は、別のタブのペインを指定すると、そのタブへ移ってフォーカスを移した
+- 起動したときの `HERDR_TAB_ID` は、ペインが別のワークスペースへ動いた後、`tab.get` が `tab_not_found` を返す古い ID になっていた。`HERDR_PANE_ID` も古い ID になっていたが、`pane.get` はその古い ID で今のペイン（今の ID と `tab_id`）を返した。このため、自分のタブの ID は `HERDR_TAB_ID` ではなく `pane.get` で得る
+
+同梱するプラグインの宣言ファイルの雛形は `internal/mux/herdr-plugin/herdr-plugin.toml` に置き、本体に埋め込む（仮）。
+宣言ファイルには entrypoint を 1 つだけ書き、その `command` は、server が環境変数 `MODAL_EDITOR_MUX_COMMAND` に入れたコマンドの文字列（引数をシェルの引用で囲んでつないだもの）を `sh -c` で `exec` する。
+宣言ファイルに本体の実行ファイルのパスを書かずに済ませるためである。
+宣言ファイルを置く場所と、herdr へ登録する（`herdr plugin link`）手順は、配布物の作り方と合わせて決める（10 章）。
 
 拡張機能は、この層を直接触らず、本体へのリクエスト（5.3 で足す `pane/open` と `popup/open`。仮）で頼む（FR-115）。
 本体は、開いたペインかポップアップの中で、表示の部品を描く client（1.4）を起動する。
@@ -2246,8 +2274,10 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
+<<<<<<< HEAD
 | server から client へ送る画面の単位（`internal/ui` の格子の差分か、表示のデータか）。client と server の往復を、要件定義 8.1 の基準で測ってから決める。#182 では仮に `internal/ui` の格子（`ui.Screen`）をそのまま送り、client の `internal/term` が差分を出力する形にした。単位に関わる処理は `internal/protocol` の `screen.go` に寄せてあるが、その箇所だけで差し替えられるのは格子の全体と格子の差分の間だけである。表示のデータの案を測るには、格子への描画（`internal/editor` の render）を境目より後ろ（client の側）へ移す必要がある（2 段目の issue で扱う） | 1.2、2 |
-| herdr の中のプロセスが、自分のタブの ID と、ペインの分割とフォーカスの移動の操作を得る手段 | 1.2、1.3 |
+| 同梱する herdr のプラグインの宣言ファイルを置く場所と、herdr へ登録する手順（登録していないと、herdr の中でポップアップとペインを開けない）。herdr の中のプロセスが自分のタブの ID を知る手段と、ペインの分割とフォーカスの移動の操作は、#184 で確かめて 1.3 に書いた | 1.3 |
+| herdr で、分割したペインの大きさを指定する手段（herdr 0.9.0 の `plugin.pane.open` は `split` の大きさを受け付けない） | 1.3 |
 | server と MCP のソケットのディレクトリが異常終了で残ったときの掃除の規則 | 1.2、6.2 |
 | 位置に結びつかない一覧（参照の一覧、キーの一覧など）を中央のポップアップに出すこと（仮）。ホバーと「ポップアップで見る」をカーソルの近くに出すことは裁定済み | 1.4 |
 | 最後の編集の client が終わったときに、部品の client を閉じて server を終えること（仮） | 1.2 |
