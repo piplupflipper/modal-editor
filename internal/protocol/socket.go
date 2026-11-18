@@ -251,9 +251,11 @@ func (cs *clientSocket) Recv() (ServerMessage, error) {
 func (cs *clientSocket) Close() error { return cs.s.close() }
 
 type wireHello struct {
-	Kind   ClientKind `json:"kind"`
-	Width  int        `json:"width,omitempty"`
-	Height int        `json:"height,omitempty"`
+	Kind     ClientKind `json:"kind"`
+	Width    int        `json:"width,omitempty"`
+	Height   int        `json:"height,omitempty"`
+	Files    []string   `json:"files,omitempty"`
+	ReadOnly bool       `json:"readOnly,omitempty"`
 }
 
 type wireClipboard struct {

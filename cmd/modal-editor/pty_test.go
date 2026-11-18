@@ -25,8 +25,14 @@ const envRunMain = "MODAL_EDITOR_TEST_RUN_MAIN"
 // それを記録するロガーの中で panic させる環境変数である。拡張機能の goroutine の panic で端末が戻ることを確かめるのに使う（#114）。
 const envPanicOnStderr = "MODAL_EDITOR_TEST_PANIC_ON_STDERR"
 
+// envFirstClientTimeout は、エディタとして起動したテストの実行ファイルで、firstClientTimeout を置き換える環境変数である（time.ParseDuration の形）。
+const envFirstClientTimeout = "MODAL_EDITOR_TEST_FIRST_CLIENT_TIMEOUT"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(envRunMain) == "1" {
+		if d, err := time.ParseDuration(os.Getenv(envFirstClientTimeout)); err == nil {
+			firstClientTimeout = d
+		}
 		if marker := os.Getenv(envPanicOnStderr); marker != "" {
 			wrapLogHandler = func(h slog.Handler) slog.Handler { return panicHandler{Handler: h, marker: marker} }
 		}

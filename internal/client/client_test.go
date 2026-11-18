@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"io"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -78,7 +79,7 @@ func TestRunForwardsAndApplies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (protocol.Hello{Kind: protocol.KindEdit, Width: 120, Height: 40}); first != want {
+	if want := (protocol.Hello{Kind: protocol.KindEdit, Width: 120, Height: 40}); !reflect.DeepEqual(first, want) {
 		t.Fatalf("first message = %+v, want %+v", first, want)
 	}
 	key := editcmd.Key{Code: editcmd.CodeEsc}
@@ -178,5 +179,55 @@ func TestRunClosesWhenTerminalInputEnds(t *testing.T) {
 	defer tm.mu.Unlock()
 	if tm.restored != 1 {
 		t.Errorf("Restore called %d times, want 1", tm.restored)
+	}
+}
+
+// Start は Hello を送って最初のメッセージを返し、端末には何も出さない。Continue はそのメッセージを最初に出してから続ける。
+func TestStartContinue(t *testing.T) {
+	tm := newFakeTerm()
+	c, s := protocol.Pipe()
+	hello := protocol.Hello{Kind: protocol.KindEdit, Width: 120, Height: 40, Files: []string{"/a"}, ReadOnly: true}
+	go func() {
+		if m, err := s.Recv(); err != nil || !reflect.DeepEqual(m, hello) {
+			t.Errorf("server Recv = %#v, %v; want %#v", m, err, hello)
+		}
+		_ = s.Send(protocol.Draw{Screen: ui.Screen{Grid: ui.NewGrid(2, 1)}})
+		_ = s.Send(protocol.Exit{})
+		_ = s.Close()
+	}()
+	first, err := Start(c, hello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := first.(protocol.Draw); !ok {
+		t.Fatalf("first = %#v, want Draw", first)
+	}
+	tm.mu.Lock()
+	n := len(tm.draws)
+	tm.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("Start が端末に %d 回描いた", n)
+	}
+	close(tm.in)
+	if err := Continue(tm, c, first, nil); err != nil {
+		t.Fatalf("Continue = %v", err)
+	}
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if len(tm.draws) != 1 || tm.restored != 1 {
+		t.Errorf("draws %d, restored %d; want 1, 1", len(tm.draws), tm.restored)
+	}
+}
+
+// Start は、server が Hello を読まずに理由付きの終わりの知らせを送って閉じたときも、その知らせを返す。
+func TestStartBusy(t *testing.T) {
+	c, s := protocol.Pipe()
+	go func() {
+		_ = s.Send(protocol.Exit{Reason: "busy"})
+		_ = s.Close()
+	}()
+	m, err := Start(c, protocol.Hello{Kind: protocol.KindEdit})
+	if ex, ok := m.(protocol.Exit); err != nil || !ok || ex.Reason != "busy" {
+		t.Errorf("Start = %#v, %v; want Exit busy", m, err)
 	}
 }

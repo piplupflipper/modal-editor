@@ -161,7 +161,7 @@ func herdrEnv(runtime, herdrSock, pane string) []string {
 // タブの server を自分の子として別のプロセスで起動して繋ぐこと、同じタブの 2 つ目は同じ server に繋ぐこと、
 // 別のタブでは別の server になること、最後の編集の client が終わると server も終わってソケットを消すことを確かめる。
 //
-// 今の server は編集の client を 1 つだけ繋ぐので、同じタブの 2 つ目は理由付きで断られて終わる。
+// 今の server は編集の client を 1 つだけ繋ぐので、同じタブの 2 つ目は断られ、1 つのプロセスで動く（基本設計 1.2 の FR-62 までの扱い）。
 //
 // req: FR-59, FR-61
 func TestAutostartHerdrInPTY(t *testing.T) {
@@ -187,18 +187,21 @@ func TestAutostartHerdrInPTY(t *testing.T) {
 		t.Errorf("server のプロセスグループ = %d, %v; want client（%d）のプロセスグループの外", pgid, err, a.cmd.Process.Pid)
 	}
 
-	// 同じタブの 2 つ目は、同じ server に繋ぐ（今は理由付きで断られる）。server は増えない
-	b := startEditorIn(t, t.TempDir(), herdrEnv(runtime, herdrSock, "wA:p2"))
-	err := b.wait(t)
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) || ee.ExitCode() == 0 {
-		t.Fatalf("同じタブの 2 つ目の終了 = %v, want 0 でない終了コード。出力: %q", err, b.out.String())
-	}
-	if !strings.Contains(b.out.String(), "別の編集の client が繋いでいる") {
-		t.Errorf("同じタブの 2 つ目の出力に断った理由が無い: %q", tail(b.out.String()))
-	}
+	// 同じタブの 2 つ目は、同じ server に繋ぐ。今は断られるので、そのことを知らせて 1 つのプロセスで引数のファイルを開く（FR-62 までの扱い）。
+	// server は増えない
+	pathB := filepath.Join(t.TempDir(), "b.txt")
+	b := startEditorIn(t, t.TempDir(), herdrEnv(runtime, herdrSock, "wA:p2"), pathB)
+	b.out.WaitForString(t, "使用中")
+	b.out.WaitForString(t, "b.txt")
 	if got := waitServers(t, sock1, 1); got[0] != pids[0] {
 		t.Errorf("同じタブの server = %v, want %v のまま", got, pids)
+	}
+	b.write(t, "ibee\x1b:wq\r")
+	if err := b.wait(t); err != nil {
+		t.Fatalf("同じタブの 2 つ目の終了 = %v, want 正常終了。出力: %q", err, tail(b.out.String()))
+	}
+	if got, err := os.ReadFile(pathB); err != nil || string(got) != "bee\n" {
+		t.Errorf("b.txt = %q, %v; want %q", got, err, "bee\n")
 	}
 
 	// 別のタブでは、別の server になる
@@ -229,40 +232,108 @@ func TestAutostartHerdrInPTY(t *testing.T) {
 }
 
 // TestAutostartRaceInPTY は、同じタブの 2 つのペインでほぼ同時に起動しても、server のロックで server が 1 つになることを確かめる（基本設計 1.2）。
-// 先に繋いだ方が編集の client になり、もう一方は同じ server に断られて終わる。
+// 先に繋いだ方が server の編集の client になり、もう一方は断られて 1 つのプロセスで動く。
+// どちらのペインにも、そのペインで打った引数のファイルが開く（server を起動した側の引数を、先に繋いだ他方のペインに開かない。PR #207 のレビューの推奨 1）。
 //
 // req: FR-59
 func TestAutostartRaceInPTY(t *testing.T) {
-	for i := range 3 {
+	for i := range 5 {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			runtime := shortRuntimeDir(t)
 			herdrSock := fakeHerdrPanes(t, map[string]string{"wA:p1": "wA:t1", "wA:p2": "wA:t1"})
 			sock := unitSocket(runtime, herdrSock+":wA:t1")
 			killServersAtCleanup(t, sock)
-			p1 := startEditorIn(t, t.TempDir(), herdrEnv(runtime, herdrSock, "wA:p1"))
-			p2 := startEditorIn(t, t.TempDir(), herdrEnv(runtime, herdrSock, "wA:p2"))
-			var alive, rejected *editorProc
-			select {
-			case err := <-p1.done:
-				p1.done <- err
-				alive, rejected = p2, p1
-			case err := <-p2.done:
-				p2.done <- err
-				alive, rejected = p1, p2
-			case <-time.After(10 * time.Second):
-				t.Fatalf("どちらも断られない。出力: %q, %q", tail(p1.out.String()), tail(p2.out.String()))
+			dir := t.TempDir()
+			pathA, pathB := filepath.Join(dir, "aaa.txt"), filepath.Join(dir, "bbb.txt")
+			p1 := startEditorIn(t, t.TempDir(), herdrEnv(runtime, herdrSock, "wA:p1"), pathA)
+			p2 := startEditorIn(t, t.TempDir(), herdrEnv(runtime, herdrSock, "wA:p2"), pathB)
+			p1.out.WaitForString(t, "aaa.txt")
+			p2.out.WaitForString(t, "bbb.txt")
+			for _, p := range []*editorProc{p1, p2} {
+				p.out.WaitForString(t, "NORMAL")
 			}
-			if err := rejected.wait(t); err == nil || !strings.Contains(rejected.out.String(), "別の編集の client が繋いでいる") {
-				t.Fatalf("断られた方の終了 = %v。出力: %q", err, tail(rejected.out.String()))
+			if a, b := strings.Contains(p1.out.String(), "使用中"), strings.Contains(p2.out.String(), "使用中"); a == b {
+				t.Errorf("1 つのプロセスで動くと知らせた方: p1 %v, p2 %v; want ちょうど 1 つ", a, b)
 			}
-			alive.out.WaitForString(t, "NORMAL")
+			for _, tc := range []struct {
+				p     *editorProc
+				other string
+			}{{p1, "bbb.txt"}, {p2, "aaa.txt"}} {
+				if strings.Contains(tc.p.out.String(), tc.other) {
+					t.Errorf("他方のペインで打った %s が開いた。出力: %q", tc.other, tail(tc.p.out.String()))
+				}
+			}
 			waitServers(t, sock, 1)
-			alive.write(t, ":q\r")
-			if err := alive.wait(t); err != nil {
-				t.Fatalf("client の終了 = %v。出力: %q", err, tail(alive.out.String()))
+			for _, p := range []*editorProc{p1, p2} {
+				p.write(t, ":q\r")
+				if err := p.wait(t); err != nil {
+					t.Fatalf("エディタの終了 = %v。出力: %q", err, tail(p.out.String()))
+				}
 			}
 			waitServerGone(t, sock)
 		})
+	}
+}
+
+// TestAutostartClientKilledInPTY は、server を起動した client が、server の起動の途中（繋ぐ前）に kill -9 で終わっても、
+// server が誰も繋がないまま残らないことを確かめる（PR #207 のレビューの必須 2）。
+// 最初の編集の client を待つ上限（firstClientTimeout）は、テストの間だけ 500ms にする。
+// kill -9 が client の接続の後になった回でも、server は接続が切れて終わるので、どちらでも server は残らない。
+//
+// req: FR-61
+func TestAutostartClientKilledInPTY(t *testing.T) {
+	runtime := shortRuntimeDir(t)
+	herdrSock := fakeHerdrPanes(t, map[string]string{"wA:p1": "wA:t1"})
+	sock := unitSocket(runtime, herdrSock+":wA:t1")
+	killServersAtCleanup(t, sock)
+	p := startEditorIn(t, t.TempDir(), append(herdrEnv(runtime, herdrSock, "wA:p1"), envFirstClientTimeout+"=500ms"))
+	deadline := time.Now().Add(10 * time.Second)
+	for len(serverPIDs(t, sock)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("server が起動しない。出力: %q", tail(p.out.String()))
+		}
+	}
+	if err := p.cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = p.wait(t) // SIGKILL で終わった誤りが返る
+	waitServerGone(t, sock)
+}
+
+// TestServeAutoWithoutClient は、-server の server が、firstClientTimeout の間に編集の client が繋がなければ、
+// 正常に終わってソケットを消すことを確かめる（起動した client が、繋ぐ前に終わった場合）。
+//
+// req: FR-61
+func TestServeAutoWithoutClient(t *testing.T) {
+	runtime := shortRuntimeDir(t)
+	sock := filepath.Join(runtime, "modal-editor", "u-test", server.SocketName)
+	killServersAtCleanup(t, sock)
+	xdg := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-server", sock) //nolint:gosec // テストの実行ファイルを server として起動する
+	cmd.Env = append(muxFreeEnv(), envRunMain+"=1", envFirstClientTimeout+"=300ms",
+		"XDG_CONFIG_HOME="+filepath.Join(xdg, "config"), "XDG_DATA_HOME="+filepath.Join(xdg, "data"))
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	start := time.Now()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("server の終了 = %v, want 正常終了。出力: %q", err, out.String())
+		}
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("client が繋がない server が終わらない")
+	}
+	if d := time.Since(start); d < 300*time.Millisecond {
+		t.Errorf("server が %v で終わった, want 300ms 待ってから", d)
+	}
+	if _, err := os.Lstat(sock); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("ソケット %s が残った: %v", sock, err)
 	}
 }
 
@@ -336,9 +407,16 @@ func newTestTmuxServer(t *testing.T, env []string) *testTmuxServer {
 	}
 	ts := &testTmuxServer{bin: bin, name: fmt.Sprintf("modal-editor-autostart-test-%d-%d", os.Getpid(), time.Now().UnixNano()), env: env}
 	t.Cleanup(func() {
+		q := exec.Command(bin, "-L", ts.name, "display-message", "-p", "#{socket_path}") //nolint:gosec // テスト用の tmux
+		q.Env = env
+		sock, _ := q.Output()
 		cmd := exec.Command(bin, "-L", ts.name, "kill-server") //nolint:gosec // テスト用の tmux
 		cmd.Env = env
 		_ = cmd.Run()
+		// kill-server はソケットのファイルを残すことがあるので消す。
+		if s := strings.TrimSpace(string(sock)); s != "" {
+			_ = os.Remove(s)
+		}
 	})
 	return ts
 }
@@ -427,7 +505,8 @@ func (ts *testTmuxServer) waitPane(t *testing.T, pane, want string) {
 
 // TestAutostartTmux は、tmux（tmux -L の別のサーバー）の中で、次を確かめる。
 //
-//   - 同じ window の 2 つのペインからほぼ同時に起動しても、server は 1 つになる（2 つ目は同じ server に断られる）
+//   - 同じ window の 2 つのペインからほぼ同時に起動しても、server は 1 つになる（2 つ目は同じ server に断られ、1 つのプロセスで動く）。
+//     どちらのペインにも、そのペインで打ったファイルが開く
 //   - 別の window では、別の server になる
 //   - ペインを別の window へ動かした client は、起動したときの server に繋いだまま編集を続けられる（FR-112）
 //   - 最後の編集の client を閉じると、server が終わり、ソケットのファイルを消す（FR-61）
@@ -443,34 +522,44 @@ func TestAutostartTmux(t *testing.T) {
 	pathA, pathB := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt")
 	// 同じ window の 2 つのペインで、ほぼ同時に起動する。最初のペインは、window を残すための待つだけのもの
 	e1, e2, e3 := newTmuxEditor(t, dir, "e1"), newTmuxEditor(t, dir, "e2"), newTmuxEditor(t, dir, "e3")
-	p0 := ts.run(t, "new-session", "-d", "-s", "t", "-x", "120", "-y", "40", "-P", "-F", "#{pane_id}", "sleep 600")
+	p0 := ts.run(t, "new-session", "-d", "-s", "t", "-x", "300", "-y", "50", "-P", "-F", "#{pane_id}", "sleep 600")
+	pathC := filepath.Join(dir, "c.txt")
 	p1 := ts.run(t, "split-window", "-d", "-t", p0, "-P", "-F", "#{pane_id}", e1.command(pathA))
-	p2 := ts.run(t, "split-window", "-d", "-h", "-t", p0, "-P", "-F", "#{pane_id}", e2.command(pathA))
+	p2 := ts.run(t, "split-window", "-d", "-h", "-t", p0, "-P", "-F", "#{pane_id}", e2.command(pathC))
 	unit1 := ts.run(t, "display-message", "-p", "-t", p0, "#{socket_path}:#{window_id}")
 	sock1 := unitSocket(runtime, unit1)
 	killServersAtCleanup(t, sock1)
 
-	// 先に繋いだ方が編集の client になり、もう一方は同じ server に断られて終わる
+	// 先に繋いだ方が server の編集の client になり、もう一方は断られて、そのことを知らせて 1 つのプロセスで動く（FR-62 までの扱い）。
+	// どちらのペインにも、そのペインで打ったファイルが開く
+	ts.waitPane(t, p1, "a.txt")
+	ts.waitPane(t, p2, "c.txt")
 	deadline := time.Now().Add(10 * time.Second)
-	var alive string
-	var rejected tmuxEditor
+	var alive, single, alivePath string
+	var aliveEditor, singleEditor tmuxEditor
 	for alive == "" {
-		if done, _ := e1.exited(); done {
-			alive, rejected = p2, e1
-		} else if done, _ := e2.exited(); done {
-			alive, rejected = p1, e2
+		s1 := ts.run(t, "capture-pane", "-p", "-J", "-t", p1)
+		s2 := ts.run(t, "capture-pane", "-p", "-J", "-t", p2)
+		switch {
+		case strings.Contains(s1, "使用中") && !strings.Contains(s2, "使用中"):
+			alive, aliveEditor, alivePath, single, singleEditor = p2, e2, pathC, p1, e1
+		case strings.Contains(s2, "使用中") && !strings.Contains(s1, "使用中"):
+			alive, aliveEditor, alivePath, single, singleEditor = p1, e1, pathA, p2, e2
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("どちらのペインも断られない。画面:\n%s\n---\n%s",
-				ts.run(t, "capture-pane", "-p", "-t", p1), ts.run(t, "capture-pane", "-p", "-t", p2))
+			t.Fatalf("どちらか一方だけが 1 つのプロセスで動くと知らせない。画面:\n%s\n---\n%s", s1, s2)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if status := rejected.wait(t); status == 0 || !strings.Contains(rejected.stderr(), "別の編集の client が繋いでいる") {
-		t.Errorf("断られたエディタの終了コード = %d、標準エラー出力 = %q, want 0 以外と断った理由", status, rejected.stderr())
-	}
 	ts.waitPane(t, alive, "NORMAL")
 	pids1 := waitServers(t, sock1, 1)
+	ts.run(t, "send-keys", "-t", single, ":q", "Enter")
+	if status := singleEditor.wait(t); status != 0 {
+		t.Errorf("1 つのプロセスで動いたエディタの終了コード = %d。標準エラー出力: %q", status, singleEditor.stderr())
+	}
+	if got := serverPIDs(t, sock1); len(got) != 1 || got[0] != pids1[0] {
+		t.Errorf("1 つのプロセスで動いたエディタの後の server = %v, want %v のまま", got, pids1)
+	}
 
 	// 別の window では、別の server になる
 	p3 := ts.run(t, "new-window", "-d", "-t", "t", "-P", "-F", "#{pane_id}", e3.command(pathB))
@@ -494,17 +583,13 @@ func TestAutostartTmux(t *testing.T) {
 	ts.run(t, "send-keys", "-t", alive, "imoved", "Escape")
 	ts.waitPane(t, alive, "moved")
 	ts.run(t, "send-keys", "-t", alive, ":wq", "Enter")
-	aliveEditor := e1
-	if alive == p2 {
-		aliveEditor = e2
-	}
 	if status := aliveEditor.wait(t); status != 0 {
 		t.Errorf("動かした client の終了コード = %d, want 0。標準エラー出力: %q", status, aliveEditor.stderr())
 	}
-	if got, err := os.ReadFile(pathA); err != nil || string(got) != "moved\n" {
-		t.Errorf("a.txt = %q, %v; want %q（起動したときの server で保存する）", got, err, "moved\n")
+	if got, err := os.ReadFile(alivePath); err != nil || string(got) != "moved\n" {
+		t.Errorf("%s = %q, %v; want %q（起動したときの server で保存する）", alivePath, got, err, "moved\n")
 	}
-	// a.txt の server の最後の編集の client が終わったので、その server は終わる（FR-61）。別の window の server は動いたまま
+	// 最初の window の server の最後の編集の client が終わったので、その server は終わる（FR-61）。別の window の server は動いたまま
 	waitServerGone(t, sock1)
 	if got := serverPIDs(t, sock2); len(got) != 1 || got[0] != pids2[0] {
 		t.Errorf("別の window の server = %v, want %v のまま", got, pids2)

@@ -92,7 +92,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	case *listen != "":
 		return serve(*listen, flags.Args(), *readOnly, *logPath)
 	case *serverPath != "":
-		return serveAuto(*serverPath, flags.Args(), *readOnly, *logPath)
+		if flags.NArg() > 0 || *readOnly {
+			return errors.New("-server ではファイルと -R を指定できない（繋いだ client が送る）")
+		}
+		return serveAuto(*serverPath, *logPath)
 	}
 
 	in, inOK := stdin.(*os.File)
@@ -164,11 +167,16 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 			return runClient(ctx, conn, tm, logger)
 		}
 		start := func(path string) (*serverChild, error) {
-			return startServerProcess(path, startOptions{files: files, readOnly: readOnly, logPath: logPath})
+			return startServerProcess(path, startOptions{logPath: logPath})
 		}
 		conn, problem := connectAuto(ctx, os.Getenv, mux.Detect(os.Getenv), start, logger)
 		if conn != nil {
-			return runClient(ctx, conn, tm, logger)
+			var first protocol.ServerMessage
+			first, problem = startClient(conn, tm, files, readOnly)
+			if problem == nil {
+				return continueClient(ctx, conn, first, tm, logger)
+			}
+			_ = conn.Close() // 使わない接続。閉じる誤りは扱えない
 		}
 		if problem != nil {
 			logger.Warn("server を使えない", "err", problem)
@@ -321,9 +329,46 @@ func serve(path string, files []string, readOnly bool, logPath string) error {
 // tmux と herdr の中で server に繋いだときと、-connect（計測のためのオプション。利用者向けではない）のときに使う。
 // server が接続を閉じるか、端末の入力が終わるまで動かす。ctx が終わったら接続を閉じ、端末を戻して終わる。
 func runClient(ctx context.Context, conn protocol.ClientConn, tm *term.Terminal, logger *slog.Logger) error {
+	return clientUntil(ctx, conn, func() error { return client.Run(tm, conn, logger) })
+}
+
+// continueClient は、startClient で最初のメッセージ first を受けた conn で、runClient と同じく編集の client として動く。
+func continueClient(ctx context.Context, conn protocol.ClientConn, first protocol.ServerMessage, tm *term.Terminal, logger *slog.Logger) error {
+	return clientUntil(ctx, conn, func() error { return client.Continue(tm, conn, first, logger) })
+}
+
+// startClient は、tmux と herdr の中で繋いだ server へ、起動の引数のファイル（絶対パスにしたもの）と -R を載せた Hello を送り、
+// 最初のメッセージを返す（client.Start）。server は、この client を繋いだ後にファイルを開く。
+//
+// server が理由 server.BusyReason の終わりの知らせで断ったとき（同じ window の server に別の編集の client が繋いでいる）と、
+// 最初のメッセージの前に接続が切れたときは、problem に理由を入れて返す。
+// 呼び出し側は、それを知らせて 1 つのプロセスで動かす（基本設計 1.2 の FR-62 までの扱い。仮）。
+// それ以外の理由付きの終わりの知らせ（ファイルを開けないなど）は first として返し、client.Continue がその理由で終わる。
+func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, readOnly bool) (first protocol.ServerMessage, problem error) {
+	abs := make([]string, len(files))
+	for i, f := range files {
+		a, err := filepath.Abs(f)
+		if err != nil {
+			return nil, fmt.Errorf("%s の絶対パスを決められないので 1 つのプロセスで動かす: %w", f, err)
+		}
+		abs[i] = a
+	}
+	w, h := tm.Size()
+	first, err := client.Start(conn, protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h, Files: abs, ReadOnly: readOnly})
+	if err != nil {
+		return nil, fmt.Errorf("server に繋げないので 1 つのプロセスで動かす: %w", err)
+	}
+	if ex, ok := first.(protocol.Exit); ok && ex.Reason == server.BusyReason {
+		return nil, errServerBusy
+	}
+	return first, nil
+}
+
+// clientUntil は、編集の client として動く run を、ctx が終わったら conn を閉じる形で動かす。
+func clientUntil(ctx context.Context, conn protocol.ClientConn, run func() error) error {
 	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() }) // client.Run が端末を戻して戻る
 	defer stopClose()
-	if err := client.Run(tm, conn, logger); err != nil {
+	if err := run(); err != nil {
 		return err
 	}
 	if ctx.Err() != nil {

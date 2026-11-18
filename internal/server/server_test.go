@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -676,5 +677,73 @@ func TestListen(t *testing.T) {
 	}
 	if _, err := Listen(file); err == nil {
 		t.Error("Listen over a regular file succeeded")
+	}
+}
+
+// ソケットだけで待つ Serve は、FirstClientTimeout の間に編集の client が繋がなければ ErrNoClient で戻り、ソケットを消す。
+//
+// req: FR-61
+func TestServeFirstClientTimeout(t *testing.T) {
+	srv := newServer(t)
+	srv.FirstClientTimeout = 50 * time.Millisecond
+	sock := filepath.Join(privateDir(t), "s", SocketName)
+	ln, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = srv.Serve(context.Background(), ln, nil); !errors.Is(err, ErrNoClient) {
+		t.Fatalf("Serve = %v, want ErrNoClient", err)
+	}
+	if _, err = os.Lstat(sock); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("socket file remains: %v", err)
+	}
+}
+
+// server は、繋いだ編集の client が Hello で送ったファイルを、その client を繋いだ後に開き、編集を禁止する指定にも従う。
+// 開けなければ、その理由の終わりの知らせを送って戻る。
+func TestServeOpensHelloFiles(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt")
+	if err := os.WriteFile(b, []byte("bee\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := newServer(t)
+	c, s := protocol.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(context.Background(), s) }()
+	if err := c.Send(protocol.Hello{Kind: protocol.KindEdit, Width: 60, Height: 10, Files: []string{b, a}, ReadOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	msgs := collect(c)
+	sendKeys(t, c, "xx:q!<CR>")
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	_ = c.Close()
+	var last string
+	for _, m := range <-msgs {
+		if d, ok := m.(protocol.Draw); ok {
+			last = d.Screen.Grid.String()
+		}
+	}
+	if !strings.HasPrefix(last, "bee ") {
+		t.Errorf("最後の画面の 1 行目が、最初の引数 b.txt の内容（xx で消えない）でない:\n%s", last)
+	}
+	if got, err := os.ReadFile(b); err != nil || string(got) != "bee\n" {
+		t.Errorf("b.txt = %q, %v; want 変わらない", got, err)
+	}
+
+	srv2 := newServer(t)
+	c2, s2 := protocol.Pipe()
+	go func() { done <- srv2.Run(context.Background(), s2) }()
+	if err := c2.Send(protocol.Hello{Kind: protocol.KindEdit, Width: 60, Height: 10, Files: []string{dir}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil {
+		t.Error("ディレクトリを開いた Run = nil, want 誤り")
+	}
+	m, err := c2.Recv()
+	if ex, ok := m.(protocol.Exit); err != nil || !ok || !strings.Contains(ex.Reason, "を開けない") {
+		t.Errorf("Recv = %#v, %v; want 開けない理由の Exit", m, err)
 	}
 }

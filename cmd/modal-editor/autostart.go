@@ -31,7 +31,8 @@ const envServerStatusFD = "MODAL_EDITOR_SERVER_STATUS_FD"
 
 // server が起動の結果としてパイプに書く 1 行。どれでもない行は、起動の誤りの文言である。
 const (
-	// statusReady は、ソケットで待ち受け、起動の引数のファイルを開き終えたことを表す。
+	// statusReady は、ソケットで待ち受け、編集の client を受け付けられるようになったことを表す。
+	// 起動の引数のファイルは server が持たない。繋いだ client が Hello で送り、server はその client を繋いだ後に開く。
 	statusReady = "ready"
 	// statusLocked は、他のプロセスが server のロックを持っていたので、server にならずに終わったことを表す。
 	statusLocked = "locked"
@@ -52,12 +53,22 @@ const lockedWait = 200 * time.Millisecond
 // dialPoll は、server のソケットに繋げるまで繋ぎ直す間隔である。
 const dialPoll = 10 * time.Millisecond
 
+// firstClientTimeout は、client が起動した server（-server）が、最初の編集の client を待つ上限である（仮。server.Server.FirstClientTimeout）。
+// 起動した client は ready を読んですぐ繋ぐので、ふつうは数 ms で繋がる。
+// 起動の途中で client が終わった（kill -9、ペインを閉じた、startTimeout で諦めた）ときに、server が誰も繋がないまま残らないようにする。
+// 負荷の高いマシンで、起動した client が ready を読んでから繋ぐまでに掛かりうる時間より十分に長くした。
+// テストは、TestMain で短くする。
+var firstClientTimeout = 10 * time.Second
+
 // startOptions は、client が server を起動するときに渡すものである。
+// 起動の引数のファイルと -R は渡さない（繋いだ client が Hello で送る）。
 type startOptions struct {
-	files    []string
-	readOnly bool
-	logPath  string
+	logPath string
 }
+
+// errServerBusy は、同じ window の server に別の編集の client が繋いでいて、1 つのプロセスで動かすときに、起動後のメッセージで知らせる文言である
+// （基本設計 1.2 の FR-62 までの扱い。仮）。80 桁の端末のメッセージの行に収まる長さにする。
+var errServerBusy = errors.New("別の client が server を使用中のため単独で起動（レジスター等を共有しない）")
 
 // connectAuto は、基本設計 1.2 の規則で server のソケットのパスを決め、server に繋ぐ（FR-59）。
 //
@@ -71,6 +82,8 @@ type startOptions struct {
 // problem にその理由を入れて返す。呼び出し側は、それを知らせて 1 つのプロセスで動かす（基本設計 1.2）。
 //
 // 返した接続は、起動したときに決めたソケットのものなので、ペインを別の window へ動かしても繋いだままである（FR-112）。
+//
+// 規則 1 でも、今は編集の client として繋ぐ。待つだけの client（FR-83）の issue で、規則 1 の接続の種類を変える。
 //
 // req: FR-59, FR-112
 func connectAuto(ctx context.Context, getenv func(string) string, m mux.Mux, start func(path string) (*serverChild, error), logger *slog.Logger) (conn protocol.ClientConn, problem error) {
@@ -218,9 +231,6 @@ func startServerProcess(path string, opts startOptions) (*serverChild, error) {
 		return nil, fmt.Errorf("実行ファイルのパスを決められない: %w", err)
 	}
 	args := []string{"-server", path}
-	if opts.readOnly {
-		args = append(args, "-R")
-	}
 	if opts.logPath != "" {
 		logPath, aerr := filepath.Abs(opts.logPath)
 		if aerr != nil {
@@ -228,7 +238,6 @@ func startServerProcess(path string, opts startOptions) (*serverChild, error) {
 		}
 		args = append(args, "-log", logPath)
 	}
-	args = append(append(args, "--"), opts.files...)
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("server の起動の結果を受けるパイプを作れない: %w", err)
@@ -302,13 +311,15 @@ func (p *statusPipe) send(s string) {
 // serveAuto は、-server のときの本体で、client が自動で起動した server として動く（基本設計 1.2）。端末を使わない。
 //
 // path のディレクトリのロック（server.Lock）を取れたときだけ server になる。取れなければ statusLocked を知らせて、正常に終わる。
-// ロックを取ったら、繋げない古い server.sock を消して path で待ち受け（server.Listen）、files を開いてから statusReady を知らせる。
+// ロックを取ったら、繋げない古い server.sock を消して path で待ち受け（server.Listen）、statusReady を知らせる。
+// 起動の引数のファイルは持たない。最初に繋いだ編集の client が Hello で送ったファイルを、その client を繋いだ後に開く（server.Server.Serve）。
 // 起動の途中の誤りは、その文言を起動の結果として知らせる。
 // 最後の編集の client が終わる（:q か、接続が切れた）とイベントループが戻り、ソケットを閉じ、ロックを外してから拡張機能を止めて終わる（FR-61）。
+// firstClientTimeout の間に編集の client が 1 つも繋がなければ、同じく終わる（起動の途中で client が終わったとき）。
 // ロックを拡張機能を止める前に外すのは、止めるのに数秒かかる間に同じ window で起動した client が、新しい server を起動できるようにするためである。
 //
 // req: FR-61
-func serveAuto(path string, files []string, readOnly bool, logPath string) (err error) {
+func serveAuto(path, logPath string) (err error) {
 	status := takeStatusPipe()
 	defer func() {
 		if err != nil {
@@ -347,24 +358,21 @@ func serveAuto(path string, files []string, readOnly bool, logPath string) (err 
 	if err != nil {
 		return fmt.Errorf("server のソケットで待ち受けられない: %w", err)
 	}
-	cfg := loadConfig(logger)
-	cfg.ReadOnlyArgs = readOnly
-	srv, err := server.New(cfg)
+	srv, err := server.New(loadConfig(logger))
 	if err != nil {
 		_ = ln.Close() // ソケットのファイルを消す
 		return fmt.Errorf("エディタを作れない: %w", err)
 	}
-	if err = openFiles(srv, files); err != nil {
-		_ = ln.Close()
-		closeServer(srv, logger)
-		return err
-	}
+	srv.FirstClientTimeout = firstClientTimeout
 	logger.Info("server を起動した", "path", path, "pid", os.Getpid())
 	status.send(statusReady)
 	err = srv.Serve(ctx, ln, nil) // 戻る前に ln を閉じ、ソケットのファイルを消す
 	unlock()
 	closeServer(srv, logger)
 	switch {
+	case errors.Is(err, server.ErrNoClient):
+		logger.Warn("編集の client が繋がないので終わる", "timeout", firstClientTimeout)
+		return nil
 	case err == nil, errors.Is(err, editor.ErrTerminalLost):
 		// 最後の編集の client が終わったら、server も終わる（FR-61）
 		return nil
