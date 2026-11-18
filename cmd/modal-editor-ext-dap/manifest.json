@@ -1,24 +1,9 @@
 {
   "id": "dap",
   "command": "./modal-editor-ext-dap",
-  "activation": [
-    { "on": "command", "id": "dap.start" },
-    { "on": "command", "id": "dap.stop" },
-    { "on": "command", "id": "dap.toggleBreakpoint" },
-    { "on": "command", "id": "dap.continue" },
-    { "on": "command", "id": "dap.next" },
-    { "on": "command", "id": "dap.stepIn" },
-    { "on": "command", "id": "dap.stepOut" }
-  ],
-  "contributes": {
-    "commands": [
-      { "id": "dap.start" },
-      { "id": "dap.stop" },
-      { "id": "dap.toggleBreakpoint" },
-      { "id": "dap.continue" },
-      { "id": "dap.next" },
-      { "id": "dap.stepIn" },
-      { "id": "dap.stepOut" }
-    ]
-  }
+  "provides": [
+    "breakpoint.toggle", "breakpoint.conditional", "breakpoint.clear",
+    "debug.continue", "debug.pause", "debug.terminate", "debug.restart", "debug.runLast",
+    "debug.stepOver", "debug.stepIn", "debug.stepOut"
+  ]
 }

@@ -464,6 +464,53 @@ func TestCommandWithheld(t *testing.T) {
 	}
 }
 
+// provider/invoke は、操作の名前で登録したハンドラーへ渡し、結果の Transaction の BaseVersion を params の Version で埋める。
+// Withheld なら複製の代わりに nil を渡し、登録していない操作には誤りを応答する。
+//
+// req: FR-94
+func TestProvider(t *testing.T) {
+	s := server.New()
+	var got []ext.ProviderInvokeParams
+	var gotNil []bool
+	s.Provider(ext.OpFormat, func(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+		got = append(got, *p)
+		gotNil = append(gotNil, b == nil)
+		r := ext.Range{End: ext.Position{Byte: 3}}
+		if p.Range != nil {
+			r = *p.Range
+		}
+		text, err := b.Slice(r)
+		return ext.ProviderInvokeResult{OK: true, Transaction: &ext.Transaction{BaseVersion: 99, Edits: []ext.Edit{{Range: r, Text: strings.ToUpper(text)}}}}, err
+	})
+	s.ProviderAsync(ext.OpDebugContinue, func(_ context.Context, b *server.Buffer, _ *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
+		gotNil = append(gotNil, b == nil)
+		go reply(ext.ProviderInvokeResult{OK: true}, nil)
+	})
+	h := start(t, s)
+	h.notify(t, ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 4, Text: "abc\ndef"})
+
+	var res ext.ProviderInvokeResult
+	rg := ext.Range{Start: ext.Position{Line: 1}, End: ext.Position{Line: 1, Byte: 2}}
+	if err := h.call(t, ext.MethodProviderInvoke, ext.ProviderInvokeParams{Operation: ext.OpFormat, Buffer: 1, Version: 4, Range: &rg}, &res); err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK || res.Transaction == nil || res.Transaction.BaseVersion != 4 || res.Transaction.Edits[0].Text != "DE" {
+		t.Errorf("provider/invoke format = %+v", res)
+	}
+	if len(got) != 1 || got[0].Range == nil || *got[0].Range != rg || gotNil[0] {
+		t.Errorf("handler got %+v (nil buffer %v)", got, gotNil)
+	}
+	if err := h.call(t, ext.MethodProviderInvoke, ext.ProviderInvokeParams{Operation: ext.OpDebugContinue, Buffer: 7, Version: 1, Withheld: true}, &res); err != nil || !res.OK {
+		t.Fatalf("withheld provider/invoke = %+v, %v", res, err)
+	}
+	if !gotNil[1] {
+		t.Error("withheld provider/invoke passed a buffer")
+	}
+	if err := h.call(t, ext.MethodProviderInvoke, ext.ProviderInvokeParams{Operation: ext.OpHover, Buffer: 1, Version: 4}, &res); err == nil {
+		t.Error("provider/invoke for an operation not registered succeeded")
+	}
+}
+
 // 拡張機能から本体へ、buffer/edit、decoration/set、message/show を送る。
 func TestSendToHost(t *testing.T) {
 	s := server.New()

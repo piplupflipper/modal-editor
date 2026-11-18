@@ -30,6 +30,9 @@ type source struct {
 // sourceBreakpoint は、setBreakpoints で送るブレークポイント（仕様の SourceBreakpoint）である。
 type sourceBreakpoint struct {
 	Line int `json:"line"`
+	// Condition は、条件付きのブレークポイントの式である。無ければ省く。
+	// デバッグアダプターが supportsConditionalBreakpoints を持たなければ、無視されうる（仕様の SourceBreakpoint）。
+	Condition string `json:"condition,omitempty"`
 }
 
 // setBreakpointsArguments は、setBreakpoints の引数である。

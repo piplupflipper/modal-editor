@@ -128,9 +128,10 @@ func TestStage2LSP(t *testing.T) {
 	}
 
 	// 言語サーバーの応答を待つ間（整形を 1 分遅らせる）も ping に答える。ping の期限は 1 秒、間隔は 50 ms。
-	res, err := h.ExecuteCommand(context.Background(), m.ID, ext.CommandExecuteParams{Buffer: 1, Version: 1, ID: "lsp.format"}, waitTimeout)
+	var res ext.ProviderInvokeResult
+	err = h.Call(context.Background(), m.ID, ext.MethodProviderInvoke, ext.ProviderInvokeParams{Operation: ext.OpFormat, Buffer: 1, Version: 1}, waitTimeout, &res)
 	if err != nil || !res.OK {
-		t.Fatalf("lsp.format = %+v, %v", res, err)
+		t.Fatalf("format = %+v, %v", res, err)
 	}
 	if _, err := h.WillSave(context.Background(), m.ID, ext.BufferWillSaveParams{Buffer: 1, Version: 1}, 200*time.Millisecond); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("willSave = %v, want ErrTimeout", err)

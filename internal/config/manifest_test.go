@@ -70,6 +70,32 @@ func TestLoadManifestJSONC(t *testing.T) {
 	}
 }
 
+// provides を読み、activation の無い宣言ファイルも提供者として通す。未知の操作は警告にする。
+//
+// req: FR-94
+func TestLoadManifestProvides(t *testing.T) {
+	p := writeManifest(t, t.TempDir(), "dap", `{
+  "id": "dap",
+  "command": "./modal-editor-ext-dap",
+  // 本体の操作のうち、この拡張機能が引き受けるもの
+  "provides": ["debug.continue", "breakpoint.toggle", "debug.future"],
+}`)
+	m, warns, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	want := []ext.Operation{ext.OpDebugContinue, ext.OpBreakpointToggle, "debug.future"}
+	if !reflect.DeepEqual(m.Provides, want) {
+		t.Errorf("Provides = %v, want %v", m.Provides, want)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0].Error(), `"debug.future" は未知の操作`) {
+		t.Errorf("warnings = %v", warns)
+	}
+	if !m.ProvidesOp(ext.OpDebugContinue) || m.ProvidesOp("debug.future") || m.ProvidesOp(ext.OpHover) {
+		t.Errorf("ProvidesOp が provides と食い違う")
+	}
+}
+
 // リポジトリの標準の拡張機能の宣言ファイルは、すべて読めて検査を通る。
 func TestLoadManifestRepository(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("..", "..", "cmd", "*", ManifestFileName))

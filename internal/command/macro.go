@@ -264,11 +264,23 @@ func (s *State) recordDot(cmd editcmd.Command) {
 // repeatable は、ドットリピートで繰り返す値であるかを返す。
 // ヤンク、移動、アンドゥ、モードの切り替えは繰り返さない。拡張機能のオペレーターと操作は、全て繰り返す（FR-12）。
 // マクロの再生（KindPlay）は繰り返すが、変更が起きたかを問わず再生の終わりに play が記録するので、ここでは false を返す（FR-57）。
+//
+// 提供者へ振り分ける本体の操作（editcmd.ProviderExtension。LSP と DAP の操作。FR-94）のうち、対象を取らない操作は繰り返さない。
+// ホバー、移動、一覧、ブレークポイント、デバッグの続行は、テキストを変えないからである（FR-06。Vim の K と <C-]> も記録しない）。
+// 名前の変更とコードアクションもテキストを変えうるが、編集は提供者が後から buffer/edit で届け、ドットリピートの記録の対象にならない
+// （基本設計 6 章の冒頭）。また、キーで呼ぶ名前の変更は新しい名前を持たない（コマンドラインの :rename は Ex コマンドなので、もともと記録しない）。
+// このため、これらも記録しない（#203 のレビュー）。
+// 範囲を取る整形（gq{モーション}）はオペレーターで、Vim の gq と同じく繰り返す。
+//
+// req: FR-06
 func repeatable(cmd editcmd.Command) bool {
 	switch cmd.Kind {
 	case editcmd.KindOperator:
 		return !isYank(cmd.Operator)
 	case editcmd.KindAction:
+		if cmd.Action.Provider() {
+			return false
+		}
 		return !cmd.Action.Builtin() || repeatableActions[cmd.Action.ID]
 	case editcmd.KindMotion, editcmd.KindRecordStart, editcmd.KindRecordStop, editcmd.KindPlay, editcmd.KindRepeat:
 	}

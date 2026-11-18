@@ -145,7 +145,7 @@ func TestParserBuiltin(t *testing.T) {
 		// 不正な列
 		{"dq", "dq", []editcmd.Result{invalid}},
 		{"dy", "dy", []editcmd.Result{invalid}},
-		{"g の後に無い文字", "gq", []editcmd.Result{invalid}},
+		{"g の後に無い文字", "gz", []editcmd.Result{invalid}},
 		{"オペレーターの後のレジスター", `d"`, []editcmd.Result{invalid}},
 		{"レジスターの名前でない", `"<C-a>`, []editcmd.Result{invalid}},
 		{"テキストオブジェクトはオペレーターの後だけ", "iw", []editcmd.Result{

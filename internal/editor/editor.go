@@ -400,6 +400,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	var w3 []error
 	e.exCommands, w3 = buildExCommands(cfg.Extensions)
 	warnings = append(warnings, w3...)
+	warnings = append(warnings, removedCommandWarnings(cfg.Keymap, e.exCommands)...)
 	var w2 []error
 	e.remap, w2 = newRemapper(cfg.Keymap, leader)
 	warnings = append(warnings, w2...)
@@ -421,8 +422,8 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 // 登録できない操作（キーの衝突など）は捨て、誤りを返す。
 // 宣言の keys の <Leader> は leader に置き換える（FR-97）。
 func buildKeymap(specs []exthost.Spec, leader []editcmd.Key) (*input.Keymap, []error) {
-	km := input.DefaultKeymap()
-	var errs []error
+	// LSP と DAP の操作の既定のキー（FR-95、FR-96）も leader で登録する。
+	km, errs := input.DefaultKeymapLeader(leader)
 	for _, s := range specs {
 		m := s.Manifest
 		groups := []struct {
@@ -468,6 +469,11 @@ func buildExCommands(specs []exthost.Spec) (map[string]string, []error) {
 			cmds[c.ID] = s.Manifest.ID
 		}
 	}
+	ms := make([]ext.Manifest, len(specs))
+	for i, s := range specs {
+		ms[i] = s.Manifest
+	}
+	providerExCommands(cmds, ms)
 	return cmds, errs
 }
 

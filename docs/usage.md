@@ -28,20 +28,16 @@ dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor main.
 ファイルが無ければ、すべての項目が既定値になる。
 設定を変えたら、本体を起動し直す。
 
-次の例は、LSP と DAP のコマンドをキーに割り当て、ACP のエージェントに opencode を使う設定である。
-この文書の以降の節は、この設定で確かめた。
+次の例は、F キーの代わりに使うキーを LSP と DAP の操作に割り当て、ACP のエージェントに opencode を使う設定である。
+LSP と DAP の操作には既定のキー（[LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー)）があり、この例のキーは足したものである。
 
 ```jsonc
 {
-  // 拡張機能のコマンドは、Ex コマンドと同じく : で呼べる
+  // 拡張機能のコマンドと LSP と DAP の操作は、Ex コマンドと同じく : で呼べる
   "keymap": {
     "normal": {
-      "<Space>d": ":lsp.definition<CR>",
-      "<Space>h": ":lsp.hover<CR>",
-      "<Space>f": ":lsp.format<CR>",
-      "<Space>b": ":dap.toggleBreakpoint<CR>",
-      "<Space>c": ":dap.continue<CR>",
-      "<Space>n": ":dap.next<CR>",
+      "<Space>h": ":hover<CR>",
+      "<Space>c": ":debug.continue<CR>",
     },
   },
   "extensions": {
@@ -57,7 +53,7 @@ dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor main.
 `keymap` は、モードの名前から、キーの列とその展開先の対応である。
 モードの名前は `normal`、`visual`、`insert`、`commandLine` で、この文書が確かめたのは `normal` だけである。
 展開先には、Vim の `:map` の右辺と同じくキーの列を書く。
-`":lsp.hover<CR>"` は、`:` でコマンドラインに入り、`lsp.hover` を打って `<CR>` で実行するキーの列である。
+`":hover<CR>"` は、`:` でコマンドラインに入り、`hover` を打って `<CR>` で実行するキーの列である。
 
 `extensions.settings` は、拡張機能の ID から、その拡張機能に渡す設定への対応である。
 中身は拡張機能ごとに違い、それぞれの設定の型の doc にある（[標準の拡張機能](#標準の拡張機能)の各節）。
@@ -78,8 +74,7 @@ dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor main.
   "leader": ",",
   "keymap": {
     "normal": {
-      "<Leader>d": ":lsp.definition<CR>",
-      "<Leader>h": ":lsp.hover<CR>",
+      "<Leader>w": ":w<CR>",
     },
   },
 }
@@ -224,9 +219,70 @@ iceberg に近い配色の例を、リポジトリの直下と配布物に `conf
 
 ## 拡張機能のコマンドを呼ぶ
 
-拡張機能のコマンドは、コマンドラインで `:` の後にコマンドの ID を打って呼ぶ（`:lsp.hover`、`:dap.start`）。
+拡張機能のコマンドは、コマンドラインで `:` の後にコマンドの ID を打って呼ぶ（`:acp.prompt`、`:mcp.status`）。
 ID の後に空白を挟んで書いた文字列は、引数としてコマンドに渡る（`:acp.prompt この関数を説明して`）。
 キーに割り当てるときは、[設定ファイル](#設定ファイル)の例のとおり `keymap` に書く。
+
+LSP と DAP の操作（定義へ移動、ホバー、ブレークポイントなど）は、拡張機能のコマンドではなく本体の操作である（#203）。
+拡張機能は宣言ファイルの `provides` で操作を引き受け、本体は、カーソルのあるバッファのファイルの種類で引き受ける拡張機能を選んで問い合わせる。
+操作は既定のキー（次の節）で呼ぶほか、コマンドラインから操作の名前で呼べる（`:hover`、`:rename 新しい名前`、`:breakpoint.conditional i == 3`）。
+コマンドラインから呼べるのは、どれかの拡張機能が `provides` で引き受けた操作だけである。
+引き受ける拡張機能が無いバッファで呼ぶと、「hover の提供者がありません（ファイルの種類 text）」のように出る。
+
+### LSP と DAP の既定のキー
+
+`<leader>` は設定の `leader`（既定は `<Space>`）である。
+どのキーも、設定の `keymap` で別のキーの列に変えられる。
+
+| キー | 操作の名前 | 操作 |
+|---|---|---|
+| `<leader>lh`、`K` | `hover` | カーソルの位置の識別子の説明をポップアップで出す |
+| `<leader>ld` / `<leader>lD`、`<C-]>` | `definition` | 定義をポップアップで見る / 定義へ移る |
+| `<leader>li` / `<leader>lI` | `implementation` | 実装をポップアップで見る / 実装へ移る |
+| `<leader>lt` / `<leader>lT` | `typeDefinition` | 型の定義をポップアップで見る / 型の定義へ移る |
+| `<leader>lr` | `references` | 参照の一覧から選んで移る |
+| `<leader>ln` | `rename` | 名前の変更。新しい名前は `:rename 新しい名前` で渡す。キーで呼ぶと渡し方を知らせる |
+| `<leader>la` | `codeAction` | コードアクション（標準の LSP の拡張機能はまだ引き受けない） |
+| `<leader>ls`、`<leader>lS` | `documentSymbols`、`workspaceSymbols` | シンボルの一覧（ファイル、ワークスペース）から選んで移る。ワークスペースはカーソルの位置の単語か `:workspaceSymbols 名前` の名前で探す |
+| `<leader>le`、`<leader>lE` | （本体） | 診断の一覧（ファイル、開いているすべてのファイル）をポップアップで出す |
+| `<leader>lj`、`<leader>lk` | （本体） | 次の診断、前の診断へ移る。端で折り返す |
+| `gq{モーション}` | `format` | 範囲を整形する。言語サーバーが範囲の整形に対応しなければ、全体を整形する |
+| `<leader>dc` | `debug.continue` | 続行。デバッグが始まっていなければ始める |
+| `<leader>dp`、`<leader>dt`、`<leader>dr` | `debug.pause`、`debug.terminate`、`debug.restart` | 一時停止、終了、終了してから前回の設定で始め直す |
+| `<leader>db` / `<leader>dB` | `breakpoint.toggle` / `breakpoint.conditional` | ブレークポイントの切り替え / 条件付きのブレークポイント。条件は `:breakpoint.conditional 式` で渡す |
+| `<leader>dX` | `breakpoint.clear` | ブレークポイントをすべて消す |
+| `<leader>dn`、`<leader>di`、`<leader>do` | `debug.stepOver`、`debug.stepIn`、`debug.stepOut` | ステップオーバー、ステップイン、ステップアウト |
+| `<leader>dl` | `debug.runLast` | 前回の設定で始める |
+| `<leader>du` | `debug.toggleUI` | DAP のペインの開け閉め（標準の DAP の拡張機能はまだ引き受けない） |
+
+### 段階 2 のコマンドからの移行
+
+段階 2 の LSP と DAP の拡張機能のコマンドは、#203 で本体の操作に置き換えたので、もう無い。
+古いコマンドをコマンドラインで打つと、`E492: エディタのコマンドではありません: lsp.definition` のように出る。
+設定の `keymap` の右辺に古いコマンドを書いていれば、起動したときに設定の誤りとして知らせる。
+そのまま使うと、左辺のキーが既定のキーを隠す。
+たとえば `"<Space>d": ":lsp.definition<CR>"` があると、`<Space>db` の `<Space>d` が先に展開されて E492 になり、残りの `b` は単語の後退として動く。
+その項目は消すか、右辺を新しい名前に書き換える。
+
+| 段階 2 のコマンド | 操作の名前（`:` で呼ぶ） | 既定のキー |
+|---|---|---|
+| `lsp.definition` | `definition` | `<C-]>`、`<leader>lD` |
+| `lsp.hover` | `hover` | `K`、`<leader>lh` |
+| `lsp.format` | `format` | `gq{モーション}` |
+| `dap.start` | `debug.continue`（始まっていなければ始める） | `<leader>dc` |
+| `dap.stop` | `debug.terminate` | `<leader>dt` |
+| `dap.toggleBreakpoint` | `breakpoint.toggle` | `<leader>db` |
+| `dap.continue` | `debug.continue` | `<leader>dc` |
+| `dap.next` | `debug.stepOver` | `<leader>dn` |
+| `dap.stepIn` | `debug.stepIn` | `<leader>di` |
+| `dap.stepOut` | `debug.stepOut` | `<leader>do` |
+
+### 操作の補足
+
+「ポップアップで見る」は、移らずに、移動先の行から 10 行をカーソルの近くに出す。
+ドットリピート（`.`）は、`gq` を除く LSP と DAP の操作を記録しない。`x` の後に `K` を打ってから `.` を打つと、`x` を繰り返す。
+一覧（参照、シンボル）は、選択肢の問いで番号を打って選ぶ。番号を振れるのは 9 件までである。
+`<leader>l?` と `<leader>d?`（キーの一覧）と補完は、まだ無い。
 
 ## 出力の欄
 
@@ -453,8 +509,8 @@ set -g set-clipboard on
 |---|---|---|---|---|
 | `treesitter` | 構文ハイライト（Go、JSON）、構文に沿ったテキストオブジェクト（Go） | Go か JSON のファイルを開いたとき | `af`、`if`、`ac`、`ic`、`aa`、`ia` | なし |
 | `line` | 行のテキストオブジェクト | `il`、`al` を打ったとき | `il`、`al` | なし |
-| `lsp` | 診断、定義へ移動、ホバー、整形 | Go のファイルを開いたとき | `:lsp.definition`、`:lsp.hover`、`:lsp.format` | PATH の `gopls` |
-| `dap` | デバッグ | コマンドを呼んだとき | `:dap.start`、`:dap.stop`、`:dap.toggleBreakpoint`、`:dap.continue`、`:dap.next`、`:dap.stepIn`、`:dap.stepOut` | PATH の `dlv` |
+| `lsp` | 診断と、LSP の操作（定義へ移動、ホバー、参照、シンボル、整形、名前の変更） | Go のファイルを開いたとき | [LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー) | PATH の `gopls` |
+| `dap` | デバッグ（DAP の操作） | 操作を呼んだとき | [LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー) | PATH の `dlv` |
 | `acp` | コーディングエージェントとの対話（ACP のクライアント） | コマンドを呼んだとき | `:acp.prompt`、`:acp.cancel` | ACP で話すエージェントと、その設定 |
 | `mcp` | エディタの状態と編集を MCP のツールとして提供する | MCP のクライアントが最初に接続したとき | `:mcp.start` | MCP のクライアント |
 
@@ -481,10 +537,14 @@ gopls は PATH から探す。
 | 操作 | 結果 |
 |---|---|
 | 編集して誤りを作る | 行の左に `E`、誤りの箇所に下線が出る。カーソルをその行に置くと、最下行に `E compiler: declared and not used: y` のように内容が出る |
-| `:lsp.hover` | カーソルの位置の識別子の説明をポップアップで出す。`<Esc>` で閉じる |
-| `:lsp.definition` | 定義へ移動する。別のファイル（標準ライブラリの `fmt/print.go` など）の定義なら、そのファイルを開く。`<C-o>` で元の位置へ戻り、`<Tab>` で定義へ進み直す（[バッファの切り替えとジャンプ](#バッファの切り替えとジャンプ)） |
-| `:lsp.format` | バッファを整形する。`u` で整形の前に戻せる |
+| `K` か `<leader>lh` | カーソルの位置の識別子の説明をポップアップで出す。`<Esc>` で閉じる |
+| `<C-]>` か `<leader>lD` | 定義へ移動する。別のファイル（標準ライブラリの `fmt/print.go` など）の定義なら、そのファイルを開く。`<C-o>` で元の位置へ戻り、`<Tab>` で定義へ進み直す（[バッファの切り替えとジャンプ](#バッファの切り替えとジャンプ)） |
+| `<leader>ld` | 定義の行から 10 行を、移らずにポップアップで出す |
+| `gqq`、`gqip` など | 整形する。gopls（v0.24.0）は範囲の整形に対応しないので、全体を整形する。`u` で整形の前に戻せる |
+| `:rename 新しい名前` | カーソルの位置の識別子の名前を変える。開いていないファイルに及ぶ変更は、適用せずに知らせる |
 | `:w` | 書き出す前に整形する |
+
+ほかの操作は [LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー) にある。
 
 言語サーバーを変える、保存の前の整形をやめるといった設定は、`extensions.settings.lsp` に書く。
 項目は `go doc -u ./cmd/modal-editor-ext-lsp settings` と `serverConfig` にある。
@@ -495,11 +555,11 @@ gopls は PATH から探す。
 `dlv` は PATH から探す。
 設定は要らない。
 
-1. 止めたい行で `:dap.toggleBreakpoint` を打つ。行の左に `B` が出る。もう一度打つと消える
-2. `:dap.start` を打つ。デバッグを始めたバッファのファイルのあるディレクトリのパッケージをビルドして実行し、ブレークポイントで止まる。止まった行の左に `=>` が出て、最下行に「停止した（breakpoint）」が出る
-3. `:dap.next`、`:dap.stepIn`、`:dap.stepOut` で 1 行ずつ進む。`=>` とカーソルが止まった位置へ移る
-4. `:dap.continue` で続ける。デバッグ対象が終わると「デバッグを終了した」が出る
-5. 途中でやめるときは `:dap.stop` を打つ
+1. 止めたい行で `<leader>db` を打つ。行の左に `B` が出る。もう一度打つと消える。条件を付けるときは `:breakpoint.conditional i == 3` を打つ
+2. `<leader>dc` を打つ。デバッグを始めたバッファのファイルのあるディレクトリのパッケージをビルドして実行し、ブレークポイントで止まる。止まった行の左に `=>` が出て、最下行に「停止した（breakpoint）」が出る
+3. `<leader>dn`、`<leader>di`、`<leader>do` で 1 行ずつ進む。`=>` とカーソルが止まった位置へ移る
+4. `<leader>dc` で続ける。デバッグ対象が終わると「デバッグを終了した」が出る
+5. 途中でやめるときは `<leader>dt` を打つ。`<leader>dr` は終えてから始め直し、`<leader>dl` は前回と同じ設定で始める
 
 デバッグ対象の標準出力（`fmt.Println` の出力など）と Delve の出力は、`dap` の欄に出る（`:output dap`）。
 デバッグが失敗したときの理由も、この欄で読む。

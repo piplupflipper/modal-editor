@@ -26,6 +26,13 @@ const (
 	lspDefinition           = "textDocument/definition"
 	lspHover                = "textDocument/hover"
 	lspFormatting           = "textDocument/formatting"
+	lspRangeFormatting      = "textDocument/rangeFormatting"
+	lspImplementation       = "textDocument/implementation"
+	lspTypeDefinition       = "textDocument/typeDefinition"
+	lspReferences           = "textDocument/references"
+	lspDocumentSymbol       = "textDocument/documentSymbol"
+	lspWorkspaceSymbol      = "workspace/symbol"
+	lspRename               = "textDocument/rename"
 	lspShowMessage          = "window/showMessage"
 	lspLogMessage           = "window/logMessage"
 	lspShowMessageRequest   = "window/showMessageRequest"
@@ -82,13 +89,19 @@ type workspaceFolder struct {
 // window.workDoneProgress は申し出ないので、サーバーは window/workDoneProgress/create を送らない前提である（送られても null を返す）。
 const clientCapabilities = `{
   "general": {"positionEncodings": ["utf-8", "utf-16"]},
-  "workspace": {"configuration": true, "workspaceFolders": true},
+  "workspace": {"configuration": true, "workspaceFolders": true, "symbol": {}, "workspaceEdit": {"documentChanges": true}},
   "textDocument": {
     "synchronization": {"dynamicRegistration": false, "willSave": false, "willSaveWaitUntil": false, "didSave": true},
     "publishDiagnostics": {"versionSupport": true},
     "hover": {"contentFormat": ["markdown", "plaintext"]},
     "definition": {"linkSupport": true},
-    "formatting": {}
+    "implementation": {"linkSupport": true},
+    "typeDefinition": {"linkSupport": true},
+    "references": {},
+    "documentSymbol": {"hierarchicalDocumentSymbolSupport": true},
+    "rename": {},
+    "formatting": {},
+    "rangeFormatting": {}
   }
 }`
 
@@ -102,6 +115,14 @@ type serverCapabilities struct {
 	DefinitionProvider         json.RawMessage `json:"definitionProvider"`
 	HoverProvider              json.RawMessage `json:"hoverProvider"`
 	DocumentFormattingProvider json.RawMessage `json:"documentFormattingProvider"`
+	// 以下は、段階 3 の本体の操作（基本設計 5.5）のために読む。
+	DocumentRangeFormattingProvider json.RawMessage `json:"documentRangeFormattingProvider"`
+	ImplementationProvider          json.RawMessage `json:"implementationProvider"`
+	TypeDefinitionProvider          json.RawMessage `json:"typeDefinitionProvider"`
+	ReferencesProvider              json.RawMessage `json:"referencesProvider"`
+	DocumentSymbolProvider          json.RawMessage `json:"documentSymbolProvider"`
+	WorkspaceSymbolProvider         json.RawMessage `json:"workspaceSymbolProvider"`
+	RenameProvider                  json.RawMessage `json:"renameProvider"`
 }
 
 // textDocumentSyncOptions は、textDocumentSync を読んだ結果である。

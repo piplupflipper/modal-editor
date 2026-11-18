@@ -216,26 +216,47 @@ func (h *host) didSave(id ext.BufferID, path string) {
 	}
 }
 
-// exec は、コマンド id を、バッファ buf のカーソルの行 line で実行する。
-func (h *host) exec(buf ext.BufferID, id string, line int) ext.CommandExecuteResult {
+// テストで呼ぶ本体の操作。段階 2 のコマンド（dap.start など）を置き換えたもの（#203）。
+// 開始は、始まっていなければ始める debug.continue で行う。
+const (
+	cmdStart            = ext.OpDebugContinue
+	cmdStop             = ext.OpDebugTerminate
+	cmdToggleBreakpoint = ext.OpBreakpointToggle
+	cmdContinue         = ext.OpDebugContinue
+	cmdNext             = ext.OpDebugStepOver
+	cmdStepIn           = ext.OpDebugStepIn
+	cmdStepOut          = ext.OpDebugStepOut
+)
+
+// exec は、本体の操作 op を、バッファ buf のカーソルの行 line で provider/invoke で呼ぶ。
+func (h *host) exec(buf ext.BufferID, op ext.Operation, line int) ext.ProviderInvokeResult {
+	h.t.Helper()
+	return h.invoke(buf, op, line, "")
+}
+
+// invoke は、exec と同じだが、args を付けられる。args が空なら省く。
+func (h *host) invoke(buf ext.BufferID, op ext.Operation, line int, args string) ext.ProviderInvokeResult {
 	h.t.Helper()
 	h.mu.Lock()
 	v := h.versions[buf]
 	h.mu.Unlock()
-	var res ext.CommandExecuteResult
-	p := ext.CommandExecuteParams{Buffer: buf, Version: v, ID: id, Cursor: ext.Position{Line: line}}
-	if err := h.conn.Call(h.ctx(), ext.MethodCommandExecute, p, &res); err != nil {
-		h.t.Fatalf("command/execute %s: %v", id, err)
+	var res ext.ProviderInvokeResult
+	p := ext.ProviderInvokeParams{Operation: op, Buffer: buf, Version: v, Cursor: ext.Position{Line: line}}
+	if args != "" {
+		p.Args = json.RawMessage(args)
+	}
+	if err := h.conn.Call(h.ctx(), ext.MethodProviderInvoke, p, &res); err != nil {
+		h.t.Fatalf("provider/invoke %s: %v", op, err)
 	}
 	return res
 }
 
 // mustExec は、exec の結果の ok が true であることを確かめる。
 // テストで編集するバッファは 1 つなので、バッファは 1 に決めている。
-func (h *host) mustExec(id string, line int) {
+func (h *host) mustExec(op ext.Operation, line int) {
 	h.t.Helper()
-	if res := h.exec(1, id, line); !res.OK {
-		h.t.Fatalf("command/execute %s: ok = false", id)
+	if res := h.exec(1, op, line); !res.OK {
+		h.t.Fatalf("provider/invoke %s: ok = false", op)
 	}
 }
 
@@ -387,28 +408,23 @@ func TestToggleBreakpointBeforeStart(t *testing.T) {
 	h.waitMessage("ブレークポイントを置けない")
 }
 
-// TestCommandArgs は、どのコマンドも引数を取らず、コマンドラインから引数を付けて呼ぶと（args の text）、
+// TestCommandArgs は、breakpoint.conditional を除くどの操作も引数を取らず、コマンドラインから引数を付けて呼ぶと（args の text）、
 // 何もせずに ok を false で返して知らせることを確かめる。空白だけの text と、キーで取った文字（char）は引数として扱わない。
 func TestCommandArgs(t *testing.T) {
 	h := newHost(t, "")
 	h.open(1, srcPath, srcText)
-	call := func(id, args string) ext.CommandExecuteResult {
+	call := func(op ext.Operation, args string) ext.ProviderInvokeResult {
 		t.Helper()
-		var res ext.CommandExecuteResult
-		h.mu.Lock()
-		v := h.versions[1]
-		h.mu.Unlock()
-		p := ext.CommandExecuteParams{Buffer: 1, Version: v, ID: id, Cursor: ext.Position{Line: 5}, Args: json.RawMessage(args)}
-		if err := h.conn.Call(h.ctx(), ext.MethodCommandExecute, p, &res); err != nil {
-			t.Fatalf("command/execute %s: %v", id, err)
-		}
-		return res
+		return h.invoke(1, op, 5, args)
 	}
-	for _, id := range []string{cmdStart, cmdStop, cmdToggleBreakpoint, cmdContinue, cmdNext, cmdStepIn, cmdStepOut} {
-		if res := call(id, `{"text":"foo"}`); res.OK {
-			t.Errorf("%s foo: ok = true", id)
+	for _, op := range providedOps {
+		if op == ext.OpBreakpointConditional {
+			continue
 		}
-		h.waitMessage(id + ": 引数を取らない")
+		if res := call(op, `{"text":"foo"}`); res.OK {
+			t.Errorf("%s foo: ok = true", op)
+		}
+		h.waitMessage(string(op) + ": 引数を取らない")
 	}
 	if res := call(cmdToggleBreakpoint, `{"text":" "}`); !res.OK {
 		t.Error("空白だけの text: ok = false")
@@ -430,9 +446,9 @@ func TestDebugSession(t *testing.T) {
 	h.mustExec(cmdToggleBreakpoint, 5)
 	h.waitSigns(bp2, bp5)
 
-	// 始める前の続行は失敗する。
-	if res := h.exec(1, cmdContinue, 0); res.OK {
-		t.Error("continue before start: ok = true, want false")
+	// 始める前のステップ実行は失敗する。続行（debug.continue）は始める。
+	if res := h.exec(1, cmdNext, 0); res.OK {
+		t.Error("step before start: ok = true, want false")
 	}
 
 	h.mustExec(cmdStart, 0)
@@ -449,8 +465,8 @@ func TestDebugSession(t *testing.T) {
 	if strings.Contains(out, "telemetry") {
 		t.Errorf("telemetry output was shown: %q", out)
 	}
-	if res := h.exec(1, cmdStart, 0); res.OK {
-		t.Error("second start: ok = true, want false")
+	if res := h.exec(1, ext.OpDebugRunLast, 0); res.OK {
+		t.Error("runLast while debugging: ok = true, want false")
 	}
 
 	h.mustExec(cmdContinue, 0)
@@ -465,9 +481,9 @@ func TestDebugSession(t *testing.T) {
 	h.waitMessage("デバッグを終了した")
 	h.waitEnded()
 
-	// 終わった後の続行は失敗する。
-	if res := h.exec(1, cmdContinue, 0); res.OK {
-		t.Error("continue after the end: ok = true, want false")
+	// 終わった後のステップ実行は失敗する。
+	if res := h.exec(1, cmdNext, 0); res.OK {
+		t.Error("step after the end: ok = true, want false")
 	}
 }
 
@@ -538,12 +554,80 @@ func TestAdapterCrash(t *testing.T) {
 	}
 	h.waitSigns(bp2)
 	h.waitEnded()
-	if res := h.exec(1, cmdContinue, 0); res.OK {
-		t.Error("continue after the crash: ok = true, want false")
+	if res := h.exec(1, cmdNext, 0); res.OK {
+		t.Error("step after the crash: ok = true, want false")
 	}
 	// もう一度始められる。
 	h.mustExec(cmdStart, 0)
 	h.waitSigns(bp2, exec2)
+}
+
+// TestProviderOperations は、段階 3 で足した DAP の操作（条件付きのブレークポイント、すべて消す、前回の設定で実行、再起動、一時停止）を確かめる。
+//
+// req: FR-94
+func TestProviderOperations(t *testing.T) {
+	h := newHost(t, fakeSettings(t, nil, nil))
+	h.open(1, srcPath, srcText)
+
+	// 前回が無ければ runLast は失敗する。条件の無い breakpoint.conditional も失敗する。
+	if res := h.exec(1, ext.OpDebugRunLast, 0); res.OK {
+		t.Error("runLast without a previous run: ok = true")
+	}
+	h.waitMessage("前回のデバッグが無い")
+	if res := h.exec(1, ext.OpBreakpointConditional, 5); res.OK {
+		t.Error("conditional without a condition: ok = true")
+	}
+	h.waitMessage(":breakpoint.conditional")
+
+	// 条件付きのブレークポイントは、setBreakpoints の condition で送る。
+	if res := h.invoke(1, ext.OpBreakpointConditional, 5, `{"text":"i > 3"}`); !res.OK {
+		t.Fatal("conditional: ok = false")
+	}
+	h.mustExec(cmdToggleBreakpoint, 2)
+	h.waitSigns(bp2, bp5)
+	h.mustExec(cmdStart, 0)
+	h.waitOutput(`condition 6 "i > 3"`)
+	h.waitSigns(bp2, bp5, exec2)
+
+	// 一時停止は threads の後に pause を送る。
+	h.mustExec(ext.OpDebugPause, 0)
+	h.waitOutput("pause")
+
+	// すべて消すと、印を消し、空の setBreakpoints を送る。
+	h.mustExec(ext.OpBreakpointClear, 0)
+	h.waitSigns(exec2)
+	h.waitOutput("setBreakpoints main.go []")
+
+	// 再起動は、終えてから前回の設定で始め直す。
+	h.mustExec(cmdToggleBreakpoint, 2)
+	h.mustExec(ext.OpDebugRestart, 0)
+	h.waitMessage("デバッグを終了した")
+	h.waitMessage("デバッグを開始した")
+	h.waitSigns(bp2, exec2)
+
+	// 終えた後の runLast は、前回の設定で始める。
+	h.mustExec(cmdStop, 0)
+	h.waitEnded()
+	h.mustExec(ext.OpDebugRunLast, 0)
+	h.waitSigns(bp2, exec2)
+}
+
+// TestManifest は、宣言ファイルが検査を通り、provides が引き受ける操作と一致することを確かめる。
+func TestManifest(t *testing.T) {
+	data, err := os.ReadFile("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m ext.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("manifest.json: %v", err)
+	}
+	if warnings, verr := m.Validate(); verr != nil || len(warnings) > 0 {
+		t.Fatalf("Validate = %v, %v", warnings, verr)
+	}
+	if !slices.Equal(m.Provides, providedOps) || len(m.Contributes.Commands) != 0 || len(m.Activation) != 0 {
+		t.Errorf("manifest = %+v, want provides %v only", m, providedOps)
+	}
 }
 
 // TestLaunchFailure は、launch が失敗したとき、理由を知らせてデバッグアダプターを終わらせることを確かめる。

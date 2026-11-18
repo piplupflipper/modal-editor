@@ -70,16 +70,17 @@ func TestLeaderKeysInvalid(t *testing.T) {
 // req: FR-97
 func TestBuildKeymapLeader(t *testing.T) {
 	specs := []exthost.Spec{{Manifest: ext.Manifest{ID: "lx", Contributes: ext.Contributes{
-		Commands: []ext.Contribution{{ID: "lx.hover", Keys: "<Leader>lh"}},
+		// <Leader>lh は本体の LSP の操作（FR-95）の既定のキーなので、重ならないキーにする。
+		Commands: []ext.Contribution{{ID: "lx.hover", Keys: "<Leader>xh"}},
 	}}}}
 	for _, leader := range []string{"<Space>", ","} {
 		km, errs := buildKeymap(specs, editcmd.MustParseKeys(leader))
 		if len(errs) != 0 {
 			t.Fatalf("errs = %v", errs)
 		}
-		b, ok := km.Lookup(input.MapNormal, editcmd.MustParseKeys(leader+"lh"))
+		b, ok := km.Lookup(input.MapNormal, editcmd.MustParseKeys(leader+"xh"))
 		if !ok || b.Ref.ID != "lx.hover" || b.Ref.Extension != "lx" {
-			t.Errorf("leader %q: %slh = %+v, %v", leader, leader, b, ok)
+			t.Errorf("leader %q: %sxh = %+v, %v", leader, leader, b, ok)
 		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/command/target"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/input"
 	"github.com/piplupflipper/modal-editor/internal/rpc"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
@@ -95,13 +96,18 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 	e.syncChanges(bs, bs.state.PendingChanges())
 	if e.host.Withheld(bs.id) {
 		// 拡張機能はこのバッファの複製を持っていない（基本設計 5.3）。
-		// command/execute は、バッファを使わないコマンド（デバッグの再開など）のために Withheld を立てて送り、それ以外は送らない。
-		p, ok := params.(ext.CommandExecuteParams)
-		if !ok {
+		// command/execute と provider/invoke は、バッファを使わないコマンド（デバッグの再開など）のために Withheld を立てて送り、
+		// それ以外は送らない。
+		switch p := params.(type) {
+		case ext.CommandExecuteParams:
+			p.Withheld = true
+			params = p
+		case ext.ProviderInvokeParams:
+			p.Withheld = true
+			params = p
+		default:
 			return errWithheld(ref)
 		}
-		p.Withheld = true
-		params = p
 	}
 	e.tagSeq++
 	tag := queryTag(e.tagSeq)
@@ -294,7 +300,7 @@ func hasEffect(method string, r *exthost.QueryResult) bool {
 	if err := r.Decode(&v); err != nil || !v.OK {
 		return false
 	}
-	if method != ext.MethodCommandExecute {
+	if method != ext.MethodCommandExecute && method != ext.MethodProviderInvoke {
 		return true
 	}
 	return (v.Transaction != nil && len(v.Transaction.Edits) > 0) || v.Open != nil
@@ -429,6 +435,9 @@ func (x *extQuery) TextObject(ref editcmd.Ref, b *buffer.Buffer, req target.Requ
 
 // Operator は、operator/apply を問い合わせる。
 func (x *extQuery) Operator(ref editcmd.Ref, b *buffer.Buffer, q command.OperatorQuery, info command.QueryInfo) (buffer.Transaction, error) {
+	if ref.Extension == input.ProviderExtension {
+		return x.providerOperator(ref, b, q, info)
+	}
 	p := ext.OperatorApplyParams{
 		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
 		Range: toExtRange(q.Span.Range(b)), Count: q.Count, Args: args(q.Char),
@@ -446,13 +455,22 @@ func (x *extQuery) Operator(ref editcmd.Ref, b *buffer.Buffer, q command.Operato
 // Action は、command/execute を問い合わせる。
 // 再生中（FR-19）は params の Sync を true にし、結果の Open（カーソルの移動）も、次の操作の前に行う。
 func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQuery, info command.QueryInfo) (buffer.Transaction, error) {
+	if ref.Extension == input.ProviderExtension {
+		return x.providerAction(ref, b, q, info)
+	}
 	p := ext.CommandExecuteParams{
 		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
 		Cursor: toExtPos(q.Cursor), Count: count(q.Count, q.CountGiven), Args: commandArgs(q), Sync: info.Replaying,
 	}
+	return x.invokeResult(ref, ext.MethodCommandExecute, p, b, q, info)
+}
+
+// invokeResult は、command/execute か provider/invoke（method）を params で問い合わせ、結果の編集とカーソルの移動を扱う。
+// 2 つの result は同じ形（ext.ProviderInvokeResult は ext.CommandExecuteResult）である。
+func (x *extQuery) invokeResult(ref editcmd.Ref, method string, params any, b *buffer.Buffer, q command.ActionQuery, info command.QueryInfo) (buffer.Transaction, error) {
 	var r ext.CommandExecuteResult
 	x.e.extRan = true
-	err := x.call(ref, ext.MethodCommandExecute, p, info, &r)
+	err := x.call(ref, method, params, info, &r)
 	if (err != nil || !r.OK) && x.e.host.Withheld(x.bs.id) && !errors.Is(err, context.Canceled) && !errors.Is(err, command.ErrDeferred) {
 		// 送っていないバッファでは、バッファを使うコマンドは失敗する。拡張機能の返す理由より、送っていないことを知らせる。
 		return buffer.Transaction{}, errWithheld(ref)

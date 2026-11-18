@@ -12,8 +12,10 @@ import (
 )
 
 // TestDefinitionJumpBackInPTY は、LSP の拡張機能とテスト用の言語サーバー（cmd/modal-editor-ext-lsp/testdata/fakels）を実際に起動し、
-// 定義へ移動（:lsp.definition）で別のファイルへ移った後に、<C-o> で元のファイルの元の位置へ戻れることを確かめる（#142）。
+// 定義へ移動（既定のキー <C-]>。#203）で別のファイルへ移った後に、<C-o> で元のファイルの元の位置へ戻れることを確かめる（#142）。
 // <C-^> で定義のファイルへ移り直し、もう一度 <C-^> で戻れることと、:ls の一覧も確かめる。
+//
+// req: FR-95
 func TestDefinitionJumpBackInPTY(t *testing.T) {
 	xdg := t.TempDir()
 	installExtension(t, xdg, "lsp")
@@ -42,7 +44,7 @@ func TestDefinitionJumpBackInPTY(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("定義へ移らない。出力: %q", p.out.String())
 		}
-		p.write(t, ":lsp.definition\r")
+		p.write(t, "\x1d") // <C-]>
 		time.Sleep(200 * time.Millisecond)
 	}
 	// <C-o> で a.go の g へ戻り、x で g を消して書き出す。

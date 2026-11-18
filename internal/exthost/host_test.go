@@ -821,6 +821,54 @@ func TestClose(t *testing.T) {
 	}
 }
 
+// 提供者は、操作を名乗り、ファイルの種類の候補になる拡張機能を、読んだ順に探す。無効になった拡張機能は飛ばす。
+//
+// req: FR-94
+func TestProvider(t *testing.T) {
+	goLSP := fakeSpec(t, "golsp", modeNormal, "go")
+	goLSP.Manifest.Provides = []ext.Operation{ext.OpHover, ext.OpFormat}
+	pyLSP := fakeSpec(t, "pylsp", modeNormal, "python")
+	pyLSP.Manifest.Provides = []ext.Operation{ext.OpHover}
+	broken := fakeSpec(t, "broken", modeExit, "")
+	broken.Manifest.Provides = []ext.Operation{ext.OpDebugContinue}
+	dap := fakeSpec(t, "dap", modeNormal, "")
+	dap.Manifest.Provides = []ext.Operation{ext.OpDebugContinue, ext.OpHover}
+	hs := newHarness(t, []Spec{goLSP, pyLSP, broken, dap}, nil, true)
+
+	for _, c := range []struct {
+		op   ext.Operation
+		ft   string
+		want string
+	}{
+		{ext.OpHover, "go", "golsp"},
+		{ext.OpHover, "python", "pylsp"},
+		// ファイルの種類の契機を持たない dap は、どのファイルの種類でも候補になる。
+		{ext.OpHover, "markdown", "dap"},
+		{ext.OpFormat, "go", "golsp"},
+		{ext.OpFormat, "python", ""},
+		{ext.OpDebugContinue, "go", "broken"},
+		{ext.OpRename, "go", ""},
+	} {
+		got, ok := hs.h.Provider(c.op, c.ft)
+		if got != c.want || ok != (c.want != "") {
+			t.Errorf("Provider(%s, %q) = %q, %v, want %q", c.op, c.ft, got, ok, c.want)
+		}
+	}
+	// Provider は起動しない。
+	if st, _ := hs.h.State("golsp"); st != StateNotStarted {
+		t.Errorf("golsp state = %s after Provider", st)
+	}
+
+	// 無効になった拡張機能は飛ばし、次の候補を使う。
+	if err := hs.h.Start("broken"); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("broken", StateDisabled)
+	if got, ok := hs.h.Provider(ext.OpDebugContinue, "go"); got != "dap" || !ok {
+		t.Errorf("Provider after broken is disabled = %q, %v, want dap", got, ok)
+	}
+}
+
 func TestNewRejectsDuplicateID(t *testing.T) {
 	s := Spec{Manifest: ext.Manifest{ID: "a"}}
 	if _, err := New([]Spec{s, s}, Config{}); err == nil {

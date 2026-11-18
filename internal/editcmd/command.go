@@ -58,6 +58,14 @@ type Ref struct {
 // Builtin は、本体の操作であるかを返す。
 func (r Ref) Builtin() bool { return r.Extension == "" }
 
+// ProviderExtension は、提供者へ振り分ける本体の操作（LSP と DAP の操作。基本設計 5.5、FR-94）の Ref.Extension に入れる値である。
+// 実行の側（internal/command）からは拡張機能の操作に見え、問い合わせる側（internal/editor）が呼ばれた時点の提供者に置き換える。
+// 値は空白を含むので、宣言ファイルの拡張機能の ID（空白を含めない。ext.Manifest.Validate）と重ならない。
+const ProviderExtension = " provider"
+
+// Provider は、提供者へ振り分ける本体の操作であるかを返す。
+func (r Ref) Provider() bool { return r.Extension == ProviderExtension }
+
 // Target は、オペレーターまたはモーションの対象である。
 type Target struct {
 	Kind TargetKind

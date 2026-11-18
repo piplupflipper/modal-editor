@@ -16,12 +16,22 @@
 //
 //   - 文書の同期: buffer/open、buffer/change、buffer/close を textDocument/didOpen、didChange（増分）、didClose にする
 //   - 診断: textDocument/publishDiagnostics を diagnostic/set にする
-//   - 定義へ移動: コマンド lsp.definition。textDocument/definition の結果へ editor/open で移動する。候補が複数なら choice/ask で選ばせる
-//   - ホバー: コマンド lsp.hover。textDocument/hover の結果を popup/show で表示させる
-//   - 整形: コマンド lsp.format と、保存の前（buffer/willSave。宣言ファイルの saveHook）。textDocument/formatting の結果をトランザクションにする
+//   - 保存の前の整形: buffer/willSave（宣言ファイルの saveHook）。textDocument/formatting の結果をトランザクションにする
 //   - 保存の通知: buffer/didSave を textDocument/didSave にする
 //
-// コマンドの既定のキーは決めない（基本設計 6.3）。補完は作らない（裁定待ち）。
+// 次の本体の操作を、宣言ファイルの provides で引き受ける（基本設計 5.5。FR-94）。本体は provider/invoke で問い合わせる。
+// キーは本体の既定のキー（<leader>lh、K、gq、<C-]> など。要件定義 4.11）で、この拡張機能はキーを宣言しない。
+// 段階 2 のコマンド（lsp.definition、lsp.hover、lsp.format）は、この操作に置き換えた（#203）。
+//
+//   - definition、implementation、typeDefinition: textDocument/definition、implementation、typeDefinition の結果へ editor/open で移動する。
+//     候補が複数なら choice/ask で選ばせる。args の peek が true なら、移らずに移動先の行を popup/show で出す
+//   - hover: textDocument/hover の結果を popup/show で表示させる
+//   - references、documentSymbols、workspaceSymbols: 結果の一覧を choice/ask で選ばせ、選んだ場所へ移る（一覧の部品ができるまでの仮の形）
+//   - format: textDocument/formatting（範囲があり言語サーバーが対応すれば textDocument/rangeFormatting）の結果をトランザクションにする
+//   - rename: args の text を新しい名前にして textDocument/rename を送り、結果を buffer/edit で適用する。
+//     同期していないファイルに及ぶ変更は適用しない
+//
+// コードアクションと補完は、まだ引き受けない。
 //
 // # 位置の変換
 //
