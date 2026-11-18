@@ -129,6 +129,10 @@ type Options struct {
 	// Env は、git と go の子プロセスに、本体の環境変数に足して渡す環境変数（"名前=値"）である。同じ名前なら Env を使う。
 	// repoEnvVars の変数は、Env に書いても外す。
 	Env []string
+	// BundledDirs は、本体が ExtensionsDir の後に拡張機能を探すディレクトリ（同梱の拡張機能。config.ExtensionDirs の 2 つ目以降）である。
+	// 入れたものの宣言ファイルの ID がここの拡張機能と重なれば、同梱のものを隠すことを Outcome.Warning に書く（基本設計 7 章の探す規則）。
+	// nil なら調べない。
+	BundledDirs []string
 	// Progress は、拡張機能ごとの処理の段階が変わるたびと、1 つの拡張機能が終わるたびに呼ぶ関数である。nil なら呼ばない。
 	Progress func(Event)
 }
@@ -148,6 +152,9 @@ const (
 	// PhaseDone は、1 つの拡張機能が終わったことを表す。Event.Outcome に結果がある。
 	// 何もしなかったもの（ActionUnchanged）も、この段階だけを知らせる。
 	PhaseDone
+	// PhaseWarning は、specs に並べたすべての拡張機能が終わった後に、Outcome.Warning のある拡張機能を知らせることを表す。
+	// Event.Outcome に結果がある。Warning はすべての拡張機能を見てから決めるので、PhaseDone の Outcome には入らない。
+	PhaseWarning
 )
 
 // String は、メッセージの行に出す段階の名前を返す。
@@ -163,6 +170,8 @@ func (p Phase) String() string {
 		return "削除"
 	case PhaseDone:
 		return "完了"
+	case PhaseWarning:
+		return "警告"
 	}
 	return fmt.Sprintf("Phase(%d)", int(p))
 }
@@ -176,7 +185,7 @@ type Event struct {
 	// Index と Total は、この拡張機能が何番目（1 から数える）か、全体で何件かである。
 	// 全体は、specs の数と、削除するかを確かめる名前の数の和である。「3/5 surround: ビルド」のように出すのに使う。
 	Index, Total int
-	// Outcome は、PhaseDone のときの結果である。他の段階では nil。
+	// Outcome は、PhaseDone と PhaseWarning のときの結果である。他の段階では nil。
 	Outcome *Outcome
 }
 
@@ -229,16 +238,23 @@ type Outcome struct {
 	// 呼び出し側は ActionUpdated と ActionRemoved の ID で稼働中の拡張機能を止める。
 	// 入っていたものと入れたものの宣言ファイルを読めなければ空。ActionUpdated では新しい版の ID である。
 	ID string
+	// PreviousID は、Sync の前に入れてあった版の宣言ファイルの ID である。何も入っていなかったか、読めなければ空。
+	// 版を上げて ID が変わったとき（ActionUpdated で ID と違う）に、稼働中の前の版を止めるのに使う。
+	PreviousID string
 	// Action は、行ったことである。
 	Action Action
 	// Commit は、入れてあるコミットである。ActionRemoved、ActionKept と、何も入っていない ActionFailed では空。
 	Commit string
 	// Err は、ActionFailed の理由である。
 	Err error
-	// Warning は、成功したが知らせることである。いまは、specs に並べたものどうしで宣言ファイルの ID が重なり、
-	// 本体（config.LoadExtensions）がこの拡張機能を使わないことだけを入れる。
-	// すべての拡張機能を見てから決めるので、Sync の戻り値にだけ入れ、Event.Outcome には入れない。
-	// 同梱の拡張機能を同じ ID で隠すことは知らせない（Sync は同梱の拡張機能のディレクトリを知らない）。
+	// Warning は、成功したが知らせることである。次のことを入れる。
+	//
+	//   - ExtensionsDir の別のディレクトリ（specs に並べたものか、手で置いたもの）と宣言ファイルの ID が重なり、
+	//     本体（config.LoadExtensions）がこの拡張機能を使わないこと
+	//   - Options.BundledDirs の同梱の拡張機能と ID が重なり、本体が同梱のものの代わりにこの拡張機能を使うこと
+	//
+	// すべての拡張機能を見てから決めるので、PhaseDone の Event.Outcome には入れず、
+	// Sync の戻り値と、その後に送る PhaseWarning の Event で知らせる。
 	Warning error
 }
 
@@ -421,6 +437,10 @@ func (s *syncer) sync(ctx context.Context, specs []Spec) ([]Outcome, error) {
 	for i := range targets {
 		t := &targets[i]
 		s.index = i + 1
+		var prevID string
+		if t.err == nil && t.installed != nil {
+			prevID = s.installedID(t.spec.Name)
+		}
 		o := Outcome{Name: t.spec.Name}
 		switch {
 		case t.err != nil:
@@ -442,10 +462,16 @@ func (s *syncer) sync(ctx context.Context, specs []Spec) ([]Outcome, error) {
 		if o.ID == "" && validName.MatchString(t.spec.Name) {
 			o.ID = s.installedID(t.spec.Name)
 		}
+		o.PreviousID = prevID
 		s.done(&o)
 		outcomes = append(outcomes, o)
 	}
-	warnDuplicateIDs(outcomes)
+	s.warnShadowing(outcomes, unlisted)
+	for i := range outcomes {
+		if outcomes[i].Warning != nil && s.opts.Progress != nil {
+			s.opts.Progress(Event{Name: outcomes[i].Name, Phase: PhaseWarning, Index: i + 1, Total: s.total, Outcome: &outcomes[i]})
+		}
+	}
 
 	if ctx.Err() == nil {
 		for i, name := range unlisted {
@@ -461,24 +487,54 @@ func (s *syncer) sync(ctx context.Context, specs []Spec) ([]Outcome, error) {
 	return outcomes, ctx.Err()
 }
 
-// warnDuplicateIDs は、入れてあるものどうしで宣言ファイルの ID が重なるとき、本体が使わない方の Outcome.Warning に書く。
-// config.LoadExtensions は、ディレクトリの名前の順で先のものを使う。
-func warnDuplicateIDs(outcomes []Outcome) {
-	order := make([]int, 0, len(outcomes))
-	for i := range outcomes {
-		if outcomes[i].ID != "" {
-			order = append(order, i)
+// warnShadowing は、outcomes の宣言ファイルの ID が他の拡張機能と重なるとき、Outcome.Warning に書く。
+//
+// config.LoadExtensions は、ExtensionsDir、BundledDirs の順に、ディレクトリの中では名前の順に読み、ID が重なれば先のものを使う。
+// ExtensionsDir の中の重なりは、本体が使わない方（名前の順で後）に書く。手で置いたものと重なるときも書く。
+// 削除する名前（unlisted）は、この後で消すので数えない。
+// BundledDirs の拡張機能と重なれば、同梱のものを隠すことを書く。
+func (s *syncer) warnShadowing(outcomes []Outcome, unlisted []string) {
+	first := map[string]string{}
+	if entries, err := os.ReadDir(s.opts.ExtensionsDir); err == nil {
+		// ReadDir は名前の順に返す。
+		for _, de := range entries {
+			name := de.Name()
+			if slices.Contains(unlisted, name) || !validName.MatchString(name) {
+				continue
+			}
+			if id := s.installedID(name); id != "" {
+				if _, ok := first[id]; !ok {
+					first[id] = name
+				}
+			}
 		}
 	}
-	slices.SortFunc(order, func(a, b int) int { return strings.Compare(outcomes[a].Name, outcomes[b].Name) })
-	first := map[string]string{}
-	for _, i := range order {
+	bundled := map[string]string{}
+	for _, d := range s.opts.BundledDirs {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, de := range entries {
+			if id := manifestID(filepath.Join(d, de.Name(), ManifestFileName)); id != "" {
+				if _, ok := bundled[id]; !ok {
+					bundled[id] = filepath.Join(d, de.Name())
+				}
+			}
+		}
+	}
+	for i := range outcomes {
 		o := &outcomes[i]
-		if prev, ok := first[o.ID]; ok {
+		if o.ID == "" {
+			continue
+		}
+		if prev, ok := first[o.ID]; ok && prev != o.Name {
 			o.Warning = fmt.Errorf("宣言ファイルの ID %q が拡張機能 %s と重なるので、本体は %s を使わない", o.ID, prev, o.Name)
 			continue
 		}
-		first[o.ID] = o.Name
+		if dir, ok := bundled[o.ID]; ok {
+			o.Warning = fmt.Errorf("宣言ファイルの ID %q が同梱の拡張機能（%s）と重なるので、本体は同梱のものの代わりに %s を使う", o.ID, dir, o.Name)
+		}
 	}
 }
 
@@ -532,7 +588,12 @@ func (s *syncer) readMarker(name string) (*LockEntry, error) {
 
 // installedID は、ExtensionsDir の name に入っている宣言ファイルの ID を返す。読めなければ空。
 func (s *syncer) installedID(name string) string {
-	data, err := os.ReadFile(filepath.Join(s.opts.ExtensionsDir, name, ManifestFileName))
+	return manifestID(filepath.Join(s.opts.ExtensionsDir, name, ManifestFileName))
+}
+
+// manifestID は、path の宣言ファイルの ID を返す。読めないか、検査で誤りになれば空。
+func manifestID(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
@@ -606,13 +667,15 @@ func (s *syncer) srcDir(name string) string {
 
 // fetch は、取得元を WorkDir の src/<名前> に git clone するか、既にあれば git fetch する。
 // ロックファイルの記録を使うときは、記録したコミットが既にあれば取得しない。
-// 既にあるソースで git が失敗したら（中断した clone などで壊れたとき）、消して 1 回だけ clone し直す。
+// 既にあるソースが git のリポジトリとして読めなければ（git remote get-url が失敗する。中断した clone などで壊れたとき）、
+// 消して 1 回だけ clone し直す。
+// 取得元に届かない（ネットワークに出られない）だけで git fetch が失敗したときは、ソースを消さずに誤りを返す（#213）。
 // 取得したディレクトリを返す。
 func (s *syncer) fetch(ctx context.Context, t *target) (string, error) {
 	src := s.srcDir(t.spec.Name)
 	if _, err := os.Stat(filepath.Join(src, ".git")); err == nil {
-		err = s.update(ctx, src, t)
-		if err == nil || ctx.Err() != nil {
+		broken, err := s.update(ctx, src, t)
+		if !broken || ctx.Err() != nil {
 			return src, err
 		}
 	}
@@ -629,20 +692,21 @@ func (s *syncer) fetch(ctx context.Context, t *target) (string, error) {
 }
 
 // update は、既にある src の取得元を t の repo にそろえ、要るなら git fetch する。
-func (s *syncer) update(ctx context.Context, src string, t *target) error {
+// src が git のリポジトリとして読めない（git remote get-url か git remote set-url が失敗した）ときは、broken を true で返す。
+func (s *syncer) update(ctx context.Context, src string, t *target) (broken bool, err error) {
 	url, err := s.git(ctx, src, "remote", "get-url", "origin")
 	if err != nil {
-		return err
+		return true, err
 	}
 	if strings.TrimSpace(url) != t.spec.Repo {
 		if _, err = s.git(ctx, src, "remote", "set-url", "origin", t.spec.Repo); err != nil {
-			return err
+			return true, err
 		}
 	} else if t.pinned && s.hasCommit(ctx, src, t.commit) {
-		return nil
+		return false, nil
 	}
 	_, err = s.git(ctx, src, "fetch", "--quiet", "--tags", "--force", "--prune", "origin")
-	return err
+	return false, err
 }
 
 // hasCommit は、src にコミット commit があるかを返す。commit はロックファイルで検査した完全なハッシュである。
