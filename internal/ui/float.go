@@ -59,9 +59,16 @@ func stripCodeFences(s string) string {
 // 長い行は空白の位置で折り返す（wrapWords）。行が popupMaxRows 行と置ける行数に収まらなければ、最後の行に残りの行数を書く。
 // Markdown は、呼び出し側（Render）がコードの囲みの行だけを除き（stripCodeFences）、他の記法は整形せずに出す
 // （6.7 の format は、整形するかを ui が決めてよいとしている）。
+//
+// 枠線の記号（SymbolPopupBorder）があれば、窓の周りに 1 列と 1 行ずつ枠線を描く。幅と行数の上限は枠線を含めて数える。
 func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol int) {
 	lines := textLines(text)
-	maxW := min(r.Width, popupMaxWidth)
+	chars, bordered := r.border()
+	b := 0
+	if bordered {
+		b = 1
+	}
+	maxW := min(r.Width, popupMaxWidth) - 2*b
 	if len(lines) == 0 || maxW < 3 {
 		return
 	}
@@ -75,19 +82,20 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 		}
 	}
 	textRows := r.textRows()
-	below, above := textRows-curRow-1, curRow
+	// 上と下に本文を置ける行数は、枠線の 2 行を除いて数える（枠線を数えずに決めると、下に枠線しか入らない行で何も出なかった。PR #206 のレビュー）。
+	below, above := textRows-curRow-1-2*b, curRow-2*b
 	useAbove := len(rows) > below && above > below
 	space := below
 	if useAbove {
 		space = above
 	}
-	h := min(len(rows), popupMaxRows, space)
+	h := min(len(rows), popupMaxRows-2*b, space)
 	if h <= 0 {
 		return
 	}
-	top := curRow + 1
+	top := curRow + 1 + b
 	if useAbove {
-		top = curRow - h
+		top = curRow - h - b
 	}
 	note := ""
 	if h < len(rows) {
@@ -95,9 +103,12 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 		width = max(width, StringWidth(note, tabStop))
 	}
 	boxW := min(width+2, maxW)
-	x0 := max(min(curCol, r.Width-boxW), 0)
+	x0 := max(min(curCol, r.Width-boxW-2*b), 0) + b
 	a := theme.attr(StylePopup)
 	special := theme.attr(StyleSpecialKey)
+	if bordered {
+		r.drawBorder(g, theme, chars, top, x0, h, boxW)
+	}
 	for i := range h {
 		row := top + i
 		clearSplit(g, row, x0, x0+boxW)
@@ -113,6 +124,45 @@ func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol i
 	}
 }
 
+// drawBorder は、row top から h 行、列 x0 から w 列の窓の周りに、枠線の 8 文字 chars（SymbolPopupBorder の並び）を描く。
+// 色は StylePopupBorder で、表に無ければ StylePopup である。枠線が画面の外に出る部分は描かない。
+//
+// req: FR-93
+func (r *Renderer) drawBorder(g *Grid, theme Theme, chars [borderChars]string, top, x0, h, w int) {
+	a, ok := theme[StylePopupBorder]
+	if !ok {
+		a = theme.attr(StylePopup)
+	}
+	put := func(row, col int, s string) {
+		if row >= 0 && row < r.Height && col >= 0 && col < r.Width {
+			clearSplit(g, row, col, col+1)
+			g.set(row, col, Cell{Text: s, Width: 1, Attr: a})
+		}
+	}
+	const (
+		topLeft = iota
+		topEdge
+		topRight
+		rightEdge
+		bottomRight
+		bottomEdge
+		bottomLeft
+		leftEdge
+	)
+	put(top-1, x0-1, chars[topLeft])
+	put(top-1, x0+w, chars[topRight])
+	put(top+h, x0-1, chars[bottomLeft])
+	put(top+h, x0+w, chars[bottomRight])
+	for c := range w {
+		put(top-1, x0+c, chars[topEdge])
+		put(top+h, x0+c, chars[bottomEdge])
+	}
+	for i := range h {
+		put(top+i, x0-1, chars[leftEdge])
+		put(top+i, x0+w, chars[rightEdge])
+	}
+}
+
 // listMaxWidth は、浮かべる一覧（Frame.List）の窓の列数の上限（仮）である。
 const listMaxWidth = 80
 
@@ -125,9 +175,16 @@ const listMaxWidth = 80
 // 選んでいる項目の行は StylePopupSelected で、他の行は StylePopup で描く。
 //
 // req: FR-54
+//
+// 枠線の記号（SymbolPopupBorder）があれば、drawPopup と同じく窓の周りに枠線を描き、幅と行数の上限は枠線を含めて数える。
 func (r *Renderer) drawList(g *Grid, theme Theme, l *List) (Cursor, bool) {
-	rows := r.textRows()
-	maxW := min(r.Width, listMaxWidth)
+	chars, bordered := r.border()
+	b := 0
+	if bordered {
+		b = 1
+	}
+	rows := r.textRows() - 2*b
+	maxW := min(r.Width, listMaxWidth) - 2*b
 	if rows < 2 || maxW < 3 {
 		return Cursor{}, false
 	}
@@ -137,12 +194,15 @@ func (r *Renderer) drawList(g *Grid, theme Theme, l *List) (Cursor, bool) {
 		width = max(width, StringWidth(it, tabStop))
 	}
 	boxW := min(width+2, maxW)
-	x0 := max((r.Width-boxW)/2, 0)
+	x0 := max((r.Width-boxW-2*b)/2, 0) + b
 	shown := min(len(l.Items), rows-1)
 	sel := min(max(l.Selected, 0), max(len(l.Items)-1, 0))
 	first := max(sel-shown+1, 0)
 	a := theme.attr(StylePopup)
 	sa := theme.attr(StylePopupSelected)
+	if bordered {
+		r.drawBorder(g, theme, chars, b, x0, 1+shown, boxW)
+	}
 	drawRow := func(row int, s string, attr Attr) {
 		clearSplit(g, row, x0, x0+boxW)
 		for c := range boxW {
@@ -150,16 +210,16 @@ func (r *Renderer) drawList(g *Grid, theme Theme, l *List) (Cursor, bool) {
 		}
 		r.drawText(g, row, x0+1, x0+boxW-1, s, attr)
 	}
-	drawRow(0, l.Title, a)
-	cur := Cursor{Row: 0, Col: x0 + 1, Shape: CursorBlock, Visible: true}
+	drawRow(b, l.Title, a)
+	cur := Cursor{Row: b, Col: x0 + 1, Shape: CursorBlock, Visible: true}
 	for i := range shown {
 		n := first + i
 		attr := a
 		if n == sel {
 			attr = sa
-			cur.Row = 1 + i
+			cur.Row = b + 1 + i
 		}
-		drawRow(1+i, l.Items[n], attr)
+		drawRow(b+1+i, l.Items[n], attr)
 	}
 	return cur, true
 }

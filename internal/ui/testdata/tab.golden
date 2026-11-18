@@ -16,7 +16,7 @@ size 20x6 cursor 1,1 bar
    |abcdefgh        z   |
    |~                   |
 fg |n...................|
-   | INSERT  [ 2,2  All |
+   | INSERT  < 2,2  All |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 

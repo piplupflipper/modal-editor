@@ -1,0 +1,26 @@
+## 並べた順に出す
+size 30x4 cursor 0,0 block
+   |abc                           |
+   |~                             |
+fg |n.............................|
+   | RO  a.go          go  NORMAL |
+fg |EEEE..................cccccccc|
+   |                              |
+
+## インサートモードの色
+size 30x4 cursor 0,0 bar
+   |abc                           |
+   |~                             |
+fg |n.............................|
+   | a.go              go  INSERT |
+fg |......................kkkkkkkk|
+   |                              |
+
+## 中身の無い部品は出さない
+size 30x4 cursor 0,0 block
+   |abc                           |
+   |~                             |
+fg |n.............................|
+   | a.go                  NORMAL |
+fg |......................cccccccc|
+   |                              |

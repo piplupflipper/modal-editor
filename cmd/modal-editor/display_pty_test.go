@@ -71,6 +71,8 @@ func TestOutputPaneInPTY(t *testing.T) {
 	p.write(t, `:output|acp.prompt {"op":"hello"}`+"\r")
 	// 端末への出力は前の画面との差分なので、空白を飛ばした語ごとに、カーソルの移動（CUP）を挟んで出る。
 	// 欄の名前の行（24 行の画面の 23 行目）は、まだ出力が無い "(まだ出力はありません)" から、書き足された欄の "acp" に変わる。
+	// ただし、欄を開いた後の最初の描画の前にエージェントの出力が届くと、"(まだ出力はありません)" の画面は描かれず、
+	// 23 行目は前のステータス行から " [出力] acp" に一度に変わる（CI の run 44330184190 で起きた）。どちらの出力も受け付ける。
 	p.out.WaitForString(t, "[出力]")
 	p.out.WaitFor(t, "acp の欄の名前", func(out string) bool { return outputTitleRe.MatchString(out) })
 	p.out.WaitForString(t, "Hello,")
@@ -125,7 +127,8 @@ var choiceRowRes = []*regexp.Regexp{
 
 var (
 	// outputTitleRe は、欄の名前の行の " [出力] " の後（23 行目の 9 列目）に "acp" を描いた出力に一致する。色を付ける列（SGR）が間に入ってよい。
-	outputTitleRe = regexp.MustCompile(`\x1b\[23;9H(\x1b\[[0-9;]*m)*acp`)
+	// 差分で 9 列目だけを書き直した形（CUP の 23;9H の後）と、行を " [出力] " から書いた形の両方に一致する。
+	outputTitleRe = regexp.MustCompile(`(\x1b\[23;9H|\x1b\[23;1H(\x1b\[[0-9;]*m)* \[出力\] )(\x1b\[[0-9;]*m)*acp`)
 	// signRe は、1 行目の先頭（CUP の 1;1H）に、印の列の "B" と空白に続いてバッファの行が描かれた出力に一致する。
 	signRe = regexp.MustCompile(`\x1b\[1;1H(\x1b\[[0-9;]*m)*B (\x1b\[[0-9;]*m)*package`)
 	// firstLineRe は、1 行目の先頭（CUP の 1;1H）に、バッファの 1 行目の "aaa" が描かれた出力に一致する。

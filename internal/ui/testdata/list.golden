@@ -8,7 +8,7 @@ fx |vvvvvvvvvvvvvvvvvvvv|
 fx |____________________|
    |line4               |
    |line5               |
-   | NORMAL  [ 1,1  Top |
+   | NORMAL  < 1,1  Top |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 
@@ -23,7 +23,7 @@ fx |vvvvvvvvvvvvvvvvvvvv|
    | "a  c  x           |
 fx |____________________|
    |line5               |
-   | NORMAL  [ 1,1  Top |
+   | NORMAL  < 1,1  Top |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 
@@ -39,7 +39,7 @@ fx |____________________|
 fx |____________________|
    | "c  c  last        |
 fx |vvvvvvvvvvvvvvvvvvvv|
-   | NORMAL  [ 1,1  Top |
+   | NORMAL  < 1,1  Top |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |
 
@@ -52,6 +52,6 @@ fx |    vvvvvvvvvvvv    |
    |line3               |
    |line4               |
    |line5               |
-   | NORMAL  [ 1,1  Top |
+   | NORMAL  < 1,1  Top |
 fx |SSSSSSSSSSSSSSSSSSSS|
    |                    |

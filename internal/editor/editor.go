@@ -142,6 +142,12 @@ type Config struct {
 	// ReadOnlyPaths は、開いた時点で編集を禁止にするファイルの置き場所である（設定の readonlyPaths。FR-120）。
 	// 各項目はディレクトリの絶対パスか、"/" を含まないディレクトリの名前（"node_modules"）で、照合の規則は underReadOnlyPath にある。
 	ReadOnlyPaths []string
+	// Colors は、色の名前から属性への対応（設定の colors。FR-91）である。ui.DefaultTheme を名前ごとに置き換える（ui.Theme.WithColors）。
+	Colors map[string]ui.Attr
+	// Symbols は、記号の名前から描く文字列への対応（設定の symbols。FR-93）である。値は ui.CheckSymbol を通したものにする。
+	Symbols ui.Symbols
+	// StatusLine は、ステータス行に並べる部品の列（設定の statusline。FR-92）である。nil なら ui.DefaultStatusLine を使う。
+	StatusLine *ui.StatusLine
 	// Problems は、呼び出し側が設定ファイルと宣言ファイルを読んだときの誤り（位置と内容）である（基本設計 8 章）。
 	// New は、すべてをログに記録し、New 自身が見つけた設定の誤りより先に並べて、最初の 1 件を起動後のメッセージで知らせる。
 	Problems []error
@@ -365,7 +371,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		term:      term,
 		host:      host,
 		mcpSocket: sock,
-		renderer:  &ui.Renderer{},
+		renderer:  &ui.Renderer{Theme: ui.DefaultTheme().WithColors(cfg.Colors), Symbols: cfg.Symbols, StatusLine: cfg.StatusLine},
 		keys:      newKeyQueue(),
 		intrCh:    make(chan struct{}, 1),
 		shellDone: make(chan shellOutcome, 1),

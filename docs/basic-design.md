@@ -2228,6 +2228,14 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 名前は、段階 2 までの印の色の名前（`sign.breakpoint` など。6.7）と構文の色の名前（`keyword` など。6.1）を含め、`diagnostic.error`、`statusline`、`tabline`、`tabline.selected`、`popup.border`、`diff.add` のように点で区切って付ける（仮）。
 既定の対応は本体が持ち、設定の `colors` で名前ごとに上書きする。
 色は 24 ビットの `#rrggbb` と、前景と背景と属性（太字、下線）の組で書く（仮）。
+#204 で、色は `#rrggbb` に加えて 0〜255 の 256 色の番号でも書けるようにし（本体の既定の色が端末の 16 色の番号のため）、属性は `bold`、`italic`、`underline`、`undercurl`、`reverse` と下線の色 `sp` にした。
+上書きは名前ごとの置き換えで、既定の属性と混ぜない（`internal/ui` の `Theme.WithColors`）。
+ステータス行の部品の色（`statusline.<部品の ID>`、モードごとの `statusline.mode.<モード>`）だけは、`statusline` の色の上に重ねる。
+部品の色が文字か背景の色を持てば、`statusline` の反転を外す（既定の `statusline` の反転で、部品の色の文字と背景が入れ替わらないように。PR #206 のレビュー）。
+本体の知らない名前は、設定の誤りとして知らせて使わない。
+ポップアップの部品（1.4。ファインダーの一致した文字、ファイラのディレクトリ、フォーカスを入れた窓の枠線など）が要る色の名前は、拡張機能が独自の名前を使えないので、その部品の issue で本体の名前に足す。
+名前の一覧は `docs/usage.md` の「見た目の設定」と `internal/ui` の `StyleNames` にある。
+`tabline`、`tabline.selected`、`diff.add` は、タブの行（FR-62）と diff（6.8）の issue で足す。
 
 ```jsonc
 {
@@ -2239,7 +2247,8 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 ```
 
 `decoration/set` の `style`（6.1）も、この名前で指定する。
-段階 2 の 10 個の名前（`comment` など）は、そのまま配色の名前として使う（仮。前に `syntax.` を付けるかは実装のときに決める）。
+段階 2 の 10 個の名前（`comment` など）は、そのまま配色の名前として使う。
+前に `syntax.` を付けないことにした（#204。既にある拡張機能の `decoration/set` の名前を変えずに済み、拡張機能 API の版を上げずに済むため）。
 表に無い名前の範囲に色を付けない規則（6.1）は変えない。
 
 ステータス行とタブ行は、部品の ID の列で並びを書く（FR-92）。
@@ -2248,9 +2257,19 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 利用者は、本体の部品と拡張機能の部品を、設定の `statusline` と `tabline` で同じく並べる。
 並べなかった部品は出さない。
 
+#204 で、設定の `statusline` は `left` と `right` の 2 つの部品の ID の列を持つオブジェクトにした（`{"left": ["mode", "name"], "right": ["ruler"]}`）。
+1 つの列に区切りの ID を挟む形（Vim の `%=`）より、左と右に寄せる部品の分け方が読み取りやすいためである。
+本体の部品は `mode`、`name`、`modified`、`readonly`、`filetype`、`recording`、`ruler`、`position` で、既定の並びは段階 2 までのステータス行と同じ並びに、名前の後の `readonly` を足したものである（`internal/ui` の `DefaultStatusLine`）。
+知らない ID は、設定の誤りとして知らせて使わない。
+左の部品が収まらなければ、Vim 9.1 と同じく名前の部品の先頭を `<` で切り、後ろの未保存の印と編集の禁止の印を残す（PR #206 のレビュー。長いパスで FR-87 の印が消えないように）。
+拡張機能の部品（`contributes.statusline` と `statusline/set`）は #208 で、タブの行の並び（`tabline`）はタブの行の issue で足す。
+
 記号は、印の列の印（6.7 の表の `=>`、`B` など）、枠線の文字、編集の禁止の印など、本体が描く記号の文字の対応である（FR-93）。
 設定の `symbols` で名前ごとに上書きする。
 既定は段階 2 までと同じく ASCII にする（6.7。端末の文字幅の設定で列がずれないようにするため）。
+#204 で、記号の名前は、印の列の印は色の名前と同じ（`sign.breakpoint` など）、編集の禁止の印は `readonly`（既定は `[RO]`）、未保存の印は `modified`（既定は `[+]`）、浮かべる窓の枠線は `popup.border` にした。
+枠線は 8 文字（左上、上、右上、右、右下、下、左下、左。Neovim の `border` の配列と同じ並び）の 1 つの文字列で書き、既定は空（枠線なし。段階 2 までと同じ見た目）である。
+印は表示幅が 1 か 2、枠線の文字は表示幅が 1 で、守らない値は設定の誤りとして使わない（`internal/ui` の `CheckSymbol`）。
 
 ### 7.2 キーの既定値とヘルプ
 

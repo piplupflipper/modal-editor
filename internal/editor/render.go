@@ -34,6 +34,8 @@ func (e *Editor) frame() *ui.Frame {
 		Text:            bs.buf,
 		Name:            bs.path,
 		Modified:        bs.buf.Modified(),
+		ReadOnly:        bs.buf.ReadOnly(),
+		FileType:        bs.fileType,
 		Mode:            uiMode(st.Mode()),
 		Cursor:          st.Cursor(),
 		CommandLine:     st.CommandLine(),
