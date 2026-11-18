@@ -196,11 +196,120 @@ var (
 	}
 )
 
-// DefaultKeymap は、本体の操作を登録したキーマップを返す。
+// ProviderExtension は、提供者へ振り分ける本体の操作（基本設計 5.5。FR-94）の Binding.Ref.Extension に入れる値である。
+//
+// LSP と DAP の操作は、どの拡張機能が引き受けるかを、呼ばれた時点のバッファのファイルの種類で決める（exthost.Host.Provider）。
+// そのためキーマップには拡張機能の ID を書けず、この値を入れておき、問い合わせる側（internal/editor）が提供者に置き換える。
+// 実行の側（internal/command）からは拡張機能の操作に見えるので、問い合わせ（command.Extensions）を通る。
+// 値は空白を含むので、宣言ファイルの ID（空白を含めない。ext.Manifest.Validate）と重ならない。
+const ProviderExtension = " provider"
+
+// 提供者へ振り分ける操作の ID のうち、ext.Operation の名前でないもの。
+const (
+	// ProviderPeekPrefix は、移動の操作の「ポップアップで見る」を表す ID の接頭辞である（peek.definition）。
+	// 後ろは ext.OpDefinition などの操作の名前で、提供者へは Args の peek を true にして問い合わせる。
+	ProviderPeekPrefix = "peek."
+	// 診断の一覧と移動は、本体が受け取った診断から作り、提供者へ問い合わせない（基本設計 5.5）。
+	ProviderDiagnosticList    = "diagnostic.list"
+	ProviderDiagnosticListAll = "diagnostic.listAll"
+	ProviderDiagnosticNext    = "diagnostic.next"
+	ProviderDiagnosticPrev    = "diagnostic.prev"
+)
+
+// providerSpec は、提供者へ振り分ける操作の既定のキーの表の 1 行である。
+type providerSpec struct {
+	keys string // editcmd.ParseKeysLeader の表記。<Leader> を含んでよい
+	id   string // ext.Operation の名前か、上の定数
+	kind BindingKind
+	// modes は、有効なモードである。0 なら種類ごとの既定（defaultModes）である。
+	modes MapMode
+}
+
+// providerKeys は、LSP と DAP の操作の既定のキーである（要件定義 4.11 の 2 つの表。FR-95、FR-96）。
+// K、gq、<C-]> は Vim の標準の操作と重なるが、nvim が LSP の有効なバッファで同じキーを LSP の操作にしているのに合わせる（基本設計 6.3）。
+// <leader>l? と <leader>d?（キーの一覧。FR-90）、補完は、まだ割り当てない。
+//
+// req: FR-95, FR-96
+var providerKeys = []providerSpec{
+	{keys: "<Leader>lh", id: "hover", kind: BindAction},
+	{keys: "K", id: "hover", kind: BindAction},
+	{keys: "<Leader>ld", id: ProviderPeekPrefix + "definition", kind: BindAction},
+	{keys: "<Leader>lD", id: "definition", kind: BindAction},
+	{keys: "<C-]>", id: "definition", kind: BindAction},
+	{keys: "<Leader>li", id: ProviderPeekPrefix + "implementation", kind: BindAction},
+	{keys: "<Leader>lI", id: "implementation", kind: BindAction},
+	{keys: "<Leader>lt", id: ProviderPeekPrefix + "typeDefinition", kind: BindAction},
+	{keys: "<Leader>lT", id: "typeDefinition", kind: BindAction},
+	{keys: "<Leader>lr", id: "references", kind: BindAction},
+	{keys: "<Leader>ln", id: "rename", kind: BindAction},
+	{keys: "<Leader>la", id: "codeAction", kind: BindAction},
+	{keys: "<Leader>ls", id: "documentSymbols", kind: BindAction},
+	{keys: "<Leader>lS", id: "workspaceSymbols", kind: BindAction},
+	{keys: "<Leader>le", id: ProviderDiagnosticList, kind: BindAction},
+	{keys: "<Leader>lE", id: ProviderDiagnosticListAll, kind: BindAction},
+	{keys: "<Leader>lj", id: ProviderDiagnosticNext, kind: BindAction},
+	{keys: "<Leader>lk", id: ProviderDiagnosticPrev, kind: BindAction},
+	// gq はオペレーターで、範囲を format の引数にする（基本設計 5.5）。ビジュアルモードでは選択を範囲にする。
+	{keys: "gq", id: "format", kind: BindOperator},
+
+	{keys: "<Leader>dc", id: "debug.continue", kind: BindAction},
+	{keys: "<Leader>dp", id: "debug.pause", kind: BindAction},
+	{keys: "<Leader>dt", id: "debug.terminate", kind: BindAction},
+	{keys: "<Leader>dr", id: "debug.restart", kind: BindAction},
+	{keys: "<Leader>db", id: "breakpoint.toggle", kind: BindAction},
+	{keys: "<Leader>dB", id: "breakpoint.conditional", kind: BindAction},
+	{keys: "<Leader>dX", id: "breakpoint.clear", kind: BindAction},
+	{keys: "<Leader>dn", id: "debug.stepOver", kind: BindAction},
+	{keys: "<Leader>di", id: "debug.stepIn", kind: BindAction},
+	{keys: "<Leader>do", id: "debug.stepOut", kind: BindAction},
+	{keys: "<Leader>dl", id: "debug.runLast", kind: BindAction},
+	{keys: "<Leader>du", id: "debug.toggleUI", kind: BindAction},
+}
+
+// ProviderOperations は、既定のキーで呼べる、提供者へ振り分ける操作の ID の一覧を、表の順に重なりなく返す。
+// ProviderPeekPrefix の付いたものと診断のものを含む。
+func ProviderOperations() []string {
+	var ids []string
+	seen := map[string]bool{}
+	for _, s := range providerKeys {
+		if !seen[s.id] {
+			seen[s.id] = true
+			ids = append(ids, s.id)
+		}
+	}
+	return ids
+}
+
+// DefaultKeymap は、本体の操作を登録したキーマップを返す。<Leader> は既定の leader（editcmd.DefaultLeader）にする。
 // 呼ぶたびに新しい値を返すので、拡張機能の操作を足しても他の呼び出し元に影響しない。
 //
 // req: FR-03
 func DefaultKeymap() *Keymap {
+	m, _ := DefaultKeymapLeader(nil)
+	return m
+}
+
+// DefaultKeymapLeader は、DefaultKeymap と同じだが、LSP と DAP の操作の既定のキー（providerKeys）の <Leader> を leader にする。
+// leader が nil なら既定の leader を使う。
+// 利用者の leader によって本体の操作と同じキーの列になった既定のキーは登録せず、errs に返す（本体の操作を優先する）。
+//
+// req: FR-03, FR-95, FR-96, FR-97
+func DefaultKeymapLeader(leader []editcmd.Key) (m *Keymap, errs []error) {
+	m = builtinKeymap()
+	for _, s := range providerKeys {
+		keys, err := editcmd.ParseKeysLeader(s.keys, leader)
+		if err == nil {
+			err = m.Bind(Binding{Kind: s.kind, Modes: s.modes, Keys: keys, Ref: editcmd.Ref{ID: s.id, Extension: ProviderExtension}})
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("本体の操作 %s の既定のキー %s を登録できない: %w", s.id, s.keys, err))
+		}
+	}
+	return m, errs
+}
+
+// builtinKeymap は、本体の操作の表（builtinMotions など）だけを登録したキーマップを返す。
+func builtinKeymap() *Keymap {
 	m := NewKeymap()
 	tables := []struct {
 		kind  BindingKind

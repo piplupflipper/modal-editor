@@ -394,6 +394,30 @@ func (h *Host) State(id string) (st State, ok bool) {
 	return e.state, true
 }
 
+// Provider は、本体の操作 op を、ファイルの種類 fileType のバッファで引き受ける拡張機能（提供者）の ID を返す（基本設計 5.5。FR-94）。
+// 選び方は [ext.Manifest] の Provides の doc のとおりで、op を provides で名乗り、fileType の候補になる
+// （[ext.Manifest.HandlesFileType]）拡張機能のうち、未起動か起動中か稼働中のものを、specs の順に探して最初のものを返す。
+// 停止中、再起動待ち、無効の拡張機能は飛ばす（その操作には使えないので、次の候補を使う）。
+// 候補が無ければ ok は false である。拡張機能は起動しない（問い合わせの [Host.Send] が起動する）。
+//
+// req: FR-94
+func (h *Host) Provider(op ext.Operation, fileType string) (id string, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, e := range h.order {
+		m := &e.spec.Manifest
+		if !m.ProvidesOp(op) || !m.HandlesFileType(fileType) {
+			continue
+		}
+		switch e.state {
+		case StateNotStarted, StateStarting, StateRunning:
+			return m.ID, true
+		case StateStopping, StateRestartWait, StateDisabled:
+		}
+	}
+	return "", false
+}
+
 // Activate は、起動の契機 kind が value について成り立ったことを知らせ、その契機を宣言した未起動の拡張機能を起動する。
 // value は、操作の契機なら操作の ID、ファイルの種類の契機ならファイルの種類の名前である。
 // 未知の種類の契機は、宣言にあっても無視する（[ext.Manifest.KnownActivation]）。

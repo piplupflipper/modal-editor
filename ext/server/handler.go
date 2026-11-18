@@ -122,6 +122,27 @@ func (s *Server) CommandAsync(id string, h AsyncCommandHandler) {
 	register(s, s.commands, "command", id, asyncEntry[ext.CommandExecuteParams, ext.CommandExecuteResult](h))
 }
 
+// ProviderHandler は、provider/invoke に答えるハンドラーである（基本設計 5.5。FR-94）。
+// b が nil になる場合と、結果の Transaction の BaseVersion の扱いは CommandHandler と同じである。
+type ProviderHandler func(ctx context.Context, b *Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error)
+
+// AsyncProviderHandler は、provider/invoke に後から答えるハンドラーである。
+type AsyncProviderHandler func(ctx context.Context, b *Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error))
+
+// Provider は、宣言ファイルの provides に書いた本体の操作 op のハンドラーを登録する（FR-94）。
+// 同じ op を 2 回登録するか（ProviderAsync との重複を含む）、Serve の後に呼ぶと panic する。
+// 登録していない操作の provider/invoke には、JSON-RPC のエラー（InvalidParams）を応答する。
+//
+// req: FR-94
+func (s *Server) Provider(op ext.Operation, h ProviderHandler) {
+	register(s, s.providers, "provider", string(op), syncEntry[ext.ProviderInvokeParams, ext.ProviderInvokeResult](h))
+}
+
+// ProviderAsync は、Provider の非同期版である。
+func (s *Server) ProviderAsync(op ext.Operation, h AsyncProviderHandler) {
+	register(s, s.providers, "provider", string(op), asyncEntry[ext.ProviderInvokeParams, ext.ProviderInvokeResult](h))
+}
+
 func register[P, R any](s *Server, m map[string]entry[P, R], kind, id string, h entry[P, R]) {
 	s.mustNotStarted()
 	if _, dup := m[id]; dup {

@@ -46,9 +46,19 @@ func TestMessageJSON(t *testing.T) {
 
 	t.Run("initialize", func(t *testing.T) {
 		roundTrip(t, InitializeParams{APIVersion: APIVersion, Settings: json.RawMessage(`{"a":1}`)},
-			`{"apiVersion":"0.3.0","settings":{"a":1}}`)
-		roundTrip(t, InitializeParams{APIVersion: APIVersion}, `{"apiVersion":"0.3.0"}`)
-		roundTrip(t, InitializeResult{APIVersion: APIVersion}, `{"apiVersion":"0.3.0"}`)
+			`{"apiVersion":"0.4.0","settings":{"a":1}}`)
+		roundTrip(t, InitializeParams{APIVersion: APIVersion}, `{"apiVersion":"0.4.0"}`)
+		roundTrip(t, InitializeResult{APIVersion: APIVersion}, `{"apiVersion":"0.4.0"}`)
+	})
+	t.Run("provider/invoke", func(t *testing.T) {
+		rg := testRange
+		roundTrip(t, ProviderInvokeParams{
+			Operation: OpFormat, Buffer: 2, Version: 5, Cursor: Position{Line: 1, Byte: 2}, Range: &rg,
+			Args: json.RawMessage(`{"peek":true}`), Sync: true,
+		}, `{"operation":"format","buffer":2,"version":5,"cursor":{"line":1,"byte":2},"range":`+testRJSON+
+			`,"count":0,"args":{"peek":true},"sync":true}`)
+		roundTrip(t, ProviderInvokeParams{Operation: OpDebugContinue, Buffer: 1, Withheld: true},
+			`{"operation":"debug.continue","buffer":1,"version":0,"cursor":{"line":0,"byte":0},"count":0,"withheld":true}`)
 	})
 	t.Run("buffer/open", func(t *testing.T) {
 		roundTrip(t, BufferOpenParams{Buffer: 1, Path: "/a.md", FileType: "markdown", Version: 0, Text: "a\nb"},

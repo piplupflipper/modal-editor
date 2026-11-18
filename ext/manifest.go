@@ -32,6 +32,19 @@ type Manifest struct {
 	Activation []Activation `json:"activation"`
 	// Contributes は、拡張機能が追加する操作である。
 	Contributes Contributes `json:"contributes"`
+	// Provides は、拡張機能が引き受ける本体の操作（提供者として名乗る操作）の列である（基本設計 5.1、5.5。FR-94）。
+	// 本体は、操作が呼ばれたら、カーソルのあるバッファのファイルの種類で提供者を選び、provider/invoke で問い合わせる。
+	//
+	// 選び方は次のとおりである（仮。基本設計 5.5）。
+	//
+	//   - その操作を名乗った拡張機能のうち、ファイルの種類の契機（ActivationFileType。設定で足したものを含む）を持たないか、
+	//     その Pattern のどれかがバッファのファイルの種類と一致するものを候補にする
+	//   - 候補のうち、未起動か起動中か稼働中のものを、本体が宣言ファイルを読んだ順に探し、最初のものを使う。
+	//     同じ操作を複数の拡張機能が名乗ったときの選び方は未決（基本設計 10 章）で、それまでは先に読んだものを使う
+	//   - 未起動なら、問い合わせで起動する。provides だけを持つ拡張機能は、Activation を空にしてよい
+	//
+	// この版の API の知らない操作の名前は、Validate が警告にし、本体は問い合わせない。
+	Provides []Operation `json:"provides,omitempty"`
 }
 
 // EnvExtensionDir は、本体が拡張機能の子プロセスに渡す環境変数の名前である（名前は仮。基本設計 5.1）。
@@ -127,6 +140,35 @@ func (m *Manifest) KnownActivation() []Activation {
 	return known
 }
 
+// ProvidesOp は、拡張機能が provides で op を名乗ったかを返す。op はこの版の API の知っている操作に限る。
+func (m *Manifest) ProvidesOp(op Operation) bool {
+	if !op.Known() {
+		return false
+	}
+	for _, p := range m.Provides {
+		if p == op {
+			return true
+		}
+	}
+	return false
+}
+
+// HandlesFileType は、拡張機能が、ファイルの種類 ft のバッファの操作の提供者の候補になるかを返す（Provides の doc）。
+// ファイルの種類の契機を持たない拡張機能は、どのファイルの種類でも候補になる。
+func (m *Manifest) HandlesFileType(ft string) bool {
+	has := false
+	for _, a := range m.Activation {
+		if a.On != ActivationFileType {
+			continue
+		}
+		has = true
+		if a.Pattern == ft {
+			return true
+		}
+	}
+	return !has
+}
+
 // Validate は、宣言ファイルを読み込んだ後の値を検査する。
 // 見つけた誤りをすべて errors.Join でまとめて err に返し、誤りが無ければ err は nil である。
 // err が nil でない宣言ファイルは、拡張機能として使わない。
@@ -134,12 +176,13 @@ func (m *Manifest) KnownActivation() []Activation {
 // 検査するのは次の項目である。
 //
 //   - ID と Command が空でないこと。ID が空白を含まないこと
-//   - Activation が 1 つ以上あること
+//   - Activation か Provides のどちらかが 1 つ以上あること
+//   - Provides に同じ操作が 2 回現れないこと
 //   - 操作の契機は、同じ種類の操作として Contributes にある ID を指すこと
 //   - ファイルの種類の契機は、Pattern が空でないこと
 //   - Contributes の各操作の ID が空でなく、種類をまたいで重複しないこと
 //
-// 未知の種類の契機は誤りにせず、warnings に 1 件ずつ返す。
+// 未知の種類の契機と、未知の操作の名前の provides は、誤りにせず、warnings に 1 件ずつ返す。
 // API の後の版で契機の種類を足しても、古い本体が新しい拡張機能の宣言ファイルを丸ごと拒まないようにするためである。
 // 本体は未知の契機だけを無視する（KnownActivation）。
 // 契機がすべて未知なら、その拡張機能は起動しないが、誤りにはしない。
@@ -187,8 +230,19 @@ func (m *Manifest) Validate() (warnings []error, err error) {
 		}
 	}
 
-	if len(m.Activation) == 0 {
-		errs = append(errs, errors.New("activation が空である"))
+	if len(m.Activation) == 0 && len(m.Provides) == 0 {
+		errs = append(errs, errors.New("activation と provides がどちらも空である"))
+	}
+	seenOps := map[Operation]bool{}
+	for i, op := range m.Provides {
+		path := fmt.Sprintf("provides[%d]", i)
+		switch {
+		case seenOps[op]:
+			errs = append(errs, fmt.Errorf("%s %q が重複する", path, op))
+		case !op.Known():
+			warnings = append(warnings, fmt.Errorf("%s %q は未知の操作なので無視する", path, op))
+		}
+		seenOps[op] = true
 	}
 	for i, a := range m.Activation {
 		path := fmt.Sprintf("activation[%d]", i)

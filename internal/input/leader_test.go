@@ -6,6 +6,62 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
+// LSP と DAP の操作の既定のキー（要件定義 4.11 の 2 つの表）は、leader に従って、提供者へ振り分ける操作として登録する。
+// gq はオペレーターで、ノーマルモードとビジュアルモードで使える。
+//
+// req: FR-95, FR-96
+func TestProviderKeys(t *testing.T) {
+	want := map[string]string{
+		"<Leader>lh": "hover", "K": "hover",
+		"<Leader>ld": "peek.definition", "<Leader>lD": "definition", "<C-]>": "definition",
+		"<Leader>li": "peek.implementation", "<Leader>lI": "implementation",
+		"<Leader>lt": "peek.typeDefinition", "<Leader>lT": "typeDefinition",
+		"<Leader>lr": "references", "<Leader>ln": "rename", "<Leader>la": "codeAction",
+		"<Leader>ls": "documentSymbols", "<Leader>lS": "workspaceSymbols",
+		"<Leader>le": "diagnostic.list", "<Leader>lE": "diagnostic.listAll",
+		"<Leader>lj": "diagnostic.next", "<Leader>lk": "diagnostic.prev",
+		"<Leader>dc": "debug.continue", "<Leader>dp": "debug.pause", "<Leader>dt": "debug.terminate",
+		"<Leader>dr": "debug.restart", "<Leader>db": "breakpoint.toggle", "<Leader>dB": "breakpoint.conditional",
+		"<Leader>dX": "breakpoint.clear", "<Leader>dn": "debug.stepOver", "<Leader>di": "debug.stepIn",
+		"<Leader>do": "debug.stepOut", "<Leader>dl": "debug.runLast", "<Leader>du": "debug.toggleUI",
+	}
+	for _, leader := range []string{"<Space>", ","} {
+		lk := editcmd.MustParseKeys(leader)
+		km, errs := DefaultKeymapLeader(lk)
+		if len(errs) != 0 {
+			t.Fatalf("leader %s: %v", leader, errs)
+		}
+		for keys, id := range want {
+			ks, err := editcmd.ParseKeysLeader(keys, lk)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, ok := km.Lookup(MapNormal, ks)
+			if !ok || b.Kind != BindAction || b.Ref != (editcmd.Ref{ID: id, Extension: ProviderExtension}) {
+				t.Errorf("leader %s, %s: got %+v, %v, want %s", leader, keys, b, ok, id)
+			}
+		}
+		for _, mode := range []MapMode{MapNormal, MapVisual} {
+			b, ok := km.Lookup(mode, editcmd.MustParseKeys("gq"))
+			if !ok || b.Kind != BindOperator || b.Ref != (editcmd.Ref{ID: "format", Extension: ProviderExtension}) {
+				t.Errorf("gq (mode %b): got %+v, %v", mode, b, ok)
+			}
+		}
+	}
+	// <Space> は既定の leader なので、DefaultKeymap でも同じに引ける。
+	if b, ok := DefaultKeymap().Lookup(MapNormal, editcmd.MustParseKeys("<Space>dc")); !ok || b.Ref.ID != "debug.continue" {
+		t.Errorf("DefaultKeymap <Space>dc = %+v, %v", b, ok)
+	}
+	// 本体の操作と接頭辞を共有する leader でも、本体の操作は残る。
+	km, errs := DefaultKeymapLeader(editcmd.MustParseKeys("g"))
+	if len(errs) != 0 {
+		t.Errorf("leader g: %v", errs)
+	}
+	if b, ok := km.Lookup(MapNormal, editcmd.MustParseKeys("gg")); !ok || !b.Ref.Builtin() {
+		t.Errorf("leader g: gg = %+v, %v", b, ok)
+	}
+}
+
 // 設定の leader として受け付けるキーで始まる列は、どのモードでも操作の表に登録でき（先に読むキーの表を共有する）、
 // 先に読むキーで始まる leader は誤りになる。本体の既定の表と拡張機能の <Leader> のキーが、leader の値で登録できなくならない。
 //

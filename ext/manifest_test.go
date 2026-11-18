@@ -80,7 +80,21 @@ func TestManifestValidate(t *testing.T) {
 		{name: "id が空", modify: func(m *Manifest) { m.ID = "" }, want: []string{"id が空"}},
 		{name: "id が空白を含む", modify: func(m *Manifest) { m.ID = "sur round" }, want: []string{`id "sur round" が空白を含む`}},
 		{name: "command が空", modify: func(m *Manifest) { m.Command = "" }, want: []string{"command が空"}},
-		{name: "activation が空", modify: func(m *Manifest) { m.Activation = nil }, want: []string{"activation が空"}},
+		{name: "activation が空", modify: func(m *Manifest) { m.Activation = nil }, want: []string{"activation と provides がどちらも空"}},
+		{
+			name:   "provides があれば activation は空でよい",
+			modify: func(m *Manifest) { m.Activation = nil; m.Provides = []Operation{OpHover, OpDebugContinue} },
+		},
+		{
+			name:   "provides の未知の操作は警告にする",
+			modify: func(m *Manifest) { m.Provides = []Operation{OpHover, "peek"} },
+			warn:   []string{`provides[1] "peek" は未知の操作なので無視する`},
+		},
+		{
+			name:   "provides の重複は誤り",
+			modify: func(m *Manifest) { m.Provides = []Operation{OpHover, OpFormat, OpHover} },
+			want:   []string{`provides[2] "hover" が重複する`},
+		},
 		{
 			name:   "未知の契機は警告にして誤りにしない",
 			modify: func(m *Manifest) { m.Activation = append(m.Activation, Activation{On: "startup"}) },

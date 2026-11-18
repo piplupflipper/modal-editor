@@ -33,6 +33,8 @@ const (
 	fakeFileType = "ft"
 	// fakeSlowInit は、initialize の応答を slowInitDelay だけ遅らせる拡張機能（ID は "slow"）である。
 	fakeSlowInit = "slowinit"
+	// fakeProvider は、本体の操作の提供者（provides）である拡張機能である（provider_test.go）。
+	fakeProvider = "provider"
 )
 
 const (
@@ -252,6 +254,8 @@ func runFakeExt(mode string) int {
 			}
 			return ext.BufferWillSaveResult{}, nil
 		})
+	case fakeProvider:
+		registerFakeProvider(s)
 	case fakeSlowInit:
 		s.OnInitialize(func(context.Context, *server.InitializeEvent) error {
 			time.Sleep(slowInitDelay)

@@ -102,12 +102,14 @@ type Server struct {
 	textObjects map[string]entry[ext.TextObjectResolveParams, ext.TextObjectResolveResult]
 	operators   map[string]entry[ext.OperatorApplyParams, ext.OperatorApplyResult]
 	commands    map[string]entry[ext.CommandExecuteParams, ext.CommandExecuteResult]
-	onInit      func(ctx context.Context, e *InitializeEvent) error
-	onOpen      func(ctx context.Context, e *BufferOpenEvent)
-	onChange    func(ctx context.Context, e *BufferChangeEvent)
-	onClose     func(ctx context.Context, e *BufferCloseEvent)
-	onDidSave   func(ctx context.Context, e *BufferDidSaveEvent)
-	onShutdown  func(ctx context.Context, e *ShutdownEvent)
+	// providers は、provider/invoke のハンドラーである。キーは操作の名前（ext.Operation の文字列）である。
+	providers  map[string]entry[ext.ProviderInvokeParams, ext.ProviderInvokeResult]
+	onInit     func(ctx context.Context, e *InitializeEvent) error
+	onOpen     func(ctx context.Context, e *BufferOpenEvent)
+	onChange   func(ctx context.Context, e *BufferChangeEvent)
+	onClose    func(ctx context.Context, e *BufferCloseEvent)
+	onDidSave  func(ctx context.Context, e *BufferDidSaveEvent)
+	onShutdown func(ctx context.Context, e *ShutdownEvent)
 	// willSave は、buffer/willSave のハンドラーである。登録は 1 つだけで、キーは空文字列である。
 	willSave map[string]entry[ext.BufferWillSaveParams, ext.BufferWillSaveResult]
 
@@ -138,6 +140,7 @@ func New() *Server {
 		textObjects: make(map[string]entry[ext.TextObjectResolveParams, ext.TextObjectResolveResult]),
 		operators:   make(map[string]entry[ext.OperatorApplyParams, ext.OperatorApplyResult]),
 		commands:    make(map[string]entry[ext.CommandExecuteParams, ext.CommandExecuteResult]),
+		providers:   make(map[string]entry[ext.ProviderInvokeParams, ext.ProviderInvokeResult]),
 		willSave:    make(map[string]entry[ext.BufferWillSaveParams, ext.BufferWillSaveResult]),
 		buffers:     make(map[ext.BufferID]*Buffer),
 		stale:       make(map[ext.BufferID]bool),
@@ -338,6 +341,14 @@ func (s *Server) handleRequest(ctx context.Context, req *rpc.Request, reply rpc.
 		query(ctx, s, req, reply, s.commands, func(p *ext.CommandExecuteParams) (ext.BufferID, ext.Version, string) {
 			return p.Buffer, p.Version, p.ID
 		}, func(p *ext.CommandExecuteParams) bool { return p.Withheld }, func(r *ext.CommandExecuteResult, v ext.Version) {
+			if r.Transaction != nil {
+				r.Transaction.BaseVersion = v
+			}
+		})
+	case ext.MethodProviderInvoke:
+		query(ctx, s, req, reply, s.providers, func(p *ext.ProviderInvokeParams) (ext.BufferID, ext.Version, string) {
+			return p.Buffer, p.Version, string(p.Operation)
+		}, func(p *ext.ProviderInvokeParams) bool { return p.Withheld }, func(r *ext.ProviderInvokeResult, v ext.Version) {
 			if r.Transaction != nil {
 				r.Transaction.BaseVersion = v
 			}
