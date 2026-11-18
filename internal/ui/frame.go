@@ -210,4 +210,6 @@ type Frame struct {
 	// PopupCenter は、Popup をカーソルの近くでなく、バッファの表示領域の中央に出すことを表す。
 	// 本体が出す知らせ（:ext sync の結果の内訳。#179 の裁定の、端末多重化ソフトの外の規則）に使う。
 	PopupCenter bool
+	// Tabs は、client のタブの並びである（FR-62）。Renderer.TabLine の場合に、画面の一番上の行にタブの行として出す。
+	Tabs []Tab
 }
