@@ -96,6 +96,9 @@ type Config struct {
 	// ExtensionActivation は extensions.activation の値で、拡張機能の ID から、宣言ファイルの activation に足す契機への対応である
 	// （基本設計 6.7 の「拡張機能ごとの activation の追加」）。足せるのは filetype の契機だけである。
 	ExtensionActivation map[string][]ext.Activation
+	// ExtensionInstall は extensions.install の値で、取得する拡張機能の列である（基本設計 5.6）。
+	// 誤りのある項目は除いてある。呼び出し側が extmgr.Spec に写して extmgr.Sync に渡す。
+	ExtensionInstall []ExtensionInstall
 	// RegisterHistorySize は registers.historySize の値で、レジスターの履歴の件数である（FR-53）。
 	// 項目が無いか誤り（1 未満を含む）なら 0 で、command の既定値（command.DefaultHistorySize）を使う。
 	RegisterHistorySize int
@@ -312,6 +315,8 @@ func (s *source) extensions(v *hujson.Value, cfg *Config) {
 			cfg.ExtensionSettings = s.extensionSettings(m.value, cfg)
 		case "activation":
 			cfg.ExtensionActivation = s.extensionActivation(m.value, cfg)
+		case "install":
+			cfg.ExtensionInstall = s.extensionInstall(m.value)
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", path)
 		}
