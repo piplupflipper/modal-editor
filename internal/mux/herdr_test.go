@@ -187,27 +187,55 @@ func TestHerdrSplitPane(t *testing.T) {
 	}
 }
 
-func TestHerdrSplitPaneDefaultsToCurrentPane(t *testing.T) {
+func TestHerdrSplitPaneDefaults(t *testing.T) {
 	f := newFakeHerdr(t, func(herdrRequest) map[string]any {
 		return ok(map[string]any{"plugin_pane": map[string]any{"pane": paneInfo("wW:p2", "wW:t4")}})
 	})
 	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
-	if _, err := h.SplitPane(testCtx(t), SplitOptions{Direction: Right, Command: Command{Args: []string{"x"}}}); err != nil {
+	if _, err := h.SplitPane(testCtx(t), SplitOptions{Target: "wW:p8", Direction: Right, Command: Command{Args: []string{"x"}}}); err != nil {
 		t.Fatal(err)
 	}
 	p := f.only(t).Params
-	if p["target_pane_id"] != "wW:p7" || p["direction"] != "right" || p["focus"] != false {
-		t.Errorf("params = %v, want target wW:p7, right, focus false", p)
+	if p["target_pane_id"] != "wW:p8" || p["direction"] != "right" || p["focus"] != false {
+		t.Errorf("params = %v, want target wW:p8, right, focus false", p)
 	}
 	if _, ok := p["cwd"]; ok {
 		t.Errorf("Dir が空なのに cwd を送った: %v", p)
 	}
 }
 
+// TestHerdrEmptyTarget は、元のペインが空なら、server の環境変数のペインを既定にせず ErrNoTarget を返すことを確かめる。
+func TestHerdrEmptyTarget(t *testing.T) {
+	f := newFakeHerdr(t, func(herdrRequest) map[string]any { return ok(map[string]any{"type": "ok"}) })
+	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
+	cmd := Command{Args: []string{"x"}}
+	if _, err := h.SplitPane(testCtx(t), SplitOptions{Command: cmd}); !errors.Is(err, ErrNoTarget) {
+		t.Errorf("SplitPane: err = %v, want ErrNoTarget", err)
+	}
+	if err := h.OpenPopup(testCtx(t), PopupOptions{Command: cmd}); !errors.Is(err, ErrNoTarget) {
+		t.Errorf("OpenPopup: err = %v, want ErrNoTarget", err)
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Errorf("リクエストを %d 件送った", n)
+	}
+}
+
+func TestHerdrOpenPopupBusy(t *testing.T) {
+	f := newFakeHerdr(t, func(herdrRequest) map[string]any { return herdrErr("ui_busy", "a popup pane is already open") })
+	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
+	err := h.OpenPopup(testCtx(t), PopupOptions{Target: "wW:p7", Command: Command{Args: []string{"x"}}})
+	if !errors.Is(err, ErrPopupBusy) {
+		t.Errorf("err = %v, want ErrPopupBusy", err)
+	}
+	if he, ok := errors.AsType[*HerdrError](err); !ok || he.Code != "ui_busy" {
+		t.Errorf("err = %v, want HerdrError ui_busy も含む", err)
+	}
+}
+
 func TestHerdrSplitPaneWithoutPaneID(t *testing.T) {
 	f := newFakeHerdr(t, func(herdrRequest) map[string]any { return ok(map[string]any{"type": "ok"}) })
 	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
-	if _, err := h.SplitPane(testCtx(t), SplitOptions{Command: Command{Args: []string{"x"}}}); err == nil {
+	if _, err := h.SplitPane(testCtx(t), SplitOptions{Target: "wW:p7", Command: Command{Args: []string{"x"}}}); err == nil {
 		t.Error("ペインの ID の無い応答を受け付けた")
 	}
 }

@@ -85,7 +85,7 @@ server と client は、server のソケット（Unix ドメインソケット�
 server のソケットのパスは、次の順に決める（仮。FR-59）。
 
 1. 環境変数 `MODAL_EDITOR_SOCKET`（仮。FR-82）があれば、そのパス
-2. tmux の中（環境変数 `TMUX` がある）なら、`tmux display -p -t "$TMUX_PANE" '#{socket_path}:#{session_id}:#{window_id}'` の結果から作った名前
+2. tmux の中（環境変数 `TMUX` がある）なら、`tmux display -p -t "$TMUX_PANE" '#{socket_path}:#{window_id}'` の結果から作った名前
 3. herdr の中なら、herdr のタブの ID から作った名前
 4. どれでもなければ、プロセス ID と乱数から作った名前で、server と編集の client を 1 つのプロセスで動かす（FR-60）
 
@@ -93,7 +93,12 @@ server のソケットのパスは、次の順に決める（仮。FR-59）。
 `-t` を省くと、起動したペインの window ではなく、アクティブな window の ID が返る（PR #178 のレビューで、2026-11-18 に tmux 3.4 で確かめた）。
 `new-window -d` や、server が `split-window -d` で開いたペイン（1.3）で起動したときに、別の window の server に繋いでしまう。
 `TMUX_PANE` には、ペインの子プロセスにペインの ID が入る（tmux 3.4 の `tmux(1)` の「The pane ID is passed to the child process of the pane in the TMUX_PANE environment variable」）。
-tmux のセッションと window の ID は、1 つの tmux のサーバーの中で一意である（同じく `tmux(1)` の「Sessions, window and panes are each numbered with a unique ID」）。
+tmux の window の ID は、1 つの tmux のサーバーの中で一意である（同じく `tmux(1)` の「Sessions, window and panes are each numbered with a unique ID」）。
+名前にセッションの ID は含めない。
+グループにしたセッション（`new-session -t`）では、同じペインの `#{session_id}` が、セッションを足したり消したりするたびに変わった（PR #188 のレビューで、2026-11-18 に tmux 3.4 で確かめた）。
+セッションの ID を含めると、同じ window で後から起動した `modal-editor` が別の名前を作り、2 つ目の server を立ててしまう。
+window の ID だけなら、セッションに依らずに「tmux の window ごとに 1 つ」の server を指せる。
+リンクした window（複数のセッションに出ている同じ window）は、1 つの server になる（PR #188 のオーケストレータの決定）。
 `tmux -L` で別の tmux のサーバーを動かすと ID が重なりうるので、名前には tmux のサーバーのソケットのパス（書式の `socket_path`）も含める（仮）。
 名前は、これらの文字列のハッシュで作る（仮。パスの長さの上限 103 バイト（6.2）に収めるため）。
 herdr のプロセスは、自分のペインの ID（`HERDR_PANE_ID`）を herdr の socket API の `pane.get` で引き、返るペインの `tab_id` で自分のタブの ID を知る（1.3。#184 で確かめた）。
@@ -167,22 +172,36 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 |---|---|---|
 | ペインを分割して開く | `split-window -t <元の client のペイン>`。フォーカスを移さないときは `-d` | 同梱するプラグインの entrypoint を、`placement` を `split` にして `plugin.pane.open` で開く（`target_pane_id` に元の client のペイン） |
 | 中央のポップアップを開く | `display-popup -E -c <tmux の client> -t <元の client のペイン>` | 同梱するプラグインの entrypoint を、`placement` を `popup` にして `plugin.pane.open` で開く |
-| ポップアップを閉じる | 中の client が終わると閉じる（`-E`）。外から閉じるときは `display-popup -C -c <tmux の client>` | 中の client が終わると閉じる。外から閉じるときは `popup.close` |
-| フォーカスを移す | `select-window -t <ペイン> ; select-pane -t <ペイン>` | `pane.focus`。ペインが別のタブにあれば、そのタブへ移る |
+| ポップアップが既に開いているとき | 何も開かずに終了コード 0 で戻る。層はこれを見分けて `ErrPopupBusy` を返す | `ui_busy` が返る。層は `ErrPopupBusy` を返す |
+| ポップアップを閉じる | 中の client が終わると閉じる（`-E`）。外から閉じるときは、層が開いたものがまだ開いているときだけ `display-popup -C -c <tmux の client>` | 中の client が終わると閉じる。外から閉じるときは `popup.close`（誰が開いたものかを問わず閉じる） |
+| フォーカスを移す | 最後に操作された tmux の client がペインの window を表示していれば `select-pane`、そうでなければ `switch-client -c <tmux の client> -t <ペイン>` | `pane.focus`。ペインが別のタブにあれば、そのタブへ移る |
 | ペインを閉じる | `kill-pane` | `pane.close` |
 | 自分のペイン | `TMUX_PANE` | `HERDR_PANE_ID` を `pane.get` で引いた今の ID |
-| server の単位の識別子 | `display -p -t "$TMUX_PANE" '#{socket_path}:#{session_id}:#{window_id}'` | `HERDR_SOCKET_PATH` と、`pane.get` で引いた自分のペインの `tab_id` |
+| server の単位の識別子 | `display -p -t "$TMUX_PANE" '#{socket_path}:#{window_id}'` | `HERDR_SOCKET_PATH` と、`pane.get` で引いた自分のペインの `tab_id` |
 
 tmux 3.4 に `display-popup` があることは、2026-11-18 に `tmux list-commands` で確かめた（#177 の「参考」）。
 server は tmux のペインの中のプロセスではないので、tmux のコマンドには、元の client のペイン（`TMUX_PANE`）を `-t` で渡す。
 `-t` を省いたときの対象はアクティブなものになると推測され（1.2 の `display -p` と同じ）、別の window に開くおそれがあるためである。
+server の環境変数のペイン（server を起動した編集の client のペイン）は、そのペインが閉じたり別の window へ動いたりする（FR-61、FR-112）ので、層は元の client のペインを省いた呼び出しを誤りにする。
 
 `display-popup` には `-c`（どの tmux の client の上に出すか）が要る。
 tmux の client に繋いでいないプロセスから `-c` を省いて打つと、tmux の client が 1 つも無いときは `no current client` で失敗した（2026-11-18、tmux 3.4）。
 client があれば `-c` を省いても開いたが、tmux の client が複数あるときにどれの上に出るかを、元の client のペインから決められない。
 このため層は、`list-clients` で、元の client のペインの window を表示している tmux の client を選び（無ければ同じセッションのもの、複数なら最後に操作されたもの）、`-c` に渡す。
+window は ID だけで比べる。グループにしたセッションでは、同じ window を表示している client のセッションの ID が、ペインから引いたセッションの ID と異なりうるためである（PR #188 のレビュー）。
+
 `display-popup` は、ポップアップが閉じるまで戻らなかった。
-層はこのプロセスを起動したら終わりを待たずに戻るので、起動した後に tmux が返した誤りは呼び出し側に返らない。
+一方、その tmux の client にポップアップが既に開いていると、何も開かずにすぐ終了コード 0 で戻った（PR #188 のレビューで、2026-11-18 に tmux 3.4 で確かめた）。
+層はこの 2 つを見分けるため、中のコマンドの前に一時ディレクトリの印のファイルを作らせ、印ができたら開いたとして戻り、印ができないまま `display-popup` が 0 で終わったら `ErrPopupBusy` を返す。
+外から閉じる `display-popup -C` は、その tmux の client のポップアップを、誰が開いたかを問わず閉じる。
+層が開いたポップアップが開いている間は同じ tmux の client に別のポップアップは開けないので、層は自分の `display-popup` のプロセスが動いている間だけ `-C` を打つ。
+
+herdr の `popup.close` は引数を取らず、`plugin.pane.open` はポップアップのペインの ID を返さず、ポップアップは `pane.list` にも出なかった（2026-11-18、herdr 0.9.0）。
+このため herdr では、層が開いたポップアップかを確かめられず、利用者が入れた他のプラグイン（starkeep など）のポップアップも閉じうる。
+server が自分のポップアップを閉じるときは、ポップアップの部品の client へ server のソケットで終わりを伝える形を基本にし、層の `ClosePopup` は部品の client が応答しないときの最後の手段にする（仮）。
+
+tmux の `FocusPane` が切り替える tmux の client は、最後に操作されたものである。
+キーを受けた編集の client を表示している tmux の client がそれに当たると推測しているが、tmux の client が複数あって、キーを受けた後に別の tmux の client が操作された場合は、そちらを切り替える。
 
 herdr の層は、CLI ではなく socket API（`HERDR_SOCKET_PATH` のソケットに、改行で区切った JSON のリクエストを送る。protocol 22）を使う。
 herdr 0.9.0 の CLI には、ペインの ID を指定してフォーカスを移す操作が無く（`herdr pane focus` は向きだけを受け付ける）、socket API には `pane.focus` があるためである。
@@ -191,8 +210,8 @@ socket API の `pane.split` は起動するコマンドを受け付けないの�
 
 - `plugin.pane.open` の `placement` は、宣言ファイルの値を開くたびに上書きできた。`split` では応答に新しいペインの ID が入り、`target_pane_id` と `direction` のとおりに開いた。中のプロセスには `HERDR_PANE_ID` と `HERDR_TAB_ID` が入った
 - `split` では `width` と `height` を受け付けなかった（`invalid_params`）。このため herdr では、分割したペインの大きさを指定できない
-- `popup` では `target_pane_id` を受け付けなかった（`overlay and popup plugin panes target the active pane`）。ポップアップは、アクティブなペインの上に開く。元の client のペインでキーを受けて開くときは、そのペインがアクティブである
-- `popup` の応答には、ペインの ID が入らなかった。外から閉じるには `popup.close` を使い、開いていなければ `popup_not_open` が返った
+- `popup` では `target_pane_id` を受け付けなかった（`overlay and popup plugin panes target the active pane`）。ポップアップは、アクティブなペインの上に開く。元の client のペインでキーを受けて開くときは、ふつうそのペインがアクティブだが、キーを受けてから層の呼び出しが herdr に届くまでの間に利用者が別のタブへ移ると、移った先に開く
+- `popup` の応答には、ペインの ID が入らなかった。外から閉じるには `popup.close` を使い、開いていなければ `popup_not_open` が返った。ポップアップが開いている間の 2 つ目の `popup` には `ui_busy`（`a popup pane is already open`）が返った
 - `80%` の大きさは端末全体に対する割合で、`env` で渡した環境変数はポップアップの中から読めた。ポップアップと分割したペインは、中のコマンドが終わると閉じた
 - `pane.focus` は、別のタブのペインを指定すると、そのタブへ移ってフォーカスを移した
 - 起動したときの `HERDR_TAB_ID` は、ペインが別のワークスペースへ動いた後、`tab.get` が `tab_not_found` を返す古い ID になっていた。`HERDR_PANE_ID` も古い ID になっていたが、`pane.get` はその古い ID で今のペイン（今の ID と `tab_id`）を返した。このため、自分のタブの ID は `HERDR_TAB_ID` ではなく `pane.get` で得る
@@ -2274,7 +2293,6 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-<<<<<<< HEAD
 | server から client へ送る画面の単位（`internal/ui` の格子の差分か、表示のデータか）。client と server の往復を、要件定義 8.1 の基準で測ってから決める。#182 では仮に `internal/ui` の格子（`ui.Screen`）をそのまま送り、client の `internal/term` が差分を出力する形にした。単位に関わる処理は `internal/protocol` の `screen.go` に寄せてあるが、その箇所だけで差し替えられるのは格子の全体と格子の差分の間だけである。表示のデータの案を測るには、格子への描画（`internal/editor` の render）を境目より後ろ（client の側）へ移す必要がある（2 段目の issue で扱う） | 1.2、2 |
 | 同梱する herdr のプラグインの宣言ファイルを置く場所と、herdr へ登録する手順（登録していないと、herdr の中でポップアップとペインを開けない）。herdr の中のプロセスが自分のタブの ID を知る手段と、ペインの分割とフォーカスの移動の操作は、#184 で確かめて 1.3 に書いた | 1.3 |
 | herdr で、分割したペインの大きさを指定する手段（herdr 0.9.0 の `plugin.pane.open` は `split` の大きさを受け付けない） | 1.3 |

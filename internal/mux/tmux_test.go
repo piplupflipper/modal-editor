@@ -2,6 +2,7 @@ package mux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -107,9 +108,34 @@ func TestTmuxDetectFromEnv(t *testing.T) {
 		t.Errorf("CurrentPane = %q, %v; want %q", pane, err, tt.Pane)
 	}
 	unit, err := m.Unit(ctx)
-	want := tt.Socket + ":" + tt.query(t, tt.Pane, "#{session_id}:#{window_id}")
+	want := tt.Socket + ":" + tt.query(t, tt.Pane, "#{window_id}")
 	if err != nil || unit != want {
 		t.Errorf("Unit = %q, %v; want %q", unit, err, want)
+	}
+}
+
+// TestTmuxUnitStableInGroupedSessions は、グループにしたセッションを足したり消したりして
+// 同じペインの session_id が変わっても、Unit が変わらないことを確かめる（PR #188 のレビュー）。
+func TestTmuxUnitStableInGroupedSessions(t *testing.T) {
+	tt := newTestTmux(t)
+	ctx := testCtx(t)
+	before, err := tt.Unit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionBefore := tt.query(t, tt.Pane, "#{session_id}")
+	if _, err = tt.run(ctx, "new-session", "-d", "-t", tt.session, "-s", "grouped"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tt.run(ctx, "kill-session", "-t", tt.session); err != nil {
+		t.Fatal(err)
+	}
+	if s := tt.query(t, tt.Pane, "#{session_id}"); s == sessionBefore {
+		t.Fatalf("session_id が変わらなかった（%s）。前提が崩れている", s)
+	}
+	after, err := tt.Unit(ctx)
+	if err != nil || after != before {
+		t.Errorf("Unit = %q, %v; want 変わらずに %q", after, err, before)
 	}
 }
 
@@ -121,7 +147,7 @@ func TestTmuxUnitFollowsPaneNotActiveWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	unit, err := tt.Unit(ctx)
-	want := tt.Socket + ":" + tt.query(t, tt.Pane, "#{session_id}:#{window_id}")
+	want := tt.Socket + ":" + tt.query(t, tt.Pane, "#{window_id}")
 	if err != nil || unit != want {
 		t.Errorf("Unit = %q, %v; want %q", unit, err, want)
 	}
@@ -136,6 +162,7 @@ func TestTmuxSplitPane(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 	dir := t.TempDir()
 	pane, err := tt.SplitPane(ctx, SplitOptions{
+		Target:    tt.Pane,
 		Direction: Right,
 		Size:      30,
 		Command:   Command{Args: writeCommand(out), Env: map[string]string{"V": "it's $V"}, Dir: dir},
@@ -216,6 +243,95 @@ func TestTmuxFocusPaneInAnotherWindow(t *testing.T) {
 	}
 }
 
+// TestTmuxFocusPaneInAnotherSession は、tmux の client が別のセッションを表示しているとき、
+// FocusPane がその client をペインのセッションへ切り替えることを確かめる（FR-112 で動かした client。PR #188 のレビュー）。
+func TestTmuxFocusPaneInAnotherSession(t *testing.T) {
+	tt := newTestTmux(t)
+	ctx := testCtx(t)
+	other, err := tt.run(ctx, "new-session", "-d", "-s", "other", "-P", "-F", "#{pane_id}", "sleep 600")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other = strings.TrimSpace(other)
+	if _, err = tt.run(ctx, "split-window", "-d", "-t", other, "sleep 600"); err != nil {
+		t.Fatal(err)
+	}
+	client := tt.attachClient(t, tt.session)
+	if err = tt.FocusPane(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	out, err := tt.run(ctx, "list-clients", "-F", "#{client_name}\t#{session_name}\t#{pane_id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := client + "\tother\t" + other; strings.TrimSpace(out) != want {
+		t.Errorf("list-clients = %q, want %q", strings.TrimSpace(out), want)
+	}
+}
+
+// TestTmuxFocusPaneSameWindow は、client が表示している window の中のペインへ移ることを確かめる。
+func TestTmuxFocusPaneSameWindow(t *testing.T) {
+	tt := newTestTmux(t)
+	ctx := testCtx(t)
+	other, err := tt.run(ctx, "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", tt.Pane, "sleep 600")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other = strings.TrimSpace(other)
+	tt.attachClient(t, tt.session)
+	if err = tt.FocusPane(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if got := tt.query(t, other, "#{pane_active}"); got != "1" {
+		t.Errorf("pane_active = %s, want 1", got)
+	}
+}
+
+func TestTmuxFocusPaneUnknown(t *testing.T) {
+	tt := newTestTmux(t)
+	if err := tt.FocusPane(testCtx(t), "%999"); err == nil {
+		t.Error("無いペインへ移って誤りにならなかった")
+	}
+}
+
+// TestTmuxPopupClientInGroupedSession は、グループにしたセッションで、元のペインの window を表示している
+// tmux の client を選ぶことを確かめる（PR #188 のレビュー）。
+func TestTmuxPopupClientInGroupedSession(t *testing.T) {
+	tt := newTestTmux(t)
+	ctx := testCtx(t)
+	if _, err := tt.run(ctx, "new-window", "-d", "-t", tt.session, "sleep 600"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tt.run(ctx, "new-session", "-d", "-t", tt.session, "-s", "grouped"); err != nil {
+		t.Fatal(err)
+	}
+	// grouped の client は別の window を表示させる。
+	if _, err := tt.run(ctx, "select-window", "-t", "grouped:1"); err != nil {
+		t.Fatal(err)
+	}
+	showing := tt.attachClient(t, tt.session)
+	tt.attachClient(t, "grouped")
+	got, err := tt.client(ctx, tt.Pane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != showing {
+		t.Errorf("client = %s, want 元のペインの window を表示している %s", got, showing)
+	}
+}
+
+func TestTmuxEmptyTarget(t *testing.T) {
+	tt := newTestTmux(t)
+	ctx := testCtx(t)
+	cmd := Command{Args: []string{"true"}}
+	if _, err := tt.SplitPane(ctx, SplitOptions{Command: cmd}); !errors.Is(err, ErrNoTarget) {
+		t.Errorf("SplitPane: err = %v, want ErrNoTarget", err)
+	}
+	if err := tt.OpenPopup(ctx, PopupOptions{Command: cmd}); !errors.Is(err, ErrNoTarget) {
+		t.Errorf("OpenPopup: err = %v, want ErrNoTarget", err)
+	}
+}
+
 func TestTmuxClosePaneUnknown(t *testing.T) {
 	tt := newTestTmux(t)
 	if err := tt.ClosePane(testCtx(t), "%999"); err == nil {
@@ -225,21 +341,36 @@ func TestTmuxClosePaneUnknown(t *testing.T) {
 
 func TestTmuxPopupWithoutClient(t *testing.T) {
 	tt := newTestTmux(t)
-	err := tt.OpenPopup(testCtx(t), PopupOptions{Command: Command{Args: []string{"true"}}})
+	err := tt.OpenPopup(testCtx(t), PopupOptions{Target: tt.Pane, Command: Command{Args: []string{"true"}}})
 	if err == nil || !strings.Contains(err.Error(), "no client") {
 		t.Errorf("tmux の client が無いのに err = %v", err)
 	}
 }
 
-// attachClient は、script(1) で疑似端末を作り、その中でテスト用の tmux のサーバーへ client を繋ぐ。
-// script が無ければ skip する。
-func (tt *testTmux) attachClient(t *testing.T) {
+// clientNames は、テスト用の tmux のサーバーの client の名前の集合を返す。
+func (tt *testTmux) clientNames(t *testing.T) map[string]bool {
+	t.Helper()
+	out, err := tt.run(testCtx(t), "list-clients", "-F", "#{client_name}")
+	if err != nil {
+		return nil
+	}
+	names := map[string]bool{}
+	for n := range strings.FieldsSeq(out) {
+		names[n] = true
+	}
+	return names
+}
+
+// attachClient は、script(1) で疑似端末を作り、その中でテスト用の tmux のサーバーの session へ client を繋ぎ、
+// その client の名前を返す。script が無ければ skip する。
+func (tt *testTmux) attachClient(t *testing.T, session string) string {
 	t.Helper()
 	script, err := exec.LookPath("script")
 	if err != nil {
 		t.Skip("script が無い")
 	}
-	attach := shellJoin([]string{tt.Bin, "-S", tt.Socket, "attach", "-t", tt.session})
+	before := tt.clientNames(t)
+	attach := shellJoin([]string{tt.Bin, "-S", tt.Socket, "attach", "-t", session})
 	cmd := exec.Command(script, "-qfec", attach, "/dev/null") //nolint:gosec // テスト用の tmux の client
 	cmd.Env = append(tmuxFreeEnv(), "TERM=xterm-256color")
 	stdin, err := cmd.StdinPipe()
@@ -258,22 +389,91 @@ func (tt *testTmux) attachClient(t *testing.T) {
 	})
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if out, err := tt.run(testCtx(t), "list-clients", "-F", "#{client_name}"); err == nil && strings.TrimSpace(out) != "" {
-			return
+		for n := range tt.clientNames(t) {
+			if !before[n] {
+				return n
+			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Skip("script の中の tmux の client が繋がらない")
+	return ""
+}
+
+// TestTmuxPopupBusy は、ポップアップが開いている間の 2 つ目の OpenPopup が ErrPopupBusy を返し、
+// 中のコマンドを起動しないことを確かめる（PR #188 のレビュー）。
+func TestTmuxPopupBusy(t *testing.T) {
+	tt := newTestTmux(t)
+	tt.attachClient(t, tt.session)
+	ctx := testCtx(t)
+	first := filepath.Join(t.TempDir(), "first")
+	if err := tt.OpenPopup(ctx, PopupOptions{Target: tt.Pane, Command: Command{Args: writeCommand(first)}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFile(t, first)
+	second := filepath.Join(t.TempDir(), "second")
+	err := tt.OpenPopup(ctx, PopupOptions{Target: tt.Pane, Command: Command{Args: writeCommand(second)}})
+	if !errors.Is(err, ErrPopupBusy) {
+		t.Errorf("2 つ目の OpenPopup: err = %v, want ErrPopupBusy", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, statErr := os.Stat(second); statErr == nil {
+		t.Error("2 つ目のポップアップのコマンドが起動した")
+	}
+	if err = tt.ClosePopup(ctx, tt.Pane); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTmuxPopupQuickCommand は、中のコマンドがすぐ終わっても ErrPopupBusy と取り違えないことを確かめる。
+func TestTmuxPopupQuickCommand(t *testing.T) {
+	tt := newTestTmux(t)
+	tt.attachClient(t, tt.session)
+	ctx := testCtx(t)
+	for range 5 {
+		if err := tt.OpenPopup(ctx, PopupOptions{Target: tt.Pane, Command: Command{Args: []string{"true"}}}); err != nil {
+			t.Fatalf("すぐ終わるコマンドで err = %v", err)
+		}
+	}
+}
+
+// TestTmuxClosePopupOnlyOwn は、この層が開いていないポップアップを ClosePopup が閉じないことを確かめる。
+func TestTmuxClosePopupOnlyOwn(t *testing.T) {
+	tt := newTestTmux(t)
+	client := tt.attachClient(t, tt.session)
+	ctx := testCtx(t)
+	// 利用者が開いたポップアップの代わりに、tmux のコマンドで直接開く。
+	out := filepath.Join(t.TempDir(), "other")
+	other := shellJoin(writeCommand(out))
+	cmd := exec.Command(tt.Bin, "-S", tt.Socket, "display-popup", "-E", "-c", client, other) //nolint:gosec // テスト用の tmux
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = tt.run(testCtx(t), "display-popup", "-C", "-c", client)
+		_ = cmd.Wait()
+	})
+	pid, err := strconv.Atoi(strings.Split(waitFile(t, out), "\n")[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = tt.ClosePopup(ctx, tt.Pane); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if syscall.Kill(pid, 0) != nil {
+		t.Error("この層が開いていないポップアップを閉じた")
+	}
 }
 
 func TestTmuxPopup(t *testing.T) {
 	tt := newTestTmux(t)
-	tt.attachClient(t)
+	tt.attachClient(t, tt.session)
 	ctx := testCtx(t)
 	out := filepath.Join(t.TempDir(), "out")
 	dir := t.TempDir()
 	err := tt.OpenPopup(ctx, PopupOptions{
-		Width: 50, Height: 40,
+		Target: tt.Pane, Width: 50, Height: 40,
 		Command: Command{Args: writeCommand(out), Env: map[string]string{"V": "popup value"}, Dir: dir},
 	})
 	if err != nil {
@@ -290,7 +490,7 @@ func TestTmuxPopup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ClosePopup(ctx, ""); err != nil {
+	if err = tt.ClosePopup(ctx, tt.Pane); err != nil {
 		t.Fatal(err)
 	}
 	// ポップアップを閉じると、中のコマンドも終わる。

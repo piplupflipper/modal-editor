@@ -93,18 +93,14 @@ func (h *Herdr) Unit(ctx context.Context) (string, error) {
 // SplitPane は、同梱するプラグインの entrypoint を、placement を split にして plugin.pane.open で開く。
 // opts.Size は使わない（herdr 0.9.0 の plugin.pane.open は、split のときに width と height を受け付けない）。
 func (h *Herdr) SplitPane(ctx context.Context, opts SplitOptions) (string, error) {
-	if err := checkCommand(opts.Command); err != nil {
+	if err := checkCommand(opts.Target, opts.Command); err != nil {
 		return "", err
 	}
 	if err := checkPercent("size", opts.Size); err != nil {
 		return "", err
 	}
-	target := opts.Target
-	if target == "" {
-		target = h.Pane
-	}
 	params := h.openParams("split", opts.Command)
-	params["target_pane_id"] = target
+	params["target_pane_id"] = opts.Target
 	params["focus"] = opts.Focus
 	switch opts.Direction {
 	case Right:
@@ -128,9 +124,11 @@ func (h *Herdr) SplitPane(ctx context.Context, opts SplitOptions) (string, error
 
 // OpenPopup は、同梱するプラグインの entrypoint を、placement を popup にして plugin.pane.open で開く。
 // herdr 0.9.0 は、ポップアップの target_pane_id を受け付けず（invalid_params）、アクティブなペインの上に開く。
-// このため opts.Target は使わない。元の client のペインでキーを受けて開くときは、そのペインがアクティブである。
+// このため opts.Target は使わない。元の client のペインでキーを受けて開くときは、ふつうそのペインがアクティブだが、
+// キーを受けてからこの呼び出しが herdr に届くまでの間に利用者が別のタブへ移ると、移った先に開く。
+// ポップアップが既に開いていると herdr は ui_busy を返すので、ErrPopupBusy に包んで返す。
 func (h *Herdr) OpenPopup(ctx context.Context, opts PopupOptions) error {
-	if err := checkCommand(opts.Command); err != nil {
+	if err := checkCommand(opts.Target, opts.Command); err != nil {
 		return err
 	}
 	if err := checkPercent("width", opts.Width); err != nil {
@@ -146,10 +144,17 @@ func (h *Herdr) OpenPopup(ctx context.Context, opts PopupOptions) error {
 	if opts.Height > 0 {
 		params["height"] = strconv.Itoa(opts.Height) + "%"
 	}
-	return h.call(ctx, "plugin.pane.open", params, nil)
+	err := h.call(ctx, "plugin.pane.open", params, nil)
+	if he, ok := errors.AsType[*HerdrError](err); ok && he.Code == "ui_busy" {
+		return fmt.Errorf("%w: %w", ErrPopupBusy, err)
+	}
+	return err
 }
 
-// ClosePopup は、popup.close で、開いているポップアップを閉じる。target は使わない。
+// ClosePopup は、popup.close で、開いているポップアップを、誰が開いたものかを問わず閉じる。target は使わない。
+// herdr 0.9.0 の popup.close は引数を取らず、plugin.pane.open はポップアップのペインの ID を返さず、
+// ポップアップは pane.list にも出ない。このため、この層が開いたものかを確かめる手段が無く、
+// 利用者が入れた他のプラグイン（starkeep など）のポップアップも閉じうる（Mux.ClosePopup の doc）。
 // ポップアップが開いていなければ（popup_not_open）、閉じたものとして nil を返す。
 func (h *Herdr) ClosePopup(ctx context.Context, _ string) error {
 	err := h.call(ctx, "popup.close", map[string]any{}, nil)

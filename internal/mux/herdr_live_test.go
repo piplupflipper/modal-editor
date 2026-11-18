@@ -1,6 +1,7 @@
 package mux
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -67,6 +68,7 @@ func TestHerdrLive(t *testing.T) {
 	// ペインを分割して開く。
 	out := filepath.Join(t.TempDir(), "split")
 	split, err := h.SplitPane(ctx, SplitOptions{
+		Target:    pane,
 		Direction: Right,
 		Command:   Command{Args: writeCommand(out), Env: map[string]string{"V": "it's split"}, Dir: os.TempDir()},
 	})
@@ -115,7 +117,7 @@ func TestHerdrLive(t *testing.T) {
 	// ポップアップを開いて、外から閉じる。
 	out = filepath.Join(t.TempDir(), "popup")
 	if err = h.OpenPopup(ctx, PopupOptions{
-		Width: 60, Height: 50,
+		Target: pane, Width: 60, Height: 50,
 		Command: Command{Args: writeCommand(out), Env: map[string]string{"V": "popup"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -125,7 +127,14 @@ func TestHerdrLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = h.ClosePopup(ctx, ""); err != nil {
+	// 開いている間の 2 つ目は ErrPopupBusy になる。
+	second := filepath.Join(t.TempDir(), "second")
+	err = h.OpenPopup(ctx, PopupOptions{Target: pane, Command: Command{Args: writeCommand(second)}})
+	t.Logf("2 つ目の OpenPopup: %v", err)
+	if !errors.Is(err, ErrPopupBusy) {
+		t.Errorf("2 つ目の OpenPopup: err = %v, want ErrPopupBusy", err)
+	}
+	if err = h.ClosePopup(ctx, pane); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)

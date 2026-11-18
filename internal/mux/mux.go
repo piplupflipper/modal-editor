@@ -14,7 +14,7 @@
 //
 // # 並行性
 //
-// どの実装も、作った後に状態を変えない。メソッドは複数の goroutine から同時に呼んでよい。
+// メソッドは複数の goroutine から同時に呼んでよい（tmux の実装が持つ、開いたポップアップの表は mutex で守る）。
 // どの操作も外部のコマンドかソケットを使うので時間がかかる。
 // イベントループ（基本設計 2.1）から同期で呼ばず、別の goroutine で呼んで結果をチャネルで受ける前提である。
 package mux
@@ -55,6 +55,13 @@ func (k Kind) String() string {
 // 呼び出し側は、ポップアップを編集の client の画面の中央に描くなど、代わりの手段を取る（基本設計 1.2、1.4）。
 var ErrUnsupported = errors.New("mux: no terminal multiplexer")
 
+// ErrPopupBusy は、ポップアップが既に開いていて、新しいポップアップを開けなかったことを表す。
+// tmux も herdr も、1 つの画面（tmux の client、herdr の端末）にポップアップを 1 つしか開かない。
+var ErrPopupBusy = errors.New("mux: a popup is already open")
+
+// ErrNoTarget は、元の client のペイン（SplitOptions.Target、PopupOptions.Target）が空であることを表す。
+var ErrNoTarget = errors.New("mux: empty target pane")
+
 // Direction は、ペインを分割する向きである。
 type Direction int
 
@@ -79,7 +86,9 @@ type Command struct {
 
 // SplitOptions は、ペインを分割して開くときの指定である。
 type SplitOptions struct {
-	// Target は、分割する元のペインの識別子である（元の client のペイン）。空なら Mux.CurrentPane のペインを使う。
+	// Target は、分割する元のペインの識別子である（元の client のペイン）。空にしない（ErrNoTarget）。
+	// server は、server を起動した編集の client より長く動き（FR-61）、そのペインは閉じたり別の window へ動いたり（FR-112）するので、
+	// Mux.CurrentPane（server の環境変数のペイン）を既定にせず、常に元の client のペインを渡す。
 	Target string
 	// Direction は、分割の向きである。
 	Direction Direction
@@ -95,9 +104,10 @@ type SplitOptions struct {
 
 // PopupOptions は、画面の中央のポップアップを開くときの指定である（FR-67）。
 type PopupOptions struct {
-	// Target は、ポップアップを開いた元のペイン（元の client のペイン）の識別子である。空なら Mux.CurrentPane のペインを使う。
-	// tmux では、このペインを表示している tmux の client の上に開く。
+	// Target は、ポップアップを開いた元のペイン（元の client のペイン）の識別子である。空にしない（ErrNoTarget。SplitOptions.Target と同じ理由）。
+	// tmux では、このペインの window を表示している tmux の client の上に開く。
 	// herdr 0.9.0 は、ポップアップをアクティブなペインの上にしか開けないので、herdr では使わない。
+	// このため herdr では、キーを受けてから開くまでの間に利用者が別のタブへ移ると、移った先のタブの上に開く。
 	Target string
 	// Width と Height は、端末全体に対する百分率（1〜100）である。0 なら端末多重化ソフトの既定に任せる。
 	Width, Height int
@@ -112,11 +122,14 @@ type Mux interface {
 	// Kind は、端末多重化ソフトの種類を返す。
 	Kind() Kind
 
-	// CurrentPane は、Detect に渡した環境変数のペイン（この層を作ったプロセスがいるペイン）の識別子を返す。
+	// CurrentPane は、Detect に渡した環境変数のペインの識別子を返す。
+	// 編集の client が起動したときに、server へ自分のペインを知らせる（基本設計 1.2）のに使う。
+	// server の中で呼ぶと、server を起動した編集の client のペインが返り、今の元の client のペインとは限らない。
 	CurrentPane(ctx context.Context) (string, error)
 
-	// Unit は、server の単位（tmux の window、herdr のタブ）を、ほかの単位と区別できる文字列で返す（基本設計 1.2）。
-	// 呼び出し側は、この文字列から server のソケットのパスを作る（FR-59）。
+	// Unit は、Detect に渡した環境変数のペインの、server の単位（tmux の window、herdr のタブ）を、
+	// ほかの単位と区別できる文字列で返す（基本設計 1.2）。
+	// 編集の client が起動したときに、この文字列から server のソケットのパスを作る（FR-59）のに使う。
 	// 端末多重化ソフトのサーバー（tmux のソケット、herdr のソケット）が異なれば、識別子が同じでも文字列は異なる。
 	Unit(ctx context.Context) (string, error)
 
@@ -125,14 +138,21 @@ type Mux interface {
 	SplitPane(ctx context.Context, opts SplitOptions) (string, error)
 
 	// OpenPopup は、画面の中央のポップアップを開き、中でコマンドを起動する（FR-67）。
-	// コマンドが終わるとポップアップは閉じる。開いた後は待たずに戻る。
+	// コマンドが終わるとポップアップは閉じる。中のコマンドが起動したら、終わりを待たずに戻る。
+	// ポップアップが既に開いていて開けないときは ErrPopupBusy を返す。開いているのが誰のポップアップでも同じである。
 	OpenPopup(ctx context.Context, opts PopupOptions) error
 
-	// ClosePopup は、OpenPopup で開いたポップアップを外から閉じる。
-	// target は、OpenPopup の PopupOptions.Target と同じものを渡す。
+	// ClosePopup は、開いているポップアップを外から閉じる。target は、OpenPopup の PopupOptions.Target と同じものを渡す。
+	//
+	// tmux では、この層が target に開いたポップアップがまだ開いているときだけ閉じ、そうでなければ何もせずに nil を返す。
+	// herdr では、開いているポップアップを、誰が開いたものかを問わず閉じる（popup.close は引数を取らず、
+	// 開いたポップアップの ID も返らないため。herdr 0.9.0）。利用者が入れた他のプラグイン（starkeep など）のポップアップも閉じうる。
+	// このため server が自分のポップアップを閉じるときは、ポップアップの部品の client へ server のソケットで終わりを伝える形を基本にし、
+	// ClosePopup は部品の client が応答しないときの最後の手段にする。
 	ClosePopup(ctx context.Context, target string) error
 
 	// FocusPane は、ペインへフォーカスを移す（FR-63）。ペインが別の window（タブ）にあれば、その window（タブ）へ移る。
+	// 移せないときは誤りを返す。
 	FocusPane(ctx context.Context, pane string) error
 
 	// ClosePane は、ペインを閉じる。
@@ -225,8 +245,11 @@ func isShellSafe(r rune) bool {
 	return strings.ContainsRune("-_./:@%+,", r)
 }
 
-// checkCommand は、起動するコマンドが空でないことを確かめる。
-func checkCommand(c Command) error {
+// checkCommand は、元のペインと起動するコマンドが空でないことを確かめる。
+func checkCommand(target string, c Command) error {
+	if target == "" {
+		return ErrNoTarget
+	}
 	if len(c.Args) == 0 {
 		return errors.New("mux: empty command")
 	}

@@ -135,8 +135,11 @@ func TestShellQuoteLeavesSafeWords(t *testing.T) {
 }
 
 func TestCheckOptions(t *testing.T) {
-	if err := checkCommand(Command{}); err == nil {
+	if err := checkCommand("%1", Command{}); err == nil {
 		t.Error("空のコマンドを受け付けた")
+	}
+	if err := checkCommand("", Command{Args: []string{"x"}}); !errors.Is(err, ErrNoTarget) {
+		t.Errorf("空の元のペイン: err = %v, want ErrNoTarget", err)
 	}
 	for _, v := range []int{-1, 101} {
 		if err := checkPercent("size", v); err == nil {
