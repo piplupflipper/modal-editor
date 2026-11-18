@@ -678,8 +678,9 @@ const (
 )
 
 // PopupShowParams は、popup/show の params である。
-// 本体は、Buffer がカーソルのあるバッファで、Version が現在のバージョン番号と一致する場合だけ表示する。
-// 表示は、次のキー入力かカーソルの移動で消す。新しい popup/show は、前の表示を置き換える。
+// 本体は、Buffer がカーソルのあるバッファで、Version が現在のバージョン番号と一致し、カーソルが Position にある場合だけ表示する。
+// 表示は、次のキー入力かカーソルの移動で消す。届いた時点でカーソルが Position から動いていれば、既に消えたものとして出さない。
+// 新しい popup/show は、前の表示を置き換える。
 type PopupShowParams struct {
 	// Buffer は、表示の基準にするバッファの番号である。
 	Buffer BufferID `json:"buffer"`

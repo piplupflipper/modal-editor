@@ -172,6 +172,8 @@ func request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 			"definitionProvider":         true,
 			"hoverProvider":              map[string]any{},
 			"documentFormattingProvider": true,
+			"referencesProvider":         true,
+			"renameProvider":             true,
 		}
 		if *encodingFlag != "none" {
 			caps["positionEncoding"] = *encodingFlag
@@ -185,7 +187,27 @@ func request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 			return
 		}
 		_ = reply(nil, nil)
-	case "textDocument/definition":
+	case "textDocument/rename":
+		// 開いている文書の TARGET をすべて newName に変える。
+		var p struct {
+			NewName string `json:"newName"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		changes := map[string][]map[string]any{}
+		mu.Lock()
+		for u, text := range docs {
+			for _, o := range occurrences(text, "TARGET") {
+				changes[u] = append(changes[u], map[string]any{"range": rng{position(text, o), position(text, o+6)}, "newText": p.NewName})
+			}
+		}
+		mu.Unlock()
+		if len(changes) == 0 {
+			_ = reply(nil, nil)
+			return
+		}
+		_ = reply(map[string]any{"changes": changes}, nil)
+	case "textDocument/definition", "textDocument/references":
+		// 参照の一覧も、定義の候補と同じく、開いている文書（と -defpath のファイル）の TARGET の位置を返す。
 		var p struct {
 			TextDocument struct{ URI string } `json:"textDocument"`
 		}

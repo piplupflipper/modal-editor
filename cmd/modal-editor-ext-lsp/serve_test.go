@@ -563,7 +563,7 @@ func TestDefinition(t *testing.T) {
 }
 
 // TestDefinitionPeek は、args の peek が true なら、移らずに、移動先の行から下を見出しと一緒に popup/show で出すことを確かめる。
-// sync が true でも、表示は再生の結果を変えないので後から送る。
+// sync が true なら、popup/show を送ってから応答する（hover と同じ。#210）。
 //
 // req: FR-94
 func TestDefinitionPeek(t *testing.T) {
@@ -578,6 +578,9 @@ func TestDefinitionPeek(t *testing.T) {
 		})
 		if !res.OK || res.Open != nil {
 			t.Fatalf("sync %v: peek = %+v", sync, res)
+		}
+		if sync && len(h.popups) == 0 {
+			t.Error("sync: replied before popup/show")
 		}
 		p := receive(t, h.popups, "popup/show")
 		at := positionOf(text, "TARGET", 0)
@@ -638,8 +641,9 @@ func TestDefinitionChoice(t *testing.T) {
 }
 
 // TestHover は、カーソル位置を UTF-16 の位置に変換して textDocument/hover を送り、結果を popup/show で送ることを確かめる。
+// sync が true（マクロの再生中）なら、popup/show を送ってから応答する（#210）。
 //
-// req: FR-30
+// req: FR-30, FR-19
 func TestHover(t *testing.T) {
 	h := startHost(t, hostOptions{maxRestarts: -1})
 	text := "a𝄞b\n日本"
@@ -648,18 +652,85 @@ func TestHover(t *testing.T) {
 	for _, tc := range []struct {
 		cursor ext.Position
 		want   string
+		sync   bool
 	}{
-		{pos(0, 1), "char=𝄞"},
-		{pos(0, 5), "char=b"},
-		{pos(1, 3), "char=本"},
+		{pos(0, 1), "char=𝄞", false},
+		{pos(0, 5), "char=b", false},
+		{pos(1, 3), "char=本", false},
+		{pos(0, 5), "char=b", true},
 	} {
-		if res := h.command(1, cmdHover, tc.cursor, false); !res.OK {
-			t.Fatal("hover: ok = false")
+		if res := h.command(1, cmdHover, tc.cursor, tc.sync); !res.OK || res.Open != nil || res.Transaction != nil {
+			t.Fatalf("hover (sync %v) = %+v", tc.sync, res)
+		}
+		if tc.sync && len(h.popups) == 0 {
+			t.Error("sync hover replied before popup/show")
 		}
 		p := receive(t, h.popups, "popup/show")
 		if p.Buffer != 1 || p.Version != 1 || p.Position != tc.cursor || p.Text != tc.want || p.Format != ext.PopupMarkdown {
 			t.Errorf("cursor %+v: popup/show = %+v, want text %q", tc.cursor, p, tc.want)
 		}
+	}
+}
+
+// TestReplayReferences は、sync が true（マクロの再生中）の参照の一覧が、choice/ask で選ばせず、
+// 候補が 1 つならその位置を応答の open で返し、複数なら知らせて ok を false にする（再生を止める）ことを確かめる。
+//
+// req: FR-94, FR-19
+func TestReplayReferences(t *testing.T) {
+	h := startHost(t, hostOptions{maxRestarts: -1, choose: "1"})
+	h.open(1, "a.go", "one TARGET")
+	h.diagnosticsAt(1, 1)
+	res := h.command(1, ext.OpReferences, pos(0, 0), true)
+	if want := pos(0, 4); !res.OK || res.Open == nil || res.Open.Position == nil || *res.Open.Position != want || res.Open.Buffer == nil || *res.Open.Buffer != 1 {
+		t.Errorf("sync references with one candidate = %+v, want open at %+v", res, want)
+	}
+
+	h.change(1, ext.Edit{Range: ext.Range{Start: pos(0, 0), End: pos(0, 0)}, Text: "TARGET "})
+	if res := h.command(1, ext.OpReferences, pos(0, 0), true); res.OK {
+		t.Errorf("sync references with two candidates = %+v, want ok = false", res)
+	}
+	if m := receive(t, h.msgs, "message/show"); !strings.Contains(m.Text, "再生中は候補を選べない") {
+		t.Errorf("message/show = %q", m.Text)
+	}
+	if len(h.choices) != 0 || len(h.opens) != 0 {
+		t.Errorf("sync references asked or moved: choices %d, opens %d", len(h.choices), len(h.opens))
+	}
+
+	// 再生中でなければ、選ばせて移る。
+	if res := h.command(1, ext.OpReferences, pos(0, 0), false); !res.OK || res.Open != nil {
+		t.Fatalf("references = %+v", res)
+	}
+	receive(t, h.choices, "choice/ask")
+	if o := receive(t, h.opens, "editor/open"); o.Position == nil || *o.Position != pos(0, 11) {
+		t.Errorf("editor/open = %+v, want the second candidate", o)
+	}
+}
+
+// TestReplayRename は、sync が true（マクロの再生中）の名前の変更が、問い合わせたバッファの編集を応答の transaction で返し、
+// 他のバッファの編集を応答の後に buffer/edit で送ることを確かめる。
+//
+// req: FR-94, FR-19
+func TestReplayRename(t *testing.T) {
+	h := startHost(t, hostOptions{maxRestarts: -1})
+	h.open(1, "a.go", "var TARGET = 1")
+	h.diagnosticsAt(1, 1)
+	h.open(2, "b.go", "x := TARGET")
+	h.diagnosticsAt(2, 1)
+	res := h.invoke(ext.ProviderInvokeParams{
+		Operation: ext.OpRename, Buffer: 1, Version: h.vers[1], Cursor: pos(0, 4), Args: json.RawMessage(`{"text":"renamed"}`), Sync: true,
+	})
+	if !res.OK || res.Transaction == nil || res.Open != nil {
+		t.Fatalf("sync rename = %+v, want ok with a transaction", res)
+	}
+	if got := applyEdits(h.texts[1], res.Transaction.Edits); got != "var renamed = 1" || res.Transaction.BaseVersion != h.vers[1] {
+		t.Errorf("transaction = %+v (applied %q)", *res.Transaction, got)
+	}
+	e := receive(t, h.edits, "buffer/edit")
+	if got := applyEdits(h.texts[2], e.Transaction.Edits); e.Buffer != 2 || got != "x := renamed" {
+		t.Errorf("buffer/edit = %+v (applied %q)", e, got)
+	}
+	if m := receive(t, h.msgs, "message/show"); m.Text != "名前を renamed に変えた（2 ファイル）" {
+		t.Errorf("message/show = %q", m.Text)
 	}
 }
 

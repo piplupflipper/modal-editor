@@ -5,12 +5,17 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/ext/server"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 )
+
+// stepDelay は、fakeProvider の debug.stepOver が止まるまでの時間である。
+const stepDelay = 150 * time.Millisecond
 
 // registerFakeProvider は、本体の操作を引き受ける拡張機能（fakeProvider）のハンドラーを登録する。
 // どの操作も、受け取った params を message/show で表示する。format は範囲（無ければ 1 行目）を大文字にする編集を返し、
@@ -32,9 +37,41 @@ func registerFakeProvider(s *server.Server) {
 		show(p)
 		return ext.ProviderInvokeResult{OK: true}, nil
 	}
-	for _, op := range []ext.Operation{ext.OpHover, ext.OpRename, ext.OpDebugContinue, ext.OpBreakpointToggle} {
+	for _, op := range []ext.Operation{ext.OpRename, ext.OpDebugContinue, ext.OpBreakpointToggle} {
 		s.Provider(op, echo)
 	}
+	// hover は、LSP の拡張機能と同じく、本文を問い合わせた位置の popup/show で出す。
+	s.Provider(ext.OpHover, func(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
+		show(p)
+		_ = s.ShowPopup(ext.PopupShowParams{Buffer: p.Buffer, Version: p.Version, Position: p.Cursor, Text: "hover-popup", Format: ext.PopupPlainText})
+		return ext.ProviderInvokeResult{OK: true}, nil
+	})
+	// debug.stepOver は、デバッガーのステップ実行の代役である。stepDelay の後に、カーソルの次の行で止まったことにする。
+	// 再生中でなければ受け付けたことだけを応答し、止まったら editor/open で移す。再生中（sync）なら、止まってから位置を応答の open で返す。
+	// stepDelay の間に次の stepOver が届いたら、動いている間なので失敗する（delve と同じ。#210）。
+	var running atomic.Bool
+	s.ProviderAsync(ext.OpDebugStepOver, func(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
+		if !running.CompareAndSwap(false, true) {
+			_ = s.ShowMessage(ext.MessageError, "debuggee is running")
+			reply(ext.ProviderInvokeResult{OK: false}, nil)
+			return
+		}
+		id := b.ID()
+		to := ext.Position{Line: min(p.Cursor.Line+1, b.LineCount()-1)}
+		open := ext.EditorOpenParams{Buffer: &id, Position: &to, Focus: true}
+		if !p.Sync {
+			reply(ext.ProviderInvokeResult{OK: true}, nil)
+		}
+		go func() { //nolint:gosec // G118: 再生中でなければ応答した後に editor/open を送るので、ハンドラーの ctx は使わない
+			time.Sleep(stepDelay)
+			running.Store(false)
+			if p.Sync {
+				reply(ext.ProviderInvokeResult{OK: true, Open: &open}, nil)
+				return
+			}
+			_, _ = s.OpenEditor(context.Background(), open)
+		}()
+	})
 	s.Provider(ext.OpFormat, func(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
 		show(p)
 		rg := lineRange(b, 0)
@@ -74,7 +111,7 @@ func providerSpecs(t *testing.T) []exthost.Spec {
 		},
 		{
 			ID: "dapx", Command: "/bin/sh", Args: []string{"-c", `FAKE_PROVIDER_ID=dapx exec "$0" "$@"`, exe, fakeExtFlag, fakeProvider},
-			Provides: []ext.Operation{ext.OpDebugContinue, ext.OpHover, ext.OpBreakpointToggle},
+			Provides: []ext.Operation{ext.OpDebugContinue, ext.OpHover, ext.OpBreakpointToggle, ext.OpDebugStepOver},
 		},
 	}
 	if _, err := ext.ValidateManifests(ms); err != nil {
@@ -172,6 +209,72 @@ func TestProviderKeys(t *testing.T) {
 	if got := h.text(); got != "xyz" {
 		t.Errorf("提供者の無い gqq: text = %q", got)
 	}
+}
+
+// マクロの再生の中の提供者の操作は、前の操作の完了を待ってから次へ進む（#210）。
+// <Space>dn を 2 回記録したマクロの再生は、2 回とも止まるのを待ってから進み、記録したときと同じく 2 行進む。
+// 再生の途中のホバーのポップアップは、記録したときと同じく次の移動で消えたものとして扱い、再生の後に残さない。
+// 最後の操作のホバーは、再生の後に出す。
+//
+// req: FR-19, FR-94
+func TestReplayProviderWaits(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.provft": "l0\nl1\nl2\nl3\nl4\nl5\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: providerSpecs(t), FileTypes: map[string]string{".provft": "provft"}}, "a.provft")
+	// lineOf と popupOf はイベントループの goroutine で呼ぶ（eventually の cond の中か do の中）。
+	lineOf := func() int { return h.e.cur.state.Cursor().Line }
+	popupOf := func() string {
+		if h.e.popup == nil {
+			return ""
+		}
+		return h.e.popup.text
+	}
+	line := func() int {
+		var l int
+		h.e.do(func() { l = lineOf() })
+		return l
+	}
+	popup := func() string {
+		var s string
+		h.e.do(func() { s = popupOf() })
+		return s
+	}
+
+	// 記録するときは、止まって移るのを待ってから次のキーを打つ。
+	h.keys("qa<Space>dn")
+	h.eventually("1 回目の停止", func() bool { return lineOf() == 1 })
+	h.keys("<Space>dn")
+	h.eventually("2 回目の停止", func() bool { return lineOf() == 2 })
+	h.keys("q")
+	h.settle()
+
+	// 再生は、2 回目のステップ実行を 1 回目の停止の後に送る。再生の直後に打ったキー（x）は、再生が済んでから処理する。
+	h.keys("gg@ax")
+	h.eventually("再生の後の x", func() bool { return h.e.cur.buf.Text() == "l0\nl1\n2\nl3\nl4\nl5" })
+	if l := line(); l != 2 {
+		t.Errorf("再生の後の行 = %d, want 2", l)
+	}
+	if msg := h.message(); strings.Contains(msg, "running") {
+		t.Errorf("再生の中のステップ実行が失敗した: %q", msg)
+	}
+	h.keys("u")
+	h.settle()
+
+	// 途中のホバーは再生の後に残らない。
+	h.keys("ggqbK")
+	h.eventually("記録のときのホバー", func() bool { return popupOf() == "hover-popup" })
+	h.keys("jq")
+	h.settle()
+	h.keys("gg@b")
+	h.settle()
+	if l, p := line(), popup(); l != 1 || p != "" {
+		t.Errorf("@b の後: line = %d, popup = %q, want 1 and no popup", l, p)
+	}
+
+	// 最後のホバーは再生の後に出す。
+	h.keys("qcKq")
+	h.settle()
+	h.keys("jk@c")
+	h.eventually("@c のホバー", func() bool { return popupOf() == "hover-popup" })
 }
 
 // キーマップの右辺の段階 2 の LSP と DAP のコマンドは、起動の時点で設定の誤りとして知らせる（#203 のレビュー）。
