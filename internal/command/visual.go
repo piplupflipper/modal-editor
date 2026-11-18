@@ -283,6 +283,8 @@ func (s *State) visualOperator(cmd editcmd.Command) error {
 		s.mode = mode
 		s.visual.anchor = s.clampPos(anchor)
 		s.cursor = s.clampPos(cursor)
+		// 望みの列は、Vim の >gv と同じく、ビジュアルモードの中ではずらす前の値を保つ（v>j は前の列へ移る）。
+		// ビジュアルモードを抜けると、exitVisual が戻したカーソルの表示の列から計算し直す（v><Esc>j は字下げの後の列へ移る）。
 		s.want = want
 		s.parser.SetVisual(true)
 	}

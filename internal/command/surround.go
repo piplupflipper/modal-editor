@@ -50,6 +50,7 @@ func checkSurroundChar(c rune) error {
 // 文字単位の範囲では、範囲の直前に開き、直後に閉じを足し、カーソルを囲んだテキストの最初の文字へ置く（saiw( の後のカーソルは単語の頭）。
 // 行単位の範囲（saj(、saip( など）では、vim-sandwich と同じく、開きと閉じをそれぞれ独立した行として、範囲の前と後ろに足す。
 // 開きの行には範囲の最初の行の字下げを、閉じの行には最後の行の字下げを付け、カーソルを最初の行の最初の空白でない文字へ置く。
+// ただし引用符（"、'、`）は行にせず、最初の行の字下げの後と最後の行の末尾の空白の前に足す（saj" は "ab\ncd"）。
 //
 // 回数は、他のオペレーターと同じく対象の回数に掛ける（2saiw( は sa2iw( と同じ）。vim-sandwich は sa の前の回数を
 // 囲む回数として扱うが、ここでは持たない。
@@ -65,6 +66,20 @@ func opSurroundAdd(s *State, cmd editcmd.Command, rg region, _ opOptions) error 
 		ind1, ind2 := leadingBlank(s.line(l1)), leadingBlank(s.line(l2))
 		// アンドゥの後のカーソルは、vim-sandwich と同じく最初の行の頭へ戻す（開きの行を足した位置）。
 		s.markUndoCursor(pos(l1, 0))
+		if isQuote(cmd.Char) {
+			// 引用符は、vim-sandwich の既定のレシピ（linewise が 0）と同じく行にせず、最初の行の最初の空白でない文字の前と、
+			// 最後の行の最後の空白でない文字の後に足す。
+			first := len(ind1)
+			last := len(strings.TrimRight(s.line(l2), " \t"))
+			if err := s.apply(
+				buffer.Edit{Range: emptyRange(pos(l2, last)), Text: closing},
+				buffer.Edit{Range: emptyRange(pos(l1, first)), Text: open},
+			); err != nil {
+				return err
+			}
+			s.setCursorNormal(pos(l1, first+len(open)))
+			return nil
+		}
 		if err := s.apply(
 			buffer.Edit{Range: emptyRange(s.lineEnd(l2)), Text: "\n" + ind2 + closing},
 			buffer.Edit{Range: emptyRange(pos(l1, 0)), Text: ind1 + open + "\n"},
