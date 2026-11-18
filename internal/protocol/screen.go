@@ -7,16 +7,16 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
-// このファイルは、画面の内容を送る単位を決める（基本設計 1.2。10 章の未決の項目を #190 で決めた）。
+// このファイルは、画面の内容を送る単位を決める（基本設計 1.2 と 10 章の未決の項目）。
 //
-// 単位は「internal/ui の格子の差分」である。
+// 単位は、仮に「internal/ui の格子の差分」にした（#190）。
 // server のイベントループは、従来どおり ui.Screen（格子の全体）を組み立てて Draw に入れる。
 // 1 つのプロセスの中の接続（Pipe）は、その Draw を写さずにそのまま渡す。
 // ソケットの接続（socket.go）は、送るときに screenEncoder が前回送った格子と比べて変わった行だけを載せ、
 // 受けるときに screenDecoder が手元の格子に当てて ui.Screen に戻す。
 // client の internal/term の Painter は、戻した格子と前回の格子のセルの差分を端末へ出す。
 //
-// この単位を、要件定義 8.1 の基準で計測する（docs/measurements/stage3-client-server-latency.md）。
+// この単位を要件定義 8.1 の基準で測った結果は docs/measurements/stage3-client-server-latency.md にある（基準をすべての計測では満たさなかった）。
 // もう一方の案（表示のデータを送り、client で格子に描く）に替えるには、
 // 格子への描画（internal/editor の render が呼ぶ ui.Renderer.Render）を client の側へ移す必要がある。
 

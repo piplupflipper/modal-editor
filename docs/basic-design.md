@@ -79,9 +79,29 @@ server は、最後の編集の client が終わったら、残った部品の c
 client は端末のバイト列をキーに解読し（`internal/term`）、キーを server へ送る。
 ESC の単独と ESC で始まる列の区別は読み取りの時間に依存するので（2 章）、解読は端末を持つ client に残す。
 server は client ごとの画面の内容を組み立て、client へ送る。
-送る単位（`internal/ui` の格子の差分か、表示のデータか）は 10 章の未決の項目で、実装の最初に client と server の往復を測ってから決める（要件定義 8 章の段階 3 で確かめること。判定の基準は要件定義 8.1）。
+送る単位（`internal/ui` の格子の差分か、表示のデータか）は 10 章の未決の項目である。
+#190 では仮に格子の差分で実装した。
+server のイベントループは `internal/ui` の格子の全体を組み立て、ソケットの接続は、前回送った格子から変わった行だけを載せる。
+client は届いた行を手元の格子に当て、`internal/term` が前回の格子とのセルの差分を端末へ出す。
+この単位で要件定義 8.1 の応答を測ったところ、基準をすべての計測では満たさなかった（[段階 3 の計測](measurements/stage3-client-server-latency.md)）。
+満たさなかったのは、3 回の計測を 2 組行ったうちの、各組 1〜2 の組み合わせの p99 の遅れの基準で、分けた構成の最大の基準はすべて満たした。
+次の手（表示のデータの案で測り直すか、基準をオーナーと見直すか）は、オーナーの判断を待つ。
+
+server は、画面とクリップボードへの書き込みを、client ごとの置き場に入れて別の goroutine で送り、イベントループは送り終えるのを待たない（#190。PR #187 のレビューの推奨 2）。
+画面は最新の 1 つだけを置き、送る前に次の画面が来たら古い方を捨てる。クリップボードへの書き込みは捨てずに順に送る。
+読み取りの遅い client（固まったペイン）があっても、イベントループと他の client は止まらない。
 
 server と client は、server のソケット（Unix ドメインソケット）の上で JSON-RPC のメッセージをやり取りする（仮。5.3 と同じ `Content-Length` の区切り）。
+メッセージはどれも応答を求めない通知で、メソッドは次のとおりにした（仮。#190）。
+
+| 向き | メソッド | 内容 |
+|---|---|---|
+| client → server | `client/hello` | 接続の最初のメッセージ。client の種類（`edit`、`popup`、`pane`、`wait`）と端末の大きさ。ペインの ID、元の client、待つだけの client が開くファイルは、それぞれを動かす issue で足す |
+| client → server | `client/event` | キー、貼り付け、端末の大きさの変化 |
+| server → client | `screen/draw` | 画面の格子の差分（変わった行）とカーソル |
+| server → client | `clipboard/set` | ホストのクリップボードへの書き込みの依頼（FR-56） |
+
+server は、最初のメッセージが `client/hello` でない接続と、まだ受け付けない種類の client の接続を閉じる。
 server のソケットのパスは、次の順に決める（仮。FR-59）。
 
 1. 環境変数 `MODAL_EDITOR_SOCKET`（仮。FR-82）があれば、そのパス
@@ -120,7 +140,8 @@ server を子にしても、client が終わったときに server を終わら�
 ロックを取った server は、繋げない古い `server.sock`（server が SIGKILL で終わった後に残ったもの）を消してから `bind` する。
 ロックを取れなかった側は、`server.sock` に繋げるまで待ってから繋ぐ（仮に 1 秒まで）。
 `MODAL_EDITOR_SOCKET` の指す server がもう無い（シェルが server より長く残った）ときは、規則 1 を飛ばして規則 2 以降で決める（仮）。
-応答の計測（要件定義 8.1）のために、server だけを指定したソケットで起動するオプションと、指定したソケットの server に編集の client として繋ぐオプションを持つ（仮。名前は実装のときに決める）。
+応答の計測（要件定義 8.1）のために、server だけを指定したソケットで起動するオプション（`-listen <パス>`）と、指定したソケットの server に編集の client として繋ぐオプション（`-connect <パス>`）を持つ（#190）。
+`-listen` の server は端末を使わず、最初に繋いだ編集の client が終わると終わる。
 これを使うと、tmux と herdr の外でも server と編集の client を別のプロセスで動かせる。利用者向けの機能ではない。
 
 server は、最後の編集の client の接続が切れたら、部品の client を閉じてから終わる（FR-61）。
@@ -134,6 +155,8 @@ server は、ペインとその client の組を覚える。
 1 つのプロセスで動かすとき（FR-60）も、server のソケットは待ち受ける。
 端末を持つ client は、同じプロセスの中の編集の client 1 つだけで、server との間はプロセスの中の呼び出しでつなぐ。
 待つだけの client（4.9）と MCP の中継コマンド（6.2）は、ソケットで繋げる。
+server のソケットは、MCP のソケット（6.2）と同じディレクトリ（プロセス ID と乱数の名前）に置く（#190）。
+#190 の時点では待つだけの client が無いので、server のソケットに届いた接続は、受け付けてすぐ閉じる。
 server と編集の client の間の取り決めは同じにし、端末多重化ソフトの中と外で編集の動作を変えない。
 このとき端末多重化ソフトを操作する層は使えないので、ポップアップは編集の client が自分の画面の中央に描く（FR-67）。
 ペインを開く依頼（`pane/open`。FR-115）は、ペインに代えて、同じ部品を中身にした中央のポップアップを編集の client の画面に描いて応える（FR-123）。
@@ -309,11 +332,11 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 | `internal/client` | server への接続、キーの送信、画面の内容の受信と端末への出力（1.2） | 編集の状態 |
 | `internal/diff` | 2 つのバッファの差分の計算と、行の対応の表、`do` と `dp` の編集（6.8）。`github.com/aymanbagabas/go-udiff` を使う。図 2 の機能の層に置き、土台の `internal/buffer` だけを import する（#185） | 表示 |
 | `internal/extmgr` | 拡張機能の取得、ビルド、更新、削除と、ロックファイル（5.6） | 拡張機能のプロセスの管理（`internal/exthost`） |
-| `internal/protocol` | server と client の間のメッセージ（キー、画面の内容、クリップボードへの書き込み）と、接続の口。1 つのプロセスの中の接続（チャネル）。画面を送る単位を決める部分（10 章の未決の項目） | メッセージの意味の処理 |
+| `internal/protocol` | server と client の間のメッセージ（接続の始めの Hello、キー、画面の内容、クリップボードへの書き込み）と、接続の口。1 つのプロセスの中の接続（チャネル）と、server のソケットの上の接続（JSON-RPC）。画面を送る単位を決める部分（仮に格子の差分。1.2 と 10 章の未決の項目） | メッセージの意味の処理 |
 
 `internal/server`、`internal/client`、`internal/protocol` の層は、#182 で次のとおりに決めた。
 
-- `internal/protocol` は `internal/editcmd` と `internal/ui` を import するので、「組み立て」の層（`internal/editor`、`internal/term` と同じ層）に置く
+- `internal/protocol` は `internal/editcmd` と `internal/ui` を import するので、「組み立て」の層（`internal/editor`、`internal/term` と同じ層）に置く。ソケットの上の接続で、土台の `internal/rpc`（メッセージの区切り）も import する（#190）
 - `internal/server` は `internal/editor` を、`internal/client` は `internal/term` を import するので、「組み立て」と「入口」の間に層を 1 つ足して置く。2 つは同じ層で、互いに import しない。両方が `internal/protocol` を import し、`cmd/modal-editor` が両者をつなぐ
 - client から届いたキーには、server が接続ごとに割り当てた識別子（`editor.ClientID`）を付けてイベントループへ渡す（2.1）
 
@@ -2372,7 +2395,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-| server から client へ送る画面の単位（`internal/ui` の格子の差分か、表示のデータか）。client と server の往復を、要件定義 8.1 の基準で測ってから決める。#182 では仮に `internal/ui` の格子（`ui.Screen`）をそのまま送り、client の `internal/term` が差分を出力する形にした。単位に関わる処理は `internal/protocol` の `screen.go` に寄せてあるが、その箇所だけで差し替えられるのは格子の全体と格子の差分の間だけである。表示のデータの案を測るには、格子への描画（`internal/editor` の render）を境目より後ろ（client の側）へ移す必要がある（2 段目の issue で扱う） | 1.2、2 |
+| server から client へ送る画面の単位（`internal/ui` の格子の差分か、表示のデータか）。#190 で格子の差分（変わった行）を実装し、要件定義 8.1 の基準で測った。p99 の遅れの基準を、3 回の計測の 2 組のどちらでも 1〜2 の組み合わせで満たさなかった（[段階 3 の計測](measurements/stage3-client-server-latency.md)）。8.1 の手順では表示のデータの案で測り直すが、その案は格子への描画（`internal/editor` の render）を client の側へ移す必要がある。測り直すか、基準を見直すかは、オーナーの判断を待つ | 1.2、2 |
 | 同梱する herdr のプラグインの宣言ファイルを置く場所と、herdr へ登録する手順（登録していないと、herdr の中でポップアップとペインを開けない）。herdr の中のプロセスが自分のタブの ID を知る手段と、ペインの分割とフォーカスの移動の操作は、#184 で確かめて 1.3 に書いた | 1.3 |
 | herdr で、分割したペインの大きさを指定する手段（herdr 0.9.0 の `plugin.pane.open` は `split` の大きさを受け付けない） | 1.3 |
 | server と MCP のソケットのディレクトリが異常終了で残ったときの掃除の規則 | 1.2、6.2 |
