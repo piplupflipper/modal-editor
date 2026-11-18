@@ -26,6 +26,12 @@ const envLatency = "MODAL_EDITOR_LATENCY"
 // envLatencyRuns は、統計に使う回数を latencyRuns から変える環境変数である。計測の道具を試すときに少なくする。
 const envLatencyRuns = "MODAL_EDITOR_LATENCY_RUNS"
 
+// envLatencyLog は、外れ値を調べるための記録を置くディレクトリを渡す環境変数である。
+// 指定すると、回ごとの時刻と値（samples.csv。組み合わせ、回、キーを書いた時刻の UNIX ナノ秒、値のナノ秒）、
+// 本体のプロセスを起動した時刻（procs.csv）、本体の標準エラー出力（<組み合わせ>-server.log、-client.log）を書く。
+// GODEBUG=gctrace=1 と一緒に使うと、本体のガベージコレクションの記録が標準エラー出力のファイルに入る。
+const envLatencyLog = "MODAL_EDITOR_LATENCY_LOG"
+
 // 要件定義 8.1 の測り方。
 const (
 	latencyLines   = 10_000 // NFR-05 と同じ形のファイルの行数
@@ -271,6 +277,8 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		t.Fatal(err)
 	}
 
+	name := fmt.Sprintf("%s-%v-%s", op.name, interval, configName(split))
+	logDir := os.Getenv(envLatencyLog)
 	args := []string{path}
 	var srv *exec.Cmd
 	var srvDone chan error
@@ -280,9 +288,14 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		srv.Env = env
 		var out bytes.Buffer
 		srv.Stdout, srv.Stderr = &out, &out
+		if logDir != "" {
+			f := createLog(t, filepath.Join(logDir, name+"-server.log"))
+			srv.Stdout, srv.Stderr = f, f
+		}
 		if err = srv.Start(); err != nil {
 			t.Fatal(err)
 		}
+		appendLog(t, logDir, "procs.csv", fmt.Sprintf("%s,server,%d\n", name, time.Now().UnixNano()))
 		srvDone = make(chan error, 1)
 		go func() { srvDone <- srv.Wait() }()
 		deadline := time.Now().Add(latencyTimeout)
@@ -302,6 +315,10 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 	cmd := exec.Command(bin, args...) //nolint:gosec // 計測する本体を偽の端末の上で起動する
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
+	if logDir != "" {
+		// GODEBUG=gctrace=1 の行を画面に混ぜないよう、標準エラー出力だけをファイルへ出す（本体は標準入力と標準出力で端末を使う）。
+		cmd.Stderr = createLog(t, filepath.Join(logDir, name+"-client.log"))
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	reads := make(chan ptyRead, 4096)
 	go func() {
@@ -320,6 +337,7 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 	if err = cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	appendLog(t, logDir, "procs.csv", fmt.Sprintf("%s,client,%d\n", name, time.Now().UnixNano()))
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	defer func() {
@@ -345,6 +363,7 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		runs = n
 	}
 	var samples []time.Duration
+	var b strings.Builder // 回ごとの記録（MODAL_EDITOR_LATENCY_LOG）。計測の後にまとめて書く
 	for i := range latencyWarmup + runs {
 		pre, preDone, key, keyDone := op.step(i)
 		if pre != "" {
@@ -360,8 +379,37 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		if i >= latencyWarmup {
 			samples = append(samples, end.Sub(start))
 		}
+		fmt.Fprintf(&b, "%s,%d,%d,%d\n", name, i, start.UnixNano(), end.Sub(start).Nanoseconds())
 	}
+	appendLog(t, logDir, "samples.csv", b.String())
 	return statsOf(samples)
+}
+
+// createLog は、計測の記録のファイルを作る。テストの終わりで閉じる。
+func createLog(t *testing.T, path string) *os.File {
+	t.Helper()
+	f, err := os.Create(path) //nolint:gosec // 計測する人が MODAL_EDITOR_LATENCY_LOG で指定したディレクトリに書く
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
+}
+
+// appendLog は、dir が空でなければ、dir/name に s を書き足す。
+func appendLog(t *testing.T, dir, name, s string) {
+	t.Helper()
+	if dir == "" {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // 計測する人が指定したディレクトリに書く
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err = f.WriteString(s); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // vscreen は、本体が端末へ書いた出力から作った画面の文字である。internal/term の Painter が使う制御シーケンスだけを解釈する
