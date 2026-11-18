@@ -51,6 +51,8 @@ type fakeOptions struct {
 	// StopDelayMs は、continue、next、stepIn、stepOut の応答から stopped の event までの時間（ミリ秒）である。
 	// 0 でなければ、その間はデバッグ対象が動いていることにし、続行とステップ実行の request に失敗を返す（delve と同じ。#210）。
 	StopDelayMs int `json:"stopDelayMs"`
+	// ExceptionOnContinue は、continue で次のブレークポイントへ進まずに、その場で reason が exception の stopped を送る（panic の代役）。
+	ExceptionOnContinue bool `json:"exceptionOnContinue"`
 }
 
 type message struct {
@@ -372,6 +374,10 @@ func (a *adapter) killChild() {
 func (a *adapter) resume(command string) {
 	switch command {
 	case "continue":
+		if a.opts.ExceptionOnContinue {
+			a.stopped("exception")
+			return
+		}
 		a.next("breakpoint")
 	case "next":
 		a.stateMu.Lock()

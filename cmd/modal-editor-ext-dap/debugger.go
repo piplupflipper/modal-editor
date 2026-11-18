@@ -190,18 +190,46 @@ type opHandler func(ctx context.Context, b *server.Buffer, p *ext.ProviderInvoke
 
 // waiter は、再生中（p.Sync）の provider/invoke の応答を、操作の完了まで遅らせるための結果の受け口である（基本設計 6 章の冒頭。FR-19）。
 // 本体は再生中に応答を待ってから次の操作へ進むので、応答を遅らせれば、次の操作（2 回目のステップ実行など）は前の操作の完了の後に届く。
-type waiter struct{ ch chan ext.ProviderInvokeResult }
+type waiter struct {
+	ch chan ext.ProviderInvokeResult
+
+	mu sync.Mutex
+	// resolved は、resolve を呼んだことを表す。abandoned は、本体が待つのをやめた（abandon）ことを表す。
+	resolved, abandoned bool
+}
 
 func newWaiter() *waiter { return &waiter{ch: make(chan ext.ProviderInvokeResult, 1)} }
 
-// resolve は、結果を届ける。2 回目からは捨てる。w が nil なら何もしない。どこから呼んでもよい。
-func (w *waiter) resolve(r ext.ProviderInvokeResult) {
+// resolve は、結果を届け、本体へ応答として届く見込みがあるかを返す。2 回目からは捨てて true を返す。
+// 本体が既に待つのをやめていれば（abandon の後）、届けずに false を返す。呼び出し側は、結果の open を editor/open で送り直す。
+// w が nil なら何もせずに true を返す。どこから呼んでもよい。
+func (w *waiter) resolve(r ext.ProviderInvokeResult) bool {
 	if w == nil {
-		return
+		return true
 	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.resolved {
+		return true
+	}
+	w.resolved = true
+	if w.abandoned {
+		return false
+	}
+	w.ch <- r
+	return true
+}
+
+// abandon は、本体が待つのをやめたことを記録する。既に届いていて応答に使っていない結果があれば、それを返す。
+func (w *waiter) abandon() (ext.ProviderInvokeResult, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.abandoned = true
 	select {
-	case w.ch <- r:
+	case r := <-w.ch:
+		return r, true
 	default:
+		return ext.ProviderInvokeResult{}, false
 	}
 }
 
@@ -209,6 +237,7 @@ func (w *waiter) resolve(r ext.ProviderInvokeResult) {
 // h が waiter を返したら、別の goroutine でその結果を待ってから応答する。Server のループは止めない。
 // 本体が待つのをやめた（期限を超えて $/cancel を送った）ら、waiter を外して取り消しで応答する。
 // その後の停止は、再生中でないときと同じく editor/open で知らせる。
+// 期限とほぼ同時に止まり、結果が既に届いていたときも、本体はその応答を捨てるので、結果の open を editor/open で送り直す（#217 のレビュー）。
 func (d *debugger) asyncProvider(h opHandler) server.AsyncProviderHandler {
 	return func(ctx context.Context, b *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
 		res, w := h(ctx, b, p)
@@ -219,12 +248,32 @@ func (d *debugger) asyncProvider(h opHandler) server.AsyncProviderHandler {
 		go func() {
 			select {
 			case r := <-w.ch:
-				reply(r, nil)
+				if ctx.Err() == nil {
+					reply(r, nil)
+					return
+				}
+				d.openLater(r.Open)
 			case <-ctx.Done():
 				d.dropStopWaiter(w)
-				reply(ext.ProviderInvokeResult{}, ctx.Err())
+				if r, ok := w.abandon(); ok {
+					d.openLater(r.Open)
+				}
 			}
+			reply(ext.ProviderInvokeResult{}, ctx.Err())
 		}()
+	}
+}
+
+// openLater は、本体が捨てた応答の open を、再生中でないときと同じく editor/open で送る。open が nil なら何もしない。
+// Server のループの外から呼ぶ。
+func (d *debugger) openLater(open *ext.EditorOpenParams) {
+	if open == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), d.timeouts.request)
+	defer cancel()
+	if _, err := d.srv.OpenEditor(ctx, *open); err != nil {
+		d.logf("editor/open: %v", err)
 	}
 }
 
@@ -868,8 +917,14 @@ func (d *debugger) showStopped(ctx context.Context, path string, line, column in
 	d.mu.Unlock()
 	d.showInfo(fmt.Sprintf("停止した（%s）: %s:%d", reason, path, line+1))
 	if w != nil {
-		w.resolve(ext.ProviderInvokeResult{OK: true, Open: d.stopOpen(ctx, path, line, column, buf, opened)})
-		return
+		if !replayStopReason(reason) {
+			// 記録したときと違う止まり方なので、再生を止める（仮。基本設計 6 章の冒頭）。止まった位置へは下で editor/open で移る。
+			w.resolve(ext.ProviderInvokeResult{OK: false})
+			d.showError(fmt.Sprintf("再生の途中でデバッグ対象が止まった（%s）ので、再生を止めた", reason))
+		} else if w.resolve(ext.ProviderInvokeResult{OK: true, Open: d.stopOpen(ctx, path, line, column, buf, opened)}) {
+			return
+		}
+		// 本体が待つのをやめた後に止まったなら、再生中でないときと同じく editor/open で移る。
 	}
 
 	res, err := d.srv.OpenEditor(ctx, ext.EditorOpenParams{Path: path, Focus: true})
@@ -915,9 +970,24 @@ func (d *debugger) stopOpen(ctx context.Context, path string, line, column int, 
 			return &ext.EditorOpenParams{Buffer: &id, Position: &pos, Version: &version, Focus: true}
 		}
 	}
+	// 開いていないファイルは、本体が開く前なので、ファイルの中身から列をバイトの位置にする。読めなければ行の先頭にする。
 	pos := ext.Position{Line: line}
+	if data, err := os.ReadFile(path); err == nil {
+		ls := strings.Split(string(data), "\n")
+		if line < len(ls) {
+			pos.Byte = utf16ColumnToByte(strings.TrimSuffix(ls[line], "\r"), column, linesStartAt1)
+		}
+	}
 	return &ext.EditorOpenParams{Path: path, Position: &pos, Focus: true}
 }
+
+// replayStopReasons は、再生中の続行、ステップ実行、開始、一時停止が待つ停止の理由（DAP の stopped の reason）である（仮）。
+// 記録したときと同じく、ブレークポイントかステップ実行か一時停止で止まったものとして再生を続ける。
+// それ以外（exception、goto など。delve の panic は exception）は、記録したときと違う止まり方として再生を止める（#217 のレビュー）。
+var replayStopReasons = []string{"step", "breakpoint", "function breakpoint", "data breakpoint", "instruction breakpoint", "pause", "entry"}
+
+// replayStopReason は、reason が再生を続けてよい停止の理由かを返す。
+func replayStopReason(reason string) bool { return slices.Contains(replayStopReasons, reason) }
 
 // stoppedWithoutSource は、止まった位置（ソースのパス）が分からない停止を知らせる。
 // 再生中の操作がこの停止を待っていれば、カーソルを動かさずに成功を返す。

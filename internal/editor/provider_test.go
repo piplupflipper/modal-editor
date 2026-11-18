@@ -275,6 +275,18 @@ func TestReplayProviderWaits(t *testing.T) {
 	h.settle()
 	h.keys("jk@c")
 	h.eventually("@c のホバー", func() bool { return popupOf() == "hover-popup" })
+
+	// 移動しないキー（zz）や、動いて戻るキー（jk）が続いても、記録したときと同じく再生の後に残らない（#217 のレビュー）。
+	for _, rec := range []string{"qeKzzq", "qfKjkq"} {
+		reg := rec[1:2]
+		h.keys("j" + rec)
+		h.settle()
+		h.keys("jk@" + reg)
+		h.settle()
+		if p := popup(); p != "" {
+			t.Errorf("%s の後の @%s: popup = %q, want none", rec, reg, p)
+		}
+	}
 }
 
 // キーマップの右辺の段階 2 の LSP と DAP のコマンドは、起動の時点で設定の誤りとして知らせる（#203 のレビュー）。

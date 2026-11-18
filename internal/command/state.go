@@ -167,7 +167,14 @@ type State struct {
 	// lastPut は、直前に実行した値が貼り付けなら、その記録である（FR-55）。execute が値を実行するたびに prevPut へ移して消すので、
 	// 別の操作を挟むと無くなる。prevPut は、実行中の値の直前の貼り付けの記録で、<C-p> と <C-n>（actPutCycle）が読む。
 	lastPut, prevPut *putRecord
+	// keysFed は、解釈したキーの数である（KeysFed）。マクロの再生で解釈したキーも数える。
+	keysFed uint64
 }
+
+// KeysFed は、この State が解釈したキーの数を返す。利用者が打ったキーに加えて、マクロの再生で解釈したキーも数える。
+// 呼び出し側（internal/editor）は、拡張機能に問い合わせた後に次のキーを解釈したかを、この値の変化で調べる
+// （popup/show を「次のキー入力で消す」規則。基本設計 6.7）。
+func (s *State) KeysFed() uint64 { return s.keysFed }
 
 // KeyParser は、キーを 1 個ずつ受け取り、編集コマンドの値に解釈する口である（基本設計 3 章の「入力の解釈」）。
 // internal/input の *Parser が満たす。internal/input は同じ層のパッケージなので、このパッケージは import せず、
@@ -265,6 +272,7 @@ func (s *State) Feed(k editcmd.Key) Result {
 
 // feed は、キーを 1 個解釈する。マクロの再生もここを通るので、記録はしない。
 func (s *State) feed(k editcmd.Key) {
+	s.keysFed++
 	switch s.mode {
 	case ModeInsert:
 		s.insertKey(k)

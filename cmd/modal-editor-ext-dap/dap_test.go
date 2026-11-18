@@ -743,6 +743,70 @@ func TestReplayStepFailure(t *testing.T) {
 	}
 }
 
+// TestReplayStopsOnException は、再生中の続行で、デバッグ対象がブレークポイントとステップ実行以外の理由（exception）で止まったら、
+// ok を false で返して再生を止め、止まった位置へは editor/open で移すことを確かめる（仮。#217 のレビュー）。
+//
+// req: FR-19
+func TestReplayStopsOnException(t *testing.T) {
+	h := newHost(t, fakeSettings(t, nil, map[string]any{"exceptionOnContinue": true}))
+	h.open(1, srcPath, srcText)
+	h.mustExec(cmdToggleBreakpoint, 2)
+	if res := h.replay(cmdStart, 0); !res.OK {
+		t.Fatalf("start (sync) = %+v", res)
+	}
+	if res := h.replay(cmdContinue, 0); res.OK {
+		t.Errorf("continue stopped by an exception (sync) = %+v, want ok = false", res)
+	}
+	h.waitMessage("再生を止めた")
+	if p := h.waitOpen(); p.Buffer == nil || *p.Buffer != 1 || p.Position.Line != 2 {
+		t.Errorf("editor/open = %+v, want buffer 1 line 2", p)
+	}
+}
+
+// TestReplayStopInUnopenedFile は、再生中の停止の位置が開いていないファイルにあれば、ファイルの中身から列をバイトの位置にして
+// パスで返すことを確かめる（#217 のレビュー）。
+//
+// req: FR-19
+func TestReplayStopInUnopenedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "main.go")
+	if err := os.WriteFile(path, []byte("x\na𝄞b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// DAP の列 4（1 から数える）は、"a𝄞b" の b の前（5 バイト目）。
+	h := newHost(t, fakeSettings(t, nil, map[string]any{"column": 4}))
+	h.open(2, path, "x\na𝄞b")
+	if res := h.invoke(2, cmdToggleBreakpoint, 1, ""); !res.OK {
+		t.Fatal("toggle: ok = false")
+	}
+	if err := h.conn.Notify(ext.MethodBufferClose, ext.BufferCloseParams{Buffer: 2}); err != nil {
+		t.Fatal(err)
+	}
+	h.open(1, srcPath, srcText)
+	res := h.replay(cmdStart, 0)
+	if !res.OK || res.Open == nil || res.Open.Path != path || res.Open.Buffer != nil || res.Open.Position == nil || *res.Open.Position != (ext.Position{Line: 1, Byte: 5}) {
+		t.Errorf("start (sync) = %+v, want open %s at 1:5", res, path)
+	}
+}
+
+// waiter は、本体が待つのをやめた後の結果を届けず、やめる前に届いていた結果を返す。
+func TestWaiterAbandon(t *testing.T) {
+	w := newWaiter()
+	want := ext.ProviderInvokeResult{OK: true}
+	if !w.resolve(want) {
+		t.Error("resolve before abandon = false")
+	}
+	if r, ok := w.abandon(); !ok || r.OK != want.OK {
+		t.Errorf("abandon after resolve = %+v, %v", r, ok)
+	}
+	w = newWaiter()
+	if _, ok := w.abandon(); ok {
+		t.Error("abandon before resolve returned a result")
+	}
+	if w.resolve(want) {
+		t.Error("resolve after abandon = true")
+	}
+}
+
 // TestManifest は、宣言ファイルが検査を通り、provides が引き受ける操作と一致することを確かめる。
 func TestManifest(t *testing.T) {
 	data, err := os.ReadFile("manifest.json")

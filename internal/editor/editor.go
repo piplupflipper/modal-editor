@@ -267,6 +267,9 @@ type Editor struct {
 
 	message ui.Message
 	popup   *popupState
+	// popupMark は、最後に拡張機能の操作（command/execute と provider/invoke）を問い合わせた State と、
+	// その時点の command.State.KeysFed の値である（invokeResult）。showPopup が、問い合わせの後に次のキーを解釈したかを調べる。
+	popupMark popupMark
 	// regList は、:registers で出したレジスターの一覧の窓である（reglist.go）。nil なら出していない。
 	regList *regListState
 	choices []*exthost.ChoiceAskRequest
