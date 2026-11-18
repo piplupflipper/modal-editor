@@ -24,6 +24,8 @@ var keepsTextActions = map[string]bool{
 	"jump-older":         true,
 	"jump-newer":         true,
 	"alternate-buffer":   true,
+	"tab-next":           true,
+	"tab-prev":           true,
 }
 
 // checkReadOnly は、編集を禁止したバッファで、cmd がテキストを変える操作かインサートモードへ移る操作なら、

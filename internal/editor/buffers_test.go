@@ -11,6 +11,7 @@ import (
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // numberedLines は、"<prefix> 1 foo" から "<prefix> n foo" までの n 行を返す。
@@ -74,10 +75,10 @@ func TestJumpListVim(t *testing.T) {
 		{"yG", a("1.0"), 1, "1.0"},
 		{"vG<Esc>", a("1.0"), 1, "30.0"},
 		{"G<C-o>", a("1.0", "30.0"), 0, "1.0"},
-		{"G<C-o><Tab>", a("1.0", "30.0"), 1, "30.0"},
-		{"G<C-o><Tab><Tab>", a("1.0", "30.0"), 1, "30.0"},
+		{"G<C-o><C-i>", a("1.0", "30.0"), 1, "30.0"},
+		{"G<C-o><C-i><C-i>", a("1.0", "30.0"), 1, "30.0"},
 		{"5G10G<C-o><C-o>", a("1.0", "5.0", "10.0"), 0, "1.0"},
-		{"5G10G<C-o><C-o><Tab>", a("1.0", "5.0", "10.0"), 1, "5.0"},
+		{"5G10G<C-o><C-o><C-i>", a("1.0", "5.0", "10.0"), 1, "5.0"},
 		{"5G10G2<C-o>", a("1.0", "5.0", "10.0"), 0, "1.0"},
 		{"5G10G3<C-o>", a("1.0", "5.0"), 2, "10.0"},
 		{"5G10G15G<C-o><C-o>20G", a("1.0", "10.0", "15.0", "5.0"), 4, "20.0"},
@@ -86,7 +87,7 @@ func TestJumpListVim(t *testing.T) {
 		{"5G10G5G<C-o>", a("1.0", "10.0", "5.0"), 1, "10.0"},
 		{"lllG<C-o>", a("1.3", "30.0"), 0, "1.3"},
 		{"<C-o>", "", 0, "1.0"},
-		{"G<Tab>", a("1.0"), 1, "30.0"},
+		{"G<C-i>", a("1.0"), 1, "30.0"},
 		{"5G<C-o><C-o>", a("1.0", "5.0"), 0, "1.0"},
 		// 行の削除と挿入に合わせて行をずらし、消した行の中の項目は消した範囲の最初の行へ寄せる。
 		{"10G20G1G3dd", a("1.0", "7.0", "17.0"), 3, "1.0"},
@@ -122,8 +123,9 @@ func TestJumpListVim(t *testing.T) {
 
 // バッファの切り替え（:e、:b、:bn、:bp、<C-^>）と、バッファをまたぐジャンプリスト。
 // 期待値は、手元の Vim 9.1 で同じ順にキーを打って得た（2026-11-16）。:ls の印は、バッファを閉じずに持つ（隠れたバッファの h）点だけが違う。
+// 未保存の変更の後の手順は、段階 3 のタブ（基本設計 4.4）に合わせて書き直した（#215）。
 //
-// req: FR-08
+// req: FR-08, FR-64
 func TestBufferSwitchVim(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"a.txt": numberedLines("line", 30, " foo"),
@@ -167,18 +169,19 @@ func TestBufferSwitchVim(t *testing.T) {
 		{keys: ":b a.txt<CR>", list: "a.txt:1.0 b.txt:1.0 a.txt:5.0 c.txt:3.0 b.txt:3.0", cur: "a.txt:5.0", alt: "b.txt"},
 		{keys: ":b 1 2<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: "E488"},
 		{keys: ":3b<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: "E481"},
-		// 未保存の変更があれば移らない。! を付けると、変更を残したまま移る。
-		{keys: "ix<Esc>:bn<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: "E37"},
-		{keys: "<C-^>", cur: "a.txt:5.0", alt: "b.txt", msg: "E37"},
-		{keys: ":bn!<CR>", list: "a.txt:1.0 b.txt:1.0 c.txt:3.0 b.txt:3.0 a.txt:5.0", cur: "b.txt:3.0", alt: "a.txt"},
+		// 段階 3 では隠れたバッファが無い（離れたタブもタブの行に残る）ので、未保存の変更があっても E37 で断らずに移る
+		// （基本設計 4.4 の段階 3 のタブとバッファ。Vim 9.1 の :bn! と同じ結果）。
+		{keys: "ix<Esc>:bn<CR>", list: "a.txt:1.0 b.txt:1.0 c.txt:3.0 b.txt:3.0 a.txt:5.0", cur: "b.txt:3.0", alt: "a.txt"},
 		{keys: ":ls<CR>", cur: "b.txt:3.0", alt: "a.txt", msg: strings.Join([]string{
 			`  1 #h + "a.txt"                        line 5`,
 			`  2 %a   "b.txt"                        line 3`,
 			`  3  h   "c.txt"                        line 3`,
 		}, "\n")},
-		// Vim 9.1 と同じく、未保存のバッファの名前を出してそのバッファへ移る。
-		{keys: "<CR>:q<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: `E162: バッファ "a.txt" の変更は保存されていません`},
-		{keys: ":qa<CR>", cur: "a.txt:5.0", alt: "b.txt", msg: "E37"},
+		// :q はカーソルのあるタブとそのバッファを閉じ、裏のタブへ移る（FR-64）。
+		{keys: "<CR>:q<CR>", list: "a.txt:1.0 c.txt:3.0 a.txt:5.0", cur: "a.txt:5.0", alt: ""},
+		// :qa は、未保存のタブがあれば、Vim 9.1 と同じくその名前を出してそのタブへ移る。
+		{keys: ":b3<CR>:qa<CR>", cur: "a.txt:5.0", alt: "c.txt", msg: `E162: バッファ "a.txt" の変更は保存されていません`},
+		{keys: ":qa<CR>", cur: "a.txt:5.0", alt: "c.txt", msg: "E37"},
 	}
 	for _, st := range steps {
 		h.keys(st.keys)
@@ -205,7 +208,7 @@ func TestBufferSwitchVim(t *testing.T) {
 	}
 }
 
-// <C-o> と <C-i> は、バッファをまたいで戻り、進む。移る前のバッファに未保存の変更があれば、Vim 9.1 と同じく E37 で移らない。
+// <C-o> と <C-i> は、バッファをまたいで戻り、進む。<Tab> はタブの移動なので（FR-98）、<C-i> で進む。
 func TestJumpAcrossBuffers(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": numberedLines("line", 30, " foo"), "b.txt": numberedLines("bline", 10, "")})
 	h := start(t, Config{WorkDir: dir}, "a.txt")
@@ -217,9 +220,10 @@ func TestJumpAcrossBuffers(t *testing.T) {
 		{"5G:e b.txt<CR>3G", "a.txt:1.0 a.txt:5.0 b.txt:1.0", 3, "b.txt:3.0", ""},
 		{"<C-o>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 2, "b.txt:1.0", ""},
 		{"<C-o>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 1, "a.txt:5.0", ""},
-		{"<Tab>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 2, "b.txt:1.0", ""},
-		{"<Tab>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 3, "b.txt:3.0", ""},
-		{"ix<Esc><C-o><C-o>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 1, "b.txt:1.0", "E37"},
+		{"<C-i>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 2, "b.txt:1.0", ""},
+		{"<C-i>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 3, "b.txt:3.0", ""},
+		// 段階 3 では、未保存の変更があっても別のタブへ移る（基本設計 4.4 の段階 3 のタブとバッファ）。
+		{"ix<Esc><C-o><C-o>", "a.txt:1.0 a.txt:5.0 b.txt:1.0 b.txt:3.0", 1, "a.txt:5.0", ""},
 	}
 	for _, st := range steps {
 		h.keys(st.keys)
@@ -245,7 +249,8 @@ func TestEnterBufferView(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"a.txt": numberedLines("a", 3, ""), "b.txt": numberedLines("b", 30, ""), "c.txt": numberedLines("c", 30, ""),
 	})
-	h := start(t, Config{WorkDir: dir}, "a.txt")
+	// Vim の測り方に合わせて、タブの行を出さない（出すと表示領域が 1 行減る）。
+	h := start(t, Config{WorkDir: dir, TabLine: ui.TabLineNever}, "a.txt")
 	steps := []struct {
 		keys string
 		top  int // 0 から数えた最初の行
@@ -305,7 +310,7 @@ func TestJumpInMacro(t *testing.T) {
 // マクロの中の Ex コマンドのバッファの切り替え（:e、:b、:bn、:bp）は、その場で動く。
 // 切り替えの後のキーは、移った先のバッファで続く（#172）。
 // 期待値は、Vim 9.1 で同じ 3 つのファイルを開き、レジスター c に同じキーを入れて再生し、P を打って得た（2026-11-18）。
-// 未保存の変更で移れなければ（E37）、Vim 9.1 と同じく再生はそこで止まり、残りのキーは元のバッファでも動かない。
+// 段階 3 では、未保存の変更があってもタブを移る（基本設計 4.4。E37 で止まる場合は無くなった）。
 //
 // req: FR-05
 func TestExBufferSwitchInMacro(t *testing.T) {
@@ -327,10 +332,10 @@ func TestExBufferSwitchInMacro(t *testing.T) {
 		{"2 回の :e", ":e b.txt\ryy:e c.txt\rx", "@cP", map[string]string{"a.txt": "ab", "b.txt": "B1\nB2", "c.txt": "C1\nC2"}, "c.txt", ""},
 		// 同じ行の :w の動作を先に行ってから移る。
 		{":w|e", ":w|e b.txt\ryy", "@cP", map[string]string{"a.txt": "ab", "b.txt": "B1\nB1\nB2"}, "b.txt", ""},
-		// 回数付き。1 回目の x で b.txt が変わるので、2 回目の :bn は E37 で止まる。
-		{"2@c と E37", ":bn\rx", "2@c", map[string]string{"a.txt": "ab", "b.txt": "1\nB2", "c.txt": "C1\nC2"}, "b.txt", "E37"},
-		// x で a.txt が変わるので :bn は E37 で止まり、後ろの x は動かない。
-		{"E37 で止まる", "x:bn\rx", "@c", map[string]string{"a.txt": "b", "b.txt": "B1\nB2", "c.txt": "C1\nC2"}, "a.txt", "E37"},
+		// 回数付き。段階 3 では未保存の変更があってもタブを移るので（基本設計 4.4）、2 回目の :bn も c.txt へ移る（Vim 9.1 の :bn! と同じ）。
+		{"2@c", ":bn\rx", "2@c", map[string]string{"a.txt": "ab", "b.txt": "1\nB2", "c.txt": "1\nC2"}, "c.txt", ""},
+		// x で a.txt が変わっても :bn は移り、後ろの x は b.txt で動く。
+		{"変更の後の :bn", "x:bn\rx", "@c", map[string]string{"a.txt": "b", "b.txt": "1\nB2", "c.txt": "C1\nC2"}, "b.txt", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -372,8 +377,7 @@ func TestExBufferSwitchInMacro(t *testing.T) {
 // req: FR-05, FR-16
 func TestExEditFromEmptyBufferInMacro(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"b.txt": "B1\nB2\n"})
-	h := start(t, Config{WorkDir: dir})
-	check := func(step, want string) {
+	check := func(h *harness, step, want string) {
 		t.Helper()
 		h.settle()
 		h.e.do(func() {
@@ -389,15 +393,19 @@ func TestExEditFromEmptyBufferInMacro(t *testing.T) {
 			}
 		})
 	}
-	h.keys("qc:e b.txt<CR>ix<Esc>q:bd!<CR>@c")
-	check("@c", "xB1\nB2")
+	// 段階 3 では、最後のタブを :bd! で閉じると client が終わるので（FR-114）、名前の無い空のタブへ戻れない。
+	// 段階 2 までの「記録してから :bd! で空のバッファへ戻る」手順に代えて、記録と同じ中身をレジスターに入れ、起動したときの空のタブで再生する。
+	h := start(t, Config{WorkDir: dir})
+	h.e.do(func() { h.e.cur.state.Registers().Set('c', command.Register{Text: ":e b.txt\rix\x1b"}) })
+	h.keys("@c")
+	check(h, "@c", "xB1\nB2")
 	h.keys("x")
-	check("x", "B1\nB2")
+	check(h, "x", "B1\nB2")
 	// 再生の中の yy も、作り直した State のレジスターに入る。
-	h.keys(":bd!<CR>")
-	h.e.do(func() { h.e.cur.state.Registers().Set('c', command.Register{Text: ":e b.txt\ryy"}) })
-	h.keys("@cP")
-	check("yy", "B1\nB1\nB2")
+	h2 := start(t, Config{WorkDir: dir})
+	h2.e.do(func() { h2.e.cur.state.Registers().Set('c', command.Register{Text: ":e b.txt\ryy"}) })
+	h2.keys("@cP")
+	check(h2, "yy", "B1\nB1\nB2")
 }
 
 // :jumps の一覧は、Vim 9.1 と同じ形で出す。期待値は、tmux の上の Vim 9.1 で同じキーを打って得た（2026-11-16）。
@@ -473,7 +481,7 @@ func TestEditorWideStateAcrossBuffers(t *testing.T) {
 
 // :wa、:qa、:wqa、:xa、:bd。
 //
-// req: FR-08
+// req: FR-08, FR-114
 func TestWriteAllQuitAllDelete(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "a1\n", "b.txt": "b1\n", "c.txt": "c1\n"})
 	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt", "b.txt", "c.txt", "a.txt")
@@ -482,7 +490,7 @@ func TestWriteAllQuitAllDelete(t *testing.T) {
 	steps := []struct{ keys, cur, msg string }{
 		{"x:bn!<CR>x:bn!<CR>", "c.txt:1.0", ""},
 		{":qa<CR>", "a.txt:1.0", `E162: バッファ "a.txt"`},
-		// :bd は未保存の変更があれば E89 で閉じず、! で捨てて閉じる。閉じた後は裏のバッファ（c.txt）へ移る。
+		// :bd は未保存の変更があれば E89 で閉じず、! で捨てて閉じる。閉じた後は裏のタブ（c.txt）へ移る。
 		{":bd<CR>", "a.txt:1.0", "E89"},
 		{":bd!<CR>", "c.txt:1.0", ""},
 		{":bd 9<CR>", "c.txt:1.0", "E86"},
@@ -517,23 +525,28 @@ func TestWriteAllQuitAllDelete(t *testing.T) {
 	})
 	h.keys(`\b`)
 	h.eventually("buffer/close", func() bool { return strings.Contains(h.e.message.Text, "close 1") })
-	// 最後のバッファを閉じると、名前の無い空のバッファを作る。
+	// 段階 3 では、最後のタブを閉じると client が終わり、最後の client なので Run が戻る（FR-114、FR-61）。
 	h.keys(":bd<CR>:bd<CR>")
-	h.settle()
-	h.e.do(func() {
-		if got := h.e.bufferList(); got != `  4 %a   "[No Name]"                    line 1` {
-			t.Errorf("最後のバッファを閉じた後の :ls = %q", got)
-		}
-	})
-	h.keys("ix<Esc>:wqa<CR>")
-	h.settle()
-	if got := h.message(); !strings.Contains(got, "E141") {
-		t.Errorf(":wqa の名前の無いバッファ: message = %q", got)
-	}
-	h.keys(":qa!<CR>")
 	select {
 	case err := <-h.done:
+		if err != nil {
+			t.Errorf("最後のタブを :bd で閉じた後の Run = %v", err)
+		}
 		h.done <- err
+	case <-time.After(5 * time.Second):
+		t.Error("最後のタブを :bd で閉じても終わらない")
+	}
+
+	h2 := start(t, Config{WorkDir: dir})
+	h2.keys("ix<Esc>:wqa<CR>")
+	h2.settle()
+	if got := h2.message(); !strings.Contains(got, "E141") {
+		t.Errorf(":wqa の名前の無いバッファ: message = %q", got)
+	}
+	h2.keys(":qa!<CR>")
+	select {
+	case err := <-h2.done:
+		h2.done <- err
 	case <-time.After(5 * time.Second):
 		t.Error(":qa! で終わらない")
 	}

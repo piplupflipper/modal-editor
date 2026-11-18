@@ -53,13 +53,13 @@ func TestDefinitionJumpBackInPTY(t *testing.T) {
 	}
 	p.write(t, "\x0fx:w\r")
 	p.out.WaitFor(t, "a.go の書き出し", written(1))
-	// :ls の一覧の 2 行目に、隠れた裏のバッファ（#h）として b.go が出る。
+	// :ls の一覧の 2 行目に、裏のタブ（#h）として b.go が出る。
 	p.write(t, ":ls\r")
 	p.out.WaitForString(t, `#h   "`)
-	// <C-^> で b.go の TARGET へ移り、x で T を消して書き出し、<C-^> で a.go へ戻って終わる。
+	// <C-^> で b.go の TARGET へ移り、x で T を消して書き出し、<C-^> で a.go へ戻り、:qa で 2 つのタブを閉じて終わる（FR-114）。
 	p.write(t, "\r\x1ex:w\r")
 	p.out.WaitFor(t, "b.go の書き出し", written(2))
-	p.write(t, "\x1e:q\r")
+	p.write(t, "\x1e:qa\r")
 	if err := p.wait(t); err != nil {
 		t.Fatalf("エディタの終了 = %v。出力: %q", err, p.out.String())
 	}

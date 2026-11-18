@@ -35,7 +35,9 @@ var errShellOutputLimit = errors.New("output limit exceeded")
 // shellJob は、実行中の外部のコマンドである。イベントループの goroutine だけが触る。
 type shellJob struct {
 	// bs は、コマンドを打ったバッファである。終わったら、このバッファの State の FinishShell に結果を渡す。
-	bs  *bufferState
+	bs *bufferState
+	// client は、コマンドを打った client である。実行中は、この client のキーだけを列に残す（keyAllowed）。
+	client *clientView
 	req *ex.ShellRequest
 	// cancel は、子プロセスのプロセスグループを終わらせる。
 	cancel context.CancelFunc
@@ -62,7 +64,9 @@ type shellOutcome struct {
 //
 // イベントループは止めない。実行中は、拡張機能のイベント、リサイズ、外での変更の確認の結果などを処理し続ける。
 // FR-82 の環境変数のもとで子が起動した modal-editor（FR-83）が server に繋いでも、イベントループと待ち合わないためである。
-// キーは <C-c>（中断）のほかは処理せずに列に残し、終わってから処理する（仮。#190 の後は、コマンドを打った client のキーだけを止める）。
+// コマンドを打った client のキーは <C-c>（中断）のほかは処理せずに列に残し、終わってから処理する。
+// 他の client のキーは処理する（仮。基本設計 4.9。clients.go の doc）。
+// 作業ディレクトリと、足す環境変数は、コマンドを打った client のもの（ClientInfo）である。
 // 終わったら、結果を shellDone でイベントループへ送り、shellFinished がバッファを変える。
 //
 // req: FR-81
@@ -72,13 +76,14 @@ func (e *Editor) startShell(bs *bufferState, req *ex.ShellRequest, replay []comm
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	job := &shellJob{bs: bs, req: req, cancel: cancel, replay: replay}
+	job := &shellJob{bs: bs, client: e.op, req: req, cancel: cancel, replay: replay}
 	e.shell = job
 	e.message = infoMessage("外部のコマンドを実行しています（<C-c> で中断します）")
 	stop := e.stop
+	dir, env := e.workDir(), e.childEnv()
 	go func() {
 		defer e.recoverPanic()
-		out, status, err := runShell(ctx, cancel, req.Cmd, req.Input, e.cfg.WorkDir, e.cfg.ChildEnv)
+		out, status, err := runShell(ctx, cancel, req.Cmd, req.Input, dir, env)
 		cancel()
 		select {
 		case e.shellDone <- shellOutcome{job: job, out: out, status: status, err: err}:
@@ -97,10 +102,10 @@ func (e *Editor) startShell(bs *bufferState, req *ex.ShellRequest, replay []comm
 	}
 }
 
-// interruptShell は、実行中の外部のコマンドがあり、<C-c> の印が立っていれば中断する。
+// interruptShell は、実行中の外部のコマンドがあり、それを打った client の <C-c> の印が立っていれば中断する。
 // 印は下ろさない（キーの列の <C-c> までの先打ちは、終わった後に shellFinished が捨てる）。
 func (e *Editor) interruptShell() {
-	if e.shell != nil && e.interrupt.Load() && !e.shell.interrupted {
+	if e.shell != nil && e.shell.client.intr.Load() && !e.shell.interrupted {
 		e.shell.interrupted = true
 		e.shell.cancel()
 	}
@@ -115,17 +120,20 @@ func (e *Editor) shellFinished(o shellOutcome) {
 		return
 	}
 	e.shell = nil
-	if e.interrupt.Load() {
+	c := o.job.client
+	if c.intr.Load() {
 		e.interrupt.Store(false)
-		e.keys.dropThrough(interruptKey)
+		c.intr.Store(false)
+		e.keys.dropThrough(interruptKey, c)
 	}
 	if !e.keys.empty() {
 		signal(e.keys.ready)
 	}
 	bs := o.job.bs
-	if !slices.Contains(e.bufs, bs) {
+	if !slices.Contains(e.bufs, bs) || c.detached {
 		return
 	}
+	e.useClient(c)
 	err := o.err
 	switch {
 	case o.job.interrupted:

@@ -175,7 +175,8 @@ func TestSocketRoundTrip(t *testing.T) {
 	c, s := socketPair(t)
 
 	sent := []ClientMessage{
-		Hello{Kind: KindEdit, Width: 80, Height: 24, Files: []string{"/a b.txt", "/c"}, ReadOnly: true},
+		Hello{Kind: KindEdit, Width: 80, Height: 24, Files: []string{"/a b.txt", "/c"}, ReadOnly: true,
+			Pane: "%3", WorkDir: "/home/u/src", Env: []string{"TMUX_PANE=%3"}},
 		Event{Key: editcmd.Key{Code: editcmd.CodeRune, Rune: 'j'}},
 		Event{Key: editcmd.Key{Code: editcmd.CodeRune, Rune: 'w', Mod: editcmd.ModCtrl}},
 		Event{Key: editcmd.Key{Code: editcmd.CodeEsc}},

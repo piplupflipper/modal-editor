@@ -13,7 +13,9 @@
 //	:[N]q[uit][!]              Action の ActionQuit を返す。! が無く、未保存の変更があれば E37 で失敗する
 //	:[range]wq[!] [file]       ActionWrite と ActionQuit を返す
 //	:[range]x[it][!] [file]    変更があるか file を指定したときだけ ActionWrite を返し、続けて ActionQuit を返す
-//	:e[dit][!] [file]    Action の ActionEdit を返す。! が無く、未保存の変更があれば E37 で失敗する
+//	:e[dit][!] [file]    Action の ActionEdit を返す。file が無く（読み直し）、! が無く、未保存の変更があれば E37 で失敗する。
+//	                     file を開くのは新しいタブなので（FR-113）、file があれば未保存の変更を確かめない
+//	:tabm[ove] [N|+N|-N|$]  カーソルのあるタブを動かす ActionTabMove を返す（FR-65）
 //	:[range]s[ubstitute]/pat/rep/[flags] [count]
 //	:[range]g[lobal][!]/pat/cmd
 //	:[range]v[global]/pat/cmd
@@ -146,6 +148,11 @@ const (
 	ActionBufferDelete
 	// ActionRegisterList は、レジスターと履歴の一覧を浮かべる窓に出す動作である（:registers。FR-54）。
 	ActionRegisterList
+	// ActionTabMove は、カーソルのあるタブを、client の中のタブの並びの中で動かす動作である（:tabmove。FR-65）。
+	// Relative が false なら、Count のタブの後ろへ動かす（0 なら先頭、-1 なら末尾。Vim 9.1 の :tabmove N と :tabmove）。
+	// Relative が true なら、Count だけ右（負なら左）へ動かす（:tabmove +N と :tabmove -N）。
+	// Text は、誤りの文言に出す引数である。並びの外を指すかは、タブを持つ呼び出し側が確かめる。
+	ActionTabMove
 )
 
 // BufferOp は、ActionBuffer の操作である。
@@ -201,8 +208,13 @@ type Action struct {
 	Output OutputOp
 	// Buffer は、ActionBuffer の操作である。
 	Buffer BufferOp
-	// Count は、ActionBuffer の回数かバッファの番号（BufferOp の doc）と、ActionJump の進める数である。
+	// Count は、ActionBuffer の回数かバッファの番号（BufferOp の doc）と、ActionJump の進める数と、ActionTabMove の位置である。
 	Count int
+	// Relative は、ActionTabMove の Count が今の位置からの数であることを表す。
+	Relative bool
+	// ClientOnly は、ActionWriteAll で、書き出すバッファを、コマンドを打った client のタブに限ることを表す（:wqa、:xa。基本設計 4.4）。
+	// false なら server のすべてのバッファを書き出す（:wa）。
+	ClientOnly bool
 }
 
 // Deletion は、:d が消した行の記録である。

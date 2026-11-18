@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/piplupflipper/modal-editor/ext"
@@ -14,22 +13,20 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
-// バッファの切り替え（:ls、:b、:bn、:bp、<C-^>）とジャンプリスト（<C-o>、<C-i>）。
+// タブの切り替え（:ls、:b、:bn、:bp、<C-^>、<Tab>、<S-Tab>）とジャンプリスト（<C-o>、<C-i>）。
 //
-// # 隠れたバッファ
+// # タブ
 //
-// 開いたバッファは、切り替えて画面から外れても閉じずに読み込んだまま持つ（Vim の 'hidden' がオンのときの隠れたバッファと同じ）。
-// 拡張機能へは、開いたときの buffer/open だけを送り、切り替えでは buffer/open も buffer/close も送らない。
-// 拡張機能は、画面に出ていないバッファの複製も持ち続ける（LSP の didOpen が続く）。
-//
-// 未保存の変更のあるバッファから離れる操作（:b、:bn、:bp、<C-^>、別のバッファへの <C-o>）は、
-// Vim の 'hidden' がオフの既定と同じく E37 で断る。"!" を付けた :b!、:bn!、:bp! は、変更を残したまま離れる（Vim 9.1 と同じ）。
-// 離れたバッファの未保存の変更は、:q が E162 で知らせる。
-// 拡張機能の editor/open（定義へ移動など）は、未保存の変更があっても移る（変更は残る）。
+// 段階 3 では、開いたバッファはどれかの client のタブになり（tabs.go）、隠れたバッファを持たない（FR-64）。
+// 拡張機能へは、開いたときの buffer/open と閉じたときの buffer/close を送り、タブの切り替えでは送らない。
+// タブを移る操作（:b、:bn、:bp、<C-^>、<Tab>、<S-Tab>、別のタブへの <C-o>）は、未保存の変更があっても断らない
+// （離れたタブも画面のタブの行に残るため。基本設計 4.4 の段階 3 のタブとバッファ）。"!" を付けても同じである。
+// 移る先が別の client のタブなら、移らずにその client のペインへフォーカスを移す（FR-63。focusOwner）。
+// 移る先がどのタブでもないバッファなら、そのバッファを新しいタブにする。
 //
 // # ジャンプリスト
 //
-// ジャンプリストは Vim のウィンドウごとのものに当たり、ウィンドウが 1 つなのでエディタに 1 つ持つ。
+// ジャンプリストは Vim のウィンドウごとのものに当たり、client ごとに 1 つ持つ（viewFields。基本設計 4.4 の段階 3 のジャンプリスト。仮）。
 // 項目はバッファの番号と位置で、上限は Vim と同じ 100 件である。
 // 規則は Vim 9.1（'jumpoptions' が空）に合わせ、手元の Vim 9.1 で getjumplist() を読んで確かめた。
 //
@@ -50,7 +47,6 @@ const maxJumps = 100
 var (
 	errNoAlternate     = errors.New("E23: 裏バッファがありません")
 	errInvalidMarkLine = errors.New("E19: マークの行番号が正しくありません")
-	errLeaveChanged    = errors.New("E37: 最後の変更が保存されていません（! を付けると変更を残したまま移ります）")
 )
 
 // markJumpAt は、bs の位置 p をジャンプリストの末尾に足す（Vim の setpcmark）。
@@ -130,14 +126,17 @@ func (e *Editor) jumpListText() string {
 	return strings.Join(lines, "\n")
 }
 
-// shiftJumps は、バッファ bs のジャンプリストの項目の行を、変更 ch に合わせてずらす（Vim の mark_adjust）。
+// shiftJumps は、すべての client のジャンプリストの、バッファ bs の項目の行を、変更 ch に合わせてずらす（Vim の mark_adjust）。
 func (e *Editor) shiftJumps(bs *bufferState, ch buffer.Change) {
-	for i := range e.jumps {
-		if e.jumps[i].buf != bs.id {
-			continue
-		}
-		for _, ed := range ch.Edits {
-			e.jumps[i].pos = shiftMarkLine(e.jumps[i].pos, ed)
+	for _, c := range e.clients {
+		v := e.viewOf(c)
+		for i := range v.jumps {
+			if v.jumps[i].buf != bs.id {
+				continue
+			}
+			for _, ed := range ch.Edits {
+				v.jumps[i].pos = shiftMarkLine(v.jumps[i].pos, ed)
+			}
 		}
 	}
 }
@@ -180,18 +179,14 @@ type navigator struct {
 // MarkJump は、command.Navigator.MarkJump である。
 func (n navigator) MarkJump(from buffer.Position) { n.e.markJumpAt(n.bs, from) }
 
-// Navigate は、command.Navigator.Navigate である。<C-o>、<C-i>、<C-^> を行う。
+// Navigate は、command.Navigator.Navigate である。<C-o>、<C-i>、<C-^>、<Tab>、<S-Tab> を行う。
 func (n navigator) Navigate(a ex.Action, cursor buffer.Position) (buffer.Position, bool, error) {
 	e := n.e
 	switch {
 	case a.Kind == ex.ActionJump:
 		return e.jumpBy(n.bs, cursor, a.Count)
-	case a.Kind == ex.ActionBuffer && a.Buffer == ex.BufferAlternate:
-		target, err := e.alternate(a.Count)
-		if err != nil {
-			return buffer.Position{}, false, err
-		}
-		if err := e.gotoBuffer(n.bs, target, false); err != nil {
+	case a.Kind == ex.ActionBuffer && (a.Buffer == ex.BufferAlternate || a.Buffer == ex.BufferNext || a.Buffer == ex.BufferPrev):
+		if err := e.bufferAction(n.bs, a); err != nil {
 			return buffer.Position{}, false, err
 		}
 		if e.cur != n.bs {
@@ -230,6 +225,10 @@ func (n navigator) RunActions(acts []ex.Action) (err error) {
 		if err != nil {
 			return err
 		}
+		if e.quit {
+			// 最後のタブを閉じた client は終わるので、再生の残りは捨てる。
+			return fmt.Errorf("%w: replay stopped because the client quit", command.ErrFailed)
+		}
 	}
 	if e.cur != bs {
 		return command.ErrBufferSwitched
@@ -240,7 +239,7 @@ func (n navigator) RunActions(acts []ex.Action) (err error) {
 // jumpBy は、ジャンプリストを count だけ進める（負なら戻る）。bs はカーソルのあるバッファ、cursor はそのカーソルである（Vim 9.1 の movemark）。
 // 移る先が bs の中なら、その位置と true を返す。別のバッファなら、切り替えてカーソルを置き、command.ErrBufferSwitched を返す。
 // 移る先が無ければ command.ErrFailed を包んだエラーを返す（Vim と同じくビープだけで、メッセージは出さない）。
-// 別のバッファへ移るときに bs に未保存の変更があれば E37 を返す。このとき、指す位置は移る先の項目のままにする（Vim 9.1 と同じ）。
+// 移る先が別の client のタブなら、その client のペインへフォーカスを移し、その client のカーソルを項目の位置へ動かす（仮。focusOwner）。
 // 項目が最後の行より後ろを指していれば E19 を返す。
 //
 // ジャンプリストは要件定義の FR のどれにも当たらないので、req: の注釈は付けない（#142 の PR #150 のレビュー）。
@@ -277,8 +276,13 @@ func (e *Editor) jumpBy(bs *bufferState, cursor buffer.Position, count int) (buf
 	if target == bs {
 		return j.pos, true, nil
 	}
-	if bs.buf.Modified() {
-		return buffer.Position{}, false, errLeaveChanged
+	if target.owner != nil && target.owner != e.view {
+		e.focusOwner(target)
+		target.state.SetCursor(j.pos)
+		return buffer.Position{}, false, nil
+	}
+	if target.owner == nil {
+		e.addTab(target)
 	}
 	e.alt = bs
 	e.switchTo(target)
@@ -286,11 +290,22 @@ func (e *Editor) jumpBy(bs *bufferState, cursor buffer.Position, count int) (buf
 	return buffer.Position{}, false, command.ErrBufferSwitched
 }
 
-// enter は、カーソルのあるバッファを bs にする。別のバッファから移るときは、移る前の位置をジャンプリストに足し、
-// 移る前のバッファを裏のバッファ（<C-^> の移り先）にする。
+// enter は、カーソルのあるタブを bs にする。別のタブから移るときは、移る前の位置をジャンプリストに足し、
+// 移る前のタブを裏のタブ（<C-^> の移り先）にする。
+// bs が別の client のタブなら、移らずにその client のペインへフォーカスを移す（FR-63。focusOwner）。
+// bs がどのタブでもなければ、読み込んでいる client の新しいタブにする（FR-113）。
+//
+// req: FR-62, FR-113
 func (e *Editor) enter(bs *bufferState) {
 	if e.cur == bs {
 		return
+	}
+	if bs.owner != nil && bs.owner != e.view {
+		e.focusOwner(bs)
+		return
+	}
+	if bs.owner == nil {
+		e.addTab(bs)
 	}
 	if e.cur != nil {
 		e.markJumpAt(e.cur, e.cur.state.Cursor())
@@ -299,20 +314,14 @@ func (e *Editor) enter(bs *bufferState) {
 	e.switchTo(bs)
 }
 
-// gotoBuffer は、from（カーソルのあるバッファ）から target へ移る（:b、:bn、:bp、<C-^>）。target が from なら何もしない。
-// force が false で from に未保存の変更があれば、E37 で移らない（Vim の 'hidden' がオフの既定と同じ）。
-// force が true なら、変更を残したまま移る（Vim 9.1 の :b! と同じ）。
+// gotoBuffer は、from（カーソルのあるタブ）から target へ移る（:b、:bn、:bp、<C-^>、<Tab>）。target が from なら何もしない。
+// 段階 3 では隠れたバッファが無いので、未保存の変更があっても移る（基本設計 4.4 の段階 3 のタブとバッファ）。
 //
-// req: FR-08
-func (e *Editor) gotoBuffer(from, target *bufferState, force bool) error {
-	if target == from {
-		return nil
+// req: FR-08, FR-98
+func (e *Editor) gotoBuffer(from, target *bufferState) {
+	if target != from {
+		e.enter(target)
 	}
-	if !force && from.buf.Modified() {
-		return errLeaveChanged
-	}
-	e.enter(target)
-	return nil
 }
 
 // alternate は、<C-^> の移り先を返す。n が 0 より大きければ番号 n のバッファ、そうでなければ裏のバッファである。
@@ -343,26 +352,25 @@ func (e *Editor) bufferAction(bs *bufferState, a ex.Action) error {
 		if err != nil || target == nil {
 			return err
 		}
-		return e.gotoBuffer(bs, target, a.Force)
+		e.gotoBuffer(bs, target)
+		return nil
 	case ex.BufferNext, ex.BufferPrev:
-		i := 0
-		for k, o := range e.bufs {
-			if o == bs {
-				i = k
-			}
-		}
+		// req: FR-98
 		step := a.Count
 		if a.Buffer == ex.BufferPrev {
 			step = -step
 		}
-		n := len(e.bufs)
-		return e.gotoBuffer(bs, e.bufs[((i+step)%n+n)%n], a.Force)
+		if next := e.nextTab(bs, step); next != nil {
+			e.gotoBuffer(bs, next)
+		}
+		return nil
 	case ex.BufferAlternate:
 		target, err := e.alternate(a.Count)
 		if err != nil {
 			return err
 		}
-		return e.gotoBuffer(bs, target, a.Force)
+		e.gotoBuffer(bs, target)
+		return nil
 	}
 	return fmt.Errorf("未知のバッファの操作 %d", a.Buffer)
 }
@@ -383,15 +391,17 @@ func (e *Editor) bufferArg(a ex.Action) (*bufferState, error) {
 	return nil, nil
 }
 
-// deleteBuffer は、:bd を行う。引数のバッファ（無ければ bs）を閉じ、拡張機能へ buffer/close を送り、一覧とジャンプリストから除く。
+// deleteBuffer は、:bd を行う。引数のバッファ（無ければ bs）のタブとバッファを閉じ、拡張機能へ buffer/close を送り、
+// 一覧とジャンプリストから除く（closeBufferState）。
 // "!" が無く、閉じるバッファに未保存の変更があれば E89 で閉じない（Vim 9.1 と同じ）。"!" があれば変更を捨てる。
-// カーソルのあるバッファを閉じるときは、裏のバッファ、無ければ一覧の次（無ければ前）のバッファへ移る。
-// 最後のバッファを閉じるときは、名前の無い空のバッファを新しい番号で作って移る（Vim と同じ）。
+// カーソルのあるタブを閉じるときは、裏のタブ、無ければ右の（無ければ左の）タブへ移る。
+// 最後のタブを閉じたら、その client を終える（FR-114。基本設計 4.4 の段階 3 のタブとバッファ）。
+// 別の client のタブは閉じない。
 //
 // Vim の :bd は、バッファを一覧から外すだけで番号とジャンプリストの項目を残すが、ここでは閉じたバッファを持たないので、
 // その項目もジャンプリストから消す。
 //
-// req: FR-08, FR-16
+// req: FR-08, FR-16, FR-64
 func (e *Editor) deleteBuffer(bs *bufferState, a ex.Action) error {
 	target, err := e.bufferArg(a)
 	if err != nil {
@@ -400,49 +410,13 @@ func (e *Editor) deleteBuffer(bs *bufferState, a ex.Action) error {
 	if target == nil {
 		target = bs
 	}
+	if target.owner != nil && target.owner != e.view {
+		return fmt.Errorf("バッファ %d は %s のタブなので、閉じません", target.id, ownerName(target))
+	}
 	if !a.Force && target.buf.Modified() {
 		return fmt.Errorf("E89: バッファ %d の変更は保存されていません (! を付けると破棄します)", target.id)
 	}
-	if target == e.cur {
-		next := e.alt
-		if next == nil || next == target || e.findBuffer(next.id) != next {
-			next = nil
-			i := slices.Index(e.bufs, target)
-			switch {
-			case i+1 < len(e.bufs):
-				next = e.bufs[i+1]
-			case i > 0:
-				next = e.bufs[i-1]
-			}
-		}
-		if next == nil {
-			b := buffer.New("")
-			b.SetFixEndOfLine(e.fixEOL)
-			next = e.newBuffer(b, "", "")
-		}
-		e.enter(next)
-	}
-	if err := e.host.CloseBuffer(target.id); err != nil {
-		e.log.Error("buffer/close を送れない", "err", err)
-	}
-	e.bufs = slices.DeleteFunc(e.bufs, func(o *bufferState) bool { return o == target })
-	if e.alt == target {
-		e.alt = nil
-	}
-	if e.deferred != nil && e.deferred.bs == target {
-		e.deferred = nil
-	}
-	kept := e.jumps[:0]
-	for i, j := range e.jumps {
-		if j.buf == target.id {
-			if i < e.jumpIdx {
-				e.jumpIdx--
-			}
-			continue
-		}
-		kept = append(kept, j)
-	}
-	e.jumps = kept
+	e.closeBufferState(target)
 	return nil
 }
 
@@ -487,36 +461,47 @@ func (e *Editor) bufferName(bs *bufferState) string {
 	if bs.path == "" {
 		return "[No Name]"
 	}
-	if rel, err := filepath.Rel(e.cfg.WorkDir, bs.path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if rel, err := filepath.Rel(e.workDir(), bs.path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return rel
 	}
 	return bs.path
 }
 
-// bufferList は、:ls の一覧を、Vim 9.1 と同じ形の行を改行でつないで返す。
+// bufferList は、:ls の一覧を、Vim 9.1 と同じ形の行を改行でつないで返す。server のすべてのバッファを出す。
 //
 //	1 %a   "a.txt"                        line 5
 //	2 #h + "b.txt"                        line 1
+//	3  a   "c.txt"                        line 1 [client 2]
 //
-// 印は、番号の後の 1 文字目が % （カーソルのあるバッファ）か # （裏のバッファ）、2 文字目が a （画面に出ている）か
-// h （隠れている）、4 文字目が + （未保存の変更がある）である。バッファは閉じないので、どれも a か h になる。
-// 行番号は、そのバッファのカーソルの行である。
+// 印は、番号の後の 1 文字目が % （カーソルのあるタブ）か # （裏のタブ）、2 文字目が a （どれかの client のカーソルのあるタブ）か
+// h （それ以外）、4 文字目が + （未保存の変更がある）である。行番号は、そのバッファのカーソルの行である。
+// 別の client のタブには [client N] を、どのタブでもないバッファには [タブなし] を、行の後に添える（仮。基本設計 4.4）。
 func (e *Editor) bufferList() string {
 	lines := make([]string, 0, len(e.bufs))
 	for _, bs := range e.bufs {
 		cur, active, mod := ' ', 'h', ' '
 		switch bs {
 		case e.cur:
-			cur, active = '%', 'a'
+			cur = '%'
 		case e.alt:
 			cur = '#'
+		}
+		if o := bs.owner; o != nil && e.viewOf(o).cur == bs {
+			active = 'a'
 		}
 		if bs.buf.Modified() {
 			mod = '+'
 		}
 		head := fmt.Sprintf("%3d %c%c %c \"%s\"", bs.id, cur, active, mod, e.bufferName(bs))
 		pad := max(40-ui.StringWidth(head, 8), 1)
-		lines = append(lines, fmt.Sprintf("%s%sline %d", head, strings.Repeat(" ", pad), bs.state.Cursor().Line+1))
+		line := fmt.Sprintf("%s%sline %d", head, strings.Repeat(" ", pad), bs.state.Cursor().Line+1)
+		switch {
+		case bs.owner == nil:
+			line += " [タブなし]"
+		case bs.owner != e.view:
+			line += " [" + ownerName(bs) + "]"
+		}
+		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
 }

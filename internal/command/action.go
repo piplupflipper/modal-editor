@@ -75,6 +75,8 @@ func init() {
 		"jump-older":         actJump(-1),
 		"jump-newer":         actJump(1),
 		"alternate-buffer":   actAlternate,
+		"tab-next":           actTab(1),
+		"tab-prev":           actTab(-1),
 	}
 }
 

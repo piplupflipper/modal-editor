@@ -15,6 +15,26 @@ func (s *State) TakeOver(prev *State) {
 	if prev == nil || prev == s {
 		return
 	}
+	s.TakeOverShared(prev)
+	s.recording, s.recorded = prev.recording, prev.recorded
+	s.parser.SetRecording(s.recording != 0)
+	if prev.recording != 0 {
+		prev.recording, prev.recorded = 0, nil
+		prev.parser.SetRecording(false)
+	}
+}
+
+// TakeOverShared は、TakeOver のうち、マクロの記録を除いたもの（レジスター、直前の検索、直前の :s、直前の f、ドットリピートの値、
+// @@ のレジスター）を prev から引き継ぐ。記録の状態は、この State と prev のそれぞれに残す。
+//
+// 段階 3 の server で、キーを打つ編集の client が替わるときに呼ぶ（基本設計 1.2、4.4）。
+// レジスターなどは client の間で共有し（FR-58）、マクロの記録は記録を始めた client のキーだけを記録する（基本設計 10 章の仮の扱い）。
+//
+// req: FR-58
+func (s *State) TakeOverShared(prev *State) {
+	if prev == nil || prev == s {
+		return
+	}
 	// 履歴の配列は push、replace、Promote がその場で書き換えるので、複製して prev と共有しない。
 	// 切り替えの後も、prev の State には保留した拡張機能の結果（ApplyDeferred）が書き込みうる（PR #166 の再レビュー）。
 	s.registers = prev.registers
@@ -24,10 +44,4 @@ func (s *State) TakeOver(prev *State) {
 	s.lastFind = prev.lastFind
 	s.dot, s.lastChange, s.dotVisual = prev.dot, prev.lastChange, prev.dotVisual
 	s.lastPlayed = prev.lastPlayed
-	s.recording, s.recorded = prev.recording, prev.recorded
-	s.parser.SetRecording(s.recording != 0)
-	if prev.recording != 0 {
-		prev.recording, prev.recorded = 0, nil
-		prev.parser.SetRecording(false)
-	}
 }

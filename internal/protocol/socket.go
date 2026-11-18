@@ -256,6 +256,9 @@ type wireHello struct {
 	Height   int        `json:"height,omitempty"`
 	Files    []string   `json:"files,omitempty"`
 	ReadOnly bool       `json:"readOnly,omitempty"`
+	Pane     string     `json:"pane,omitempty"`
+	WorkDir  string     `json:"workDir,omitempty"`
+	Env      []string   `json:"env,omitempty"`
 }
 
 type wireClipboard struct {

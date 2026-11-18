@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,8 @@ import (
 
 // keyInput は、端末から届いた入力 1 件である。paste が空でなければ貼り付けで、key は読まない。
 type keyInput struct {
+	// c は、入力を受けた client である。
+	c     *clientView
 	key   editcmd.Key
 	paste string
 }
@@ -37,28 +40,33 @@ func (q *keyQueue) push(in keyInput) {
 	signal(q.ready)
 }
 
-// pushInterrupt は、中断の印 flag を立て、中断のキー in を積む。2 つを錠の中で行うので、
+// pushInterrupt は、中断の印 flag と client の印 clientFlag を立て、中断のキー in を積む。3 つを錠の中で行うので、
 // 印が立ったのを見てから dropThrough を呼べば、in はもう列にある。
-func (q *keyQueue) pushInterrupt(in keyInput, flag *atomic.Bool) {
+func (q *keyQueue) pushInterrupt(in keyInput, flag, clientFlag *atomic.Bool) {
 	q.mu.Lock()
 	flag.Store(true)
+	clientFlag.Store(true)
 	q.items = append(q.items, in)
 	q.mu.Unlock()
 	signal(q.ready)
 }
 
-func (q *keyQueue) pop() (keyInput, bool) {
+// popFor は、列の中で allowed が true を返す client の最初の入力を取り出す。
+// 取り出した後も列に入力が残っていれば、ready で知らせ直す。
+func (q *keyQueue) popFor(allowed func(*clientView) bool) (keyInput, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.items) == 0 {
-		return keyInput{}, false
+	for i, k := range q.items {
+		if !allowed(k.c) {
+			continue
+		}
+		q.items = slices.Delete(q.items, i, i+1)
+		if len(q.items) > 0 {
+			signal(q.ready)
+		}
+		return k, true
 	}
-	k := q.items[0]
-	q.items = q.items[1:]
-	if len(q.items) > 0 {
-		signal(q.ready)
-	}
-	return k, true
+	return keyInput{}, false
 }
 
 func (q *keyQueue) empty() bool {
@@ -67,30 +75,61 @@ func (q *keyQueue) empty() bool {
 	return len(q.items) == 0
 }
 
-// dropThrough は、列の先頭から k までのキー（k を含む）と、その間の貼り付けを捨てる。k が無ければ何もしない。
-// 中断（<C-c>）の後に、中断の前に先打ちしたキーを実行しないために使う（Vim と同じ）。
-func (q *keyQueue) dropThrough(k editcmd.Key) {
+// any は、列に allowed が true を返す client の入力があるかを返す。
+func (q *keyQueue) any(allowed func(*clientView) bool) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	return slices.ContainsFunc(q.items, func(k keyInput) bool { return allowed(k.c) })
+}
+
+// has は、列に client c の入力があるかを返す。
+func (q *keyQueue) has(c *clientView) bool {
+	return q.any(func(o *clientView) bool { return o == c })
+}
+
+// drop は、列から client c の入力をすべて捨てる。
+func (q *keyQueue) drop(c *clientView) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.items = slices.DeleteFunc(q.items, func(k keyInput) bool { return k.c == c })
+}
+
+// dropThrough は、列の中の client c の入力のうち、先頭から k までのキー（k を含む）と、その間の貼り付けを捨てる。
+// c の k が無ければ何もしない。他の client の入力は残す。
+// 中断（<C-c>）の後に、中断の前に先打ちしたキーを実行しないために使う（Vim と同じ）。
+func (q *keyQueue) dropThrough(k editcmd.Key, c *clientView) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	end := -1
 	for i, x := range q.items {
-		if x.paste == "" && x.key == k {
-			q.items = q.items[i+1:]
-			return
+		if x.c == c && x.paste == "" && x.key == k {
+			end = i
+			break
 		}
 	}
+	if end < 0 {
+		return
+	}
+	kept := q.items[:0:0]
+	for i, x := range q.items {
+		if i > end || x.c != c {
+			kept = append(kept, x)
+		}
+	}
+	q.items = kept
 }
 
 // handleKeys は、列からキーを 1 個取り出して処理する。残りがあれば ready が知らせ直すので、次の周回で処理する。
 // 1 個ずつにするのは、キーの間に届いた拡張機能のイベントも、届いた順に近く処理するためである。
+// 外部のコマンドの実行中は、それを打った client のキーを列に残して終わってから処理し、問いの間は、問いを出した client のキーだけを処理する（keyAllowed）。
+// <C-c> による外部のコマンドの中断は intrCh で受ける（shell.go）。
 func (e *Editor) handleKeys() {
-	if e.shell != nil {
-		// 外部のコマンドの実行中は、キーを列に残して終わってから処理する（<C-c> の中断は intrCh で受ける。shell.go）。
+	e.syncAsker()
+	in, ok := e.keys.popFor(e.keyAllowed)
+	if !ok || in.c.detached {
 		return
 	}
-	in, ok := e.keys.pop()
-	if !ok {
-		return
-	}
+	e.useClient(in.c)
 	if in.paste != "" {
 		e.handlePaste(in.paste)
 	} else {
@@ -101,12 +140,19 @@ func (e *Editor) handleKeys() {
 
 // afterKey は、キーの処理の後に、中断の後始末と、曖昧なキーの列の時間切れの準備をする。
 func (e *Editor) afterKey() {
-	if e.interrupt.Load() {
+	if c := e.op; c.intr.Load() {
 		// このキーで始めた外部のコマンドは、知らせ（intrCh）を Run が先に取っていても、ここで中断する。
 		e.interruptShell()
 		// 処理の途中に <C-c> が押された。中断はもう効いたので印を下ろし、<C-c> までの先打ちを捨てる。
 		e.interrupt.Store(false)
-		e.keys.dropThrough(interruptKey)
+		c.intr.Store(false)
+		e.keys.dropThrough(interruptKey, c)
+	}
+	if e.quit {
+		// 最後のタブを閉じた client は、この後に外す（reapClients）。
+		e.stopKeyTimer()
+		e.extRan, e.fromCmdline = false, false
+		return
 	}
 	if e.remap.pendingKeys() || e.cur.state.Pending() {
 		e.armKeyTimer()
@@ -125,26 +171,38 @@ func (e *Editor) afterKey() {
 	e.fromCmdline = false
 }
 
+// armKeyTimer は、操作中の client の、曖昧なキーの列を確定させるタイマーを掛け直す。
+// 時間が来たら、keyFireCh でイベントループへ知らせる（client ごとに、他の client のキーで止まらないように持つ）。
 func (e *Editor) armKeyTimer() {
-	if e.keyTimer == nil {
-		e.keyTimer = time.NewTimer(e.keyTimeout())
-	} else {
-		e.keyTimer.Reset(e.keyTimeout())
+	c := e.op
+	if c.keyTimer != nil {
+		c.keyTimer.Stop()
 	}
-	e.keyTimeC = e.keyTimer.C
+	c.keyGen++
+	f := keyFire{c: c, gen: c.keyGen}
+	stop := e.stop
+	c.keyTimer = time.AfterFunc(e.keyTimeout(), func() {
+		select {
+		case e.keyFireCh <- f:
+		case <-stop:
+		}
+	})
 }
 
+// stopKeyTimer は、操作中の client のタイマーを止める。止める前に送り始めた知らせは、世代が違うので捨てる。
 func (e *Editor) stopKeyTimer() {
-	if e.keyTimer != nil {
-		e.keyTimer.Stop()
+	c := e.op
+	if c.keyTimer != nil {
+		c.keyTimer.Stop()
 	}
-	e.keyTimeC = nil
+	c.keyGen++
 }
 
 // handleKey は、利用者のキーを 1 個処理する。
 func (e *Editor) handleKey(k editcmd.Key) {
 	if k == interruptKey {
 		e.interrupt.Store(false)
+		e.op.intr.Store(false)
 		k = editcmd.Esc
 	}
 	e.popup = nil

@@ -148,6 +148,12 @@ type Config struct {
 	Symbols ui.Symbols
 	// StatusLine は、ステータス行に並べる部品の列（設定の statusline。FR-92）である。nil なら ui.DefaultStatusLine を使う。
 	StatusLine *ui.StatusLine
+	// TabLine は、タブの行を出す場合（設定の tabline。FR-62。仮）である。ゼロ値は、タブが 2 つ以上のときだけ出す。
+	TabLine ui.TabLineMode
+	// FocusPane は、別の編集の client のタブのファイルを開こうとしたときに、from のペインから pane のペインへ
+	// フォーカスを移す関数である（FR-63。internal/mux の Mux.FocusPane を包んだもの）。ペインは ClientInfo.Pane である。
+	// イベントループを止めないよう、別の goroutine で呼ぶ。nil なら移さず、メッセージだけを出す。
+	FocusPane func(from, pane string) error
 	// Problems は、呼び出し側が設定ファイルと宣言ファイルを読んだときの誤り（位置と内容）である（基本設計 8 章）。
 	// New は、すべてをログに記録し、New 自身が見つけた設定の誤りより先に並べて、最初の 1 件を起動後のメッセージで知らせる。
 	Problems []error
@@ -175,16 +181,16 @@ type Config struct {
 
 // Editor は、イベントループと、編集の状態の全体である。New で作り、Run で動かし、Close で終える。
 // Run 以外のメソッド（Open）は、Run の前に、Run と同じ goroutine から呼ぶ。
+//
+// 編集の client ごとの画面の状態（viewFields）は、イベントループが扱っている client のものを Editor に埋め込んだ欄に置き、
+// 他の client のものは clientView に退避する（clients.go。基本設計 1.2、4.4 の段階 3）。
 type Editor struct {
-	cfg      Config
-	log      *slog.Logger
-	term     Terminal
-	host     *exthost.Host
-	renderer *ui.Renderer
-	keymap   *input.Keymap
+	cfg    Config
+	log    *slog.Logger
+	host   *exthost.Host
+	keymap *input.Keymap
 	// exCommands は、コマンドラインから呼べる拡張機能のコマンドの ID から、宣言した拡張機能の ID への表である（buildExCommands）。
 	exCommands map[string]string
-	remap      *remapper
 	// leader は、<Leader> を置き換えたキーの列（Config.Leader を読んだもの。FR-97）である。キーの一覧（FR-90）で使う。
 	leader   []editcmd.Key
 	fileType map[string]string
@@ -194,15 +200,32 @@ type Editor struct {
 	// mcpSocket は、New が決めた MCP のソケットのパスである。Config.MCPSocket を指定したときと、決められなかったときは nil。
 	mcpSocket *exthost.MCPSocket
 
+	// viewFields は、いま読み込んでいる client（view）の画面の状態である。
+	viewFields
+	// clients は、繋いでいる編集の client を、繋いだ順に並べたものである（clients.go）。
+	clients []*clientView
+	// view は、viewFields を読み込んでいる client である。描画は client ごとに読み込み直す（render）。
+	view *clientView
+	// op は、操作中の client（最後にキーを受けた編集の client。基本設計 1.2）である。拡張機能の editor/open などはこの client のタブに開く。
+	op *clientView
+	// shared は、レジスターなどの client の間で共有する状態（command.State.TakeOverShared）を最後に持った State である。
+	// キーを打つ client が替わったら、その client のカーソルのあるバッファの State へ引き継ぐ（useClient）。
+	shared *command.State
+	// asker は、確認の問いか選択肢の問いを出している client である。問いが無ければ nil（syncAsker）。
+	asker *clientView
+	// attachCh は、Attach が渡す新しい client を、イベントループへ送る。
+	attachCh chan attachRequest
+	// goneCh は、端末の入力が閉じた client を、イベントループへ送る（forwardInput）。
+	goneCh chan *clientView
+	// keyFireCh は、曖昧なキーの列の時間切れ（client ごとのタイマー）を、イベントループへ送る。
+	keyFireCh chan keyFire
+	// endErr は、最後の client が終わったときに Run が返す値である（:q などで終われば nil、端末が失われたら ErrTerminalLost）。
+	endErr error
+	// finished は、Run が戻ると閉じる。Attach が、イベントループの終わりを知るために使う。
+	finished chan struct{}
+
 	bufs   []*bufferState
-	cur    *bufferState
 	nextID ext.BufferID
-	// alt は、裏のバッファ（直前にカーソルのあったバッファ。<C-^> の移り先、:ls の #）である。無ければ nil。
-	alt *bufferState
-	// jumps と jumpIdx は、ジャンプリストと、<C-o> と <C-i> が次に読む位置である（buffers.go）。
-	// jumpIdx が len(jumps) なら、末尾の次（最後のジャンプの後に <C-o> をまだ打っていない）を指す。
-	jumps   []jumpEntry
-	jumpIdx int
 
 	keys      *keyQueue
 	interrupt atomic.Bool
@@ -217,8 +240,6 @@ type Editor struct {
 	// extStopped は、:ext sync が削除の後に Disable で止めた拡張機能の ID である。無効になった知らせを異常として出さない（stateChange）。
 	extStopped map[string]bool
 	resizeCh   chan struct{}
-	size       atomic.Value // [2]int
-	inputDone  chan struct{}
 	// inspect は、別の goroutine から関数をイベントループの goroutine で実行させる。テストが状態を読むのと（do）、
 	// :ext sync の進み具合と結果を渡すのに使う（extsync.go）。
 	inspect chan func()
@@ -248,9 +269,6 @@ type Editor struct {
 	// ctx は、Run に渡された ctx である。入れ子の待ちも、これが終わったらやめる。
 	ctx context.Context
 
-	keyTimer *time.Timer
-	keyTimeC <-chan time.Time
-
 	// held は、入れ子の待ちの間に届き、処理せずに取っておいた拡張機能のイベントである。
 	held []exthost.Event
 	// waiting は、入れ子の待ちの深さである。
@@ -265,13 +283,6 @@ type Editor struct {
 	// clipPushes は、ホストのクリップボードへ最後に送ったか、送るかを判定したときの command.Registers.Pushes の値である（syncClipboard）。
 	clipPushes uint64
 
-	message ui.Message
-	popup   *popupState
-	// popupMark は、最後に拡張機能の操作（command/execute と provider/invoke）を問い合わせた State と、
-	// その時点の command.State.KeysFed の値である（invokeResult）。showPopup が、問い合わせの後に次のキーを解釈したかを調べる。
-	popupMark popupMark
-	// regList は、:registers で出したレジスターの一覧の窓である（reglist.go）。nil なら出していない。
-	regList *regListState
 	choices []*exthost.ChoiceAskRequest
 	// choiceDone は、続けて届いた問い（choices が空になるまでの一続き）のうち、答えたか取り下げられた問いの数である。
 	// 表示中の問いが何件目か（choiceDone+1）を出すのに使い、choices が空になったら 0 に戻す（#151）。
@@ -290,14 +301,12 @@ type Editor struct {
 	outputOrder []outputKey
 	// outputLast は、最後に書き足された欄である。
 	outputLast outputKey
-	// outView は、開いている出力の欄である。nil なら閉じている。
-	outView *outputView
-
-	quit bool
 }
 
 // bufferState は、開いているバッファ 1 つの状態である。
 type bufferState struct {
+	// owner は、このバッファをタブに持つ編集の client である（FR-62。tabs.go）。どのタブでもなければ nil。
+	owner    *clientView
 	id       ext.BufferID
 	buf      *buffer.Buffer
 	state    *command.State
@@ -379,18 +388,19 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	e := &Editor{
 		cfg:       cfg,
 		log:       lg,
-		term:      term,
 		host:      host,
 		mcpSocket: sock,
-		renderer:  &ui.Renderer{Theme: ui.DefaultTheme().WithColors(cfg.Colors), Symbols: cfg.Symbols, StatusLine: cfg.StatusLine},
 		keys:      newKeyQueue(),
 		intrCh:    make(chan struct{}, 1),
 		shellDone: make(chan shellOutcome, 1),
 		resizeCh:  make(chan struct{}, 1),
-		inputDone: make(chan struct{}),
 		inspect:   make(chan func()),
 		decoDone:  make(chan decoBuilt),
 		checkDone: make(chan []fileResult),
+		attachCh:  make(chan attachRequest),
+		goneCh:    make(chan *clientView),
+		keyFireCh: make(chan keyFire),
+		finished:  make(chan struct{}),
 		outputs:   map[outputKey][]string{},
 		nextID:    1,
 	}
@@ -416,8 +426,14 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	}
 	warnings = append(warnings, removedCommandWarnings(cfg.Keymap, e.exCommands)...)
 	var w2 []error
-	e.remap, w2 = newRemapper(cfg.Keymap, leader)
+	var remap *remapper
+	remap, w2 = newRemapper(cfg.Keymap, leader)
 	warnings = append(warnings, w2...)
+	// 最初の編集の client は term である（server では、最初に繋いだ client。後の client は Attach で足す）。
+	first := e.newClientView(term, remap)
+	e.clients = []*clientView{first}
+	e.view, e.op = first, first
+	e.viewFields = first.v
 	for _, w := range warnings {
 		lg.Warn("設定の誤り", "err", w)
 	}
@@ -430,6 +446,16 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		e.message = ui.Message{Text: text, Level: ui.MessageError}
 	}
 	return e, nil
+}
+
+// newRenderer は、設定の見た目（色、記号、ステータス行の並び、タブの行）を持った描画の部品を作る。client ごとに 1 つ持つ。
+func (e *Editor) newRenderer() *ui.Renderer {
+	return &ui.Renderer{
+		Theme:      ui.DefaultTheme().WithColors(e.cfg.Colors),
+		Symbols:    e.cfg.Symbols,
+		StatusLine: e.cfg.StatusLine,
+		TabLine:    e.cfg.TabLine,
+	}
 }
 
 // buildKeymap は、本体の操作に、拡張機能が宣言した操作（contributes）を足したキーマップを作る（FR-11）。
@@ -552,17 +578,13 @@ func (e *Editor) OpenWith(path string, readOnly bool) error {
 //
 // req: NFR-04
 func (e *Editor) Run(ctx context.Context) error {
-	if e.cur == nil {
-		b := buffer.New("")
-		b.SetFixEndOfLine(e.fixEOL)
-		e.newBuffer(b, "", "")
-	}
-	w, h := e.term.Size()
-	e.setSize(w, h)
+	defer close(e.finished)
 	e.ctx = ctx
 	e.stop = make(chan struct{})
 	defer close(e.stop)
-	go e.forwardInput()
+	for _, c := range e.clients {
+		e.startClient(c)
+	}
 	var checkC <-chan time.Time
 	if d := e.checkInterval(); d > 0 {
 		t := time.NewTicker(d)
@@ -570,7 +592,11 @@ func (e *Editor) Run(ctx context.Context) error {
 		checkC = t.C
 	}
 	e.render()
-	for !e.quit {
+	for {
+		// 終わる client（:q で最後のタブを閉じた、端末の入力が閉じた）を外す。最後の client が終われば戻る（FR-61、FR-114）。
+		if e.reapClients(); len(e.clients) == 0 {
+			return e.endErr
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -584,11 +610,15 @@ func (e *Editor) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-e.inputDone:
-			if e.keys.empty() || e.shell != nil {
-				return ErrTerminalLost
+		case c := <-e.goneCh:
+			c.inputClosed = true
+		case req := <-e.attachCh:
+			e.attach(req)
+		case f := <-e.keyFireCh:
+			if f.c.attached() && f.gen == f.c.keyGen {
+				e.useClient(f.c)
+				e.flushKeys()
 			}
-			e.handleKeys()
 		case <-e.keys.ready:
 			e.handleKeys()
 		case <-e.resizeCh:
@@ -608,9 +638,6 @@ func (e *Editor) Run(ctx context.Context) error {
 			} else {
 				e.handleEvent(ev)
 			}
-		case <-e.keyTimeC:
-			e.keyTimeC = nil
-			e.flushKeys()
 		case f := <-e.inspect:
 			f()
 		case r := <-e.decoDone:
@@ -628,45 +655,18 @@ func (e *Editor) Run(ctx context.Context) error {
 				continue // 何も変わらなければ描き直さない
 			}
 		}
-		e.renderIdle()
+		if e.reapClients(); len(e.clients) > 0 {
+			e.renderIdle()
+		}
 	}
-	return nil
 }
 
-// renderIdle は、列に処理していないキーが無いときだけ描く。
+// renderIdle は、列に処理できるキーが無いときだけ描く。
 // 貼り付けのようにキーがまとめて届いたときは、溜まったキーを処理し終えてから 1 回描く。
+// 外部のコマンドの実行中や問いの間に止めている client のキー（keyAllowed）は数えない。
 func (e *Editor) renderIdle() {
-	if e.keys.empty() {
+	if !e.keys.any(e.keyAllowed) {
 		e.render()
-	}
-}
-
-// forwardInput は、端末の入力を読み、キーを列に積む。<C-c> を見たら中断の印を立てる。
-func (e *Editor) forwardInput() {
-	defer close(e.inputDone)
-	defer e.recoverPanic()
-	for ev := range e.term.Input() {
-		if ev.Resize {
-			e.size.Store([2]int{ev.Width, ev.Height})
-			signal(e.resizeCh)
-			continue
-		}
-		if ev.Paste != "" {
-			e.keys.push(keyInput{paste: ev.Paste})
-			e.forwarded.Add(1)
-			continue
-		}
-		k := ev.Key.Normalize()
-		if k == interruptKey {
-			// 印と <C-c> のキーは、列の錠の中で一緒に置く。印を先に見た afterKey の dropThrough が、
-			// まだ積んでいない <C-c> を捨て損ね、後でそれを <Esc> として処理して「中断しました」を消すのを防ぐ（#202）。
-			e.keys.pushInterrupt(keyInput{key: k}, &e.interrupt)
-			signal(e.intrCh)
-			e.forwarded.Add(1)
-			continue
-		}
-		e.keys.push(keyInput{key: k})
-		e.forwarded.Add(1)
 	}
 }
 
@@ -690,25 +690,19 @@ func signal(ch chan struct{}) {
 	}
 }
 
-func (e *Editor) setSize(w, h int) {
-	e.renderer.Width, e.renderer.Height = max(w, 0), max(h, 0)
-}
-
-// applySize は、端末から届いた最新の大きさを反映する。
-func (e *Editor) applySize() {
-	if v, ok := e.size.Load().([2]int); ok {
-		e.setSize(v[0], v[1])
-	}
-}
-
 // do は、f をイベントループの goroutine で実行し、終わるまで待つ。テストが状態を読むために使う。
+// Run が戻った後は、f をこの goroutine で呼ぶ（イベントループはもう状態を触らない）。
 func (e *Editor) do(f func()) {
 	done := make(chan struct{})
-	e.inspect <- func() {
+	select {
+	case e.inspect <- func() {
 		defer close(done)
 		f()
+	}:
+		<-done
+	case <-e.finished:
+		f()
 	}
-	<-done
 }
 
 // newBuffer は、バッファを開いた状態に加え、exthost へ知らせる。カーソルのあるバッファがまだ無ければ、そのバッファにする。
@@ -731,7 +725,11 @@ func (e *Editor) newBuffer(b *buffer.Buffer, path, fileType string) *bufferState
 	e.initState(bs)
 	e.bufs = append(e.bufs, bs)
 	if e.cur == nil {
+		e.addTab(bs)
 		e.cur = bs
+		if e.shared == nil {
+			e.shared = bs.state
+		}
 	}
 	return bs
 }
@@ -781,6 +779,9 @@ func (e *Editor) switchTo(bs *bufferState) {
 	if e.cur != nil && e.cur != bs {
 		bs.state.TakeOver(e.cur.state)
 		e.renderer.EnterBuffer(bs.buf.LineCount(), bs.state.Cursor().Line)
+		if e.shared == e.cur.state {
+			e.shared = bs.state
+		}
 	}
 	e.cur = bs
 }
@@ -800,7 +801,7 @@ func (e *Editor) absPath(path string) string {
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path)
 	}
-	return filepath.Join(e.cfg.WorkDir, path)
+	return filepath.Join(e.workDir(), path)
 }
 
 // openFile は、path のファイルを開く。既に開いていればそのバッファを返す。
@@ -871,6 +872,12 @@ func (e *Editor) replaceBuffer(bs *bufferState, b *buffer.Buffer) {
 	e.initState(bs)
 	bs.state.TakeOver(old)
 	bs.state.SetCursor(old.Cursor())
+	if e.shared == old {
+		e.shared = bs.state
+	}
+	if bs.owner != nil {
+		bs.state.Viewport = viewport{r: e.viewOf(bs.owner).renderer}
+	}
 }
 
 // detectFileType は、ファイル名と拡張子から、ファイルの種類を判定する（基本設計 6.7 のファイルの種類の判定）。

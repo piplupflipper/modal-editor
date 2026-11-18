@@ -46,6 +46,7 @@ func (e *Editor) frame() *ui.Frame {
 		Diagnostics:     bs.uiDiagnostics(),
 		Signs:           bs.uiSigns(),
 		Output:          e.uiOutput(),
+		Tabs:            e.uiTabs(),
 	}
 	f.HitEnter = e.hitEnter()
 	f.OperatorPending = st.Mode() == command.ModeNormal && st.Pending()
@@ -55,12 +56,14 @@ func (e *Editor) frame() *ui.Frame {
 	if p := e.popup; p != nil && (p.bs != bs || p.cursor != st.Cursor()) {
 		e.popup = nil
 	}
+	// 問いは、問いを出した client の画面にだけ出す（clients.go の doc）。
+	question := e.showsQuestion()
 	switch {
-	case e.confirm != nil:
+	case question && e.confirm != nil:
 		f.Message = ui.Message{Text: e.confirm.Prompt, Level: ui.MessageWarning}
-	case e.prompt != nil:
+	case question && e.prompt != nil:
 		f.Message = ui.Message{Text: e.prompt.text, Level: ui.MessageWarning}
-	case e.activeChoice() != nil:
+	case question && e.activeChoice() != nil:
 		f.Choice = e.uiChoice()
 		f.List = e.uiRegList()
 	case e.regList != nil:
@@ -101,9 +104,16 @@ func (v viewport) Rows() int { return max(v.r.TextRows(), 1) }
 // SetTop は、表示領域の最初の行を変える。横のスクロールの位置は変えない。
 func (v viewport) SetTop(top int) { v.r.SetScroll(top, v.r.Left()) }
 
-// render は、画面を描いて端末へ出す。
+// render は、繋いでいるすべての client の画面を描いて、それぞれの端末へ出す。
+// 描き終えたら、読み込む client を描く前のものに戻す。
 func (e *Editor) render() {
-	if e.renderer.Width <= 0 || e.renderer.Height <= 0 {
+	e.syncAsker()
+	e.eachView(func(*clientView) { e.renderView() })
+}
+
+// renderView は、読み込んでいる client の画面を描いて端末へ出す。
+func (e *Editor) renderView() {
+	if e.cur == nil || e.quit || e.renderer.Width <= 0 || e.renderer.Height <= 0 {
 		return
 	}
 	scr := e.renderer.Render(e.frame())

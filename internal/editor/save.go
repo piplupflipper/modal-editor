@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/piplupflipper/modal-editor/ext"
@@ -22,10 +23,11 @@ var (
 	errNoWrite    = errors.New("E37: 最後の変更が保存されていません（! を付けると変更を捨てます）")
 )
 
-// checkOthersSaved は、bs 以外に未保存の変更のあるバッファがあれば、最初のものへ移り、名前を入れた E162 を返す
+// checkOthersSaved は、bs 以外に未保存の変更のあるバッファが bufs にあれば、最初のものへ移り、名前を入れた E162 を返す
 // （Vim 9.1 の :q と :qa が、未保存のバッファへ移って知らせるのと同じ）。
-func (e *Editor) checkOthersSaved(bs *bufferState) error {
-	for _, o := range e.bufs {
+// 別の client のタブのバッファは、移らずにその client のペインへフォーカスを移す（enter）。
+func (e *Editor) checkOthersSaved(bs *bufferState, bufs []*bufferState) error {
+	for _, o := range bufs {
 		if o != bs && o.buf.Modified() {
 			e.enter(o)
 			return fmt.Errorf("E162: バッファ \"%s\" の変更は保存されていません (! を付けると破棄します)", e.bufferName(o))
@@ -34,14 +36,65 @@ func (e *Editor) checkOthersSaved(bs *bufferState) error {
 	return nil
 }
 
+// endsServer は、操作中の client の最後のタブを閉じると server が終わるか（繋いでいる client がこの 1 つだけか）を返す。
+// server が終わると、どのタブでもないバッファの変更も失うので、:q と :qa はそれも確かめる。
+func (e *Editor) endsServer() bool {
+	return len(e.clients) == 1
+}
+
+// quitTab は、:q と :wq と :x の終わりの動作である。カーソルのあるタブ bs を閉じ、そのバッファも閉じる（FR-64）。
+// 最後のタブなら client を終える（FR-114）。未保存の変更の確認（E37）は ex が行う。
+// ! が無く、閉じると server が終わるとき（最後の client の最後のタブ）は、Vim 9.1 の :q と同じく、
+// 他に未保存の変更のあるバッファがあれば E162 で閉じない。
+//
+// req: FR-64, FR-114
+func (e *Editor) quitTab(bs *bufferState, force bool) error {
+	if !force && len(e.view.tabs) <= 1 && e.endsServer() {
+		if err := e.checkOthersSaved(bs, e.bufs); err != nil {
+			return err
+		}
+	}
+	e.closeBufferState(bs)
+	return nil
+}
+
+// quitAll は、:qa、:wqa、:xa の終わりの動作である。操作中の client のタブをすべて閉じ、client を終える（FR-114、FR-124）。
+// 他の client のタブは閉じない。! が無ければ、閉じるタブ（閉じると server が終わるときは、どのタブでもないバッファも）に
+// 未保存の変更があれば、そのタブへ移って E37 か E162 で閉じない（Vim 9.1 と同じ）。
+//
+// req: FR-114, FR-124
+func (e *Editor) quitAll(bs *bufferState, force bool) error {
+	if !force {
+		if bs.buf.Modified() {
+			return errNoWrite
+		}
+		check := e.view.tabs
+		if e.endsServer() {
+			check = e.bufs
+		}
+		if err := e.checkOthersSaved(bs, slices.Clone(check)); err != nil {
+			return err
+		}
+	}
+	for _, o := range slices.Clone(e.view.tabs) {
+		e.closeBufferState(o)
+	}
+	return nil
+}
+
 // writeAll は、:wa を行う。未保存の変更のあるバッファを、番号の順に保存の流れ（save）で書き出す。
+// clientOnly なら操作中の client のタブだけ（:wqa、:xa）を、そうでなければ server のすべてのバッファ（:wa。仮）を書き出す。
 // 名前の無いバッファは書き出さずに E141 にし、他のバッファは書き出す（Vim 9.1 と同じ）。最初の誤りを返す。
 // force が false なら、:w と同じく外で変わったファイルを確かめ（writeConflict）、変わっていれば errChangedOnDisk を返す。
 //
 // req: FR-08
-func (e *Editor) writeAll(force bool) error {
+func (e *Editor) writeAll(force, clientOnly bool) error {
 	var first error
-	for _, o := range e.bufs {
+	bufs := e.bufs
+	if clientOnly {
+		bufs = e.view.tabs
+	}
+	for _, o := range slices.Clone(bufs) {
 		if !o.buf.Modified() {
 			continue
 		}
@@ -80,26 +133,13 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 	case ex.ActionWrite:
 		return e.write(bs, a)
 	case ex.ActionQuit:
-		if !a.Force {
-			if err := e.checkOthersSaved(bs); err != nil {
-				return err
-			}
-		}
-		e.quit = true
-		return nil
+		return e.quitTab(bs, a.Force)
 	case ex.ActionQuitAll:
-		if !a.Force {
-			if bs.buf.Modified() {
-				return errNoWrite
-			}
-			if err := e.checkOthersSaved(bs); err != nil {
-				return err
-			}
-		}
-		e.quit = true
-		return nil
+		return e.quitAll(bs, a.Force)
 	case ex.ActionWriteAll:
-		return e.writeAll(a.Force)
+		return e.writeAll(a.Force, a.ClientOnly)
+	case ex.ActionTabMove:
+		return e.tabMove(bs, a)
 	case ex.ActionBufferDelete:
 		return e.deleteBuffer(bs, a)
 	case ex.ActionEdit:

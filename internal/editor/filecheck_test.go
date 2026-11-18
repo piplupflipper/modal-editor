@@ -473,7 +473,7 @@ func TestNoticeAfterExtCommand(t *testing.T) {
 	// コマンドラインから実行したコマンドでも、先読みのキーが溜まっていれば問わずに次へ回す。
 	h.e.do(func() {
 		for _, k := range []string{":", "f", "a", "k", "e", ".", "d", "u", "m", "p", "<CR>", "l"} {
-			h.e.keys.push(keyInput{key: editcmd.MustParseKeys(k)[0]})
+			h.e.keys.push(keyInput{c: h.e.op, key: editcmd.MustParseKeys(k)[0]})
 		}
 		for !h.e.keys.empty() {
 			h.e.handleKeys()
