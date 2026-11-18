@@ -369,7 +369,7 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 	}
 	// 分けた構成で otherPre を打つ操作は、同じ server にもう 1 つの編集の client を繋ぐ（#215）。
 	other := s
-	done := func(i int, keyDone func(*vscreen) bool) func(*vscreen) bool { return keyDone }
+	done := func(keyDone func(*vscreen) bool) func(*vscreen) bool { return keyDone }
 	if split && op.otherPre != "" {
 		var stopOther func()
 		other, stopOther = startLatencyClient(t, bin, args, env, logDir, name+"-other")
@@ -378,7 +378,7 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		if op.otherSetup != nil {
 			op.otherSetup(other)
 		}
-		done = func(_ int, keyDone func(*vscreen) bool) func(*vscreen) bool {
+		done = func(keyDone func(*vscreen) bool) func(*vscreen) bool {
 			return func(v *vscreen) bool { return keyDone(v) && screenHas("from-b")(v) }
 		}
 	}
@@ -407,7 +407,7 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		if _, err = s.master.WriteString(key); err != nil {
 			t.Fatal(err)
 		}
-		end := s.waitFor(done(i, keyDone))
+		end := s.waitFor(done(keyDone))
 		if i >= latencyWarmup {
 			samples = append(samples, end.Sub(start))
 		}
