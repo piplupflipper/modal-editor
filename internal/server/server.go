@@ -57,9 +57,6 @@ const helloTimeout = 5 * time.Second
 // ErrUnexpectedHello は、client の最初のメッセージが、編集の client の Hello でなかったことを表す。
 var ErrUnexpectedHello = errors.New("server: first message is not a hello from an edit client")
 
-// ErrBadSize は、client が Hello で知らせた端末の大きさが、受け付ける上限（protocol.MaxWidth、protocol.MaxHeight）を超えたことを表す。
-var ErrBadSize = errors.New("server: terminal size out of range")
-
 // Server は、編集の状態を持つ側である。New で作り、Open で起動の引数のファイルを開き、Run か Serve で client を繋いで動かし、Close で拡張機能を止める。
 type Server struct {
 	ed *editor.Editor
@@ -206,10 +203,6 @@ func handshake(ctx context.Context, conn protocol.ServerConn) (protocol.Hello, e
 	if !ok || h.Kind != protocol.KindEdit {
 		return protocol.Hello{}, fmt.Errorf("%w: %#v", ErrUnexpectedHello, r.m)
 	}
-	// 大きさを知らせない（0 以下）なら既定の大きさにする。知らせた大きさが上限を超えれば断る。
-	if h.Width > 0 && h.Height > 0 && !protocol.ValidSize(h.Width, h.Height) {
-		return protocol.Hello{}, fmt.Errorf("%w: %dx%d", ErrBadSize, h.Width, h.Height)
-	}
 	return h, nil
 }
 
@@ -310,11 +303,13 @@ func (t *clientTerm) attach(id editor.ClientID, conn protocol.ServerConn, hello 
 // defaultWidth と defaultHeight は、client が Hello で端末の大きさを知らせなかったときの大きさである（term.Terminal.Size と同じ）。
 const defaultWidth, defaultHeight = 80, 24
 
+// defaultSize は、Hello の大きさを格子の大きさにする。知らせない（0 以下）なら既定の大きさにし、
+// 上限を超えれば断らずに上限へ切り詰める（protocol.ClampSize。大きな端末でも起動できるようにする）。
 func defaultSize(w, h int) (int, int) {
 	if w <= 0 || h <= 0 {
 		return defaultWidth, defaultHeight
 	}
-	return w, h
+	return protocol.ClampSize(w, h)
 }
 
 // finish は、イベントループが終わった後に呼ぶ。まだ送っていないクリップボードへの書き込みと、終わりの知らせ（理由 reason）を
@@ -349,9 +344,13 @@ func (t *clientTerm) read() {
 			t.log.Warn("client から 2 回目の Hello が届いた。無視する")
 			continue
 		}
-		if ev.Resize && !protocol.ValidSize(ev.Width, ev.Height) {
-			t.log.Warn("client が知らせた端末の大きさが範囲の外なので、無視する", "width", ev.Width, "height", ev.Height)
-			continue
+		if ev.Resize {
+			if ev.Width <= 0 || ev.Height <= 0 {
+				t.log.Warn("client が知らせた端末の大きさが 0 以下なので、無視する", "width", ev.Width, "height", ev.Height)
+				continue
+			}
+			// 上限を超える大きさは、断らずに上限へ切り詰める（protocol.ClampSize）
+			ev.Width, ev.Height = protocol.ClampSize(ev.Width, ev.Height)
 		}
 		t.events <- t.termEvent(ev)
 	}

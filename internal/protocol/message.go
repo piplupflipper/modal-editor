@@ -29,23 +29,37 @@ const (
 	KindWait ClientKind = "wait"
 )
 
-// MaxWidth と MaxHeight は、端末の大きさとして受け付ける列数と行数の上限である。
+// MaxWidth、MaxHeight、MaxCells は、画面の格子の列数、行数、セルの数（列数 × 行数）の上限である。
 // server は Hello と大きさの変化の Event の大きさで格子（ui.Grid）を作り、client は届いた画面の大きさで格子を作るので、
 // 上限が無いと、壊れたか悪意のある相手が送った巨大な値でメモリを使い切り、プロセスごと落ちる（PR #200 のレビュー。
 // Go の out of memory は recover できず、server では未保存の変更を失う）。
 //
-// 値の根拠: 8K の画面（7680 × 4320 ピクセル）を 6 × 12 ピクセルの小さな文字で埋めても 1280 列 360 行である。
-// その上に余裕を見て 2000 列 1000 行とした（仮）。
-// このときの格子は 200 万セルで、1 セルが約 48 バイトなので 1 つの格子で約 96 MB になる。
-// server と client はそれぞれ数個の格子を持つが、16 GiB 級のマシンで落ちない大きさに収まる。
+// 上限は、実際の端末で起こりうる大きさを断らないことを優先して決めた（仮）。
+// server は端末の大きさを断らず、上限へ切り詰めて格子を作る（ClampSize）。切り詰めたときは、端末の右か下が空く。
+//
+//   - MaxCells: 1 セルが約 48 バイトなので、200 万セルで 1 つの格子が約 96 MB である。server と client はそれぞれ数個の格子を持つが、
+//     16 GiB 級のマシンで落ちない大きさに収まる。8K の画面（7680 × 4320 ピクセル）を 6 × 12 ピクセルの小さな文字で埋めた
+//     1280 列 360 行（約 46 万セル）や、横に並べた複数の画面にまたがる 4000 列 400 行（160 万セル）を切り詰めずに受け付ける
+//   - MaxWidth と MaxHeight: 1 辺の上限で、細長い端末（2100 列 20 行など）を断らないよう、セルの数の上限とは別に大きく取った
 const (
-	MaxWidth  = 2000
-	MaxHeight = 1000
+	MaxWidth  = 10000
+	MaxHeight = 10000
+	MaxCells  = 2_000_000
 )
 
-// ValidSize は、width と height が、どちらも 1 以上で上限以下かを返す。
+// ValidSize は、width と height が、どちらも 1 以上で上限以下で、セルの数が MaxCells 以下かを返す。
 func ValidSize(width, height int) bool {
-	return width >= 1 && width <= MaxWidth && height >= 1 && height <= MaxHeight
+	return width >= 1 && width <= MaxWidth && height >= 1 && height <= MaxHeight && width*height <= MaxCells
+}
+
+// ClampSize は、1 以上の width と height を、ValidSize を満たす大きさへ切り詰める。
+// 列数と行数をそれぞれ上限に切り詰め、セルの数が MaxCells を超えれば行数を減らす。
+func ClampSize(width, height int) (int, int) {
+	width, height = min(max(width, 1), MaxWidth), min(max(height, 1), MaxHeight)
+	if width*height > MaxCells {
+		height = MaxCells / width
+	}
+	return width, height
 }
 
 // Hello は、client が接続の最初に送るメッセージである。client の種類と端末の大きさを知らせる（基本設計 1.2）。

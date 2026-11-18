@@ -251,14 +251,14 @@ func TestClientTermAttach(t *testing.T) {
 }
 
 // 大きさの変化の Event の大きさが範囲の外なら、イベントループへ渡さずに捨てる（PR #200 のレビューの推奨 1）。
-func TestClientTermDropsBadResize(t *testing.T) {
+func TestClientTermClampsResize(t *testing.T) {
 	key := editcmd.Key{Code: editcmd.CodeRune, Rune: 'x'}
 	c, s := protocol.Pipe()
 	ct := newClientTerm()
 	for _, ev := range []protocol.Event{
-		{Resize: true, Width: 100000, Height: 100000},
 		{Resize: true, Width: 0, Height: 24},
-		{Resize: true, Width: 120, Height: 40},
+		{Resize: true, Width: 2100, Height: 20},
+		{Resize: true, Width: 100000, Height: 100000},
 		{Key: key},
 	} {
 		if err := c.Send(ev); err != nil {
@@ -266,18 +266,63 @@ func TestClientTermDropsBadResize(t *testing.T) {
 		}
 	}
 	ct.attach(1, s, protocol.Hello{Kind: protocol.KindEdit, Width: 80, Height: 24})
-	if ev := <-ct.Input(); !ev.Resize || ev.Width != 120 || ev.Height != 40 {
-		t.Errorf("first event = %+v, want the valid resize 120x40", ev)
+	if ev := <-ct.Input(); !ev.Resize || ev.Width != 2100 || ev.Height != 20 {
+		t.Errorf("first event = %+v, want the resize 2100x20 as is", ev)
+	}
+	if ev := <-ct.Input(); !ev.Resize || ev.Width != protocol.MaxWidth || ev.Width*ev.Height > protocol.MaxCells {
+		t.Errorf("second event = %+v, want a resize clamped to the limits", ev)
 	}
 	if ev := <-ct.Input(); ev.Key != key {
-		t.Errorf("second event = %+v, want key x", ev)
+		t.Errorf("third event = %+v, want key x", ev)
 	}
 	_ = c.Close()
 	ct.finish("")
 }
 
+// Hello の大きさが上限を超えていても断らず、上限へ切り詰めた大きさで格子を作る（PR #200 の再レビューの必須 2）。
+// 上限に届かない大きな端末（2100 列）は、そのままの大きさで描く。
+func TestRunAcceptsLargeTerminal(t *testing.T) {
+	for _, tt := range []struct {
+		w, h           int
+		wantW, wantMax int
+	}{
+		{2100, 20, 2100, 2100 * 20},
+		{100000, 100000, protocol.MaxWidth, protocol.MaxCells},
+	} {
+		srv := newServer(t)
+		c, s := protocol.Pipe()
+		done := make(chan error, 1)
+		go func() { done <- srv.Run(context.Background(), s) }()
+		if err := c.Send(protocol.Hello{Kind: protocol.KindEdit, Width: tt.w, Height: tt.h}); err != nil {
+			t.Fatal(err)
+		}
+		m, err := c.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, ok := m.(protocol.Draw)
+		if !ok {
+			t.Fatalf("first message = %#v, want Draw", m)
+		}
+		g := d.Screen.Grid
+		if g.Width() != tt.wantW || g.Width()*g.Height() > tt.wantMax {
+			t.Errorf("hello %dx%d: screen %dx%d, want width %d and at most %d cells", tt.w, tt.h, g.Width(), g.Height(), tt.wantW, tt.wantMax)
+		}
+		sendKeys(t, c, ":q<CR>")
+		go func() {
+			for {
+				if _, err := c.Recv(); err != nil {
+					return
+				}
+			}
+		}()
+		if err := <-done; err != nil {
+			t.Fatalf("Run = %v", err)
+		}
+	}
+}
+
 // 最初のメッセージが編集の client の Hello でなければ、Run は ErrUnexpectedHello で戻り、接続を閉じる。
-// Hello の大きさが上限を超えていれば、格子を作らずに ErrBadSize で戻る（PR #200 のレビューの推奨 1）。
 func TestRunRejectsNonHello(t *testing.T) {
 	for _, tt := range []struct {
 		first protocol.ClientMessage
@@ -285,9 +330,6 @@ func TestRunRejectsNonHello(t *testing.T) {
 	}{
 		{protocol.Event{Resize: true, Width: 80, Height: 24}, ErrUnexpectedHello},
 		{protocol.Hello{Kind: protocol.KindWait}, ErrUnexpectedHello},
-		{protocol.Hello{Kind: protocol.KindEdit, Width: 100000, Height: 100000}, ErrBadSize},
-		{protocol.Hello{Kind: protocol.KindEdit, Width: protocol.MaxWidth + 1, Height: 24}, ErrBadSize},
-		{protocol.Hello{Kind: protocol.KindEdit, Width: 80, Height: protocol.MaxHeight + 1}, ErrBadSize},
 	} {
 		first := tt.first
 		srv := newServer(t)

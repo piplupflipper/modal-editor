@@ -150,9 +150,10 @@ type screenDecoder struct {
 
 // decode は、d を手元の格子に当てた ui.Screen を返す。
 // 大きさが前回と違えば格子を作り直し、載っていない行は空白にする（server はそのときすべての行を載せる）。
-// 大きさが上限（MaxWidth、MaxHeight）を超えていれば、格子を作らずに誤りを返す。
+// 大きさが上限（ValidSize）を超えていれば、格子を作らずに誤りを返す。0 × 0 は受け付ける（server は格子が無い画面をこの大きさで送る）。
+// server は端末の大きさを上限へ切り詰めて格子を作るので（ClampSize）、正しい server からの画面は上限を超えない。
 func (dec *screenDecoder) decode(d wireDraw) (ui.Screen, error) {
-	if d.Width < 0 || d.Height < 0 || d.Width > MaxWidth || d.Height > MaxHeight {
+	if (d.Width != 0 || d.Height != 0) && !ValidSize(d.Width, d.Height) {
 		return ui.Screen{}, fmt.Errorf("protocol: screen size %dx%d out of range", d.Width, d.Height)
 	}
 	g := dec.grid

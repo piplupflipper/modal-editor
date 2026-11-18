@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,13 +27,12 @@ type serverProc struct {
 
 // startServer は、テストの実行ファイルを -listen sock で server として起動し、ソケットのファイルができるまで待つ。
 // 利用者の設定と拡張機能を読まないように、XDG_CONFIG_HOME と XDG_DATA_HOME を空のディレクトリにする。
-func startServer(t *testing.T, bin, sock string, env []string, files ...string) *serverProc {
+func startServer(t *testing.T, bin, sock string, files ...string) *serverProc {
 	t.Helper()
 	xdg := t.TempDir()
 	cmd := exec.Command(bin, append([]string{"-listen", sock}, files...)...) //nolint:gosec // テストの実行ファイルか make build の本体を server として起動する
 	cmd.Env = append(os.Environ(), envRunMain+"=1",
 		"XDG_CONFIG_HOME="+filepath.Join(xdg, "config"), "XDG_DATA_HOME="+filepath.Join(xdg, "data"))
-	cmd.Env = append(cmd.Env, env...)
 	out := &bytes.Buffer{}
 	cmd.Stdout, cmd.Stderr = out, out
 	p := &serverProc{cmd: cmd, out: out, done: make(chan error, 1)}
@@ -84,7 +84,7 @@ func (p *serverProc) wait(t *testing.T) error {
 func TestClientServerProcessesInPTY(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.txt")
 	sock := socketPath(t)
-	srv := startServer(t, os.Args[0], sock, nil, path)
+	srv := startServer(t, os.Args[0], sock, path)
 
 	p := startEditor(t, "-connect", sock)
 	if p.cmd.Process.Pid == srv.cmd.Process.Pid {
@@ -118,7 +118,7 @@ func TestClientServerProcessesInPTY(t *testing.T) {
 // （PR #200 のレビューの推奨 2）。
 func TestServerKilledInPTY(t *testing.T) {
 	sock := socketPath(t)
-	srv := startServer(t, os.Args[0], sock, nil)
+	srv := startServer(t, os.Args[0], sock)
 	p := startEditor(t, "-connect", sock)
 	before := ptytest.Termios(t, p.tty)
 	p.out.WaitForString(t, "NORMAL")
@@ -140,6 +140,52 @@ func TestServerKilledInPTY(t *testing.T) {
 	}
 }
 
+// TestLargeTerminalInPTY は、1 つのプロセスの構成でも分けた構成でも、2100 列の大きな端末で起動でき、
+// さらに広げると新しい幅で描き直すことを確かめる（PR #200 の再レビューの必須 2）。
+// ステータス行（反転の属性で、行の全体を 1 続きに書く）の長さで、描いた幅を見る。
+func TestLargeTerminalInPTY(t *testing.T) {
+	status := regexp.MustCompile(`NORMAL[^\x1b]*`)
+	maxCol := func(out string) int {
+		m := 0
+		for _, s := range status.FindAllString(out, -1) {
+			m = max(m, len(s))
+		}
+		return m
+	}
+	for _, split := range []bool{false, true} {
+		t.Run(configName(split), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "a.txt")
+			args := []string{path}
+			var srv *serverProc
+			if split {
+				sock := socketPath(t)
+				srv = startServer(t, os.Args[0], sock, path)
+				args = []string{"-connect", sock}
+			}
+			p := startEditorSized(t, 2100, 20, t.TempDir(), nil, args...)
+			p.out.WaitFor(t, "2000 列より右に描く", func(out string) bool {
+				return strings.Contains(out, "NORMAL") && maxCol(out) > 2000
+			})
+			start := len(p.out.String())
+			ptytest.SetSize(t, p.master, 2300, 30)
+			p.out.WaitFor(t, "広げた後に 2200 列より右に描く", func(out string) bool {
+				return maxCol(out[start:]) > 2200
+			})
+			p.write(t, ":q\r")
+			if err := p.wait(t); err != nil {
+				t.Fatalf("エディタの終了 = %v。出力の末尾: %q", err, tail(p.out.String()))
+			}
+			if srv != nil {
+				if err := srv.wait(t); err != nil {
+					t.Fatalf("server の終了 = %v。出力: %q", err, srv.out.String())
+				}
+			}
+		})
+	}
+}
+
+func tail(s string) string { return s[max(len(s)-300, 0):] }
+
 // socketPath は、親も権限 0700 のディレクトリの下の、server のソケットのパスを返す（server.Listen は親も検査する）。
 func socketPath(t *testing.T) string {
 	t.Helper()
@@ -153,7 +199,7 @@ func socketPath(t *testing.T) string {
 // TestClientKilledEndsServerInPTY は、編集の client が SIGKILL で終わって接続が切れたら、server も終わることを確かめる（基本設計 1.2）。
 func TestClientKilledEndsServerInPTY(t *testing.T) {
 	sock := socketPath(t)
-	srv := startServer(t, os.Args[0], sock, nil)
+	srv := startServer(t, os.Args[0], sock)
 	p := startEditor(t, "-connect", sock)
 	p.out.WaitForString(t, "NORMAL")
 	if err := p.cmd.Process.Kill(); err != nil {

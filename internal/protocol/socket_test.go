@@ -54,7 +54,7 @@ func TestSocketSkipsUnknownMethods(t *testing.T) {
 	}
 }
 
-// 上限（MaxWidth、MaxHeight）を超える大きさの画面は、格子を作らずに誤りにする（PR #200 のレビューの推奨 1）。
+// 上限（ValidSize）を超える大きさの画面は、格子を作らずに誤りにする（PR #200 のレビューの推奨 1）。
 func TestSocketRejectsHugeScreen(t *testing.T) {
 	for _, body := range []string{
 		`{"jsonrpc":"2.0","method":"screen/draw","params":{"width":100000,"height":100000,"cursor":{}}}`,
@@ -77,15 +77,35 @@ func TestValidSize(t *testing.T) {
 	}{
 		{80, 24, true},
 		{1, 1, true},
-		{MaxWidth, MaxHeight, true},
+		{2100, 20, true},
+		{MaxWidth, MaxCells / MaxWidth, true},
+		{MaxCells / MaxHeight, MaxHeight, true},
 		{0, 24, false},
 		{80, 0, false},
-		{MaxWidth + 1, 24, false},
-		{80, MaxHeight + 1, false},
+		{MaxWidth + 1, 1, false},
+		{1, MaxHeight + 1, false},
+		{MaxWidth, MaxHeight, false}, // セルの数が MaxCells を超える
 		{-1, -1, false},
 	} {
 		if got := ValidSize(tt.w, tt.h); got != tt.want {
 			t.Errorf("ValidSize(%d, %d) = %v, want %v", tt.w, tt.h, got, tt.want)
+		}
+	}
+}
+
+// ClampSize は、上限に収まる大きさを変えず、超える大きさを ValidSize を満たす大きさへ切り詰める。
+func TestClampSize(t *testing.T) {
+	for _, tt := range []struct{ w, h, wantW, wantH int }{
+		{80, 24, 80, 24},
+		{2100, 20, 2100, 20},
+		{100000, 5, MaxWidth, 5},
+		{5, 100000, 5, MaxHeight},
+		{4000, 1000, 4000, MaxCells / 4000},
+		{100000, 100000, MaxWidth, MaxCells / MaxWidth},
+	} {
+		w, h := ClampSize(tt.w, tt.h)
+		if w != tt.wantW || h != tt.wantH || !ValidSize(w, h) {
+			t.Errorf("ClampSize(%d, %d) = %d, %d; want %d, %d", tt.w, tt.h, w, h, tt.wantW, tt.wantH)
 		}
 	}
 }
