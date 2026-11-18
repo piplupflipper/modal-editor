@@ -13,8 +13,8 @@
 | 実装とテスト | 43 | 実装とテストの両方に注釈がある |
 | 実装のみ | 0 | 実装に注釈があり、テストに無い |
 | テストのみ | 0 | テストに注釈があり、実装に無い |
-| 未着手 | 52 | 注釈が無い |
-| 合計 | 95 | |
+| 未着手 | 54 | 注釈が無い |
+| 合計 | 97 | |
 
 ## 一覧
 
@@ -57,25 +57,27 @@
 | FR-55 | 実装とテスト | [internal/command/putcycle.go:35](../internal/command/putcycle.go#L35)<br>[internal/command/putcycle.go:65](../internal/command/putcycle.go#L65) | [internal/command/putcycle_test.go:33](../internal/command/putcycle_test.go#L33)<br>[internal/command/putcycle_test.go:76](../internal/command/putcycle_test.go#L76)<br>[internal/command/putcycle_test.go:111](../internal/command/putcycle_test.go#L111)<br>[internal/command/putcycle_test.go:133](../internal/command/putcycle_test.go#L133)<br>[internal/command/putcycle_test.go:163](../internal/command/putcycle_test.go#L163)<br>[internal/command/putcycle_test.go:191](../internal/command/putcycle_test.go#L191)<br>[internal/command/putcycle_test.go:213](../internal/command/putcycle_test.go#L213)<br>[internal/command/putcycle_test.go:230](../internal/command/putcycle_test.go#L230)<br>[internal/command/putcycle_test.go:251](../internal/command/putcycle_test.go#L251)<br>[internal/command/putcycle_test.go:289](../internal/command/putcycle_test.go#L289)<br>[internal/editor/reglist_test.go:16](../internal/editor/reglist_test.go#L16) | 貼り付けの直後に、貼ったテキストを、履歴の 1 つ前のものに置き換えられる。続けて使うと、さらに前のものに置き換える |
 | FR-56 | 実装とテスト | [internal/config/config.go:316](../internal/config/config.go#L316)<br>[internal/editor/keys.go:310](../internal/editor/keys.go#L310)<br>[internal/term/terminal.go:171](../internal/term/terminal.go#L171) | [internal/config/config_test.go:162](../internal/config/config_test.go#L162)<br>[internal/editor/clipboard_test.go:22](../internal/editor/clipboard_test.go#L22)<br>[internal/editor/clipboard_test.go:59](../internal/editor/clipboard_test.go#L59)<br>[internal/editor/clipboard_test.go:77](../internal/editor/clipboard_test.go#L77)<br>[internal/editor/clipboard_test.go:107](../internal/editor/clipboard_test.go#L107)<br>[internal/editor/clipboard_test.go:132](../internal/editor/clipboard_test.go#L132)<br>[internal/editor/clipboard_test.go:146](../internal/editor/clipboard_test.go#L146)<br>[internal/editor/reglist_test.go:148](../internal/editor/reglist_test.go#L148)<br>[internal/term/terminal_test.go:158](../internal/term/terminal_test.go#L158) | 履歴の先頭が変わるたびに、その内容を OSC 52 の制御シーケンスで端末へ送り、ホストのクリップボードに入れる。送るかどうかを設定で指定でき、既定は送る。ホストのクリップボードは読まない |
 | FR-57 | 実装とテスト | [internal/command/macro.go:71](../internal/command/macro.go#L71)<br>[internal/command/macro.go:193](../internal/command/macro.go#L193)<br>[internal/command/macro.go:266](../internal/command/macro.go#L266) | [internal/command/macro_test.go:205](../internal/command/macro_test.go#L205)<br>[internal/command/macro_test.go:320](../internal/command/macro_test.go#L320)<br>[internal/command/macro_test.go:371](../internal/command/macro_test.go#L371)<br>[internal/command/macro_test.go:422](../internal/command/macro_test.go#L422)<br>[internal/command/macro_test.go:438](../internal/command/macro_test.go#L438)<br>[internal/command/macro_test.go:453](../internal/command/macro_test.go#L453) | マクロの再生（`@a`、`@@`）をドットリピートの対象にする。`.` はレジスターの今の中身を再生し、再生の中で変更が起きたかどうかを問わない。マクロの中の `.` は、そのマクロの中の直前の変更を繰り返し、まだ変更が無ければ、再生を始める前の、マクロの再生ではない直前の変更を繰り返す。マクロの中の変更は、再生の外のドットリピートの対象を変えない |
-| FR-58 | 未着手 | - | - | 本体を server と client に分ける。server はバッファ、レジスターとその履歴、直前の検索、マクロ、ドットリピート、拡張機能を持ち、同じ server に繋いだ client の間で共有する。client は端末に描き、キーを受ける。例: ある client でヤンクしたテキストを、同じ server の別の client で貼れる |
+| FR-58 | 未着手 | - | - | 本体を server と client に分ける。server はバッファ、レジスターとその履歴、直前の検索、マクロ、ドットリピート、拡張機能を持ち、同じ server に繋いだ client の間で共有する。client は端末に描き、キーを受ける。例: ある編集の client でヤンクしたテキストを、同じ server の別の編集の client で貼れる |
 | FR-59 | 未着手 | - | - | server は、tmux の window ごと、herdr のタブごとに 1 つとする。server のソケットのパスは、tmux のセッションと window の ID、または herdr のタブの ID から決める。同じ window（タブ）の中で起動した `modal-editor` は、新しい server を作らずに、その server に client として繋ぐ |
-| FR-60 | 未着手 | - | - | tmux と herdr の外で起動した `modal-editor` は、server と client を 1 つのプロセスで動かす |
-| FR-61 | 未着手 | - | - | server は、最後の client が終わったときに終わる。ペインを別の window（タブ）へ動かした client は、元の server に繋がったまま動き続ける |
-| FR-62 | 未着手 | - | - | 各 client は 1 本のタブの行を持つ。1 つのバッファは、どれか 1 つの client のタブになる（タブとバッファは 1 対 1） |
-| FR-63 | 未着手 | - | - | 別の client のタブになっているファイルを開こうとしたら、新しく開かずに、その client のペインへフォーカスを移す |
-| FR-64 | 未着手 | - | - | 隠れたバッファを持たない。タブを閉じたら、そのバッファも閉じる |
+| FR-60 | 未着手 | - | - | tmux と herdr の外で起動した `modal-editor` は、server と編集の client を 1 つのプロセスで動かす。このときも server のソケットは待ち受け、待つだけの client（FR-83）は繋げる |
+| FR-61 | 未着手 | - | - | server は、最後の編集の client が終わったときに、残った部品の client を閉じてから終わる。ペインを別の window（タブ）へ動かした編集の client は、元の server に繋がったまま動き続ける |
+| FR-62 | 未着手 | - | - | 各編集の client は 1 本のタブの行を持つ。1 つのバッファは、どれか 1 つの編集の client のタブになる（タブとバッファは 1 対 1）。FR-109 の画面に出さないバッファと、FR-110 のポップアップの写しは、どのタブにもならない |
+| FR-63 | 未着手 | - | - | 別の編集の client のタブになっているファイルを開こうとしたら、新しく開かずに、その client のペインへフォーカスを移す |
+| FR-64 | 未着手 | - | - | 隠れたバッファを持たない。タブを閉じたら、そのバッファも閉じる。`:e {ファイル}` は新しいタブで開く。編集の client の最後のタブを閉じたら、その client が終わる。`:qa` は、その client のタブだけを閉じる |
+| FR-109 | 未着手 | - | - | 拡張機能が、どのタブにもなっていないファイルを編集するとき（ACP の `fs/write_text_file`、MCP の `open_file` で開いたファイルの編集、LSP の複数のファイルにまたがる名前の変更）は、タブを増やさず、画面に出さないバッファで編集を適用し、保存してすぐ閉じる。変えたファイルの一覧をメッセージの行に出す |
 | FR-65 | 未着手 | - | - | client の中のタブの並びを、利用者が変えられる |
 | FR-66 | 未着手 | - | - | server が端末多重化ソフトを操作する層を持ち、tmux と herdr のそれぞれで、ペインの分割、ポップアップを開くこと、フォーカスの移動を行う。拡張機能は端末多重化ソフトを直接操作せず、本体に「ペインを開いて」「ポップアップを開いて」と頼む。本体は開いたペインかポップアップの中で、表示の部品を描く client を動かす |
 | FR-67 | 未着手 | - | - | 画面の中央のポップアップは、tmux では `display-popup` で、herdr では本体が同梱する herdr のプラグインのポップアップのペインで開く。どちらも使えない（端末多重化ソフトの外など）ときは、client が自分のペインの中央に描く |
-| FR-68 | 未着手 | - | - | ポップアップは操作できる窓とする。フォーカスを移せ、中身をスクロールでき、`q` と `<Esc>` で閉じる |
+| FR-68 | 未着手 | - | - | ポップアップは操作できる窓とする。中身をスクロールでき、`<Esc>` で閉じる。`q` は、ポップアップの中でもマクロの記録（FR-05）である。編集の client の画面の中に描く浮かべた窓（ホバーなど）は、フォーカスを入れて操作できる。中央のポップアップは、開いている間はそれだけを操作する |
 | FR-69 | 未着手 | - | - | 拡張機能は、ポップアップの中だけで効くキーの割り当てを宣言できる |
 | FR-70 | 未着手 | - | - | バッファを、タブとポップアップの間で移せる。タブをポップアップへ縮めることと、ポップアップをタブへ広げることができ、移してもバッファの内容と未保存の変更は変わらない |
 | FR-71 | 未着手 | - | - | テキストのバッファを出したポップアップの中でも、ノーマルモードとインサートモードの通常の編集のキーが効く |
 | FR-72 | 未着手 | - | - | ポップアップとペインに出す中身は、本体の表示の部品（テキストのバッファ、一覧、木、入力の行）を、色を付ける範囲と一緒にデータで渡す形だけで指定する。拡張機能が端末のセルを直接描く手段は持たない |
+| FR-110 | 未着手 | - | - | 定義などを「ポップアップで見る」操作（4.11 の LSP のキーの表）は、移動先の位置のテキストの写しを、編集を禁止したバッファとして、カーソルの近くのポップアップに出す。そのポップアップをタブへ広げると、本物のファイルを新しいタブで開き、既にタブで開いていればそのタブへ移る |
 | FR-73 | 未着手 | - | - | `sa{モーションかテキストオブジェクト}{文字}` で、範囲を囲む（vim-sandwich の `sa` と同じ操作）。例: `saiw)` は単語を `(` と `)` で囲む |
 | FR-74 | 未着手 | - | - | `sd{文字}` で、カーソルを含む最も内側の、その文字の囲みを消す（vim-sandwich の `sd` と同じ操作） |
 | FR-75 | 未着手 | - | - | `sr{前の文字}{後の文字}` で、カーソルを含む最も内側の囲みを、別の文字の囲みに替える（vim-sandwich の `sr` と同じ操作） |
-| FR-76 | 未着手 | - | - | ノーマルモードの `<` と `>` は、`<<` と `>>` と同じく行をずらす。回数は行数として扱う（`3<` は 3 行をずらす） |
+| FR-76 | 未着手 | - | - | ノーマルモードの `<` と `>` は、次のキーを待たずに、`<<` と `>>` と同じく行をずらす。回数は行数として扱う（`3<` は 3 行をずらす）。`<<` と打つと 2 回ずらす |
 | FR-77 | 未着手 | - | - | ビジュアルモードの `<` と `>` は、行をずらした後もビジュアルモードと選択の範囲を保つ |
 | FR-78 | 未着手 | - | - | 保存の先のディレクトリが無ければ、利用者に聞かずに作ってから保存し、作ったことをメッセージの行に 1 行で出す |
 | FR-79 | 未着手 | - | - | 保存が権限の不足（`EACCES`）で失敗したら、権限を上げて保存するかを選択肢で聞く。保存するなら、画面を一時的に通常の端末へ戻し、設定したコマンド（既定は `["sudo"]`。`["doas"]` などに変えられる）で `tee <パス>` を起動して、バッファの中身を標準入力で渡す。パスワードはそのコマンドが端末から聞き、エディタはパスワードを読まない。保存の先のディレクトリを権限の不足で作れないときも、同じコマンドを通して作る |
@@ -84,7 +86,7 @@
 | FR-82 | 未着手 | - | - | 本体が起動する子プロセスの環境変数に、server のソケットのパス（名前は仮に `MODAL_EDITOR_SOCKET`）を入れ、`EDITOR` と `GIT_EDITOR` に `modal-editor` を入れる |
 | FR-83 | 未着手 | - | - | FR-82 の環境変数のもとで起動した `modal-editor` は、新しい画面を作らずに、その環境変数の server に client として繋ぎ、渡されたファイルをタブで開かせ、それらのタブが閉じられるまで待ってから終わる。`:!` の実行中にこれが起きたら、`:!` を実行した client が端末を取り戻して画面を描く。例: `:!git commit` の中で git が起動したエディタで、コミットのメッセージをタブとして編集できる |
 | FR-84 | 未着手 | - | - | オプション（仮に `--new`）を付けて起動した `modal-editor` は、FR-82 の環境変数があっても親の server に繋がず、新しい server と client を起動する |
-| FR-85 | 未着手 | - | - | バッファごとに、編集の禁止の状態を持つ（モードにはしない）。禁止中は、テキストを変える操作をすべて断り、断ったことをメッセージの行に 1 行で出す。拡張機能の `buffer/edit` も断る |
+| FR-85 | 未着手 | - | - | バッファごとに、編集の禁止の状態を持つ（モードにはしない）。禁止中は、テキストを変える操作をすべて断り、断ったことをメッセージの行に 1 行で出す。拡張機能の `buffer/edit` も断る。保存（`:w`）は断らない |
 | FR-86 | 未着手 | - | - | 編集の禁止は、コマンド（仮に `:readonly`）で切り替えられ、起動のオプション `-R` で開いたファイルは禁止の状態で始まる |
 | FR-87 | 未着手 | - | - | 編集を禁止したバッファは、タブの行とステータス行に禁止中であることを出す |
 | FR-88 | 未着手 | - | - | ファイルでないバッファ（ホバーの説明、git の HEAD の版など）と、設定で並べたパス（`~/go/pkg/mod`、`node_modules` など）の下のファイルのバッファは、編集の禁止の状態で始まる |
@@ -98,17 +100,17 @@
 | FR-96 | 未着手 | - | - | DAP の操作に、この節の DAP のキーの表のキーを既定で割り当てる。どのキーも設定で変えられる |
 | FR-97 | 未着手 | - | - | `<leader>` の既定を `<Space>` とし、設定で変えられる。キーマップの記法で `<Leader>` と書ける |
 | FR-98 | 未着手 | - | - | ノーマルモードの `<Tab>` と `<S-Tab>` で、client の中の次のタブと前のタブへ移る |
-| FR-99 | 未着手 | - | - | 2 つのバッファ（2 つの client のタブ）を見比べられる。差分の計算と色は server が持ち、両側の client に差分の色を出す。diff 専用のタブは作らない |
+| FR-99 | 未着手 | - | - | 2 つのバッファ（2 つの編集の client のタブ）を見比べられる。差分の計算と色は server が持ち、両側の client に差分の色を出す。diff 専用のタブは作らない |
 | FR-100 | 未着手 | - | - | 見比べている間は、片側をスクロールすると、server がもう片側のスクロールを対応する行にそろえる |
 | FR-101 | 未着手 | - | - | 見比べている間は、Vim と同じく `]c` と `[c` で次と前の差分へ移り、`do` と `dp` で差分を相手から取り込み、相手へ送る |
 | FR-102 | 未着手 | - | - | 設定ファイルの `extensions.install`（名前は仮）に、拡張機能の取得元（git のリポジトリ）と版を並べる。コマンド（仮に `:ext sync`）で、並べた拡張機能を取得し、`go build` でビルドし、`$XDG_DATA_HOME/modal-editor/extensions/<名前>/` に入れる。版を変えたものは更新し、並べなくなったものは削除する |
 | FR-103 | 未着手 | - | - | FR-102 で取得した拡張機能のコミットを、設定ファイルと同じディレクトリのロックファイルに記録する |
 | FR-104 | 未着手 | - | - | git 連携の拡張機能を持つ。バッファのファイルの git の HEAD の版を、編集を禁止したバッファとして開き、FR-99 で見比べられるようにする。この他の範囲は 7 章の未決事項である |
-| FR-105 | 未着手 | - | - | markdown の描画の拡張機能を持つ。範囲は 7 章の未決事項である |
-| FR-106 | 未着手 | - | - | ツリー型のファイラの拡張機能を持つ。ディレクトリの木を、端末多重化ソフトで分割したペインに木の部品で出し、選んだファイルを開く |
-| FR-107 | 未着手 | - | - | ファジーファインダーの拡張機能を持つ。本体は、入力の行の中身が変わるたびにその中身を拡張機能へ送り、拡張機能が絞り込んで並べた一覧を表示する。一覧は後から届いてよく、FR-17 の期限の対象にしない |
-| FR-108 | 未着手 | - | - | 拡張機能は、本体が持つ一覧（タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリスト）を問い合わせられる |
-| FR-109 | 未着手 | - | - | DAP の拡張機能は、デバッグの情報（変数、スタックなど）とデバッグ対象の出力を、端末多重化ソフトのペインに出す。`<leader>du` でそれらのペインを開け閉めする |
+| FR-105 | 未着手 | - | - | ツリー型のファイラの拡張機能を持つ。ディレクトリの木を、端末多重化ソフトで分割したペインに木の部品で出し、選んだファイルを、ファイラを開いた元の編集の client のタブで開く |
+| FR-106 | 未着手 | - | - | ファジーファインダーの拡張機能を持つ。本体は、入力の行の中身が変わるたびにその中身を拡張機能へ送り、拡張機能が絞り込んで並べた一覧を表示する。一覧は後から届いてよく、FR-17 の期限の対象にしない |
+| FR-107 | 未着手 | - | - | 拡張機能は、本体が持つ一覧（タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリスト）を問い合わせられる |
+| FR-108 | 未着手 | - | - | DAP の拡張機能は、デバッグの情報（変数、スタックなど）とデバッグ対象の出力を、端末多重化ソフトのペインに出す。`<leader>du` でそれらのペインを開け閉めする |
+| FR-111 | 未着手 | - | - | ACP の拡張機能は、エージェントの返答と進み具合を、端末多重化ソフトのペインに出す |
 | NFR-01 | 実装とテスト | [Makefile:25](../Makefile#L25)<br>[Makefile:39](../Makefile#L39) | [internal/distcheck/dist_test.go:32](../internal/distcheck/dist_test.go#L32)<br>[internal/distcheck/static_test.go:103](../internal/distcheck/static_test.go#L103) | メンテナンスされている一般的な Linux ディストリビューションに、ファイルを置くだけで動作する。本体と拡張機能は別々のファイルとして配布する |
 | NFR-02 | 実装とテスト | [Makefile:99](../Makefile#L99) | [internal/distcheck/static_test.go:68](../internal/distcheck/static_test.go#L68) | 本体は cgo を使わず、C の標準ライブラリに依存しない実行ファイルにする |
 | NFR-03 | 実装とテスト | [internal/exthost/process.go:70](../internal/exthost/process.go#L70)<br>[internal/ui/decorations.go:68](../internal/ui/decorations.go#L68) | [cmd/modal-editor-ext-script/main_test.go:294](../cmd/modal-editor-ext-script/main_test.go#L294)<br>[cmd/modal-editor-ext-script/main_test.go:367](../cmd/modal-editor-ext-script/main_test.go#L367)<br>[cmd/modal-editor-ext-script/main_test.go:422](../cmd/modal-editor-ext-script/main_test.go#L422)<br>[cmd/modal-editor-ext-script/main_test.go:435](../cmd/modal-editor-ext-script/main_test.go#L435)<br>[internal/exthost/host_test.go:606](../internal/exthost/host_test.go#L606)<br>[internal/exthost/host_test.go:658](../internal/exthost/host_test.go#L658)<br>[internal/exthost/host_test.go:684](../internal/exthost/host_test.go#L684)<br>[internal/exthost/host_test.go:707](../internal/exthost/host_test.go#L707)<br>[internal/exthost/host_test.go:724](../internal/exthost/host_test.go#L724)<br>[internal/exthost/host_test.go:739](../internal/exthost/host_test.go#L739)<br>[internal/exthost/host_test.go:787](../internal/exthost/host_test.go#L787)<br>[internal/exthost/host_test.go:956](../internal/exthost/host_test.go#L956)<br>[internal/exthost/rlimit_linux_test.go:136](../internal/exthost/rlimit_linux_test.go#L136)<br>[internal/ui/decorations_test.go:65](../internal/ui/decorations_test.go#L65)<br>[internal/ui/decorations_test.go:115](../internal/ui/decorations_test.go#L115) | 拡張機能の異常終了が本体に波及しない。拡張機能のクラッシュ、panic、無限ループ、デッドロック、期限の超過、設定した上限の範囲でのメモリの使い切りが起きても、本体のプロセスは動き続け、編集中のバッファは失われない |
