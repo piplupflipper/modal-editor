@@ -165,7 +165,7 @@ func (e *Editor) autoRead() bool {
 // 編集中の行がその場で置き換わったり、問いが入力の途中に割り込んだりしないためである。
 func (e *Editor) idle() bool {
 	st := e.cur.state
-	return !e.asking() && e.activeChoice() == nil && !e.hitEnter() && e.keys.empty() && !e.remap.pendingKeys() &&
+	return !e.asking() && e.shell == nil && e.activeChoice() == nil && !e.hitEnter() && e.keys.empty() && !e.remap.pendingKeys() &&
 		st.Mode() == command.ModeNormal && !st.Pending()
 }
 

@@ -151,6 +151,12 @@ type Config struct {
 	// NoClipboard は、レジスターの履歴の先頭をホストのクリップボードへ送らないことを表す（基本設計 7 章の registers.clipboard が "off"）。
 	// ゼロ値の false は既定の "osc52" で、履歴の先頭が変わるたびに Terminal.SetClipboard で送る（FR-56）。
 	NoClipboard bool
+	// ChildEnv は、本体が起動する外部のコマンド（:{range}! と :r ! のシェル）の環境変数に、本体の環境の後に足す "名前=値" の列である。
+	// 外部のコマンドはイベントループを止めずに動くので、子が起動した modal-editor（FR-83）が server に繋いでも詰まらない。
+	// 同じ名前は後のものが勝つ（os/exec の決まり）。
+	// FR-82 の server のソケットのパス（仮に MODAL_EDITOR_SOCKET）と、EDITOR、GIT_EDITOR を入れる口で、
+	// 値は server のソケットができてから呼び出し側が入れる（#190）。
+	ChildEnv []string
 }
 
 // Editor は、イベントループと、編集の状態の全体である。New で作り、Run で動かし、Close で終える。
@@ -189,6 +195,9 @@ type Editor struct {
 	// forwarded は、端末から読んで列に積んだキーの数である。テストが、送ったキーを処理し終えたかを知るために使う。
 	forwarded atomic.Int64
 	intrCh    chan struct{}
+	// shell は、実行中の外部のコマンド（:{range}! と :r !）である。無ければ nil。shellDone へ結果が届く（shell.go）。
+	shell     *shellJob
+	shellDone chan shellOutcome
 	resizeCh  chan struct{}
 	size      atomic.Value // [2]int
 	inputDone chan struct{}
@@ -353,6 +362,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		renderer:  &ui.Renderer{},
 		keys:      newKeyQueue(),
 		intrCh:    make(chan struct{}, 1),
+		shellDone: make(chan shellOutcome, 1),
 		resizeCh:  make(chan struct{}, 1),
 		inputDone: make(chan struct{}),
 		inspect:   make(chan func()),
@@ -533,7 +543,7 @@ func (e *Editor) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-e.inputDone:
-			if e.keys.empty() {
+			if e.keys.empty() || e.shell != nil {
 				return ErrTerminalLost
 			}
 			e.handleKeys()
@@ -542,7 +552,10 @@ func (e *Editor) Run(ctx context.Context) error {
 		case <-e.resizeCh:
 			e.applySize()
 		case <-e.intrCh:
-			// <C-c> のキーそのものは列から届くので、ここでは何もしない。
+			// <C-c> のキーそのものは列から届くので、ここでは外部のコマンドの中断だけをする。
+			e.interruptShell()
+		case o := <-e.shellDone:
+			e.shellFinished(o)
 		case ev, ok := <-e.host.Events():
 			if !ok {
 				return nil
