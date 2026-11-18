@@ -87,6 +87,9 @@ func TestDistLicenses(t *testing.T) {
 		"licenses/github.com/tree-sitter/tree-sitter-go/LICENSE",
 		"licenses/github.com/tree-sitter/tree-sitter-json/LICENSE",
 		"licenses/github.com/traefik/yaegi/LICENSE",
+		// go-udiff は、Go の作者の BSD-3-Clause と、go-udiff の作者の MIT の 2 つの文面を持つ（基本設計 6.8）。
+		"licenses/github.com/aymanbagabas/go-udiff/LICENSE-BSD",
+		"licenses/github.com/aymanbagabas/go-udiff/LICENSE-MIT",
 	} {
 		info, err := os.Stat(filepath.Join(dir, rel))
 		if err != nil {

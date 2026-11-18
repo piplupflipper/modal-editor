@@ -42,6 +42,10 @@ DIST_NAME := modal-editor-$(VERSION)-$(shell go env GOOS)-$(shell go env GOARCH)
 DIST_DIR  := $(DIST_ROOT)/$(DIST_NAME)
 # 配布する実行ファイルのパッケージ。依存するモジュールのライセンスの文面を集めるのに使う。
 DIST_PACKAGES := ./cmd/modal-editor ./cmd/modal-editor-mcp-bridge $(addprefix ./cmd/,$(EXTENSIONS) $(CGO_EXTENSIONS))
+# 本体にまだつないでいないが、つなぐことが決まっているパッケージ。ライセンスの文面を集める対象に足す。
+# internal/diff は go-udiff（BSD-3-Clause と MIT。LICENSE-BSD と LICENSE-MIT）を使い、本体の server から使う（基本設計 6.8）。
+# 本体が import すると DIST_PACKAGES の依存に含まれるので、そのときにここから外してよい（残しても結果は変わらない）。
+DIST_LICENSE_PACKAGES := $(DIST_PACKAGES) ./internal/diff
 # 配布物を起動して確かめるコンテナのイメージ。ビルド用の道具が無く、C の標準ライブラリが異なるものを選ぶ。
 # 結果が docs/measurements/nfr-dist.md の記録と同じものを指すように、版のタグで固定する。
 DIST_SMOKE_IMAGES := debian:13.7-slim almalinux:8.10-minimal alpine:3.24.1 busybox:1.36.1
@@ -130,7 +134,7 @@ dist: build ## 配布物を dist/ に作る（実行ファイルと宣言ファ�
 	done
 	cp $$(go env GOROOT)/LICENSE $$(go env GOROOT)/PATENTS $(DIST_DIR)/licenses/go/
 	cp $(MUSL_COPYRIGHT) $(DIST_DIR)/licenses/musl/copyright
-	go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Dir}}{{end}}{{end}}' $(DIST_PACKAGES) | sort -u | \
+	go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Dir}}{{end}}{{end}}' $(DIST_LICENSE_PACKAGES) | sort -u | \
 		while read -r p d; do \
 			mkdir -p $(DIST_DIR)/licenses/$$p && cp $$d/LICENSE* $(DIST_DIR)/licenses/$$p/ || exit 1; \
 		done

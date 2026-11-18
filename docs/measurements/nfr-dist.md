@@ -57,7 +57,7 @@ musl は NSS を持たないので、将来これらを import しても同じ�
 |---|---|---|
 | `licenses/go/` | Go の標準ライブラリとランタイム（`LICENSE`、`PATENTS`） | `$(go env GOROOT)` から写す |
 | `licenses/musl/copyright` | musl | `MUSL_COPYRIGHT`（既定は Debian の musl のパッケージが置く `/usr/share/doc/musl/copyright`）から写す |
-| `licenses/<モジュールのパス>/` | 依存するモジュール（tree-sitter の Go の束縛と C の本体、Go と JSON の文法、yaegi、go-pointer） | 配布する実行ファイルのパッケージの `go list -deps` から、モジュールのディレクトリの `LICENSE*` を写す |
+| `licenses/<モジュールのパス>/` | 依存するモジュール（tree-sitter の Go の束縛と C の本体、Go と JSON の文法、yaegi、go-pointer、diff の go-udiff の `LICENSE-BSD` と `LICENSE-MIT`） | 配布する実行ファイルのパッケージと、本体につなぐことが決まっているパッケージ（Makefile の `DIST_LICENSE_PACKAGES`。2026-11-18 の時点で `internal/diff`）の `go list -deps` から、モジュールのディレクトリの `LICENSE*` を写す |
 
 `internal/distcheck` の `TestDistLicenses` が、これらの文面が配布物にあることを確かめる。
 musl-gcc の静的リンクでは GCC の `libgcc.a` もリンクされる。
