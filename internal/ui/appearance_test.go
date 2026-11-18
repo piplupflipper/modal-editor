@@ -34,13 +34,13 @@ func TestStatusLineReadOnly(t *testing.T) {
 }
 
 // 名前が長くて収まらなければ、Vim 9.1 と同じく名前の先頭を "<" で切り、[RO] と [+] を残す（PR #206 のレビューの入力。
-// 100 列の端末で 94 文字のパス。Vim 9.1 の `vim -Nu NONE -R` の 50 列の窓は `<4030-b80ff77dac4f/find.go [RO]` と出す）。
+// 100 列の端末で 94 文字のパス。ユーザー名は同じ長さの架空の名前に置き換えた。Vim 9.1 の `vim -Nu NONE -R` の 50 列の窓は `<4030-b80ff77dac4f/find.go [RO]` と出す）。
 //
 // req: FR-87
 func TestStatusLineLongName(t *testing.T) {
 	b := buffer.New("abc\n")
 	r := newRenderer(100, 6)
-	name := "/home/endo84/go/pkg/mod/github.com/tailscale/hujson@v0.0.0-20260727124030-b80ff77dac4f/find.go"
+	name := "/home/user01/go/pkg/mod/github.com/tailscale/hujson@v0.0.0-20260727124030-b80ff77dac4f/find.go"
 	got := r.Render(&Frame{Text: b, Name: name, ReadOnly: true}).Grid.RowText(4)
 	want := " NORMAL  <mod/github.com/tailscale/hujson@v0.0.0-20260727124030-b80ff77dac4f/find.go [RO]  1,1  All "
 	if got != want {

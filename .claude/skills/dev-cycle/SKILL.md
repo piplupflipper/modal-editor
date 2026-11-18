@@ -33,7 +33,7 @@ description: modal-editor の実装サイクル（issue 起票 → worktree で�
 
 ### 2.1 準備
 
-- リポジトリは `/home/endo84/ghq/github.com/piplupflipper/modal-editor`（GitHub の `piplupflipper/modal-editor`）。main の作業ツリーは触らない
+- リポジトリは `~/ghq/github.com/piplupflipper/modal-editor`（GitHub の `piplupflipper/modal-editor`）。main の作業ツリーは触らない
 - 最初に読むもの: この skill、`README.md`、`docs/requirements.md`、`docs/basic-design.md`、担当 issue（`gh issue view <番号>`）
 - worktree を作る: リポジトリで `git fetch origin` の後、`gwq add -b <ブランチ名>` を実行し、`gwq get <ブランチ名>` で得たパスへ `cd` する。パスはリポジトリの外の `~/worktrees/github.com/piplupflipper/modal-editor/<ブランチ名の / を - にしたもの>` になる
 - `gwq add -b` は、主リポジトリの作業ツリーの HEAD を基点にする。2 つ目の引数は基点ではなく worktree のパスとして扱われる（2026-11-16 に `gwq add -b <branch> origin/main` と打ち、リポジトリの中に `origin/main` という worktree ができた）。基点を新しくしたいときは、主リポジトリで `git pull --ff-only` してから打つ
