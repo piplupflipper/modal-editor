@@ -20,8 +20,9 @@
 // # 画面の送る単位
 //
 // 画面の内容をどの単位で送るか（internal/ui の格子の差分か、表示のデータか）は、基本設計 10 章の未決の項目である。
-// 送る単位に関わる処理は screen.go の ScreenEncoder（server の側）と ScreenDecoder（client の側）に寄せ、
-// 単位を差し替えるときはこの 2 つと Draw の中身だけを変える。
+// 送る単位に関わる処理は screen.go の ScreenEncoder（server の側）と ScreenDecoder（client の側）に寄せた。
+// ただし、この 2 つと Draw の中身だけで差し替えられるのは、格子の全体と格子の差分の間だけである。
+// 表示のデータの案を測るには、格子への描画（internal/editor の render）を境目より後ろ（client の側）へ移す必要がある（2 段目の issue で扱う）。
 // 今は、server が組み立てた ui.Screen をそのまま渡し、client の internal/term が前回の格子との差分を出力する。
 //
 // # 層

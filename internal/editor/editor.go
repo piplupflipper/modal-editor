@@ -78,7 +78,8 @@ type TermEvent struct {
 	Resize        bool
 	Width, Height int
 	// Client は、このイベントを受けた client である（基本設計 2.1 の段階 3）。internal/server が接続ごとに割り当てる。
-	// 今は編集の client が 1 つだけなので、イベントループは読まない。複数の client のタブを分けるときに使う（FR-62）。
+	// 今は編集の client が 1 つだけなので、イベントループは読まない。forwardInput がキーの列に積むときに捨て、大きさも 1 つに上書きする。
+	// 2 段目以降の複数の client の issue で、キーの列、中断の印、キーの列の待ち、オペレーターの途中の状態を client ごとに分けるときに使う（基本設計 2.1、FR-62）。
 	Client ClientID
 }
 

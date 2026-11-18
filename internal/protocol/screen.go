@@ -3,7 +3,12 @@ package protocol
 import "github.com/piplupflipper/modal-editor/internal/ui"
 
 // このファイルは、画面の内容を送る単位を決める（基本設計 1.2 と 10 章の未決の項目）。
-// 単位を差し替えるときは、Draw の中身と ScreenEncoder、ScreenDecoder だけを変える。
+//
+// この箇所だけで差し替えられるのは、「格子の全体」と「格子の差分」の間だけである。
+// 10 章のもう一方の案（表示のデータを送り、client で格子に描く）を測るには、
+// 格子への描画（internal/editor の render が呼ぶ ui.Renderer.Render）を境目より後ろ（client の側）へ移す必要がある。
+// 今は描画がイベントループの中で済んでから editor.Terminal.Draw に ui.Screen が渡るので、server の側には表示のデータが残っていない。
+// 境目の移動は 2 段目の issue で扱う。
 //
 // 今の単位は「internal/ui の格子の全体（ui.Screen）」である。
 // server は組み立てた ui.Screen をそのまま Draw に入れ、client はそれを internal/term の Painter に渡して、前回の格子との差分を出力する。

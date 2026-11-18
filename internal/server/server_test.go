@@ -171,6 +171,27 @@ func TestRunReturnsOnContextDone(t *testing.T) {
 	}
 }
 
+// client が最初のメッセージを送らないまま ctx が終わっても、Run は ctx.Err() で戻り、接続を閉じる。
+func TestRunReturnsOnContextDoneBeforeFirstMessage(t *testing.T) {
+	srv := newServer(t)
+	c, s := protocol.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx, s) }()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run = %v, want context.Canceled", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return while the client sent nothing")
+	}
+	if _, err := c.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("client Recv after Run: err = %v, want io.EOF", err)
+	}
+}
+
 // イベントループへ渡すイベントには、接続ごとに割り当てた client の識別子が付く（基本設計 2.1）。
 // 最初のイベントが端末の大きさなら Size に使い、そうでなければ既定の大きさにしてイベントとして渡す。
 func TestClientTermAttach(t *testing.T) {
@@ -184,7 +205,9 @@ func TestClientTermAttach(t *testing.T) {
 	if err := c.Send(protocol.Event{Key: key}); err != nil {
 		t.Fatal(err)
 	}
-	ct.attach(7, s)
+	if err := ct.attach(context.Background(), 7, s); err != nil {
+		t.Fatal(err)
+	}
 	if w, h := ct.Size(); w != 100 || h != 30 {
 		t.Errorf("Size = %dx%d, want 100x30", w, h)
 	}
@@ -201,7 +224,9 @@ func TestClientTermAttach(t *testing.T) {
 	if err := c.Send(protocol.Event{Key: key}); err != nil {
 		t.Fatal(err)
 	}
-	ct.attach(8, s)
+	if err := ct.attach(context.Background(), 8, s); err != nil {
+		t.Fatal(err)
+	}
 	if w, h := ct.Size(); w != defaultWidth || h != defaultHeight {
 		t.Errorf("Size = %dx%d, want the default %dx%d", w, h, defaultWidth, defaultHeight)
 	}

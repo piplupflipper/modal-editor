@@ -60,13 +60,16 @@ func (s *Server) Open(path string) error {
 
 // Run は、conn を編集の client として繋ぎ、イベントループを動かす。1 つの Server で 1 回だけ呼べる。
 // 戻り値は editor.Editor.Run と同じで、:q で nil、client が接続を閉じたら editor.ErrTerminalLost、ctx の終わりで ctx.Err() である。
+// client が最初のメッセージ（端末の大きさ）を送る前に ctx が終わっても、ctx.Err() で戻る。
 //
 // 戻る前に conn を閉じる。client はそれを見て端末を戻す。
 // 拡張機能はまだ止めないので、呼び出し側は client が端末を戻すのを待ってから Close を呼ぶ（editor.Editor.Close の doc の順序）。
 func (s *Server) Run(ctx context.Context, conn protocol.ServerConn) error {
 	defer func() { _ = conn.Close() }() // 閉じる誤りは、client の側の Recv の誤りで分かる
 	s.nextID++
-	s.client.attach(s.nextID, conn)
+	if err := s.client.attach(ctx, s.nextID, conn); err != nil {
+		return err
+	}
 	return s.ed.Run(ctx)
 }
 
@@ -90,14 +93,33 @@ type clientTerm struct {
 
 // attach は、conn を繋ぐ。最初のイベントで端末の大きさを受け取り、残りのイベントを読む goroutine を起こす。
 // 最初のイベントが大きさでなければ、既定の大きさにして、そのイベントもイベントループへ渡す。
-func (t *clientTerm) attach(id editor.ClientID, conn protocol.ServerConn) {
+// 最初のイベントを待つ間に ctx が終わったら、ctx.Err() を返す（client が何も送らなくても Run が戻れるようにする）。
+// そのとき最初のイベントを待つ goroutine は、呼び出し側（Run）が conn を閉じると戻る。
+func (t *clientTerm) attach(ctx context.Context, id editor.ClientID, conn protocol.ServerConn) error {
 	t.id, t.conn = id, conn
 	t.width, t.height = defaultWidth, defaultHeight
-	first, err := conn.Recv()
-	if err != nil {
-		close(t.events) // 大きさを知らせる前に client が閉じた。イベントループは ErrTerminalLost で戻る
-		return
+	type received struct {
+		ev  protocol.Event
+		err error
 	}
+	firstCh := make(chan received, 1)
+	go func() {
+		defer t.recoverPanic()
+		ev, err := conn.Recv()
+		firstCh <- received{ev, err}
+	}()
+	var r received
+	select {
+	case r = <-firstCh:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if r.err != nil {
+		// 大きさを知らせる前に client が閉じた。誤りにはせず、イベントループに ErrTerminalLost で戻らせる
+		close(t.events)
+		return nil //nolint:nilerr // client の切断は Run の戻り値の ErrTerminalLost で知らせる
+	}
+	first := r.ev
 	var pending []protocol.Event
 	if first.Resize && first.Width > 0 && first.Height > 0 {
 		t.width, t.height = first.Width, first.Height
@@ -105,6 +127,7 @@ func (t *clientTerm) attach(id editor.ClientID, conn protocol.ServerConn) {
 		pending = append(pending, first)
 	}
 	go t.read(pending)
+	return nil
 }
 
 // read は、pending と、client から届いたイベントを、client の識別子を付けてイベントループへ送る。
