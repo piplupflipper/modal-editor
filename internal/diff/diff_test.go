@@ -232,7 +232,11 @@ func applyPatch(t *testing.T, b *buffer.Buffer, p Patch) {
 // TestHunkAtVim は、A の側にカーソルを置いて do（Obtain）か dp（Put）を打った後の両側の内容が、Vim 9.1 と同じになることを確かめる。
 // 期待値は、2026-11-18 に手元の Vim 9.1（patches 1-16）で
 // vim -N -u NONE -n --not-a-term -d a b -c 'set diffopt=internal,filler' に、カーソルの移動と :diffget か :diffput を流し、
-// 両側を :w! で書き出して取った（#185 のレビューの組と、末尾と途中の追加の組）。
+// 両側を :w! で書き出して取った。
+// 組は、#185 の 2 回のレビューの組と、最初の行と最後の行、詰め物（この側に無い行）が最初の行の上・途中・最後の行の下にあるもの、
+// 変えた行、空のファイルを組み合わせたもので、組ごとに A の側の全ての行で do と dp を打った。
+// a と b を入れ替えた組も含めるので、B の側にカーソルを置いた場合も確かめている。
+// 塊の位置が Vim（xdiff）と違う組では結果が違いうる（Hunk の doc）が、ここに挙げた組は全て Vim と一致した。
 // バッファは buffer.New の既定（'fixendofline' が有効）である。
 func TestHunkAtVim(t *testing.T) {
 	tests := []struct {
@@ -241,21 +245,118 @@ func TestHunkAtVim(t *testing.T) {
 		put          bool
 		wantA, wantB string
 	}{
-		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 2, false, "a\nX\nc\nd\n", "a\nX\nc\nd\n"},
+		// 1 回目のレビューの組。
 		{"a\nb\nc\nd\n", "a\nc\nd\n", 2, false, "a\nc\nd\n", "a\nc\nd\n"},
 		{"a\nb\nc\nd\ne\n", "X\nb\nc\nd\nY\n", 1, false, "X\nb\nc\nd\ne\n", "X\nb\nc\nd\nY\n"},
 		{"c\nd\n", "d\nd\na\na\nb\n", 1, false, "d\n", "d\nd\na\na\nb\n"},
-		{"a\n", "", 0, false, "\n", ""},
 		{"", "x\ny\n", 0, true, "", "\n"},
-		{"a\nb\nc\n", "a\nb\nc\nd\n", 2, false, "a\nb\nc\nd\n", "a\nb\nc\nd\n"},
-		{"a\nb\nc\n", "a\nb\nc\nd\n", 1, false, "a\nb\nc\n", "a\nb\nc\nd\n"},
-		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 3, false, "a\nb\nX\nd\n", "a\nb\nX\nd\n"},
 		{"a\nb\nc\n", "a\nb\nZ\nd\n", 2, false, "a\nb\nZ\nd\n", "a\nb\nZ\nd\n"},
+		// 2 回目のレビューの組と、網羅の組。
+		{"p\nq\n", "y\np\nq\nz\n", 0, false, "y\np\nq\n", "y\np\nq\nz\n"},
+		{"p\nq\n", "y\np\nq\nz\n", 1, false, "p\nq\n", "y\np\nq\nz\n"},
+		{"p\nq\n", "y\np\nq\nz\n", 0, true, "p\nq\n", "p\nq\nz\n"},
+		{"p\nq\n", "y\np\nq\nz\n", 1, true, "p\nq\n", "y\np\nq\nz\n"},
+		{"p\nq\nr\n", "p\ny\nq\nr\nz\n", 0, false, "p\nq\nr\n", "p\ny\nq\nr\nz\n"},
+		{"p\nq\nr\n", "p\ny\nq\nr\nz\n", 1, false, "p\ny\nq\nr\n", "p\ny\nq\nr\nz\n"},
+		{"p\nq\nr\n", "p\ny\nq\nr\nz\n", 2, false, "p\nq\nr\n", "p\ny\nq\nr\nz\n"},
+		{"p\nq\nr\n", "p\ny\nq\nr\nz\n", 0, true, "p\nq\nr\n", "p\ny\nq\nr\nz\n"},
+		{"p\nq\nr\n", "p\ny\nq\nr\nz\n", 1, true, "p\nq\nr\n", "p\nq\nr\nz\n"},
+		{"p\nq\nr\n", "p\ny\nq\nr\nz\n", 2, true, "p\nq\nr\n", "p\ny\nq\nr\nz\n"},
+		{"a\nd\n", "b\na\nd\nc\n", 0, false, "b\na\nd\n", "b\na\nd\nc\n"},
+		{"a\nd\n", "b\na\nd\nc\n", 1, false, "a\nd\n", "b\na\nd\nc\n"},
+		{"a\nd\n", "b\na\nd\nc\n", 0, true, "a\nd\n", "a\nd\nc\n"},
+		{"a\nd\n", "b\na\nd\nc\n", 1, true, "a\nd\n", "b\na\nd\nc\n"},
+		{"p\nq\n", "p\nq\nz\n", 0, false, "p\nq\n", "p\nq\nz\n"},
+		{"p\nq\n", "p\nq\nz\n", 1, false, "p\nq\nz\n", "p\nq\nz\n"},
+		{"p\nq\n", "p\nq\nz\n", 0, true, "p\nq\n", "p\nq\nz\n"},
+		{"p\nq\n", "p\nq\nz\n", 1, true, "p\nq\n", "p\nq\nz\n"},
+		{"a\nc\nc\n", "a\n", 0, false, "a\nc\nc\n", "a\n"},
+		{"a\nc\nc\n", "a\n", 1, false, "a\n", "a\n"},
+		{"a\nc\nc\n", "a\n", 2, false, "a\n", "a\n"},
+		{"a\nc\nc\n", "a\n", 0, true, "a\nc\nc\n", "a\n"},
+		{"a\nc\nc\n", "a\n", 1, true, "a\nc\nc\n", "a\nc\nc\n"},
+		{"a\nc\nc\n", "a\n", 2, true, "a\nc\nc\n", "a\nc\nc\n"},
+		{"a\n", "a\nc\nc\n", 0, false, "a\nc\nc\n", "a\nc\nc\n"},
+		{"a\n", "a\nc\nc\n", 0, true, "a\n", "a\nc\nc\n"},
+		{"b\n", "b\nc\na\nd\nd\n", 0, false, "b\nc\na\nd\nd\n", "b\nc\na\nd\nd\n"},
+		{"b\n", "b\nc\na\nd\nd\n", 0, true, "b\n", "b\nc\na\nd\nd\n"},
+		{"a\nb\nc\n", "a\nb\nc\nd\n", 0, false, "a\nb\nc\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\n", "a\nb\nc\nd\n", 1, false, "a\nb\nc\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\n", "a\nb\nc\nd\n", 2, false, "a\nb\nc\nd\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\n", "a\nb\nc\nd\n", 0, true, "a\nb\nc\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\n", "a\nb\nc\nd\n", 1, true, "a\nb\nc\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\n", "a\nb\nc\nd\n", 2, true, "a\nb\nc\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 0, false, "a\nb\nc\nd\n", "a\nb\nX\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 1, false, "a\nb\nc\nd\n", "a\nb\nX\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 2, false, "a\nb\nX\nd\n", "a\nb\nX\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 3, false, "a\nb\nX\nd\n", "a\nb\nX\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 0, true, "a\nb\nc\nd\n", "a\nb\nX\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 1, true, "a\nb\nc\nd\n", "a\nb\nX\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 2, true, "a\nb\nc\nd\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 3, true, "a\nb\nc\nd\n", "a\nb\nc\nd\n"},
+		{"x\n", "y\n", 0, false, "y\n", "y\n"},
+		{"x\n", "y\n", 0, true, "x\n", "x\n"},
+		{"a\n", "", 0, false, "\n", ""},
+		{"a\n", "", 0, true, "a\n", "a\n"},
+		{"", "a\n", 0, false, "a\n", "a\n"},
+		{"", "a\n", 0, true, "", "\n"},
+		{"a\nb\n", "x\na\nb\n", 0, false, "x\na\nb\n", "x\na\nb\n"},
+		{"a\nb\n", "x\na\nb\n", 1, false, "a\nb\n", "x\na\nb\n"},
+		{"a\nb\n", "x\na\nb\n", 0, true, "a\nb\n", "a\nb\n"},
+		{"a\nb\n", "x\na\nb\n", 1, true, "a\nb\n", "x\na\nb\n"},
+		{"a\nb\nc\n", "a\nX\nc\nd\n", 0, false, "a\nb\nc\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\n", "a\nX\nc\nd\n", 1, false, "a\nX\nc\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\n", "a\nX\nc\nd\n", 2, false, "a\nX\nc\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\n", "a\nX\nc\nd\n", 0, true, "a\nb\nc\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\n", "a\nX\nc\nd\n", 1, true, "a\nb\nc\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\n", "a\nX\nc\nd\n", 2, true, "a\nb\nc\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\n", "a\nb\n", 0, false, "a\nb\nc\n", "a\nb\n"},
+		{"a\nb\nc\n", "a\nb\n", 1, false, "a\nb\nc\n", "a\nb\n"},
+		{"a\nb\nc\n", "a\nb\n", 2, false, "a\nb\n", "a\nb\n"},
+		{"a\nb\nc\n", "a\nb\n", 0, true, "a\nb\nc\n", "a\nb\n"},
+		{"a\nb\nc\n", "a\nb\n", 1, true, "a\nb\nc\n", "a\nb\n"},
+		{"a\nb\nc\n", "a\nb\n", 2, true, "a\nb\nc\n", "a\nb\nc\n"},
+		{"a\nb\nc\n", "b\nc\n", 0, false, "b\nc\n", "b\nc\n"},
+		{"a\nb\nc\n", "b\nc\n", 1, false, "b\nc\n", "b\nc\n"},
+		{"a\nb\nc\n", "b\nc\n", 2, false, "a\nb\nc\n", "b\nc\n"},
+		{"a\nb\nc\n", "b\nc\n", 0, true, "a\nb\nc\n", "a\nb\nc\n"},
+		{"a\nb\nc\n", "b\nc\n", 1, true, "a\nb\nc\n", "a\nb\nc\n"},
+		{"a\nb\nc\n", "b\nc\n", 2, true, "a\nb\nc\n", "b\nc\n"},
+		{"a\nb\n", "a\nx\nb\n", 0, false, "a\nb\n", "a\nx\nb\n"},
+		{"a\nb\n", "a\nx\nb\n", 1, false, "a\nx\nb\n", "a\nx\nb\n"},
+		{"a\nb\n", "a\nx\nb\n", 0, true, "a\nb\n", "a\nx\nb\n"},
+		{"a\nb\n", "a\nx\nb\n", 1, true, "a\nb\n", "a\nb\n"},
+		{"y\np\nq\nz\n", "p\nq\n", 0, false, "p\nq\nz\n", "p\nq\n"},
+		{"y\np\nq\nz\n", "p\nq\n", 1, false, "p\nq\nz\n", "p\nq\n"},
+		{"y\np\nq\nz\n", "p\nq\n", 2, false, "y\np\nq\nz\n", "p\nq\n"},
+		{"y\np\nq\nz\n", "p\nq\n", 3, false, "y\np\nq\n", "p\nq\n"},
+		{"y\np\nq\nz\n", "p\nq\n", 0, true, "y\np\nq\nz\n", "y\np\nq\n"},
+		{"y\np\nq\nz\n", "p\nq\n", 1, true, "y\np\nq\nz\n", "y\np\nq\n"},
+		{"y\np\nq\nz\n", "p\nq\n", 2, true, "y\np\nq\nz\n", "p\nq\n"},
+		{"y\np\nq\nz\n", "p\nq\n", 3, true, "y\np\nq\nz\n", "p\nq\nz\n"},
+		{"p\nq\nz\n", "p\nq\n", 0, false, "p\nq\nz\n", "p\nq\n"},
+		{"p\nq\nz\n", "p\nq\n", 1, false, "p\nq\nz\n", "p\nq\n"},
+		{"p\nq\nz\n", "p\nq\n", 2, false, "p\nq\n", "p\nq\n"},
+		{"p\nq\nz\n", "p\nq\n", 0, true, "p\nq\nz\n", "p\nq\n"},
+		{"p\nq\nz\n", "p\nq\n", 1, true, "p\nq\nz\n", "p\nq\n"},
+		{"p\nq\nz\n", "p\nq\n", 2, true, "p\nq\nz\n", "p\nq\nz\n"},
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 0, false, "a\nb\nc\nd\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 1, false, "a\nX\nc\nd\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 2, false, "a\nX\nc\nd\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 3, false, "a\nb\nc\nd\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 0, true, "a\nb\nc\nd\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 1, true, "a\nb\nc\nd\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 2, true, "a\nb\nc\nd\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 3, true, "a\nb\nc\nd\n", "a\nX\nc\nd\n"},
 	}
 	for _, tt := range tests {
 		ba, bb := buffer.New(tt.a), buffer.New(tt.b)
 		r := Compute(FromBuffer(ba), FromBuffer(bb))
-		if i, ok := r.HunkAt(A, tt.line); ok {
+		op := OpGet
+		if tt.put {
+			op = OpPut
+		}
+		if i, ok := r.HunkAt(A, tt.line, op); ok {
 			if tt.put {
 				applyPatch(t, bb, r.Put(i, A))
 			} else {

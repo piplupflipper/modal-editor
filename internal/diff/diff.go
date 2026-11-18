@@ -223,17 +223,32 @@ func (r *Result) Prev(side Side, line int) (int, bool) {
 	return 0, false
 }
 
-// HunkAt は、side の側でカーソルが行 line にあるときに、Vim の do と dp（範囲を付けない :diffget と :diffput）が対象にする塊の番号を返す。
+// Op は、塊を取り込む操作の種類である（HunkAt）。
+type Op int
+
+const (
+	// OpGet は、Vim の do（:diffget）である。Obtain で編集を作る。
+	OpGet Op = iota
+	// OpPut は、Vim の dp（:diffput）である。Put で編集を作る。
+	OpPut
+)
+
+// HunkAt は、side の側でカーソルが行 line にあるときに、op（do か dp。範囲を付けない :diffget か :diffput）が対象にする塊の番号を返す。
 //
-// Vim 9.1 の ex_diffgetput と同じく、カーソルの行と 1 つ上の行に掛かる塊を対象にする。
-// 範囲が空でない塊は、カーソルの行が範囲の中か、範囲の直後の行（1 つ上の行が範囲の最後の行）なら対象になる。
+// Vim 9.1 の ex_diffgetput（src/diff.c）の範囲の決め方を写す。
+// 範囲を付けないと、Vim はカーソルの行と 1 つ上の行（1 始まりで line1 = カーソル - 1、line2 = カーソル）を範囲にし、
+// 範囲に掛かる塊（この側の始まりが line2 以下で、終わりが line1 より後ろ）を対象にする。
+// 0 始まりの行で言い直すと、範囲が空でない塊は、カーソルの行が範囲の中か、範囲の直後の行なら対象になる。
 // 範囲が空の塊（この側に無い行の詰め物）は、カーソルの行が詰め物の直下の行なら対象になる。
-// ただし、カーソルが最後の行にあり、その行と 1 つ上の行が塊にも詰め物の直下にも無ければ、1 つ上の行の代わりに、
-// 末尾の空の範囲の塊（最後の行の下の詰め物）を対象にする。
-// 2026-11-18 に手元の Vim 9.1 で、#185 のレビューの組（TestHunkAtVim）の結果を確かめた。
+//
+// op が OpGet のときだけ、カーソルが最後の行にあり、その行と 1 つ上の行の diff_check が 0（塊の中でも、詰め物の直下でもない）なら、
+// 範囲をカーソルの行と 1 つ下の行にする。
+// このとき対象になるのは、末尾の空の範囲の塊（最後の行の下の詰め物）だけである。
+// OpPut にこの規則は無い（Vim のソースで :diffget に限っている）。
+// 2026-11-18 に手元の Vim 9.1（patches 1-16）で、最初の行、最後の行、詰め物の上下を組み合わせた組（TestHunkAtVim）の結果を確かめた。
 //
 // 塊の間には同じ行が少なくとも 1 行あるので、対象の塊は高々 1 つである。無ければ false を返す。
-func (r *Result) HunkAt(side Side, line int) (int, bool) {
+func (r *Result) HunkAt(side Side, line int, op Op) (int, bool) {
 	n := r.lineCount(side)
 	inHunk := func(l int) bool {
 		for _, h := range r.Hunks {
@@ -251,7 +266,9 @@ func (r *Result) HunkAt(side Side, line int) (int, bool) {
 		}
 		return false
 	}
-	if line == max(n-1, 0) && !inHunk(line) && !fillerAbove(line) && (line == 0 || !inHunk(line-1)) {
+	// clean は、Vim の diff_check が 0 を返す行（塊の中でも、詰め物の直下でもない行）かどうかである。
+	clean := func(l int) bool { return !inHunk(l) && !fillerAbove(l) }
+	if op == OpGet && line == max(n-1, 0) && clean(line) && (line == 0 || clean(line-1)) {
 		for i, h := range r.Hunks {
 			if s := h.Span(side); s.Len() == 0 && s.Start >= n {
 				return i, true
