@@ -147,20 +147,54 @@ func TestMacroEndsInInsert(t *testing.T) {
 	}
 }
 
-// Interrupted が true を返すと、大きな回数のマクロの再生は ErrInterrupted で止まる。
+// Interrupted が true を返すと、大きな回数のマクロの再生は ErrInterrupted で止まり、
+// 止まった位置のモードと打ちかけのキーを取り消して、ノーマルモードの打ち始めへ戻る（#202）。
+// Vim 9.1 は、レジスターの再生の途中の CTRL-C を、インサートモードとコマンドラインモードでは <Esc> として読ませる
+// （src/getchar.c の vgetorpeek()）。
 //
 // req: FR-05
 func TestMacroInterrupted(t *testing.T) {
-	s := setup(t, "|a")
-	calls := 0
-	s.Interrupted = func() bool { calls++; return calls > 3 }
-	s.registers.Set('b', Register{Text: "Ax<Esc>"})
-	if err := errOf(feedKeys(s, "999999999@b")); !errors.Is(err, ErrInterrupted) {
-		t.Fatalf("@b err = %v", err)
+	tests := []struct {
+		name string
+		reg  string
+		// stop は、何回目の Interrupted の問い合わせで true を返すかである。問い合わせは、各回の始めと各キーの前にある。
+		stop int
+		want string
+	}{
+		// 4 回目の問い合わせ（<Esc> の前）で止まる。x を入れたインサートモードを抜ける。
+		{"インサートモード", "Ax<Esc>", 4, "ax"},
+		// 回数付きの挿入は、<Esc> の前で止めても回数分くり返さず、入れた 1 回分で止める。
+		// Vim 9.1 で let @b='3i' . repeat('x', 3000000) . "\<Esc>" を @b して途中で CTRL-C を送ると、
+		// 1 行目は x が 1 回分の途中まで（46796 字）入った長さ 46797 になり、'2o' で同じことをすると行は 2 行だった（2026-11-18 に確かめた）。
+		{"回数付きの i", "3ix<Esc>", 5, "xa"},
+		{"回数付きの o", "2ox<Esc>", 5, "a\nx"},
+		// 回数が大きくても、中断の後始末で回数分の挿入をしない。くり返せば text が 100000 字になり、時間もかかる（#205 のレビューで 4 秒）。
+		{"大きな回数の i", "100000ix<Esc>", 10, "xa"},
+		// 3 回目の問い合わせ（":" の後の "s" の前）で止まる。打ちかけのコマンドラインは実行せずに捨てる。
+		{"コマンドラインモード", ":s/a/aa/\r", 3, "a"},
+		// 3 回目の問い合わせ（"d" の後の "d" の前）で止まる。打ちかけのオペレーターを捨てる。
+		{"打ちかけのオペレーター", "dd", 3, "a"},
 	}
-	// 4 回目の問い合わせ（<Esc> の前）で止まるので、x を入れたインサートモードのまま残る（Vim の <C-c> と同じく途中で止める）。
-	if got := s.buf.Text(); got != "ax" {
-		t.Errorf("@b: text = %q", got)
+	for _, tt := range tests {
+		s := setup(t, "|a")
+		calls := 0
+		s.Interrupted = func() bool { calls++; return calls >= tt.stop }
+		s.registers.Set('b', Register{Text: tt.reg})
+		if err := errOf(feedKeys(s, "999999999@b")); !errors.Is(err, ErrInterrupted) {
+			t.Fatalf("%s: @b err = %v", tt.name, err)
+		}
+		if got := s.buf.Text(); got != tt.want {
+			t.Errorf("%s: text = %q, want %q", tt.name, got, tt.want)
+		}
+		if s.Mode() != ModeNormal || s.Pending() || s.CommandLine() != "" {
+			t.Errorf("%s: mode = %v, pending = %v, cmdline = %q", tt.name, s.Mode(), s.Pending(), s.CommandLine())
+		}
+		// 中断の後に打つキーは、ノーマルモードの打ち始めとして解釈する。
+		s.Interrupted = nil
+		feedKeys(s, "ox<Esc>")
+		if got := s.buf.Text(); got != tt.want+"\nx" {
+			t.Errorf("%s: 中断の後の ox<Esc>: text = %q", tt.name, got)
+		}
 	}
 }
 

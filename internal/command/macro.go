@@ -136,7 +136,7 @@ func (s *State) finishPlayDot(dot *editcmd.Command) {
 func (s *State) playKeys(keys []editcmd.Key, n int) {
 	for iter := range n {
 		if s.interrupted() {
-			s.fail(ErrInterrupted)
+			s.stopInterrupted()
 			return
 		}
 		if len(keys) == 0 {
@@ -144,7 +144,7 @@ func (s *State) playKeys(keys []editcmd.Key, n int) {
 		}
 		for i := 0; i < len(keys); i++ {
 			if s.interrupted() {
-				s.fail(ErrInterrupted)
+				s.stopInterrupted()
 				return
 			}
 			s.feed(keys[i])
@@ -166,6 +166,25 @@ func (s *State) playKeys(keys []editcmd.Key, n int) {
 				return
 			}
 		}
+	}
+}
+
+// stopInterrupted は、中断（Interrupted）で再生を止め、ErrInterrupted を記録して、打ちかけのキーとモードを取り消す。
+//
+// 再生はキーの間のどこでも止まるので、:s/a/aa/<CR> の ":" の直後に止まるとコマンドラインモードのまま残り、
+// 利用者が続けて打つキー（ox<Esc> など）がコマンドラインへ入る（#202）。
+// Vim 9.1 は、レジスターの再生の途中の CTRL-C を、インサートモードとコマンドラインモードでは <Esc>、
+// それ以外では CTRL-C として読ませる（src/getchar.c の vgetorpeek()）。どちらもモードと打ちかけのキーを取り消すので、
+// ここでは <Esc> を 1 個渡して、ノーマルモードの打ち始めへ戻す。
+// 回数付きの挿入（3ix<Esc>）は、Vim 9.1 の ins_esc() が got_int で回数を 0 にするのと同じく、入れた 1 回分で止める
+// （src/edit.c）。<Esc> で回数分くり返すと、大きな回数では中断がかえって長い処理になる。
+func (s *State) stopInterrupted() {
+	s.fail(ErrInterrupted)
+	if s.mode == ModeInsert {
+		s.insert.repeat = 1
+	}
+	if s.mode != ModeNormal || s.parser.Pending() {
+		s.feed(editcmd.Esc)
 	}
 }
 

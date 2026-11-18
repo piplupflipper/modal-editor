@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/piplupflipper/modal-editor/internal/command"
@@ -31,6 +32,16 @@ func newKeyQueue() *keyQueue { return &keyQueue{ready: make(chan struct{}, 1)} }
 
 func (q *keyQueue) push(in keyInput) {
 	q.mu.Lock()
+	q.items = append(q.items, in)
+	q.mu.Unlock()
+	signal(q.ready)
+}
+
+// pushInterrupt は、中断の印 flag を立て、中断のキー in を積む。2 つを錠の中で行うので、
+// 印が立ったのを見てから dropThrough を呼べば、in はもう列にある。
+func (q *keyQueue) pushInterrupt(in keyInput, flag *atomic.Bool) {
+	q.mu.Lock()
+	flag.Store(true)
 	q.items = append(q.items, in)
 	q.mu.Unlock()
 	signal(q.ready)
