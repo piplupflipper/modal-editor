@@ -213,6 +213,9 @@ type Editor struct {
 	shared *command.State
 	// asker は、確認の問いか選択肢の問いを出している client である。問いが無ければ nil（syncAsker）。
 	asker *clientView
+	// extClient は、拡張機能の ID から、その拡張機能へ最後に問い合わせ（command/execute、provider/invoke など）を始めた client への表である。
+	// 拡張機能が後から届ける editor/open、message/show、choice/ask を、その client に出すのに使う（extView。基本設計 1.2）。
+	extClient map[string]*clientView
 	// attachCh は、Attach が渡す新しい client を、イベントループへ送る。
 	attachCh chan attachRequest
 	// goneCh は、端末の入力が閉じた client を、イベントループへ送る（forwardInput）。
@@ -400,6 +403,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		attachCh:  make(chan attachRequest),
 		goneCh:    make(chan *clientView),
 		keyFireCh: make(chan keyFire),
+		extClient: map[string]*clientView{},
 		finished:  make(chan struct{}),
 		outputs:   map[outputKey][]string{},
 		nextID:    1,

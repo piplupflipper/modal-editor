@@ -739,7 +739,7 @@ func TestRunStops(t *testing.T) {
 	}
 
 	h2 := start(t, Config{})
-	close(h2.term.in)
+	h2.term.closeInput()
 	select {
 	case err := <-h2.done:
 		if !errors.Is(err, ErrTerminalLost) {

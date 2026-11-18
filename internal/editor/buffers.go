@@ -277,8 +277,10 @@ func (e *Editor) jumpBy(bs *bufferState, cursor buffer.Position, count int) (buf
 		return j.pos, true, nil
 	}
 	if target.owner != nil && target.owner != e.view {
-		e.focusOwner(target)
-		target.state.SetCursor(j.pos)
+		// その client が入力の途中なら、タブもカーソルも替えない（focusOwner）。
+		if e.focusOwner(target) {
+			target.state.SetCursor(j.pos)
+		}
 		return buffer.Position{}, false, nil
 	}
 	if target.owner == nil {

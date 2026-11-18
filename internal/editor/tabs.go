@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
@@ -37,25 +38,36 @@ func (e *Editor) withView(c *clientView, f func()) {
 }
 
 // focusOwner は、別の client のタブのバッファ bs を開こうとしたときに、その client のペインへフォーカスを移す（FR-63）。
-// その client のカーソルのあるタブを bs にし、ペインへのフォーカスの移動を Config.FocusPane で頼む（別の goroutine）。
+// その client が入力の途中でなければ（idle）、その client のカーソルのあるタブを bs にする。
+// 入力の途中（インサートモード、コマンドラインモード、ビジュアルモード、キーの列の途中）なら、タブは替えずに、
+// 開くよう頼まれたことをその client のメッセージの行に出す（PR #223 のレビューの必須 1。利用者がフォーカスの移った先で
+// 打ち続けたキーが、見ていないファイルのコマンドにならないため）。
+// ペインへのフォーカスの移動は Config.FocusPane で頼む（別の goroutine）。
 // 移せないとき（端末多重化ソフトの外、ペインを知らない）は、メッセージで知らせるだけにする。
+// タブを bs にしたかを返す。
 //
 // req: FR-63
-func (e *Editor) focusOwner(bs *bufferState) {
+func (e *Editor) focusOwner(bs *bufferState) bool {
 	o := bs.owner
+	from := e.view.info.Pane
+	asker := e.view.info.ID
+	name := e.bufferName(bs)
+	switched := false
 	e.withView(o, func() {
-		if e.cur != bs {
+		switch {
+		case e.cur == bs:
+			switched = true
+		case e.viewIdle():
 			e.enter(bs)
+			switched = true
+		default:
+			e.message = infoMessage(fmt.Sprintf("client %d が %s を開こうとしました（入力の途中なのでタブは替えません）", asker, name))
 		}
 	})
-	from, to := "", o.info.Pane
-	if e.op != nil {
-		from = e.op.info.Pane
-	}
-	name := e.bufferName(bs)
+	to := o.info.Pane
 	if e.cfg.FocusPane == nil || from == "" || to == "" {
 		e.message = infoMessage(fmt.Sprintf("%s は %s のタブです", name, ownerName(bs)))
-		return
+		return switched
 	}
 	e.message = infoMessage(fmt.Sprintf("%s は %s のタブです（そのペインへ移ります）", name, ownerName(bs)))
 	focus, log := e.cfg.FocusPane, e.log
@@ -65,6 +77,17 @@ func (e *Editor) focusOwner(bs *bufferState) {
 			log.Warn("ペインへフォーカスを移せない", "from", from, "pane", to, "err", err)
 		}
 	}()
+	return switched
+}
+
+// viewIdle は、読み込んでいる client が入力の途中でないか（ノーマルモードで、キーの列とキーマップの展開の途中でなく、
+// hit-enter の問いも出していないか）を返す。別の client からカーソルのあるタブを替えてよいかを決める（focusOwner）。
+func (e *Editor) viewIdle() bool {
+	if e.cur == nil {
+		return true
+	}
+	st := e.cur.state
+	return st.Mode() == command.ModeNormal && !st.Pending() && !e.remap.pendingKeys() && e.regList == nil && !e.hitEnter()
 }
 
 // removeTab は、読み込んでいる client のタブから bs を外す。bs がカーソルのあるタブなら、裏のタブ、無ければ右の（無ければ左の）タブへ移る。

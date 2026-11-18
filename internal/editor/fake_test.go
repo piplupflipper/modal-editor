@@ -2,6 +2,7 @@ package editor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -140,6 +141,20 @@ func runFakeExt(mode string) int {
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
 		// fake.echo は、受け取った command/execute の args をそのまま表示する。
+		s.Command("fake.openlater", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			// 引数のパスを、応答の 300ms 後に editor/open（focus）で開き、開いたことを message/show で知らせる（#215 の client の振り分け）。
+			var args struct{ Text string }
+			if err := json.Unmarshal(p.Args, &args); err != nil {
+				return ext.CommandExecuteResult{}, err
+			}
+			go func() {
+				time.Sleep(300 * time.Millisecond)
+				if _, err := s.OpenEditor(hostCtx, ext.EditorOpenParams{Path: args.Text, Focus: true}); err == nil {
+					_ = s.ShowMessage(ext.MessageInfo, "opened later")
+				}
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.Command("fake.echo", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("args=%s", p.Args))
 			return ext.CommandExecuteResult{OK: true}, nil
@@ -284,7 +299,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 			Activation: []ext.Activation{
 				act(ext.ActivationTextObject, "fake.line"), act(ext.ActivationTextObject, "fake.slow"),
 				act(ext.ActivationTextObject, "fake.hang"), act(ext.ActivationCommand, "fake.upper"),
-				act(ext.ActivationCommand, "fake.echo"),
+				act(ext.ActivationCommand, "fake.echo"), act(ext.ActivationCommand, "fake.openlater"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -293,7 +308,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.dump", `\d`), contrib("fake.ask", `\a`), contrib("fake.state", `\s`),
 					contrib("fake.focus", `\f`), contrib("fake.goto", `\g`), contrib("fake.eol", `\e`),
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
-					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.save", `\w`),
+					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
 				},
 			},
@@ -321,12 +336,17 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 // fakeTerm は、テスト用の偽の端末である。キーを送り、最後に描いた画面を持つ。
 type fakeTerm struct {
 	in chan TermEvent
+	// closeIn は、in を 1 回だけ閉じるためのものである（closeInput）。
+	closeIn sync.Once
 
 	mu   sync.Mutex
 	last ui.Screen
 	// clips は、SetClipboard で送られたテキストを、送られた順に並べたものである。
 	clips []string
 }
+
+// closeInput は、端末の入力を閉じる（端末が失われた）。何度呼んでもよい。
+func (f *fakeTerm) closeInput() { f.closeIn.Do(func() { close(f.in) }) }
 
 func (f *fakeTerm) SetClipboard(text string) error {
 	f.mu.Lock()
@@ -372,6 +392,8 @@ type harness struct {
 	done   chan error
 	sent   int64
 	cancel context.CancelFunc
+	// peers は、Attach で足した client の偽の端末である。後始末で入力を閉じる。
+	peers []*fakeTerm
 }
 
 // start は、cfg でエディタを作り、files を開いて、別の goroutine で Run する。テストの終わりに止めて Close する。
@@ -405,6 +427,11 @@ func start(t *testing.T, cfg Config, files ...string) *harness {
 			}
 		case <-time.After(5 * time.Second):
 			t.Error("Run が終わらない")
+		}
+		// 入力を読む goroutine（forwardInput）を残さないよう、偽の端末の入力を閉じる（PR #223 のレビューの並行処理の節）。
+		term.closeInput()
+		for _, p := range h.peers {
+			p.closeInput()
 		}
 		closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()

@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,6 +41,7 @@ type peer struct {
 func (h *harness) attach(info ClientInfo) *peer {
 	h.t.Helper()
 	term := &exitTerm{fakeTerm: newFakeTerm()}
+	h.peers = append(h.peers, term.fakeTerm)
 	if err := h.e.Attach(term, info); err != nil {
 		h.t.Fatalf("Attach = %v", err)
 	}
@@ -266,7 +268,7 @@ func TestLostClientKeepsModifiedBuffers(t *testing.T) {
 	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt"), filepath.Join(dir, "c.txt")}})
 	b.keys("ix<Esc>")
 	h.settle()
-	close(b.term.in)
+	b.term.closeInput()
 	h.eventually("B を外す", func() bool { return len(h.e.clients) == 1 })
 	h.e.do(func() {
 		var names []string
@@ -354,5 +356,138 @@ func TestClientsShowBufferDecorations(t *testing.T) {
 	}
 	if !strings.HasPrefix(bs, "=>beta") || !strings.Contains(bs, "hover of beta") || strings.Contains(bs, "alpha") {
 		t.Errorf("B の画面:\n%s", bs)
+	}
+}
+
+// FR-63 でフォーカスを移される client が入力の途中（インサートモード）なら、その client のタブは替えない（PR #223 のレビューの必須 1）。
+// 移された先で打ち続けたキーは、入力の途中のタブに入り、見ていないファイルを変えない。
+// ノーマルモードに戻った後なら、タブを替える。
+//
+// req: FR-63
+func TestFocusOwnerKeepsBusyClient(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n", "b.txt": "beta\n", "c.txt": "gamma\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt", "b.txt") // 最後に開いた b.txt がカーソルのあるタブ
+	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "c.txt")}})
+	// レビューの再現: A は b.txt で Oabc（<Esc> を打たない）。B で :e a.txt。A は def<Esc> と打ち続ける。
+	h.keys("ggOabc")
+	h.settle()
+	b.keys(":e a.txt<CR>")
+	h.settle()
+	if s := h.term.screen(); !strings.Contains(s, "入力の途中なのでタブは替えません") {
+		t.Errorf("A の画面に知らせが出ない:\n%s", s)
+	}
+	h.keys("def<Esc>")
+	h.settle()
+	if got := h.bufferText("a.txt"); got != "alpha" {
+		t.Errorf("a.txt = %q, want 変わらない", got)
+	}
+	if got := h.bufferText("b.txt"); got != "abcdef\nbeta" {
+		t.Errorf("b.txt = %q, want 入力の続き", got)
+	}
+	// ノーマルモードに戻った後は、B の :e a.txt で A のタブを a.txt にする。
+	b.keys(":e a.txt<CR>")
+	h.settle()
+	h.e.do(func() {
+		if got := filepath.Base(h.e.viewOf(h.e.clients[0]).cur.path); got != "a.txt" {
+			t.Errorf("A のカーソルのあるタブ = %s, want a.txt", got)
+		}
+	})
+}
+
+// 問いを出した client が終わったら、問いを他の client へ移さずに取り下げる（PR #223 のレビューの必須 2）。
+// レビューの再現: A が外で変わったファイルに :w して問いを出した後に A の端末が閉じると、B で打った y で書き出していた。
+//
+// req: FR-58
+func TestQuestionCancelledWhenAskerGone(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n", "target.txt": "t\n"})
+	path := filepath.Join(dir, "a.txt")
+	h := start(t, Config{WorkDir: dir, CheckInterval: -1}, "a.txt")
+	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "target.txt")}})
+	h.e.do(func() { h.e.clients[0].info.ID = 1 })
+	h.keys("Ax<Esc>")
+	h.settle()
+	writeExternal(t, path, "alpha\next\n")
+	h.keys(":w<CR>")
+	h.eventually("書き込みの問い", func() bool { return h.e.prompt != nil })
+	h.term.closeInput()
+	h.eventually("A を外す", func() bool { return len(h.e.clients) == 1 })
+	h.e.do(func() {
+		if h.e.prompt != nil || h.e.asker != nil {
+			t.Errorf("問いが残った: prompt = %v, asker = %v", h.e.prompt != nil, h.e.asker)
+		}
+	})
+	if msg := h.message(); !strings.Contains(msg, "問いを取り下げました") || !strings.Contains(msg, "a.txt") {
+		t.Errorf("B への知らせ = %q", msg)
+	}
+	b.keys("y")
+	h.settle()
+	if got, err := os.ReadFile(path); err != nil || string(got) != "alpha\next\n" {
+		t.Errorf("a.txt = %q, %v; want 外で変えた内容のまま", got, err)
+	}
+	if got := h.bufferText("target.txt"); got != "t" {
+		t.Errorf("target.txt = %q", got)
+	}
+}
+
+// 問いの間に待たせている client には、待たせている理由を出す（PR #223 のレビューの推奨 2）。
+//
+// req: FR-58
+func TestHeldClientShowsWhy(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a\nb\nc\n", "b.txt": "bb\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	h.e.do(func() { h.e.clients[0].info.ID = 1 })
+	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt")}})
+	h.keys(":2,1d<CR>")
+	h.eventually("問い", func() bool { return h.e.confirm != nil })
+	h.e.do(func() { h.e.render() })
+	if s := b.term.screen(); !strings.Contains(s, "client 1 の問いの答えを待っています") {
+		t.Errorf("B の画面:\n%s", s)
+	}
+	h.keys("n")
+	h.settle()
+}
+
+// 拡張機能が後から届ける editor/open と message/show は、その拡張機能へ問い合わせを始めた client に出す。
+// 応答を待つ間に別の client がキーを打っても、その client には出さない（PR #223 のレビューの裁定要 2 へのオーケストレータの決定。仮）。
+// 始めた client が終わっていれば、操作中の client に出す。
+//
+// req: FR-62
+func TestExtResultGoesToRequester(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n", "b.txt": "beta\n", "t1.txt": "t1\n", "t2.txt": "t2\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt")}})
+	tabsOf := func(i int) string {
+		var names []string
+		h.e.do(func() {
+			for _, bs := range h.e.clients[i].tabs {
+				names = append(names, filepath.Base(bs.path))
+			}
+		})
+		return strings.Join(names, " ")
+	}
+	h.keys(":fake.openlater " + filepath.Join(dir, "t1.txt") + "<CR>")
+	h.settle()
+	b.keys("j")
+	h.eventually("t1.txt を開く", func() bool { return h.e.findPath(filepath.Join(dir, "t1.txt")) != nil })
+	h.settle()
+	if got := tabsOf(0); got != "a.txt t1.txt" {
+		t.Errorf("A のタブ = %s, want t1.txt を足す", got)
+	}
+	if got := tabsOf(1); got != "b.txt" {
+		t.Errorf("B のタブ = %s, want 変わらない", got)
+	}
+	h.eventually("A への message/show", func() bool {
+		return h.e.viewOf(h.e.clients[0]).message.Text == "opened later"
+	})
+	if s := b.term.screen(); strings.Contains(s, "opened later") {
+		t.Errorf("B の画面に出た:\n%s", s)
+	}
+
+	// 問い合わせを始めた client（B）が終わっていれば、操作中の client（A）に出す。
+	b.keys(":fake.openlater " + filepath.Join(dir, "t2.txt") + "<CR>:q<CR>")
+	h.eventually("t2.txt を開く", func() bool { return h.e.findPath(filepath.Join(dir, "t2.txt")) != nil })
+	h.settle()
+	if got := tabsOf(0); !strings.Contains(got, "t2.txt") {
+		t.Errorf("A のタブ = %s, want t2.txt を足す", got)
 	}
 }

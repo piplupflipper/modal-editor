@@ -102,7 +102,9 @@ func New(cfg editor.Config) (*Server, error) {
 
 // newTerm は、1 つの client との接続を editor.Terminal の口にするものを作る。
 func (s *Server) newTerm() *clientTerm {
-	return &clientTerm{onPanic: s.onPanic, log: s.log, events: make(chan editor.TermEvent)}
+	t := &clientTerm{onPanic: s.onPanic, log: s.log, events: make(chan editor.TermEvent)}
+	t.onEnd = func() { s.untrack(t) }
+	return t
 }
 
 // clientInfo は、Hello から、イベントループへ渡す client ごとの情報を作る。
@@ -191,9 +193,17 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, first protocol.Serv
 }
 
 // track は、繋いだ client の t を覚える（Serve の終わりに終わりの知らせを送るため）。
+// 終わった（end の後の）client は、untrack で一覧から外す（PR #223 のレビューの推奨 4）。
 func (s *Server) track(t *clientTerm) {
 	s.mu.Lock()
 	s.terms = append(s.terms, t)
+	s.mu.Unlock()
+}
+
+// untrack は、終わった client の t を一覧から外す。
+func (s *Server) untrack(t *clientTerm) {
+	s.mu.Lock()
+	s.terms = slices.DeleteFunc(s.terms, func(o *clientTerm) bool { return o == t })
 	s.mu.Unlock()
 }
 
@@ -210,6 +220,8 @@ func (s *Server) attachLoop(a *acceptor) {
 		id := editor.ClientID(s.nextID.Add(1))
 		t := s.newTerm()
 		t.attach(id, j.conn, j.hello)
+		// Attach の直後に client が終わっても（Exit）、一覧から外せるように、先に足す。
+		s.track(t)
 		if err := s.ed.Attach(t, clientInfo(id, j.hello)); err != nil {
 			reason := err.Error()
 			if errors.Is(err, editor.ErrStopped) {
@@ -219,7 +231,6 @@ func (s *Server) attachLoop(a *acceptor) {
 			t.end(reason)
 			continue
 		}
-		s.track(t)
 		s.log.Info("編集の client を足した", "client", id, "pane", j.hello.Pane)
 	}
 }
@@ -412,6 +423,8 @@ type clientTerm struct {
 	out outbox
 	// ended は、end を 1 回だけ行うためのものである。
 	ended sync.Once
+	// onEnd は、end の後に呼ぶ関数である（Server の一覧から外す）。newTerm で決め、後から変えない。
+	onEnd func()
 }
 
 // end は、まだ送っていないクリップボードへの書き込みと、終わりの知らせ（理由 reason）を送り（finish）、接続を閉じる。
@@ -426,6 +439,9 @@ func (t *clientTerm) end(reason string) {
 		}
 		_ = t.conn.Close() // 閉じる誤りは、client の側の Recv の誤りで分かる
 	})
+	if t.onEnd != nil {
+		t.onEnd()
+	}
 }
 
 // Exit は、editor.ClientExiter である。client が :q で最後のタブを閉じ、他の client が残るときに、イベントループが呼ぶ。

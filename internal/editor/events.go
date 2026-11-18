@@ -47,7 +47,11 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 	switch ev := ev.(type) {
 	case *exthost.QueryResult:
 		if p := e.deferred; p != nil && ev.Tag == p.tag {
-			e.applyDeferred(p, ev)
+			c := p.client
+			if c == nil || c.detached {
+				c = e.op
+			}
+			e.withView(c, func() { e.applyDeferred(p, ev) })
 		}
 		// それ以外は、期限を超えたか取り消した問い合わせの結果なので捨てる（FR-17）。
 	case *exthost.StateChange:
@@ -55,7 +59,9 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 	case *exthost.EditRequest:
 		e.editRequest(ev)
 	case *exthost.MessageShow:
-		e.message = ui.Message{Text: ev.Params.Text, Level: messageLevel(ev.Params.Level)}
+		e.withView(e.extView(ev.Extension), func() {
+			e.message = ui.Message{Text: ev.Params.Text, Level: messageLevel(ev.Params.Level)}
+		})
 	case *exthost.DecorationSet:
 		e.setDecorations(ev.Extension, ev.Params)
 	case *exthost.DiagnosticSet:
@@ -69,16 +75,30 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 	case *exthost.EditorStateRequest:
 		_ = ev.Reply(e.editorState())
 	case *exthost.EditorOpenRequest:
-		e.editorOpenRequest(ev)
+		e.withView(e.extView(ev.Extension), func() { e.editorOpenRequest(ev) })
 	case *exthost.BufferSaveRequest:
 		e.bufferSaveRequest(ev)
 	case *exthost.DiagnosticListRequest:
 		_ = ev.Reply(e.diagnosticList(ev.Params))
 	case *exthost.ChoiceAskRequest:
+		if e.asker == nil && !e.asking() && e.activeChoice() == nil {
+			// 問いは、その拡張機能へ問い合わせを始めた client に出す（基本設計 1.2）。
+			e.asker = e.extView(ev.Extension)
+		}
 		e.choices = append(e.choices, ev)
 	default:
 		e.log.Warn("未知のイベント", "type", fmt.Sprintf("%T", ev))
 	}
+}
+
+// extView は、拡張機能 extID が後から届けるもの（editor/open、message/show、choice/ask）を出す client を返す。
+// その拡張機能へ最後に問い合わせを始めた client で、その client が終わっていれば（または問い合わせていなければ）操作中の client である
+// （PR #223 のレビューの裁定要 2 へのオーケストレータの決定。仮）。
+func (e *Editor) extView(extID string) *clientView {
+	if c := e.extClient[extID]; c != nil && !c.detached {
+		return c
+	}
+	return e.op
 }
 
 func messageLevel(l ext.MessageLevel) ui.MessageLevel {

@@ -8,7 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
@@ -37,8 +39,15 @@ import (
 // # 問いと外部のコマンド
 //
 // 確認の問い（:s///c、外で変わったファイルへの :w の問いなど）と、拡張機能の選択肢の問い（choice/ask）は server に 1 つで、
-// 問いを出した時点の操作中の client（asker）の画面にだけ出す。答えるまで、他の client のキーは処理せずに列に残す（仮）。
+// 問いを出した時点の操作中の client（拡張機能の問いは、その拡張機能へ問い合わせを始めた client。asker）の画面にだけ出す。
+// 答えるまで、他の client のキーは処理せずに列に残し、その client には待っていることを出す（仮）。
 // Vim の問いと同じく、答えるまで他の処理をせず、問いを出したバッファと範囲を変えないためである。
+// 問いを出した client が終わったら、問いは取り下げる（cancelQuestions）。
+//
+// # 拡張機能が後から届けるもの
+//
+// editor/open、message/show、choice/ask、期限 0 の問い合わせの結果は、その拡張機能へ最後に問い合わせを始めた client に出す（extView。仮）。
+// ホバー（popup/show）は、そのバッファをカーソルのあるタブに持つ client に出す。
 // 外部のコマンド（:{range}! と :r !）の実行中は、コマンドを打った client のキーだけを列に残し、他の client のキーは処理する（仮。基本設計 4.9）。
 // 外部のコマンドを <C-c> で中断できるのは、コマンドを打った client の <C-c> だけである。
 // マクロの再生と拡張機能の応答の待ちは、イベントループを止めるので、どの client の <C-c> でも中断する。
@@ -381,10 +390,51 @@ func (e *Editor) loseClient(c *clientView) {
 		e.closeBufferState(bs)
 	}
 	e.removeClient(c)
-	if len(kept) > 0 && len(e.clients) > 0 {
-		text := fmt.Sprintf("client %d が終わりました。未保存のバッファを残しました（:ls で確かめ、:b で開けます）: %s", c.info.ID, strings.Join(kept, "、"))
-		e.viewOf(e.op).message = ui.Message{Text: text, Level: ui.MessageWarning}
+	if len(kept) > 0 {
+		e.notifyAll(fmt.Sprintf("client %d が終わりました。未保存のバッファを残しました（:ls で確かめ、:b で開けます）: %s", c.info.ID, strings.Join(kept, "、")))
 	}
+	if x, ok := e.lostTerm(c).(ClientExiter); ok && len(e.clients) > 0 {
+		// server が接続の後始末（送り待ちの置き場と一覧から外すこと）をできるように知らせる。相手はもう読んでいない。
+		x.Exit("")
+	}
+}
+
+// lostTerm は、外した client c の端末を返す。
+func (e *Editor) lostTerm(c *clientView) Terminal { return c.v.term }
+
+// notifyAll は、繋いでいるすべての client のメッセージの行に、警告 text を出す。
+// 同じ処理の中で既に警告を出していれば、その後に続ける（client が終わったときの、問いの取り下げと残したバッファの知らせ）。
+func (e *Editor) notifyAll(text string) {
+	for _, c := range e.clients {
+		v := e.viewOf(c)
+		if v.message.Level == ui.MessageWarning && v.message.Text != "" && !strings.Contains(v.message.Text, text) {
+			v.message = ui.Message{Text: v.message.Text + "。" + text, Level: ui.MessageWarning}
+			continue
+		}
+		v.message = ui.Message{Text: text, Level: ui.MessageWarning}
+	}
+}
+
+// cancelQuestions は、出している問いをすべて取り下げる。確認の問いは n、本体の問いは <Esc>（書き出さない、読み直さない）、
+// 拡張機能の選択肢の問いは取り消し（Cancelled）で答えたものとする。
+func (e *Editor) cancelQuestions() {
+	if cf, bs := e.confirm, e.confirmBS; cf != nil {
+		e.confirm, e.confirmBS = nil, nil
+		if bs != nil && slices.Contains(e.bufs, bs) {
+			_ = e.handleResult(bs, bs.state.Confirm(cf, false)) // 失敗は handleResult が知らせる
+		}
+	}
+	if p := e.prompt; p != nil {
+		e.prompt = nil
+		p.answer(editcmd.Esc)
+	}
+	for _, ch := range e.choices {
+		if !closed(ch) {
+			_ = ch.Reply(ext.ChoiceAskResult{Cancelled: true}) // 拡張機能が先に取り下げていれば届かない
+		}
+	}
+	e.choices = nil
+	e.endChoices()
 }
 
 // removeClient は、client c を一覧から外し、他の client を読み込む。c のタイマーを止める。
@@ -396,10 +446,27 @@ func (e *Editor) removeClient(c *clientView) {
 	if c == e.view {
 		c.v = e.viewFields
 	}
+	// 問いを出した client が終わったら、問いを他の client へ移さずに取り下げる（PR #223 のレビューの必須 2）。
+	// 他の client の利用者は、問いがどのファイルのものかを知らないので、その答えで見ていないファイルを書き出さないためである。
+	asked := e.asker == c || (e.asker == nil && e.op == c)
 	c.detached = true
 	e.clients = slices.DeleteFunc(e.clients, func(o *clientView) bool { return o == c })
+	cancelled := asked && (e.asking() || e.activeChoice() != nil)
+	if cancelled {
+		e.cancelQuestions()
+	}
+	defer func() {
+		if cancelled {
+			e.notifyAll(fmt.Sprintf("client %d が終わったので、その client の問いを取り下げました", c.info.ID))
+		}
+	}()
 	if e.asker == c {
 		e.asker = nil
+	}
+	for owner, o := range e.extClient {
+		if o == c {
+			delete(e.extClient, owner)
+		}
 	}
 	if e.shell != nil && e.shell.client == c {
 		// 外部のコマンドを打った client が終わった。出力を入れる先の画面が無いので止める（結果は shellFinished が捨てる）。
@@ -431,18 +498,18 @@ func ownerName(bs *bufferState) string {
 	return fmt.Sprintf("client %d", bs.owner.info.ID)
 }
 
-// workDir は、操作中の client の作業ディレクトリを返す。知らせていなければ Config.WorkDir である。
+// workDir は、読み込んでいる client（キーを処理する間は操作中の client）の作業ディレクトリを返す。知らせていなければ Config.WorkDir である。
 func (e *Editor) workDir() string {
-	if c := e.op; c != nil && c.info.WorkDir != "" {
+	if c := e.view; c != nil && c.info.WorkDir != "" {
 		return c.info.WorkDir
 	}
 	return e.cfg.WorkDir
 }
 
-// childEnv は、操作中の client の外部のコマンドに足す環境変数を返す（ClientInfo.Env の後に Config.ChildEnv）。
+// childEnv は、読み込んでいる client の外部のコマンドに足す環境変数を返す（ClientInfo.Env の後に Config.ChildEnv）。
 func (e *Editor) childEnv() []string {
 	var env []string
-	if c := e.op; c != nil {
+	if c := e.view; c != nil {
 		env = append(env, c.info.Env...)
 	}
 	return append(env, e.cfg.ChildEnv...)

@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/piplupflipper/modal-editor/internal/command"
@@ -66,6 +67,13 @@ func (e *Editor) frame() *ui.Frame {
 	case question && e.activeChoice() != nil:
 		f.Choice = e.uiChoice()
 		f.List = e.uiRegList()
+	case !question && (e.asking() || e.activeChoice() != nil):
+		// 問いの間は、このペインのキーを処理せずに待たせるので、その理由を出す（PR #223 のレビューの推奨 2）。
+		q := e.asker
+		if q == nil {
+			q = e.op
+		}
+		f.Message = ui.Message{Text: fmt.Sprintf("client %d の問いの答えを待っています（答えるまで、このペインのキーは処理しません）", q.info.ID), Level: ui.MessageWarning}
 	case e.regList != nil:
 		f.List = e.uiRegList()
 	case e.popup != nil:
