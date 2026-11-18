@@ -196,13 +196,13 @@ var (
 	}
 )
 
-// ProviderExtension は、提供者へ振り分ける本体の操作（基本設計 5.5。FR-94）の Binding.Ref.Extension に入れる値である。
+// ProviderExtension は、提供者へ振り分ける本体の操作（基本設計 5.5。FR-94）の Binding.Ref.Extension に入れる値である（editcmd.ProviderExtension）。
 //
 // LSP と DAP の操作は、どの拡張機能が引き受けるかを、呼ばれた時点のバッファのファイルの種類で決める（exthost.Host.Provider）。
 // そのためキーマップには拡張機能の ID を書けず、この値を入れておき、問い合わせる側（internal/editor）が提供者に置き換える。
 // 実行の側（internal/command）からは拡張機能の操作に見えるので、問い合わせ（command.Extensions）を通る。
-// 値は空白を含むので、宣言ファイルの ID（空白を含めない。ext.Manifest.Validate）と重ならない。
-const ProviderExtension = " provider"
+// ただしドットリピートは、対象を取らない操作（K、<leader>db など）を記録しない（command の repeatable。FR-06）。
+const ProviderExtension = editcmd.ProviderExtension
 
 // 提供者へ振り分ける操作の ID のうち、ext.Operation の名前でないもの。
 const (

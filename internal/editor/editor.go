@@ -400,6 +400,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	var w3 []error
 	e.exCommands, w3 = buildExCommands(cfg.Extensions)
 	warnings = append(warnings, w3...)
+	warnings = append(warnings, removedCommandWarnings(cfg.Keymap, e.exCommands)...)
 	var w2 []error
 	e.remap, w2 = newRemapper(cfg.Keymap, leader)
 	warnings = append(warnings, w2...)

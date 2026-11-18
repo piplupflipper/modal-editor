@@ -32,7 +32,7 @@ func registerFakeProvider(s *server.Server) {
 		show(p)
 		return ext.ProviderInvokeResult{OK: true}, nil
 	}
-	for _, op := range []ext.Operation{ext.OpHover, ext.OpRename, ext.OpDebugContinue} {
+	for _, op := range []ext.Operation{ext.OpHover, ext.OpRename, ext.OpDebugContinue, ext.OpBreakpointToggle} {
 		s.Provider(op, echo)
 	}
 	s.Provider(ext.OpFormat, func(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
@@ -74,7 +74,7 @@ func providerSpecs(t *testing.T) []exthost.Spec {
 		},
 		{
 			ID: "dapx", Command: "/bin/sh", Args: []string{"-c", `FAKE_PROVIDER_ID=dapx exec "$0" "$@"`, exe, fakeExtFlag, fakeProvider},
-			Provides: []ext.Operation{ext.OpDebugContinue, ext.OpHover},
+			Provides: []ext.Operation{ext.OpDebugContinue, ext.OpHover, ext.OpBreakpointToggle},
 		},
 	}
 	if _, err := ext.ValidateManifests(ms); err != nil {
@@ -90,7 +90,7 @@ func providerSpecs(t *testing.T) []exthost.Spec {
 // 既定のキーで呼んだ LSP と DAP の操作は、バッファのファイルの種類で選んだ提供者へ provider/invoke で問い合わせる。
 // 結果の編集とカーソルの移動は command/execute と同じに扱う。提供者が無ければ、そのことをメッセージの行に出す。
 //
-// req: FR-94, FR-95, FR-96
+// req: FR-06, FR-94, FR-95, FR-96
 func TestProviderKeys(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.provft": "abc\ndef\nghi\n", "b.txt": "xyz\n"})
 	h := start(t, Config{WorkDir: dir, Extensions: providerSpecs(t), FileTypes: map[string]string{".provft": "provft"}}, "a.provft")
@@ -103,17 +103,23 @@ func TestProviderKeys(t *testing.T) {
 	waitMsg("<Space>lh", "lspx hover cursor=0:1 range=- args= withheld=false")
 	h.keys("K")
 	waitMsg("K", "lspx hover cursor=0:1 range=- args= withheld=false")
-	// 提供者の操作は、拡張機能の操作と同じくドットリピートが記録する（docs/vim-differences.md。Vim の K は記録しない）。
-	h.keys("xK")
-	waitMsg("xK", "lspx hover cursor=0:1 range=- args= withheld=false")
-	h.e.do(func() { h.e.message.Text = "" })
-	h.keys(".")
-	waitMsg(". の後の K", "lspx hover cursor=0:1 range=- args= withheld=false")
-	if got := h.text(); got != "ac\ndef\nghi" {
-		t.Errorf("xK. の後: text = %q", got)
+	// 対象を取らない提供者の操作は、テキストを変えないのでドットリピートが記録しない（FR-06）。
+	// xK. と x<Space>db. の . は、直前の変更の x を繰り返す（#203 のレビュー）。
+	for _, keys := range []string{"K", "<Space>db"} {
+		h.keys("x" + keys)
+		h.settle()
+		h.e.do(func() { h.e.message.Text = "" })
+		h.keys(".")
+		h.settle()
+		if got := h.text(); got != "a\ndef\nghi" {
+			t.Errorf("x%s. の後: text = %q", keys, got)
+		}
+		h.keys("uu0l")
+		h.settle()
+		if got := h.text(); got != "abc\ndef\nghi" {
+			t.Fatalf("x%s.uu の後: text = %q", keys, got)
+		}
 	}
-	h.keys("u")
-	h.settle()
 
 	// <C-]> と <Space>lD は定義へ移り、<Space>ld は peek を付けて問い合わせ、移らない。
 	h.keys("<C-]>")
@@ -135,6 +141,15 @@ func TestProviderKeys(t *testing.T) {
 	if got := h.text(); got != "abc\ndef\nghi" {
 		t.Errorf("u: text = %q", got)
 	}
+	// gq はオペレーターなので、Vim の gq と同じくドットリピートで繰り返し、format を問い合わせ直す。
+	h.e.do(func() { h.e.message.Text = "" })
+	h.keys(".")
+	h.eventually("gqj の後の .", func() bool { return h.e.cur.buf.Text() == "abc\nDEF\nGHI" })
+	if msg := h.message(); !strings.HasPrefix(msg, "lspx format cursor=1:0 range=1:0-2:3") {
+		t.Errorf("gqj の後の .: message = %q", msg)
+	}
+	h.keys("u")
+	h.settle()
 
 	// 提供者の操作は、コマンドラインから操作の名前で呼べ、引数を args の text で渡す。
 	h.keys(":rename newName<CR>")
@@ -156,6 +171,26 @@ func TestProviderKeys(t *testing.T) {
 	}
 	if got := h.text(); got != "xyz" {
 		t.Errorf("提供者の無い gqq: text = %q", got)
+	}
+}
+
+// キーマップの右辺の段階 2 の LSP と DAP のコマンドは、起動の時点で設定の誤りとして知らせる（#203 のレビュー）。
+// 拡張機能が同じ ID のコマンドをまだ宣言していれば知らせない。
+func TestRemovedCommandWarnings(t *testing.T) {
+	km := map[string]map[string]string{"normal": {
+		"<Space>d": ":lsp.definition<CR>", "<Space>b": ":dap.toggleBreakpoint<CR>", "<Space>w": ":w<CR>",
+	}}
+	errs := removedCommandWarnings(km, map[string]string{})
+	if len(errs) != 2 || !strings.Contains(errs[0].Error(), "keymap.normal の <Space>b の右辺の :dap.toggleBreakpoint") ||
+		!strings.Contains(errs[1].Error(), ":definition か <C-]>") {
+		t.Errorf("errs = %v", errs)
+	}
+	if errs := removedCommandWarnings(km, map[string]string{"lsp.definition": "old", "dap.toggleBreakpoint": "old"}); len(errs) != 0 {
+		t.Errorf("宣言された古いコマンド: errs = %v", errs)
+	}
+	h := start(t, Config{Keymap: km})
+	if msg := h.message(); !strings.Contains(msg, ":dap.toggleBreakpoint は無くなったコマンド") || !strings.Contains(msg, "他 1 件") {
+		t.Errorf("起動時のメッセージ = %q", msg)
 	}
 }
 

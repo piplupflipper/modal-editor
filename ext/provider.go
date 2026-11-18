@@ -102,6 +102,8 @@ type ProviderInvokeResult = CommandExecuteResult
 // ProviderArgs は、provider/invoke の Args の形である（仮）。
 type ProviderArgs struct {
 	// Peek は、移動の操作で、移らずにポップアップで見ることを表す。
+	// 今は提供者が移動先の行を popup/show で出す。ポップアップの部品（FR-110）ができたら、#177 の裁定のとおり本体が写しを
+	// 編集を禁止したバッファとして出す形へ移り、提供者は場所だけを返すことになる（このとき Peek の意味が変わる。仮）。
 	Peek bool `json:"peek,omitempty"`
 	// Text は、コマンドラインから呼んだときの、操作の名前の後の引数の文字列である（:rename 新しい名前）。
 	Text string `json:"text,omitempty"`

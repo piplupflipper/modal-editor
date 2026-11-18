@@ -195,6 +195,43 @@ func (e *Editor) showDiagnosticList(bss []*bufferState) {
 	e.popup = &popupState{bs: cur, cursor: cur.state.Cursor(), text: strings.Join(lines, "\n")}
 }
 
+// removedCommands は、段階 2 の LSP と DAP の拡張機能のコマンドの ID から、置き換えた本体の操作の名前と既定のキーへの対応である（#203）。
+// docs/usage.md の「段階 2 のコマンドからの移行」の表と同じものである。
+var removedCommands = map[string]string{
+	"lsp.definition":       ":definition か <C-]>、<leader>lD",
+	"lsp.hover":            ":hover か K、<leader>lh",
+	"lsp.format":           ":format か gq{モーション}",
+	"dap.start":            ":debug.continue か <leader>dc",
+	"dap.stop":             ":debug.terminate か <leader>dt",
+	"dap.toggleBreakpoint": ":breakpoint.toggle か <leader>db",
+	"dap.continue":         ":debug.continue か <leader>dc",
+	"dap.next":             ":debug.stepOver か <leader>dn",
+	"dap.stepIn":           ":debug.stepIn か <leader>di",
+	"dap.stepOut":          ":debug.stepOut か <leader>do",
+}
+
+// removedCommandWarnings は、利用者のキーマップの右辺に、段階 2 の LSP と DAP のコマンド（removedCommands）があれば、
+// 項目ごとに設定の誤りを返す。そのコマンドは呼ぶと E492 になり、左辺が既定のキー（<leader>d で始まるものなど）を隠すためである。
+// 拡張機能がまだ同じ ID のコマンドを宣言していれば（cmds にあれば）知らせない。
+// 誤りの順は、モードと左辺の名前の順である。
+func removedCommandWarnings(keymap map[string]map[string]string, cmds map[string]string) []error {
+	var errs []error
+	for _, mode := range slices.Sorted(maps.Keys(keymap)) {
+		m := keymap[mode]
+		for _, lhs := range slices.Sorted(maps.Keys(m)) {
+			rhs := m[lhs]
+			for _, old := range slices.Sorted(maps.Keys(removedCommands)) {
+				if _, ok := cmds[old]; ok || !strings.Contains(rhs, ":"+old) {
+					continue
+				}
+				errs = append(errs, fmt.Errorf("keymap.%s の %s の右辺の :%s は無くなったコマンドです（E492 になる）。%s を使う（docs/usage.md）",
+					mode, lhs, old, removedCommands[old]))
+			}
+		}
+	}
+	return errs
+}
+
 // providerExCommands は、拡張機能が provides で名乗った操作を、コマンドラインから操作の名前で呼ぶための表に足す（:rename 新しい名前）。
 // 拡張機能のコマンド（contributes.commands）と同じ名前の操作は足さない（拡張機能のコマンドを優先する）。
 func providerExCommands(cmds map[string]string, specs []ext.Manifest) {

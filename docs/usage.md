@@ -255,7 +255,32 @@ LSP と DAP の操作（定義へ移動、ホバー、ブレークポイント�
 | `<leader>dl` | `debug.runLast` | 前回の設定で始める |
 | `<leader>du` | `debug.toggleUI` | DAP のペインの開け閉め（標準の DAP の拡張機能はまだ引き受けない） |
 
+### 段階 2 のコマンドからの移行
+
+段階 2 の LSP と DAP の拡張機能のコマンドは、#203 で本体の操作に置き換えたので、もう無い。
+古いコマンドをコマンドラインで打つと、`E492: エディタのコマンドではありません: lsp.definition` のように出る。
+設定の `keymap` の右辺に古いコマンドを書いていれば、起動したときに設定の誤りとして知らせる。
+そのまま使うと、左辺のキーが既定のキーを隠す。
+たとえば `"<Space>d": ":lsp.definition<CR>"` があると、`<Space>db` の `<Space>d` が先に展開されて E492 になり、残りの `b` は単語の後退として動く。
+その項目は消すか、右辺を新しい名前に書き換える。
+
+| 段階 2 のコマンド | 操作の名前（`:` で呼ぶ） | 既定のキー |
+|---|---|---|
+| `lsp.definition` | `definition` | `<C-]>`、`<leader>lD` |
+| `lsp.hover` | `hover` | `K`、`<leader>lh` |
+| `lsp.format` | `format` | `gq{モーション}` |
+| `dap.start` | `debug.continue`（始まっていなければ始める） | `<leader>dc` |
+| `dap.stop` | `debug.terminate` | `<leader>dt` |
+| `dap.toggleBreakpoint` | `breakpoint.toggle` | `<leader>db` |
+| `dap.continue` | `debug.continue` | `<leader>dc` |
+| `dap.next` | `debug.stepOver` | `<leader>dn` |
+| `dap.stepIn` | `debug.stepIn` | `<leader>di` |
+| `dap.stepOut` | `debug.stepOut` | `<leader>do` |
+
+### 操作の補足
+
 「ポップアップで見る」は、移らずに、移動先の行から 10 行をカーソルの近くに出す。
+ドットリピート（`.`）は、`gq` を除く LSP と DAP の操作を記録しない。`x` の後に `K` を打ってから `.` を打つと、`x` を繰り返す。
 一覧（参照、シンボル）は、選択肢の問いで番号を打って選ぶ。番号を振れるのは 9 件までである。
 `<leader>l?` と `<leader>d?`（キーの一覧）と補完は、まだ無い。
 
