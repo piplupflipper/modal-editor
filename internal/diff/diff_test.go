@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,35 +20,26 @@ import (
 func TestParse(t *testing.T) {
 	tests := []struct {
 		content string
-		want    Text
+		want    []string
 	}{
-		{"", Text{EOL: true}},
-		{"\n", Text{Lines: []string{""}, EOL: true}},
-		{"a\nb\n", Text{Lines: []string{"a", "b"}, EOL: true}},
-		{"a\nb", Text{Lines: []string{"a", "b"}, EOL: false}},
-		{"a\n\n", Text{Lines: []string{"a", ""}, EOL: true}},
+		{"", nil},
+		{"\n", []string{""}},
+		{"a\nb\n", []string{"a", "b"}},
+		{"a\nb", []string{"a", "b"}},
+		{"a\n\n", []string{"a", ""}},
 	}
 	for _, tt := range tests {
-		got := Parse(tt.content)
-		if !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("Parse(%q) = %#v, want %#v", tt.content, got, tt.want)
-		}
-		if s := got.String(); s != tt.content {
-			t.Errorf("Parse(%q).String() = %q", tt.content, s)
+		if got := Parse(tt.content).Lines; !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("Parse(%q).Lines = %#v, want %#v", tt.content, got, tt.want)
 		}
 	}
 }
 
 func TestFromBuffer(t *testing.T) {
 	for _, content := range []string{"", "\n", "a\nb\n", "a\nb"} {
-		b := buffer.New(content)
-		b.SetFixEndOfLine(false)
-		var sb strings.Builder
-		if _, err := b.WriteTo(&sb); err != nil {
-			t.Fatal(err)
-		}
-		if got := FromBuffer(b).String(); got != sb.String() {
-			t.Errorf("FromBuffer(%q).String() = %q, want %q", content, got, sb.String())
+		got := FromBuffer(buffer.New(content)).Lines
+		if want := Parse(content).Lines; !reflect.DeepEqual(got, want) {
+			t.Errorf("FromBuffer(%q).Lines = %#v, want %#v", content, got, want)
 		}
 	}
 }
@@ -62,7 +54,8 @@ func TestCompute(t *testing.T) {
 		{"変えた行", "a\nb\nc\n", "a\nx\nc\n", []Hunk{{Span{1, 2}, Span{1, 2}}}},
 		{"足した行", "a\nc\n", "a\nb\nc\n", []Hunk{{Span{1, 1}, Span{1, 2}}}},
 		{"消した行", "a\nb\nc\n", "a\nc\n", []Hunk{{Span{1, 2}, Span{1, 1}}}},
-		{"末尾の改行の有無", "a\nb\n", "a\nb", []Hunk{{Span{1, 2}, Span{1, 2}}}},
+		// Vim 9.1 と同じく、末尾の改行の有無だけの違いは出さない（パッケージの doc）。
+		{"末尾の改行の有無", "a\nb\n", "a\nb", nil},
 		{"空のファイル", "", "a\n", []Hunk{{Span{0, 0}, Span{0, 1}}}},
 		{"末尾へ足した行", "a\n", "a\nb\n", []Hunk{{Span{1, 1}, Span{1, 2}}}},
 	}
@@ -88,32 +81,25 @@ func TestKind(t *testing.T) {
 	}
 }
 
-// applyHunks は、r の塊の通りに A の側の行を置き換えた結果を返す。
-func applyHunks(r *Result) Text {
+// applyHunks は、r の塊の通りに A の側の行を置き換えた結果の行を返す。
+func applyHunks(r *Result) []string {
 	a, b := r.Text(A), r.Text(B)
-	var lines []string
+	lines := []string{}
 	prev := 0
 	for _, h := range r.Hunks {
 		lines = append(lines, a.Lines[prev:h.A.Start]...)
 		lines = append(lines, b.Lines[h.B.Start:h.B.End]...)
 		prev = h.A.End
 	}
-	lines = append(lines, a.Lines[prev:]...)
-	eol := a.EOL
-	if len(r.Hunks) > 0 && r.Hunks[len(r.Hunks)-1].B.End == len(b.Lines) {
-		eol = b.EOL
-	}
-	return Text{Lines: lines, EOL: eol}
+	return append(lines, a.Lines[prev:]...)
 }
 
-// randomText は、少ない種類の行から n 行のテキストを作る。末尾の改行の有無も乱数で決める。
+// randomText は、少ない種類の行から n 行のテキストを作る。
 func randomText(rng *rand.Rand, n int) string {
 	var sb strings.Builder
-	for i := range n {
+	for range n {
 		sb.WriteByte("abcd"[rng.IntN(4)])
-		if i < n-1 || rng.IntN(4) != 0 {
-			sb.WriteString("\n")
-		}
+		sb.WriteString("\n")
 	}
 	return sb.String()
 }
@@ -160,6 +146,7 @@ func gnuDiff(t *testing.T, dir, a, b string) (deleted, added int) {
 // TestComputeAgainstDiffCommand は、乱数で作ったテキストの組で、塊の通りに置き換えると a が b になることと、
 // 消した行と足した行の数が diff --minimal（最小の差分）と同じことを確かめる。
 // 違いが少ない（lcs の探索の上限に届かない）大きさのテキストに限る。
+// テキストは全て末尾の改行を持たせる（diff コマンドは末尾の改行の有無を違いとして出すため）。
 func TestComputeAgainstDiffCommand(t *testing.T) {
 	if _, err := exec.LookPath("diff"); err != nil {
 		t.Skip("diff コマンドが無い")
@@ -170,7 +157,7 @@ func TestComputeAgainstDiffCommand(t *testing.T) {
 		a := randomText(rng, rng.IntN(15))
 		b := randomText(rng, rng.IntN(15))
 		r := Compute(Parse(a), Parse(b))
-		if got := applyHunks(r).String(); got != b {
+		if got := applyHunks(r); !slices.Equal(got, Parse(b).Lines) {
 			t.Fatalf("#%d: 塊の通りに置き換えた結果 %q, want %q (a = %q)", i, got, b, a)
 		}
 		var deleted, added int
@@ -185,7 +172,7 @@ func TestComputeAgainstDiffCommand(t *testing.T) {
 	}
 }
 
-func TestNextPrevHunkAt(t *testing.T) {
+func TestNextPrev(t *testing.T) {
 	// A: a b c d e、B: a x c e f。塊は [1,2)→[1,2)、[3,4)→[3,3)、[5,5)→[4,5)。
 	r := Compute(Parse("a\nb\nc\nd\ne\n"), Parse("a\nx\nc\ne\nf\n"))
 	want := []Hunk{{Span{1, 2}, Span{1, 2}}, {Span{3, 4}, Span{3, 3}}, {Span{5, 5}, Span{4, 5}}}
@@ -216,16 +203,68 @@ func TestNextPrevHunkAt(t *testing.T) {
 		{"Prev A 4", r.Prev, A, 4, res{1, true}},
 		{"Prev A 1", r.Prev, A, 1, res{0, false}},
 		{"Prev B 4", r.Prev, B, 4, res{1, true}},
-		{"HunkAt A 1", r.HunkAt, A, 1, res{0, true}},
-		{"HunkAt A 2", r.HunkAt, A, 2, res{0, false}},
-		{"HunkAt A 4（末尾の空の範囲）", r.HunkAt, A, 4, res{2, true}},
-		{"HunkAt B 3（空の範囲の次の行）", r.HunkAt, B, 3, res{1, true}},
-		{"HunkAt B 4", r.HunkAt, B, 4, res{2, true}},
-		{"HunkAt B 0", r.HunkAt, B, 0, res{0, false}},
 	}
 	for _, tt := range tests {
 		if got := call(tt.f, tt.side, tt.line); got != tt.want {
 			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// writeOut は、バッファを書き出した内容を返す。
+func writeOut(t *testing.T, b *buffer.Buffer) string {
+	t.Helper()
+	var sb strings.Builder
+	if _, err := b.WriteTo(&sb); err != nil {
+		t.Fatal(err)
+	}
+	return sb.String()
+}
+
+// applyPatch は、p をバッファへ適用する。
+func applyPatch(t *testing.T, b *buffer.Buffer, p Patch) {
+	t.Helper()
+	if _, err := b.Apply(buffer.Transaction{BaseVersion: b.Version(), Edits: []buffer.Edit{p.Edit}}); err != nil {
+		t.Fatalf("patch %+v: %v", p, err)
+	}
+}
+
+// TestHunkAtVim は、A の側にカーソルを置いて do（Obtain）か dp（Put）を打った後の両側の内容が、Vim 9.1 と同じになることを確かめる。
+// 期待値は、2026-11-18 に手元の Vim 9.1（patches 1-16）で
+// vim -N -u NONE -n --not-a-term -d a b -c 'set diffopt=internal,filler' に、カーソルの移動と :diffget か :diffput を流し、
+// 両側を :w! で書き出して取った（#185 のレビューの組と、末尾と途中の追加の組）。
+// バッファは buffer.New の既定（'fixendofline' が有効）である。
+func TestHunkAtVim(t *testing.T) {
+	tests := []struct {
+		a, b         string
+		line         int // A の側のカーソルの行（0 始まり）
+		put          bool
+		wantA, wantB string
+	}{
+		{"a\nb\nc\nd\n", "a\nX\nc\nd\n", 2, false, "a\nX\nc\nd\n", "a\nX\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nc\nd\n", 2, false, "a\nc\nd\n", "a\nc\nd\n"},
+		{"a\nb\nc\nd\ne\n", "X\nb\nc\nd\nY\n", 1, false, "X\nb\nc\nd\ne\n", "X\nb\nc\nd\nY\n"},
+		{"c\nd\n", "d\nd\na\na\nb\n", 1, false, "d\n", "d\nd\na\na\nb\n"},
+		{"a\n", "", 0, false, "\n", ""},
+		{"", "x\ny\n", 0, true, "", "\n"},
+		{"a\nb\nc\n", "a\nb\nc\nd\n", 2, false, "a\nb\nc\nd\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\n", "a\nb\nc\nd\n", 1, false, "a\nb\nc\n", "a\nb\nc\nd\n"},
+		{"a\nb\nc\nd\n", "a\nb\nX\nd\n", 3, false, "a\nb\nX\nd\n", "a\nb\nX\nd\n"},
+		{"a\nb\nc\n", "a\nb\nZ\nd\n", 2, false, "a\nb\nZ\nd\n", "a\nb\nZ\nd\n"},
+	}
+	for _, tt := range tests {
+		ba, bb := buffer.New(tt.a), buffer.New(tt.b)
+		r := Compute(FromBuffer(ba), FromBuffer(bb))
+		if i, ok := r.HunkAt(A, tt.line); ok {
+			if tt.put {
+				applyPatch(t, bb, r.Put(i, A))
+			} else {
+				applyPatch(t, ba, r.Obtain(i, A))
+			}
+		}
+		if ga, gb := writeOut(t, ba), writeOut(t, bb); ga != tt.wantA || gb != tt.wantB {
+			t.Errorf("a = %q, b = %q, 行 %d, put = %v: A = %q, B = %q, want %q, %q (塊 %v)",
+				tt.a, tt.b, tt.line, tt.put, ga, gb, tt.wantA, tt.wantB, r.Hunks)
 		}
 	}
 }
@@ -255,30 +294,20 @@ func TestMapLine(t *testing.T) {
 	}
 }
 
-// applyPatches は、content のバッファに、patches を後ろの塊から順に適用した内容を返す。
+// applyPatches は、content のバッファに、patches を後ろの塊から順に適用して書き出した内容を返す。
 // 後ろから適用すると、前の塊の位置は変わらない。
 func applyPatches(t *testing.T, content string, patches []Patch) string {
 	t.Helper()
 	b := buffer.New(content)
-	b.SetFixEndOfLine(false)
 	for i := len(patches) - 1; i >= 0; i-- {
-		p := patches[i]
-		eol := b.HasTrailingNewline()
-		if p.SetEOL {
-			eol = p.EOL
-		}
-		if _, err := b.ApplyReload(buffer.Transaction{BaseVersion: b.Version(), Edits: []buffer.Edit{p.Edit}}, eol); err != nil {
-			t.Fatalf("patch %d (%+v): %v", i, p, err)
-		}
-		if p.NoLines {
-			b.MarkNoLines()
-		}
+		applyPatch(t, b, patches[i])
 	}
-	return FromBuffer(b).String()
+	return writeOut(t, b)
 }
 
-// TestObtainPut は、全ての塊を do（Obtain）で取り込むと、相手と同じ内容になることと、dp（Put）で送ると相手が同じ内容になることを、
+// TestObtainPut は、全ての塊を do（Obtain）で取り込むと、相手と同じ行になることと、dp（Put）で送ると相手が同じ行になることを、
 // 乱数で作ったテキストの組と境界の組で確かめる。編集はバッファ（internal/buffer）に適用する。
+// 相手が空のファイルなら、Vim 9.1 と同じく空の行 1 つ（書き出すと "\n"）になる（Patch の doc）。
 func TestObtainPut(t *testing.T) {
 	pairs := [][2]string{
 		{"", "a\n"},
@@ -301,11 +330,23 @@ func TestObtainPut(t *testing.T) {
 			obtain = append(obtain, r.Obtain(i, A))
 			put = append(put, r.Put(i, B))
 		}
-		if got := applyPatches(t, a, obtain); got != b {
-			t.Errorf("a = %q, b = %q: A で全ての塊を do した結果 %q", a, b, got)
+		// buffer.New の既定は 'fixendofline' が有効なので、書き出すと末尾に改行が付く。
+		want := b
+		switch {
+		case want == "" && len(r.Hunks) > 0:
+			want = "\n"
+		case want == "" || strings.HasSuffix(want, "\n"):
+		default:
+			want += "\n"
 		}
-		if got := applyPatches(t, a, put); got != b {
-			t.Errorf("a = %q, b = %q: B で全ての塊を dp した結果 %q", a, b, got)
+		if len(r.Hunks) == 0 {
+			want = writeOut(t, buffer.New(a))
+		}
+		if got := applyPatches(t, a, obtain); got != want {
+			t.Errorf("a = %q, b = %q: A で全ての塊を do した結果 %q, want %q", a, b, got, want)
+		}
+		if got := applyPatches(t, a, put); got != want {
+			t.Errorf("a = %q, b = %q: B で全ての塊を dp した結果 %q, want %q", a, b, got, want)
 		}
 		for i := range r.Hunks {
 			if p := r.Put(i, A); p.Side != B {
@@ -325,11 +366,53 @@ func TestInline(t *testing.T) {
 		{"abc", "abXc", []Span{{2, 2}}, []Span{{2, 3}}},
 		{"aXbYc", "abc", []Span{{1, 2}, {3, 4}}, []Span{{1, 1}, {2, 2}}},
 		{"あいう", "あえう", []Span{{3, 6}}, []Span{{3, 6}}},
+		// 不正な UTF-8（#185 のレビュー）。1 バイトを 1 文字として、バイトの位置で返す。
+		{"\xff\xff\xffx", "\xff\xff\xffy", []Span{{3, 4}}, []Span{{3, 4}}},
+		{"\xffあx", "\xffあy", []Span{{4, 5}}, []Span{{4, 5}}},
+		{"\xe3\x81x", "\xe3\x81y", []Span{{2, 3}}, []Span{{2, 3}}},
+		{"\xff\xfeab", "\xffab", []Span{{1, 2}}, []Span{{1, 1}}},
+		// 違う不正なバイトは違う文字である。
+		{"\xff", "\xfe", []Span{{0, 1}}, []Span{{0, 1}}},
 	}
 	for _, tt := range tests {
 		sa, sb := Inline(tt.a, tt.b)
 		if !reflect.DeepEqual(sa, tt.sa) || !reflect.DeepEqual(sb, tt.sb) {
 			t.Errorf("Inline(%q, %q) = %v, %v, want %v, %v", tt.a, tt.b, sa, sb, tt.sa, tt.sb)
+		}
+	}
+}
+
+// TestInlineReplace は、乱数で作ったバイト列（不正な UTF-8 と多バイト文字を含む）の組で、
+// 範囲が行の中に収まり、a の範囲を b の範囲の内容で置き換えると b になることを確かめる。
+func TestInlineReplace(t *testing.T) {
+	pieces := []string{"a", "b", "あ", "é", "\xff", "\xfe", "\xe3\x81", "\xef\xbf\xbd"}
+	rng := rand.New(rand.NewPCG(7, 8)) //nolint:gosec // 再現できる無作為の入力が要る。暗号の用途ではない。
+	gen := func() string {
+		var sb strings.Builder
+		for range rng.IntN(12) {
+			sb.WriteString(pieces[rng.IntN(len(pieces))])
+		}
+		return sb.String()
+	}
+	for range 2000 {
+		a, b := gen(), gen()
+		sa, sb := Inline(a, b)
+		if len(sa) != len(sb) {
+			t.Fatalf("Inline(%q, %q): 範囲の数が違う %v, %v", a, b, sa, sb)
+		}
+		var out strings.Builder
+		prev := 0
+		for i := range sa {
+			if sa[i].Start < prev || sa[i].End > len(a) || sb[i].End > len(b) || sa[i].Start > sa[i].End || sb[i].Start > sb[i].End {
+				t.Fatalf("Inline(%q, %q): 範囲が行の外か逆順 %v, %v", a, b, sa, sb)
+			}
+			out.WriteString(a[prev:sa[i].Start])
+			out.WriteString(b[sb[i].Start:sb[i].End])
+			prev = sa[i].End
+		}
+		out.WriteString(a[prev:])
+		if out.String() != b {
+			t.Fatalf("Inline(%q, %q) = %v, %v: 置き換えた結果 %q", a, b, sa, sb, out.String())
 		}
 	}
 }
@@ -355,7 +438,7 @@ func largeTexts(n, changes int) (Text, Text) {
 			b = append(b, l)
 		}
 	}
-	return Text{Lines: a, EOL: true}, Text{Lines: b, EOL: true}
+	return Text{Lines: a}, Text{Lines: b}
 }
 
 // TestComputeLarge は、NFR-05 の大きさ（10,000 行）のテキストの計算の時間を記録する。
@@ -369,7 +452,7 @@ func TestComputeLarge(t *testing.T) {
 		r := Compute(a, b)
 		elapsed := time.Since(start)
 		t.Logf("10,000 行、%d 箇所: %d 個の塊、%v", changes, len(r.Hunks), elapsed)
-		if got := applyHunks(r).String(); got != b.String() {
+		if got := applyHunks(r); !slices.Equal(got, b.Lines) {
 			t.Fatalf("%d 箇所: 塊の通りに置き換えた結果が b と違う", changes)
 		}
 		if elapsed > 2*time.Second {

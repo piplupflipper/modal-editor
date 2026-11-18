@@ -12,8 +12,12 @@
 //
 // 行は Vim と同じく数える。
 // "a\nb\n" と "a\nb" はどちらも "a" と "b" の 2 行で、空のファイル "" は 0 行、"\n" は空の行 1 つである。
-// 末尾の改行の有無は Text.EOL に持ち、最後の行の後の改行の有無が違えば、最後の行どうしを違う行として扱う。
-// これは diff コマンドが "\ No newline at end of file" を付けて最後の行を変えた行として出すのと同じである。
+//
+// 末尾の改行の有無だけの違いは、違いとして扱わない（仮。#185 のオーケストレータの決定）。
+// Vim 9.1 の diff は 'fixendofline' の設定によらず、末尾の改行の有無だけが違う 2 つのファイルに違いを出さない（2026-11-18 に手元の Vim 9.1 で確かめた）。
+// FR-101 の操作を Vim に合わせるので、違いの出し方も Vim に合わせる。
+// diff コマンド（"\ No newline at end of file" を付けて最後の行を違う行にする）とは違う。
+// このため Text は末尾の改行の有無を持たず、Parse と FromBuffer のどちらで作っても、行が同じなら違いは出ない。
 //
 // # 行の番号
 //
@@ -51,60 +55,37 @@ func (s Side) Other() Side {
 
 // Text は、見比べるテキストを行の列で表す。
 // Lines の各要素は改行を含まない。
-// EOL は、最後の行の後に改行があるかどうかで、Lines が空なら意味を持たない。
+// 末尾の改行の有無は持たない（パッケージの doc の「行の数え方」）。
 type Text struct {
 	Lines []string
-	EOL   bool
 }
 
 // Parse は、ファイルの内容 content を、パッケージの doc の「行の数え方」に従って Text にする。
 // 改行は LF を前提にする。
+//
+// バッファになっていないファイルの版（FR-104 の git の HEAD の版など）に使う。
+// 開いているバッファは FromBuffer で作る（行の無いバッファを 0 行として扱うため）。
+// 末尾の改行の有無は比べないので、片方を Parse、もう片方を FromBuffer で作っても、末尾の改行の扱いの違いで違いは出ない。
 func Parse(content string) Text {
 	if content == "" {
-		return Text{EOL: true}
+		return Text{}
 	}
-	eol := strings.HasSuffix(content, "\n")
-	return Text{Lines: strings.Split(strings.TrimSuffix(content, "\n"), "\n"), EOL: eol}
+	return Text{Lines: strings.Split(strings.TrimSuffix(content, "\n"), "\n")}
 }
 
-// FromBuffer は、バッファ b を書き出したときの内容（buffer.Buffer.WriteTo）と同じ Text を作る。
-// 行の無いバッファ（NoLines）は 0 行、それ以外は b の行で、EOL は b.FinalNewline() である。
+// FromBuffer は、バッファ b の行の Text を作る。
+// 行の無いバッファ（NoLines）は 0 行、それ以外は b の行である。
 // 行の文字列は b と共有するが、Go の文字列は変わらないので、返した Text を別の goroutine へ渡してよい。
 // b を読むので、イベントループの goroutine で呼ぶ。
 func FromBuffer(b *buffer.Buffer) Text {
 	if b.NoLines() {
-		return Text{EOL: true}
+		return Text{}
 	}
 	lines := make([]string, b.LineCount())
 	for i := range lines {
 		lines[i] = b.Line(i)
 	}
-	return Text{Lines: lines, EOL: b.FinalNewline()}
-}
-
-// String は、t をファイルの内容の形（Parse の逆）で返す。
-func (t Text) String() string {
-	if len(t.Lines) == 0 {
-		return ""
-	}
-	s := strings.Join(t.Lines, "\n")
-	if t.EOL {
-		s += "\n"
-	}
-	return s
-}
-
-// keys は、差分の計算で比べる行の列を返す。
-// 最後の行の後に改行が無ければ、最後の行の末尾に "\n" を足して、改行のある同じ内容の行と区別する。
-// 行は改行を含まないので、"\n" で終わる行は、改行の無い最後の行だけである。
-func (t Text) keys() []string {
-	if t.EOL || len(t.Lines) == 0 {
-		return t.Lines
-	}
-	keys := make([]string, len(t.Lines))
-	copy(keys, t.Lines)
-	keys[len(keys)-1] += "\n"
-	return keys
+	return Text{Lines: lines}
 }
 
 // Span は、Start から End の直前までの範囲を表す。
@@ -135,6 +116,15 @@ const (
 // Hunk は、差分の塊である。
 // A の側の行の範囲 A を、B の側の行の範囲 B で置き換えると、A の側のテキストが B の側に近づく。
 // 2 つの範囲が両方とも空になることは無い。
+//
+// 詰め物の行（Vim の diff の filler）は、範囲の短い側に、長さの差だけ描く。
+// ただし、0 行のテキスト（空のファイル）の側は、画面に空の行 1 つが出るので、Vim 9.1 はその行を変えた行として色を付け、
+// 詰め物をもう片側の範囲の長さより 1 行少なくする（a = ""、b = "d\nb\n" で、A の側の空の行は変えた行、詰め物は 1 行。#185 のレビュー）。
+// 詰め物を描く側（server）はこの規則を写す。
+//
+// 塊の位置は、同じ長さの共通部分列の選び方によって、Vim（xdiff）と違いうる。
+// 違いの少ないテキストでも起こる（#185 のレビューで、0〜5 行の乱数の組の多くで位置か詰め物の数が違った）。
+// その場合も、塊の通りに置き換えれば A が B になることは変わらないが、do で取り込む行は Vim と変わりうる。
 type Hunk struct {
 	A Span
 	B Span
@@ -175,7 +165,7 @@ type Result struct {
 // その場合は、近くの違いが 1 つの塊にまとまり、同じ行も塊に含まれうる（10,000 行に 200 箇所の違いで、塊は 75 個になった）。
 // その場合も、塊の通りに置き換えれば a が b になることは保たれる。
 func Compute(a, b Text) *Result {
-	ds := lcs.DiffLines(a.keys(), b.keys())
+	ds := lcs.DiffLines(a.Lines, b.Lines)
 	if len(ds) == 0 {
 		return &Result{a: a, b: b}
 	}
@@ -233,18 +223,50 @@ func (r *Result) Prev(side Side, line int) (int, bool) {
 	return 0, false
 }
 
-// HunkAt は、side の側の行 line にある塊の番号を返す（Vim の do と dp が対象にする塊）。
-// 行が塊の範囲の中にあるか、範囲が空の塊の、塊が始まる行（Next の説明）であれば、その塊である。
-// 無ければ false を返す。
+// HunkAt は、side の側でカーソルが行 line にあるときに、Vim の do と dp（範囲を付けない :diffget と :diffput）が対象にする塊の番号を返す。
+//
+// Vim 9.1 の ex_diffgetput と同じく、カーソルの行と 1 つ上の行に掛かる塊を対象にする。
+// 範囲が空でない塊は、カーソルの行が範囲の中か、範囲の直後の行（1 つ上の行が範囲の最後の行）なら対象になる。
+// 範囲が空の塊（この側に無い行の詰め物）は、カーソルの行が詰め物の直下の行なら対象になる。
+// ただし、カーソルが最後の行にあり、その行と 1 つ上の行が塊にも詰め物の直下にも無ければ、1 つ上の行の代わりに、
+// 末尾の空の範囲の塊（最後の行の下の詰め物）を対象にする。
+// 2026-11-18 に手元の Vim 9.1 で、#185 のレビューの組（TestHunkAtVim）の結果を確かめた。
+//
+// 塊の間には同じ行が少なくとも 1 行あるので、対象の塊は高々 1 つである。無ければ false を返す。
 func (r *Result) HunkAt(side Side, line int) (int, bool) {
-	i := sort.Search(len(r.Hunks), func(i int) bool { return r.Hunks[i].Span(side).End > line })
-	if i < len(r.Hunks) && r.Hunks[i].Span(side).Start <= line {
-		return i, true
+	n := r.lineCount(side)
+	inHunk := func(l int) bool {
+		for _, h := range r.Hunks {
+			if s := h.Span(side); s.Start <= l && l < s.End {
+				return true
+			}
+		}
+		return false
 	}
-	// 範囲が空の塊は End > line を満たさないことがあるので、前後を調べる。
-	for _, j := range []int{i - 1, i} {
-		if j >= 0 && j < len(r.Hunks) && r.Hunks[j].Span(side).Len() == 0 && r.anchor(j, side) == line {
-			return j, true
+	fillerAbove := func(l int) bool {
+		for _, h := range r.Hunks {
+			if s := h.Span(side); s.Len() == 0 && s.Start == l {
+				return true
+			}
+		}
+		return false
+	}
+	if line == max(n-1, 0) && !inHunk(line) && !fillerAbove(line) && (line == 0 || !inHunk(line-1)) {
+		for i, h := range r.Hunks {
+			if s := h.Span(side); s.Len() == 0 && s.Start >= n {
+				return i, true
+			}
+		}
+		return 0, false
+	}
+	for i, h := range r.Hunks {
+		s := h.Span(side)
+		if s.Len() == 0 {
+			if s.Start == line {
+				return i, true
+			}
+		} else if s.Start <= line && line <= s.End {
+			return i, true
 		}
 	}
 	return 0, false
