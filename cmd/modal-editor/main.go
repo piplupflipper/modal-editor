@@ -231,6 +231,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		AutoRead:         cfg.AutoRead,
 		CheckInterval:    interval,
 		Keymap:           cfg.Keymap,
+		Leader:           cfg.Leader,
 		SyncTimeout:      cfg.SyncTimeout,
 		StartSyncTimeout: cfg.StartSyncTimeout,
 		FileTypes:        cfg.FileTypes,

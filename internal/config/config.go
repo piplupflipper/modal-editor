@@ -43,7 +43,8 @@ import (
 // 設定ファイルの形は次のとおりである。
 //
 //	{
-//	  "keymap": { "normal": { "<Space>w": ":w<CR>" } },
+//	  "keymap": { "normal": { "<Leader>w": ":w<CR>" } },
+//	  "leader": "<Space>",
 //	  "fixendofline": true,
 //	  "autoread": true,
 //	  "checkIntervalMs": 1000,
@@ -60,8 +61,11 @@ import (
 type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
 	// モードの名前（"normal"、"visual"、"insert"、"commandLine"）から、キーの列の表記から展開するキーの列の表記への対応である。
-	// 未知のモードと、editcmd.ParseKeys で読めない表記の項目は除いてある。
+	// 未知のモードと、editcmd.ParseKeysLeader で読めない表記の項目は除いてある。<Leader> は置き換えずに残す。
 	Keymap map[string]map[string]string
+	// Leader は leader の値で、キーの表記の <Leader> に当たるキーの列の表記である（基本設計 7.2。FR-97）。
+	// editor.Config.Leader にそのまま渡す。項目が無いか誤りなら空で、editor の既定（editcmd.DefaultLeader）を使う。
+	Leader string
 	// SyncTimeout は extensions.syncTimeoutMs の値で、editor.Config.SyncTimeout にそのまま渡す。
 	// 項目が無いか誤りなら nil（editor の既定値）。0 は「待たない」（FR-18）。
 	SyncTimeout *time.Duration
@@ -165,6 +169,8 @@ func Parse(path string, data []byte) (Config, []error) {
 		switch m.name {
 		case "keymap":
 			cfg.Keymap = s.keymap(m.value)
+		case "leader":
+			cfg.Leader = s.leader(m.value)
 		case "fixendofline":
 			if b, ok := s.boolean(m.value, "fixendofline"); ok {
 				cfg.FixEndOfLine = &b
@@ -210,7 +216,8 @@ func (s *source) keymap(v *hujson.Value) map[string]map[string]string {
 		}
 		maps := map[string]string{}
 		for _, e := range s.members(mobj, path) {
-			if keys, err := editcmd.ParseKeys(e.name); err != nil || len(keys) == 0 {
+			// <Leader> の置き換え先は leader の項目で決まるが、どの leader でも空でない列になるので、既定の leader で確かめる。
+			if keys, err := editcmd.ParseKeysLeader(e.name, nil); err != nil || len(keys) == 0 {
 				s.report(e.nameOff, "%s: キーの列 %q を読めない%s", path, e.name, reason(err))
 				continue
 			}
@@ -218,7 +225,7 @@ func (s *source) keymap(v *hujson.Value) map[string]map[string]string {
 			if !ok {
 				continue
 			}
-			if _, err := editcmd.ParseKeys(rhs); err != nil {
+			if _, err := editcmd.ParseKeysLeader(rhs, nil); err != nil {
 				s.report(e.value.StartOffset, "%s: 展開する列 %q を読めない: %v", join(path, e.name), rhs, err)
 				continue
 			}
@@ -227,6 +234,22 @@ func (s *source) keymap(v *hujson.Value) map[string]map[string]string {
 		out[mode.name] = maps
 	}
 	return out
+}
+
+// leader は、leader の値を読む（基本設計 7.2。FR-97）。
+// 値は ParseKeys の表記の文字列で、空の列と <Leader> を含む表記は誤りとして既定値（空）を返す。
+//
+// req: FR-97
+func (s *source) leader(v *hujson.Value) string {
+	str, ok := s.str(v, "leader")
+	if !ok {
+		return ""
+	}
+	if _, err := editcmd.ParseLeader(str); err != nil {
+		s.report(v.StartOffset, "leader %q を読めない: %v", str, err)
+		return ""
+	}
+	return str
 }
 
 // reason は、err があれば ": <err>" を返す。

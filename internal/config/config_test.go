@@ -122,6 +122,54 @@ func TestParseFixEndOfLine(t *testing.T) {
 	}{{1, 18, "fixendofline は true か false にする"}})
 }
 
+// leader はキーの列の表記の文字列で、空の列と <Leader> を含む表記は誤りとして既定値（空）のままにする。
+// keymap の左辺と右辺には <Leader> を書け、置き換えずに残す（置き換えは editor が leader で行う）。
+//
+// req: FR-97
+func TestParseLeader(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+		errs int
+	}{
+		{`{}`, "", 0},
+		{`{"leader": ","}`, ",", 0},
+		{`{"leader": "<Space>"}`, "<Space>", 0},
+		{`{"leader": ""}`, "", 1},
+		{`{"leader": "<leader>"}`, "", 1},
+		{`{"leader": "<Foo>"}`, "", 1},
+		{`{"leader": 1}`, "", 1},
+		{`{"leader": "q"}`, "", 1},
+		{`{"leader": "1"}`, "", 1},
+		{`{"leader": "<Esc>"}`, "", 1},
+	}
+	for _, c := range cases {
+		cfg, errs := Parse("c", []byte(c.src))
+		if len(errs) != c.errs || cfg.Leader != c.want {
+			t.Errorf("%s: Leader = %q, errs = %v", c.src, cfg.Leader, errs)
+		}
+	}
+	_, errs := Parse("c", []byte(`{"leader": "<Leader>"}`))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{{1, 12, `leader "<Leader>" を読めない`}})
+	_, errs = Parse("c", []byte("{\n  \"leader\": \"@\"\n}"))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{{2, 13, "先に読まれるキーで始まる"}})
+
+	cfg, errs := Parse("c", []byte(`{"keymap": {"normal": {"<Leader>w": ":w<CR>", "Q": "<leader>w", "<Leader>": "x"}}, "leader": ","}`))
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	want := map[string]string{"<Leader>w": ":w<CR>", "Q": "<leader>w", "<Leader>": "x"}
+	if !reflect.DeepEqual(cfg.Keymap["normal"], want) || cfg.Leader != "," {
+		t.Errorf("Keymap = %v, Leader = %q", cfg.Keymap, cfg.Leader)
+	}
+}
+
 // registers の historySize と maxEntryBytes は 1 以上の整数で、0 以下は誤りとして既定値（0）のままにする。
 // deleteToHistory は、項目が無いときの nil（既定の有効）と、書いた値を区別する。
 //

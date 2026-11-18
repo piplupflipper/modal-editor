@@ -151,17 +151,17 @@ func (m *Keymap) Bind(b Binding) error {
 	return nil
 }
 
+// reservedFirstKey は、k が modes のどれかで Parser の先に読むキーかを返す。
+// 先に読むキーの表は editcmd.LeadRoleOf にあり、設定の leader の検査（editcmd.ParseLeader）と共有する。
 func reservedFirstKey(k editcmd.Key, modes MapMode) bool {
-	if !k.Plain() {
-		return false
-	}
-	switch r := k.Rune; {
-	case r >= '1' && r <= '9':
+	switch editcmd.LeadRoleOf(k) {
+	case editcmd.LeadCount:
 		return modes&(MapNormal|MapVisual|MapOperatorPending) != 0
-	case r == '"':
+	case editcmd.LeadRegister:
 		return modes&(MapNormal|MapVisual) != 0
-	case r == 'q' || r == '@' || r == '.':
+	case editcmd.LeadMacro:
 		return modes&MapNormal != 0
+	case editcmd.LeadNone:
 	}
 	return false
 }
