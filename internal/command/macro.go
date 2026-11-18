@@ -103,8 +103,8 @@ func (s *State) play(cmd editcmd.Command) error {
 	}
 	s.playDepth--
 	s.replaying = replaying
-	if errors.Is(s.res.Err, ErrBufferSwitched) {
-		// 再生は移った先のバッファで続くので、終わったときにドットリピートの対象を決める印を残りに積む。
+	if suspendsReplay(s.res.Err) {
+		// 再生は移った先のバッファで（外部のコマンドの後に）続くので、終わったときにドットリピートの対象を決める印を残りに積む。
 		s.res.Remaining = append(s.res.Remaining, ReplaySegment{Dot: &dot})
 		return nil
 	}
@@ -132,7 +132,7 @@ func (s *State) finishPlayDot(dot *editcmd.Command) {
 // （"y" なら続きを実行する）。答えのキーが無ければ、確認は Result.Confirm のまま呼び出し側へ渡す。
 //
 // 拡張機能の操作が ErrBufferSwitched を返した（カーソルのあるバッファが別のバッファへ移った）ら、
-// 残りのキーを Result.Remaining に積んで止める。呼び出し側は、移った先のバッファの State の ContinueReplay へ渡す。
+// 残りのキーを Result.Remaining に積んで止める。:{range}! と :r ! が外部のコマンドの実行を求めた（ErrShellPending）ときも同じである。呼び出し側は、移った先のバッファの State の ContinueReplay へ渡す。
 func (s *State) playKeys(keys []editcmd.Key, n int) {
 	for iter := range n {
 		if s.interrupted() {
@@ -157,7 +157,7 @@ func (s *State) playKeys(keys []editcmd.Key, n int) {
 				}
 			}
 			if s.res.Err != nil {
-				if errors.Is(s.res.Err, ErrBufferSwitched) {
+				if suspendsReplay(s.res.Err) {
 					s.res.Remaining = append(s.res.Remaining, ReplaySegment{Keys: keys[i+1:], Count: 1})
 					if rest := n - iter - 1; rest > 0 {
 						s.res.Remaining = append(s.res.Remaining, ReplaySegment{Keys: keys, Count: rest})
@@ -202,7 +202,7 @@ func (s *State) ContinueReplay(segs []ReplaySegment) Result {
 		}
 		s.playKeys(seg.Keys, seg.Count)
 		if s.res.Err != nil {
-			if errors.Is(s.res.Err, ErrBufferSwitched) {
+			if suspendsReplay(s.res.Err) {
 				s.res.Remaining = append(s.res.Remaining, segs[i+1:]...)
 				break
 			}

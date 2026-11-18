@@ -13,6 +13,7 @@ import (
 
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // shellOutputLimit は、:{range}! と :r ! の外部のコマンドの出力（標準出力と標準エラー出力の合計）の上限のバイト数である（仮）。
@@ -40,6 +41,13 @@ type shellJob struct {
 	cancel context.CancelFunc
 	// interrupted は、<C-c> で中断したかである。
 	interrupted bool
+	// replay は、マクロの再生の途中で始めたときの、再生の残りである（command.ErrShellPending）。
+	// mapped は、キーマップの展開の途中で始めたときの、展開の残りのキーである（feedMapped）。
+	// paste は、貼り付けの前に確定させたキーで始めたときの、貼り付けのテキストである（handlePaste）。
+	// どれも、出力を入れ終えた後に、この順で続ける。実行できなかった、中断したときは捨てる（Vim の再生とキーマップが誤りで止まるのと同じ）。
+	replay []command.ReplaySegment
+	mapped []editcmd.Key
+	paste  string
 }
 
 // shellOutcome は、外部のコマンドを動かす goroutine からイベントループへ送る結果である。
@@ -58,13 +66,13 @@ type shellOutcome struct {
 // 終わったら、結果を shellDone でイベントループへ送り、shellFinished がバッファを変える。
 //
 // req: FR-81
-func (e *Editor) startShell(bs *bufferState, req *ex.ShellRequest) {
+func (e *Editor) startShell(bs *bufferState, req *ex.ShellRequest, replay []command.ReplaySegment) {
 	if e.shell != nil {
 		e.showError(errors.New("E319: 外部のコマンドの実行中です"))
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	job := &shellJob{bs: bs, req: req, cancel: cancel}
+	job := &shellJob{bs: bs, req: req, cancel: cancel, replay: replay}
 	e.shell = job
 	e.message = infoMessage("外部のコマンドを実行しています（<C-c> で中断します）")
 	stop := e.stop
@@ -128,7 +136,36 @@ func (e *Editor) shellFinished(o shellOutcome) {
 		err = fmt.Errorf("外部のコマンドを実行できません: %w", err)
 	}
 	e.message = noMessage
-	_ = e.handleResult(bs, bs.state.FinishShell(o.job.req, o.out, o.status, err)) // 失敗は handleResult が知らせる
+	if e.handleResult(bs, bs.state.FinishShell(o.job.req, o.out, o.status, err)) != nil {
+		// 失敗は handleResult が知らせた。再生と展開の残りは捨てる。
+		e.remap.reset()
+		return
+	}
+	e.continueAfterShell(o.job)
+}
+
+// continueAfterShell は、外部のコマンドの出力を入れた後に、止めていた再生の残り、キーマップの展開の残り、貼り付けを続ける。
+// 続きの中でまた外部のコマンドを始めたら、まだ続けていないものをその実行に引き継ぐ。
+func (e *Editor) continueAfterShell(job *shellJob) {
+	if len(job.replay) > 0 {
+		next := e.cur
+		_ = e.handleResult(next, next.state.ContinueReplay(job.replay)) // 失敗は handleResult が知らせる
+		if e.shell != nil {
+			e.shell.mapped = append(e.shell.mapped, job.mapped...)
+			e.shell.paste = job.paste
+			return
+		}
+	}
+	if len(job.mapped) > 0 {
+		e.feedMapped(job.mapped)
+		if e.shell != nil {
+			e.shell.paste = job.paste
+			return
+		}
+	}
+	if job.paste != "" {
+		e.handlePaste(job.paste)
+	}
 }
 
 // limitedBuffer は、shellOutputLimit までを溜める io.Writer である。超えたら over を立て、cancel で子を止め、誤りを返す。

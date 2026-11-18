@@ -141,6 +141,63 @@ func TestShellBackgroundChild(t *testing.T) {
 	}
 }
 
+// キーマップの展開の中の :{range}! は、展開の残りのキーを外部のコマンドが終わるまで保留し、出力を入れてから続ける。
+// 期待値は Vim 9.1（nnoremap Q :%!sort<CR>:w<CR>、nnoremap Z :%!sort<CR>dd。本文 c/b/a）で、Q は並べてから保存し、Z は b/c になる。
+//
+// req: FR-81
+func TestShellInMapping(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	dir := writeFiles(t, map[string]string{"a.txt": "c\nb\na\n"})
+	keymap := map[string]map[string]string{"normal": {
+		"Q": ":%!sleep 0.3; LC_ALL=C sort<CR>:w<CR>",
+		"Z": ":%!sleep 0.3; LC_ALL=C sort<CR>dd",
+	}}
+	h := start(t, Config{WorkDir: dir, Keymap: keymap}, "a.txt")
+	h.keys("Q")
+	h.waitShell()
+	if got := h.text(); got != "a\nb\nc" {
+		t.Errorf("Q: text = %q", got)
+	}
+	if disk, err := os.ReadFile(filepath.Join(dir, "a.txt")); err != nil || string(disk) != "a\nb\nc\n" {
+		t.Errorf("Q: disk = %q, %v（並べてから保存する）", disk, err)
+	}
+	h.keys("uuZ")
+	h.waitShell()
+	if got := h.text(); got != "b\nc" {
+		t.Errorf("Z: text = %q, want %q", got, "b\nc")
+	}
+}
+
+// マクロの再生の中の :{range}! は、再生を止めて外部のコマンドを動かし、出力を入れてから再生の残りを続ける。
+// 期待値は Vim 9.1 で、本文 ab/cd/ef/gh の 1 行目で qa:.!tr a-z A-Z<CR>jq の後に 2@a を打った結果である。
+// ドットリピートで再生し直したときも同じく続ける。
+//
+// req: FR-81
+func TestShellInMacro(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	dir := writeFiles(t, map[string]string{"a.txt": "ab\ncd\nef\ngh\nij\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	h.keys("qa:.!tr a-z A-Z<CR>")
+	h.waitShell()
+	h.keys("jq2@a")
+	h.waitShell()
+	if got := h.text(); got != "AB\nCD\nEF\ngh\nij" {
+		t.Errorf("2@a: text = %q", got)
+	}
+	var cur string
+	h.e.do(func() { cur = h.e.cur.state.Cursor().String() })
+	if cur != "3:0" {
+		t.Errorf("2@a: cursor = %s, want 3:0", cur)
+	}
+	// . は 2@a を繰り返す（FR-57。Vim の . はマクロの再生を繰り返さないので、ここは Vim と比べていない）。
+	// gh と ij を変え、2 回目の j は最後の行で失敗して止まる。
+	h.keys(".")
+	h.waitShell()
+	if got := h.text(); got != "AB\nCD\nEF\nGH\nIJ" {
+		t.Errorf(".: text = %q", got)
+	}
+}
+
 // 出力が上限を超えたら、子を止めてバッファを変えずに誤りを出す。
 //
 // req: FR-81

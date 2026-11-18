@@ -8,8 +8,16 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
-// errShellInReplay は、マクロの再生の中で :{range}! と :r ! を実行しようとしたことを表す。
-var errShellInReplay = errors.New("E319: マクロの再生の中では外部のコマンドを使えません")
+// ErrShellPending は、マクロの再生の途中の :{range}! と :r ! が外部のコマンドの実行を求めた（Result.Shell）ので、
+// 再生を止めたことを表す。誤りではない。残りのキーは ErrBufferSwitched と同じく Result.Remaining に入り、
+// 呼び出し側は FinishShell で出力を入れた後に、カーソルのあるバッファの State の ContinueReplay へ渡して再生を続ける。
+// 実行できなかった、中断したときは、残りを捨てる（Vim の再生が誤りで止まるのと同じ）。
+var ErrShellPending = errors.New("command: replay waits for an external command")
+
+// suspendsReplay は、err が再生を止めて残りを Result.Remaining に積む理由（バッファの移動か、外部のコマンドの実行）かを返す。
+func suspendsReplay(err error) bool {
+	return errors.Is(err, ErrBufferSwitched) || errors.Is(err, ErrShellPending)
+}
 
 // CommandLine は、コマンドラインモードで入力中の文字列（先頭の ":" を除く）を返す。
 func (s *State) CommandLine() string { return string(s.cmdline) }
@@ -112,11 +120,11 @@ func (s *State) applyExResult(res ex.Result, err error) {
 		s.res.Message = Message{Text: res.Notice.Text, Warning: res.Notice.Warning}
 	}
 	if res.Shell != nil {
+		s.res.Shell = res.Shell
 		if s.playDepth > 0 {
-			// 再生の途中で実行を待つと、残りのキーを止めておく手立てが無い（呼び出し側は実行の間イベントループを止めない）。
-			s.fail(errShellInReplay)
-		} else {
-			s.res.Shell = res.Shell
+			// 再生の途中なら、ErrBufferSwitched と同じく残りのキーを Result.Remaining に積んで止める。
+			// 呼び出し側は、外部のコマンドが終わって出力を入れた後に ContinueReplay で続ける。
+			s.fail(ErrShellPending)
 		}
 	}
 	var extCmds []ex.Action

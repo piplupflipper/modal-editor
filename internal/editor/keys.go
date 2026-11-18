@@ -170,10 +170,22 @@ func (e *Editor) handleKey(k editcmd.Key) {
 	// 利用者がコマンドラインで打ったキー（:acp.prompt ...<CR> の <CR>）かを覚える。afterKey が、拡張機能のコマンドの後に
 	// 記録した問いを出してよいかを決めるのに使う。キーマップの展開で入ったコマンドラインは、利用者のキーがノーマルモードなので数えない。
 	e.fromCmdline = e.cur.state.Mode() == command.ModeCommandLine
-	for _, k := range e.remap.feed(e.mapMode(), k) {
-		if !e.feedKey(k) {
+	e.feedMapped(e.remap.feed(e.mapMode(), k))
+}
+
+// feedMapped は、キーマップを通した後のキーの列を、1 個ずつ command.State へ渡す。キーが失敗したら残りを捨てる。
+// 途中のキーで外部のコマンド（:{range}! と :r !）を始めたら、残りのキーを外部のコマンドに持たせ、
+// 終わって出力を入れた後に、再び展開せずに続ける（Vim はコマンドが終わってから展開の残りを実行する）。
+func (e *Editor) feedMapped(keys []editcmd.Key) {
+	for i, k := range keys {
+		ok := e.feedKey(k)
+		if e.shell != nil {
+			e.shell.mapped = append(e.shell.mapped, keys[i+1:]...)
+			return
+		}
+		if !ok {
 			e.remap.reset()
-			break
+			return
 		}
 	}
 }
@@ -196,11 +208,11 @@ func (e *Editor) handlePaste(text string) {
 		return
 	}
 	e.message = noMessage
-	for _, k := range e.remap.flush() {
-		if !e.feedKey(k) {
-			e.remap.reset()
-			break
-		}
+	e.feedMapped(e.remap.flush())
+	if e.shell != nil {
+		// 貼り付けの前に確定させたキーで外部のコマンドを始めたら、貼り付けは終わった後に入れる。
+		e.shell.paste = text
+		return
 	}
 	bs := e.cur
 	_ = e.handleResult(bs, bs.state.Paste(text)) // 失敗は handleResult が知らせる
@@ -208,12 +220,10 @@ func (e *Editor) handlePaste(text string) {
 
 // flushKeys は、曖昧なキーの列を、時間切れとして確定させて実行する。
 func (e *Editor) flushKeys() {
-	for _, k := range e.remap.flush() {
-		if !e.feedKey(k) {
-			break
-		}
+	e.feedMapped(e.remap.flush())
+	if e.shell == nil {
+		_ = e.handleResult(e.cur, e.cur.state.Flush()) // 失敗は handleResult が知らせる
 	}
-	_ = e.handleResult(e.cur, e.cur.state.Flush()) // 失敗は handleResult が知らせる
 	e.afterKey()
 }
 
@@ -273,6 +283,8 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 		e.message = ui.Message{Text: res.Message.Text, Level: level}
 	}
 	switched := errors.Is(res.Err, command.ErrBufferSwitched)
+	// 再生の途中の外部のコマンドで再生を止めた。誤りではないので知らせない（残りは shellFinished が続ける）。
+	shellPending := errors.Is(res.Err, command.ErrShellPending)
 	// Ex コマンドの動作（:w など）を先に行い、操作の失敗はその後に知らせる。
 	// ex は誤りのコマンドで止まるので、動作はどれも誤りより左のコマンドのものである。
 	// 先に知らせると、:w|foo の E492 が :w の「書き込みました」に上書きされて見えない（Vim は :w の後に E492 を出す）。
@@ -284,12 +296,17 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 		// Err は確認を求めた E493 なので知らせず、問いを出す（render）。
 		// 左の動作が失敗したら問いを出さない（:w! dir|3,1d。Vim 9.1 は :w が失敗すると右のコマンドを実行しない）。
 		e.confirm, e.confirmBS = res.Confirm, bs
-	case res.Err != nil && !switched && !actionFailed:
+	case res.Err != nil && !switched && !shellPending && !actionFailed:
 		e.reportError(res.Err)
 	}
-	if res.Shell != nil {
+	if res.Shell != nil && !actionFailed {
 		// :{range}! と :r ! の外部のコマンドを、イベントループを止めずに動かす（FR-81。shell.go）。
-		e.startShell(bs, res.Shell)
+		// 再生の途中なら、再生の残りを持たせ、終わった後に続ける。
+		var rest []command.ReplaySegment
+		if shellPending {
+			rest = res.Remaining
+		}
+		e.startShell(bs, res.Shell, rest)
 	}
 	e.doPendingOpens()
 	if switched {

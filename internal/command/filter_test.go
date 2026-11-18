@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os/exec"
 	"testing"
+
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // shCommand は、テストの ex.State.Shell である。cmd を /bin/sh -c で実行し、標準出力と標準エラー出力を合わせて返す。
@@ -166,33 +168,53 @@ func TestFilterStale(t *testing.T) {
 	}
 }
 
-// TestFilterInMacro は、マクロの再生の中の :r ! を、実行を求めずに誤りにして再生を止めることを確かめる。
-// 記録の間（再生でない）は実行を求める。
+// TestFilterInMacro は、マクロの再生の中の :{range}! が、実行を求めて再生を止め（ErrShellPending）、
+// 出力を入れた後に ContinueReplay で残りを続けられることを確かめる。入れ子の再生と回数の残りも Remaining に入る。
+// 期待値は Vim 9.1 で、本文 "ab/cd/ef/gh" の 1 行目で qa:.!tr a-z A-Z<CR>jq の後に 2@a を打った結果である（AB/CD/EF/GH、カーソル 3:0）。
 //
 // req: FR-81
 func TestFilterInMacro(t *testing.T) {
-	s := setup(t, "|a\nb")
-	var asked int
-	for _, res := range feedKeys(s, "qa:r !echo x<CR>xq") {
-		if res.Shell != nil {
-			asked++
+	s := setup(t, "|ab\ncd\nef\ngh")
+	rec := feedKeys(s, "qa:.!tr a-z A-Z<CR>")
+	if sh := rec[len(rec)-1].Shell; sh == nil {
+		t.Fatal("記録の間に実行を求めない")
+	} else {
+		out, status, err := shCommand(sh.Cmd, sh.Input)
+		s.FinishShell(sh, out, status, err)
+	}
+	feedKeys(s, "jq")
+	if got := s.buf.Text(); got != "AB\ncd\nef\ngh" {
+		t.Fatalf("記録: text = %q", got)
+	}
+	// 2@a は @b の中から呼ぶ（入れ子の再生）。
+	s.registers.named['b'-'a'] = Register{Text: "2@a", keys: editcmd.MustParseKeys("2@a"), filled: true}
+	res := feedKeys(s, "@b")
+	last := res[len(res)-1]
+	for steps := 0; last.Shell != nil; steps++ {
+		if steps > 5 {
+			t.Fatal("再生が終わらない")
 		}
-	}
-	if asked != 1 {
-		t.Fatalf("記録の間の実行の求め = %d, want 1", asked)
-	}
-	var last Result
-	for _, res := range feedKeys(s, "@a") {
-		if res.Shell != nil {
-			t.Errorf("再生の中で実行を求めた")
+		if !errors.Is(last.Err, ErrShellPending) {
+			t.Fatalf("err = %v, want ErrShellPending", last.Err)
 		}
-		last = res
+		out, status, err := shCommand(last.Shell.Cmd, last.Shell.Input)
+		if fin := s.FinishShell(last.Shell, out, status, err); fin.Err != nil {
+			t.Fatalf("FinishShell: %v", fin.Err)
+		}
+		last = s.ContinueReplay(last.Remaining)
 	}
-	if !errors.Is(last.Err, errShellInReplay) {
-		t.Errorf("err = %v, want errShellInReplay", last.Err)
+	if last.Err != nil {
+		t.Fatalf("err = %v", last.Err)
 	}
-	if got := s.buf.Text(); got != "\nb" {
-		t.Errorf("text = %q（再生は :r で止まり、x は動かない）", got)
+	if got := s.buf.Text(); got != "AB\nCD\nEF\ngh" {
+		t.Errorf("text = %q", got)
+	}
+	if got := s.Cursor().String(); got != "3:0" {
+		t.Errorf("cursor = %s", got)
+	}
+	// ドットリピートの対象は、いちばん外側の再生（@b）である（FR-57）。. で @b をもう一度再生すると、また外部のコマンドを求める。
+	if res := feedKeys(s, "."); res[len(res)-1].Shell == nil {
+		t.Errorf(". が @b を再生しなかった")
 	}
 }
 

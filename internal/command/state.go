@@ -99,7 +99,7 @@ type Result struct {
 	// Confirm は、Ex コマンドが続きを実行する前に利用者の確認を求めたときに nil でない（逆順の範囲の :4,2d など）。
 	// このとき Err は E493 の *ex.Error である。呼び出し側は Confirm.Prompt を示して y か n を受け、State.Confirm に渡す。
 	Confirm *ex.Confirm
-	// Remaining は、Err が ErrBufferSwitched のときの、マクロの再生の残りである。
+	// Remaining は、Err が ErrBufferSwitched か ErrShellPending のときの、マクロの再生の残りである。
 	// 呼び出し側は、カーソルのあるバッファの State の ContinueReplay に渡して再生を続ける。
 	Remaining []ReplaySegment
 	// Message は、操作が利用者に知らせる通知である（検索したパターンと、検索の折り返しの警告）。無ければ Text が空である。
