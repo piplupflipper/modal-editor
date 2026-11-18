@@ -21,8 +21,8 @@ func TestPipeDeliversInOrder(t *testing.T) {
 		if err != nil {
 			t.Fatalf("server Recv: %v", err)
 		}
-		if ev.Key.Rune != want {
-			t.Fatalf("server Recv = %q, want %q", ev.Key.Rune, want)
+		if e, ok := ev.(Event); !ok || e.Key.Rune != want {
+			t.Fatalf("server Recv = %#v, want key %q", ev, want)
 		}
 	}
 	if err := s.Send(SetClipboard{Text: "x"}); err != nil {
@@ -68,7 +68,7 @@ func TestPipeDrainsBeforeEOF(t *testing.T) {
 	}
 	_ = c.Close()
 	ev, err := s.Recv()
-	if err != nil || ev.Paste != "p" {
+	if err != nil || ev != (Event{Paste: "p"}) {
 		t.Fatalf("server Recv = %#v, %v; want the event sent before Close", ev, err)
 	}
 	if _, err := s.Recv(); !errors.Is(err, io.EOF) {

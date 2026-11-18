@@ -18,7 +18,7 @@ const (
 // どちらかの Close の後、相手の Recv は届いていたものを返し終えてから io.EOF を返す。
 func Pipe() (ClientConn, ServerConn) {
 	p := &pipe{
-		events:     make(chan Event, pipeEventBuffer),
+		events:     make(chan ClientMessage, pipeEventBuffer),
 		messages:   make(chan ServerMessage, pipeMessageBuffer),
 		clientDone: make(chan struct{}),
 		serverDone: make(chan struct{}),
@@ -27,7 +27,7 @@ func Pipe() (ClientConn, ServerConn) {
 }
 
 type pipe struct {
-	events   chan Event
+	events   chan ClientMessage
 	messages chan ServerMessage
 	// clientDone と serverDone は、それぞれの側の Close で閉じる。データのチャネルは閉じない（Send と Close が並んでも panic しない）。
 	clientDone, serverDone chan struct{}
@@ -36,8 +36,8 @@ type pipe struct {
 
 type pipeClient struct{ p *pipe }
 
-func (c pipeClient) Send(ev Event) error {
-	return send(c.p.events, c.p.clientDone, c.p.serverDone, ev)
+func (c pipeClient) Send(m ClientMessage) error {
+	return send(c.p.events, c.p.clientDone, c.p.serverDone, m)
 }
 
 func (c pipeClient) Recv() (ServerMessage, error) {
@@ -55,7 +55,7 @@ func (s pipeServer) Send(m ServerMessage) error {
 	return send(s.p.messages, s.p.serverDone, s.p.clientDone, m)
 }
 
-func (s pipeServer) Recv() (Event, error) {
+func (s pipeServer) Recv() (ClientMessage, error) {
 	return recv(s.p.events, s.p.serverDone, s.p.clientDone)
 }
 

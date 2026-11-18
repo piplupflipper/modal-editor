@@ -1,5 +1,6 @@
 /bin/
 /dist/
+/modal-editor
 *.test
 *.out
 coverage.*

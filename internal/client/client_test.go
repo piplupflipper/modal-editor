@@ -67,7 +67,7 @@ func wait(t *testing.T, done <-chan error) {
 	}
 }
 
-// client は、最初に端末の大きさを送り、端末のキーをそのまま server へ送る。
+// client は、最初に編集の client の Hello で端末の大きさを送り、端末のキーをそのまま server へ送る。
 // server から届いた画面とクリップボードへの書き込みを届いた順に端末へ出し、server が閉じたら端末を戻して戻る。
 func TestRunForwardsAndApplies(t *testing.T) {
 	tm := newFakeTerm()
@@ -78,25 +78,27 @@ func TestRunForwardsAndApplies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (protocol.Event{Resize: true, Width: 120, Height: 40}); first != want {
-		t.Fatalf("first event = %+v, want %+v", first, want)
+	if want := (protocol.Hello{Kind: protocol.KindEdit, Width: 120, Height: 40}); first != want {
+		t.Fatalf("first message = %+v, want %+v", first, want)
 	}
 	key := editcmd.Key{Code: editcmd.CodeEsc}
 	tm.in <- term.Event{Key: key}
 	tm.in <- term.Event{Paste: "p"}
-	if ev, err := s.Recv(); err != nil || ev.Key != key {
+	if ev, err := s.Recv(); err != nil || ev != (protocol.Event{Key: key}) {
 		t.Fatalf("event = %+v, %v; want <Esc>", ev, err)
 	}
-	if ev, err := s.Recv(); err != nil || ev.Paste != "p" {
+	if ev, err := s.Recv(); err != nil || ev != (protocol.Event{Paste: "p"}) {
 		t.Fatalf("event = %+v, %v; want paste", ev, err)
 	}
 
 	g := ui.NewGrid(3, 2)
-	var enc protocol.ScreenEncoder
-	if err := s.Send(enc.Encode(ui.Screen{Grid: g})); err != nil {
+	if err := s.Send(protocol.Draw{Screen: ui.Screen{Grid: g}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Send(protocol.SetClipboard{Text: "yank"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Send(protocol.Exit{}); err != nil {
 		t.Fatal(err)
 	}
 	_ = s.Close()
@@ -112,6 +114,50 @@ func TestRunForwardsAndApplies(t *testing.T) {
 	}
 	if tm.restored != 1 {
 		t.Errorf("Restore called %d times, want 1", tm.restored)
+	}
+}
+
+// server が終わりの知らせ（Exit）を送らずに接続を閉じたら、client は端末を戻してから ErrServerLost を返す。
+// 理由付きの Exit なら、その理由の ServerExitError を返す（PR #200 のレビューの推奨 2）。
+func TestRunReportsServerEnd(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		last []protocol.ServerMessage
+		want func(error) bool
+	}{
+		{"lost", nil, func(err error) bool { return errors.Is(err, ErrServerLost) }},
+		{"reason", []protocol.ServerMessage{protocol.Exit{Reason: "stopped"}}, func(err error) bool {
+			var e *ServerExitError
+			return errors.As(err, &e) && e.Reason == "stopped"
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := newFakeTerm()
+			c, s := protocol.Pipe()
+			done := runClient(tm, c)
+			if _, err := s.Recv(); err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range tt.last {
+				if err := s.Send(m); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_ = s.Close()
+			select {
+			case err := <-done:
+				if !tt.want(err) {
+					t.Fatalf("Run = %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Run did not return")
+			}
+			tm.mu.Lock()
+			defer tm.mu.Unlock()
+			if tm.restored != 1 {
+				t.Errorf("Restore called %d times, want 1", tm.restored)
+			}
+		})
 	}
 }
 

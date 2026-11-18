@@ -1,4 +1,4 @@
-// Package client は、端末を持つ側（編集の client）である（基本設計 1.2、2 章。FR-58 の 1 段目）。
+// Package client は、端末を持つ側（編集の client）である（基本設計 1.2、2 章。FR-58）。
 //
 // client は端末（internal/term）を持ち、端末から解読したキーを server へ送り、server から届いた画面を端末へ出す。
 // 編集の状態は持たない。キーの列の解釈、マクロ、ドットリピートは server の側にある（基本設計 1.2）。
@@ -37,7 +37,8 @@ type Terminal interface {
 
 // Run は、tm を conn の先の server に編集の client として繋ぎ、server が接続を閉じるか、端末の入力が終わるまで動かす。
 //
-// 最初に端末の大きさを server へ知らせ（protocol の接続の最初のメッセージ）、その後は次の 2 つを並行に行う。
+// 最初に、編集の client であることと端末の大きさを Hello で server へ知らせ（protocol の接続の最初のメッセージ）、その後は次の 2 つを並行に行う。
+// conn は、1 つのプロセスの中の接続（protocol.Pipe）でも、server のソケットの接続（protocol.Dial）でもよい。
 //
 //   - 端末のイベントを server へ送る（別の goroutine）。端末の入力が終わったら接続を閉じ、server に端末が失われたことを知らせる
 //   - server から届いた画面とクリップボードへの書き込みを、届いた順に端末へ出す（Run を呼んだ goroutine）
@@ -45,6 +46,8 @@ type Terminal interface {
 // 送る向きと受ける向きを別の goroutine にするのは、server が画面を送り終えるのを待つ間も、キーを送れるようにするためである。
 //
 // 接続が閉じたら、端末を戻し、接続を閉じて戻る。戻す誤りを返す。
+// 端末を戻せたときは、server の終わり方を返す。終わりの知らせ（protocol.Exit）を理由なしで受けたか、自分の側で閉じたなら nil、
+// 理由付きで受けたなら *ServerExitError、知らせを受けずに接続が閉じたなら ErrServerLost である。
 // 端末への出力の誤りは logger に記録し、続ける（editor.Terminal の Draw と同じ扱い）。
 // 送る goroutine は、端末の入力（Terminal.Input）が閉じるまで残る。呼び出し側は、Run の後に端末の入力を止める（term.Terminal.Close）。
 // 送る goroutine が panic したら、端末を戻してから panic を続ける（基本設計 8 章）。
@@ -53,21 +56,36 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	w, h := tm.Size()
-	if err := conn.Send(protocol.Event{Resize: true, Width: w, Height: h}); err == nil {
+	if err := conn.Send(protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h}); err == nil {
 		go forward(tm, conn)
 	}
-	var dec protocol.ScreenDecoder
+	// endErr は、server の終わり方による Run の戻り値である（端末を戻した後に返す）。
+	var endErr error
+	exited := false
+recv:
 	for {
 		m, err := conn.Recv()
 		if err != nil {
-			if !errors.Is(err, io.EOF) && !errors.Is(err, protocol.ErrClosed) {
+			switch {
+			case errors.Is(err, protocol.ErrClosed):
+				// 自分の側で閉じた（端末の入力が終わった、呼び出し側が閉じた）
+			case exited:
+			case errors.Is(err, io.EOF):
+				endErr = ErrServerLost
+			default:
 				logger.Error("server からの受信に失敗", "err", err)
+				endErr = fmt.Errorf("%w: %w", ErrServerLost, err)
 			}
-			break
+			break recv
 		}
 		switch m := m.(type) {
+		case protocol.Exit:
+			exited = true
+			if m.Reason != "" {
+				endErr = &ServerExitError{Reason: m.Reason}
+			}
 		case protocol.Draw:
-			if err := tm.Draw(dec.Decode(m)); err != nil {
+			if err := tm.Draw(m.Screen); err != nil {
 				logger.Error("描画に失敗", "err", err)
 			}
 		case protocol.SetClipboard:
@@ -83,8 +101,19 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 	if rerr != nil {
 		return fmt.Errorf("client: %w", rerr)
 	}
-	return nil
+	return endErr
 }
+
+// ErrServerLost は、server が終わりの知らせ（protocol.Exit）を送らずに接続が閉じたこと、つまり server が異常終了したことを表す。
+// 未保存の変更を失ったかもしれないことを利用者が気づけるよう、呼び出し側は端末を戻した後に知らせて、0 でない終了コードで終わる。
+var ErrServerLost = errors.New("server との接続が切れた（server が異常終了したかもしれない）")
+
+// ServerExitError は、server が理由を添えて終わったこと（シグナルで止められたなど）を表す。
+type ServerExitError struct {
+	Reason string
+}
+
+func (e *ServerExitError) Error() string { return e.Reason }
 
 // forward は、端末のイベントを server へ送る。端末の入力が終わったら接続を閉じる。
 // server が接続を閉じた後も、端末の入力が閉じるまで読み捨てる（端末の読み取りを止めないため）。

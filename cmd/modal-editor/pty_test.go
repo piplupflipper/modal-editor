@@ -90,7 +90,13 @@ func startEditorWithConfig(t *testing.T, configText string, args ...string) *edi
 // startEditorIn は、XDG_CONFIG_HOME と XDG_DATA_HOME を xdg の下の config と data にし、環境変数 env を足して、エディタを起動する。
 func startEditorIn(t *testing.T, xdg string, env []string, args ...string) *editorProc {
 	t.Helper()
-	master, tty := ptytest.Open(t, 80, 24)
+	return startEditorSized(t, 80, 24, xdg, env, args...)
+}
+
+// startEditorSized は、startEditorIn と同じく、ただし偽の端末を cols 列 rows 行にしてエディタを起動する。
+func startEditorSized(t *testing.T, cols, rows uint16, xdg string, env []string, args ...string) *editorProc {
+	t.Helper()
+	master, tty := ptytest.Open(t, cols, rows)
 	cmd := exec.Command(os.Args[0], args...) //nolint:gosec // テストの実行ファイル自身をエディタとして起動する
 	cmd.Env = append(os.Environ(), envRunMain+"=1",
 		"XDG_CONFIG_HOME="+filepath.Join(xdg, "config"), "XDG_DATA_HOME="+filepath.Join(xdg, "data"))

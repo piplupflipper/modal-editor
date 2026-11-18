@@ -128,6 +128,16 @@ func (g *Grid) set(row, col int, c Cell) {
 	g.cells[row*g.width+col] = c
 }
 
+// SetRow は、row 行目を cells で置き換える。cells が行の幅より短ければ残りのセルを変えず、長ければはみ出した分を捨てる。
+// 範囲の外の行なら何もしない。
+// 描いた後の格子は変えない約束（editor.Terminal.Draw）なので、新しく作った格子を組み立てるときにだけ使う（internal/protocol が、届いた画面の差分から格子を作り直すのに使う）。
+func (g *Grid) SetRow(row int, cells []Cell) {
+	if row < 0 || row >= g.height {
+		return
+	}
+	copy(g.cells[row*g.width:(row+1)*g.width], cells)
+}
+
 // Row は、row 行目のセルの写しを返す。
 func (g *Grid) Row(row int) []Cell {
 	if row < 0 || row >= g.height {
