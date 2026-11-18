@@ -255,7 +255,7 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 | `internal/mux` | 端末多重化ソフトを操作する層（1.3）。tmux 用と herdr 用の実装 | どのペインに何を出すか |
 | `internal/server` | server のソケットの待ち受け、client の接続の管理、client ごとのタブの並び、client からのキーのイベントループへの受け渡し（1.2） | 端末 |
 | `internal/client` | server への接続、キーの送信、画面の内容の受信と端末への出力（1.2） | 編集の状態 |
-| `internal/diff` | 2 つのバッファの差分の計算と、行の対応の表（6.8）。`github.com/aymanbagabas/go-udiff` を使う | 表示 |
+| `internal/diff` | 2 つのバッファの差分の計算と、行の対応の表、`do` と `dp` の編集（6.8）。`github.com/aymanbagabas/go-udiff` を使う。図 2 の機能の層に置き、土台の `internal/buffer` だけを import する（#185） | 表示 |
 | `internal/extmgr` | 拡張機能の取得、ビルド、更新、削除と、ロックファイル（5.6） | 拡張機能のプロセスの管理（`internal/exthost`） |
 | `internal/protocol` | server と client の間のメッセージ（キー、画面の内容、クリップボードへの書き込み）と、接続の口。1 つのプロセスの中の接続（チャネル）。画面を送る単位を決める部分（10 章の未決の項目） | メッセージの意味の処理 |
 
@@ -1912,7 +1912,9 @@ server は、2 つのバッファのテキストから `github.com/aymanbagabas/
 色の名前は 7.1 の配色の名前（`diff.add`、`diff.delete`、`diff.change`。仮）を使う。
 どちらかのバッファが編集されたら、計算し直す。
 計算はバッファの行数に比例しうるので、色の表と同じく（6.1）イベントループの外の goroutine で行い、写したテキストを渡す（2.1）。
-行の中の差分（単語の単位の色付け）にも go-udiff を使えるかは、実装のときに API を試して確かめる（#177 の「参考」）。
+行の中の差分は、go-udiff の `Strings`（文字の単位の Myers のアルゴリズム）で計算できた（#185 の `diff.Inline`）。
+単語の単位ではなく文字の単位の範囲になり、Vim の 'diffopt' の `inline:char` に近い。
+違いが多いと、go-udiff の lcs は探索の深さの上限で打ち切り、近くの違いを 1 つの塊にまとめた、最小とは限らない差分を返す（#185 の測りで、10,000 行に 200 箇所の違いを入れると塊は 75 個になった）。
 
 スクロールのそろえも server が持つ（FR-100）。
 片側の client のスクロールで最初の行が変わったら、server が対応の表でもう片側の最初の行を決め、もう片側の client に送る。
@@ -1933,7 +1935,7 @@ go-udiff を選んだ理由と候補は、2026-11-18 の調べ（#177 の「参�
 
 | ライブラリ | ライセンス | 最新 | 扱い |
 |---|---|---|---|
-| `github.com/aymanbagabas/go-udiff` | BSD-3-Clause | v0.4.2（2026-11-15） | 採用。Myers のアルゴリズム。依存なし。README によれば `golang.org/x/tools/internal/diff` を写したもの |
+| `github.com/aymanbagabas/go-udiff` | BSD-3-Clause と MIT（README の License 節。`LICENSE-BSD` は Go の作者、`LICENSE-MIT` は go-udiff の作者のもの） | v0.4.2（2026-11-15） | 採用。Myers のアルゴリズム。依存なし。README によれば `golang.org/x/tools/internal/diff` を写したもの |
 | `github.com/sergi/go-diff` | MIT | v1.4.5（2026-11-17） | 採らない。diff-match-patch の移植 |
 | `github.com/pmezard/go-difflib` | GitHub では判定不能（NOASSERTION） | 最後の push は 2023-05-30 | 対象外 |
 
