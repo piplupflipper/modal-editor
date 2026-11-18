@@ -153,7 +153,7 @@ func (r *Renderer) statusSegs(ids []string, theme Theme, base Attr, text Text, f
 
 // fitName は、左の部品 segs が幅 width に収まらなければ、名前の部品（StatusPartName）の先頭を切って "<" を付け、
 // 後ろの部品（編集の禁止の印、未保存の印など）が収まるようにする（Vim 9.1 のステータス行と同じ。FR-87）。
-// 名前を切っても収まらなければ、名前を "<" だけまで切り、残りは drawSegs が右の端で切る。
+// 名前を "<" だけにしても収まらなければ、名前を空白 1 つにして印を残し、それでも収まらない分は drawSegs が右の端で切る。
 func (r *Renderer) fitName(segs []statusSeg, width int) {
 	total := 0
 	for _, s := range segs {
@@ -175,6 +175,11 @@ func (r *Renderer) fitName(segs []statusSeg, width int) {
 			gl := nextGlyph(name, off, dropped, tabStop)
 			dropped += gl.width
 			off += gl.size
+		}
+		if dropped < over+1 && i+1 < len(segs) {
+			// 名前を "<" だけにしても、後ろの印が収まらない。名前を空白 1 つにして、印を 1 列でも多く残す（PR #206 の再レビュー）。
+			segs[i].text = " "
+			return
 		}
 		segs[i].text = " <" + name[off:] + " "
 		return

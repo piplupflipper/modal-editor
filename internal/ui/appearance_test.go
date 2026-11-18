@@ -50,6 +50,10 @@ func TestStatusLineLongName(t *testing.T) {
 	if !strings.Contains(got, "find.go [+] [RO]  1,1") || !strings.HasPrefix(got, " NORMAL  <") {
 		t.Errorf("未保存と禁止: %q", got)
 	}
+	// 名前を "<" だけにしても収まらない幅（PR #206 の再レビューの 24 列）では、名前を出さずに [RO] を残す。
+	if got := newRenderer(24, 6).Render(&Frame{Text: b, Name: name, ReadOnly: true}).Grid.RowText(4); got != " NORMAL  [RO]  1,1  All " {
+		t.Errorf("24 列: %q", got)
+	}
 	// 収まる名前は切らない。
 	if got := r.Render(&Frame{Text: b, Name: "a.go", ReadOnly: true}).Grid.RowText(4); !strings.HasPrefix(got, " NORMAL  a.go [RO] ") {
 		t.Errorf("短い名前: %q", got)
