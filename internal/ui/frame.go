@@ -207,4 +207,7 @@ type Frame struct {
 	// PopupMarkdown は、Popup の本文が Markdown（popup/show の format が markdown）かどうかである。
 	// true なら、コードの囲みの行（```go など）を描かずに中身の行だけを出す（基本設計 6.7。#151）。他の記法は整形しない。
 	PopupMarkdown bool
+	// PopupCenter は、Popup をカーソルの近くでなく、バッファの表示領域の中央に出すことを表す。
+	// 本体が出す知らせ（:ext sync の結果の内訳。#179 の裁定の、端末多重化ソフトの外の規則）に使う。
+	PopupCenter bool
 }

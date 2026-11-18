@@ -246,6 +246,76 @@ func TestCloseContextCancels(t *testing.T) {
 }
 
 // 未起動と再起動待ちの拡張機能の Disable は、プロセスを待たずに無効にする。
+// Reload は、稼働中なら正常に止めて未起動へ戻し、次の契機で起動し直す（:ext sync で実行ファイルを入れ替えた後。基本設計 5.6）。
+// 再起動待ちと無効なら、すぐに未起動へ戻す。
+func TestReload(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "idle", modeNormal, ""), fakeSpec(t, "crash", modeExit, "")}, func(c *Config) {
+		c.RestartDelay = time.Hour
+		c.MaxRestartDelay = time.Hour
+	}, true)
+
+	hs.h.Activate(ext.ActivationTextObject, "idle.obj")
+	hs.waitState("idle", StateRunning)
+	if err := hs.h.Reload("idle"); err != nil {
+		t.Fatal(err)
+	}
+	if st := hs.state("idle"); st != StateStopping {
+		t.Fatalf("state right after Reload = %s, want stopping", st)
+	}
+	hs.waitState("idle", StateStopping)
+	if sc := hs.waitState("idle", StateNotStarted); sc.Err != nil {
+		t.Errorf("reload reason = %v, want nil", sc.Err)
+	}
+	if started := hs.h.Activate(ext.ActivationTextObject, "idle.obj"); len(started) != 1 {
+		t.Errorf("activation after Reload started %v, want idle", started)
+	}
+	hs.waitState("idle", StateRunning)
+
+	hs.h.Activate(ext.ActivationTextObject, "crash.obj")
+	hs.waitState("crash", StateRestartWait)
+	if err := hs.h.Reload("crash"); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("crash", StateNotStarted)
+
+	if err := hs.h.Disable("crash"); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("crash", StateDisabled)
+	if err := hs.h.Reload("crash"); err != nil {
+		t.Fatal(err)
+	}
+	if st := hs.state("crash"); st != StateNotStarted {
+		t.Errorf("state after Reload of disabled = %s, want not started", st)
+	}
+	if err := hs.h.Reload("nope"); !errors.Is(err, ErrUnknownExtension) {
+		t.Errorf("Reload(unknown) = %v, want ErrUnknownExtension", err)
+	}
+}
+
+// ファイルの種類で起動する拡張機能は、Reload で止めた後、開いたままのバッファのファイルの種類で起動し直し、全文を受け取り直す
+// （PR #220 のレビューの必須 1）。
+func TestReloadFileType(t *testing.T) {
+	hs := newHarness(t, []Spec{fakeSpec(t, "lsp", modeNormal, "go")}, nil, true)
+	if err := hs.h.OpenBuffer(BufferSnapshot{ID: 1, Version: 1, Text: "package main", FileType: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("lsp", StateRunning)
+	if err := hs.h.Reload("lsp"); err != nil {
+		t.Fatal(err)
+	}
+	hs.waitState("lsp", StateNotStarted)
+	hs.waitState("lsp", StateStarting)
+	hs.waitState("lsp", StateRunning)
+	var s fakeState
+	if err := hs.h.Call(ctx, "lsp", methodState, nil, callTimeout, &s); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Buffers[1].Text; got != "package main" {
+		t.Errorf("起動し直した拡張機能のバッファ 1 = %q, want %q", got, "package main")
+	}
+}
+
 func TestDisableNotRunning(t *testing.T) {
 	hs := newHarness(t, []Spec{fakeSpec(t, "idle", modeNormal, ""), fakeSpec(t, "crash", modeExit, "")}, func(c *Config) {
 		c.RestartDelay = time.Hour

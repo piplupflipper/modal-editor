@@ -98,13 +98,12 @@ func (l *Lock) encode() ([]byte, error) {
 // 途中で失敗しても前の中身が残るように、同じディレクトリの一時ファイルに書いてから名前を変える。
 // path が symlink なら（dotfiles のリポジトリへ GNU stow などでファイルごとに張ったもの）、symlink は残し、
 // リンク先のファイルのディレクトリに一時ファイルを書いて、リンク先の名前へ変える。
+// リンク先が無い（切れた symlink。dotfiles のリポジトリでまだ作っていないか、消したとき）ときも、リンクの指す先に作る。
+// ReadLock は切れた symlink を「ファイルが無い」として読むので、それと揃える（#213）。
 func writeLock(path string, l *Lock) error {
-	if fi, err := os.Lstat(path); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
-		target, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			return fmt.Errorf("ロックファイルの symlink の先を求められない: %w", err)
-		}
-		path = target
+	path, err := lockTarget(path)
+	if err != nil {
+		return fmt.Errorf("ロックファイルの symlink の先を求められない: %w", err)
 	}
 	data, err := l.encode()
 	if err != nil {
@@ -138,4 +137,49 @@ func writeLock(path string, l *Lock) error {
 		return fmt.Errorf("ロックファイルを書けない: %w", err)
 	}
 	return nil
+}
+
+// maxLockLinks は、lockTarget が辿る symlink の数の上限である（Linux の 1 つのパスの解決の上限 40 と同じ）。
+const maxLockLinks = 40
+
+// lockTarget は、ロックファイルのパス path が symlink なら、書き込む先のパスを返す。symlink でなければ path を返す。
+// リンク先があれば filepath.EvalSymlinks の結果を返す。
+// リンク先が無ければ、symlink を 1 つずつ os.Readlink で辿り、最後のリンクの指す先（まだ無いファイル）を返す。
+// 相対パスのリンクは、リンクのあるディレクトリから解決する。
+func lockTarget(path string) (string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode()&fs.ModeSymlink == 0 {
+		return path, nil //nolint:nilerr // 無いファイルと読めないファイルは、この後の読み書きで扱う
+	}
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		return target, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	for range maxLockLinks {
+		link, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(link) {
+			// リンクのあるディレクトリ自身が symlink を含んでも、そこから解決するように、ディレクトリを先に実体のパスにする。
+			dir, derr := filepath.EvalSymlinks(filepath.Dir(path))
+			if derr != nil {
+				return "", derr
+			}
+			link = filepath.Join(dir, link)
+		}
+		path = link
+		fi, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return path, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if fi.Mode()&fs.ModeSymlink == 0 {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("%s: symlink が %d 段を超える", path, maxLockLinks)
 }

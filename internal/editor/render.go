@@ -68,6 +68,7 @@ func (e *Editor) frame() *ui.Frame {
 	case e.popup != nil:
 		f.Popup = e.popup.text
 		f.PopupMarkdown = e.popup.markdown
+		f.PopupCenter = e.popup.center
 	case f.Message.Text == "" && st.Mode() == command.ModeNormal && !st.Pending():
 		// 他に出すものが無ければ、カーソルの行の診断の本文を出す。
 		if m, ok := bs.cursorDiagnostic(toExtPos(st.Cursor())); ok {

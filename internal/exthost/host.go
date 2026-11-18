@@ -249,7 +249,7 @@ const (
 	StateRunning
 	// StateStopping は、[Host.Disable] で shutdown を送り、プロセスが終わるのを待っている状態である（基本設計 5.2）。
 	// 問い合わせと buffer/willSave は送らずに [ErrUnavailable] で失敗させ、buffer/change などの通知も送らない。
-	// プロセスが終わると StateDisabled へ移る。
+	// プロセスが終わると StateDisabled へ移る。[Host.Reload] で止めたときは、StateNotStarted へ移る。
 	StateStopping
 	// StateRestartWait は、異常で子プロセスを終わらせ、再起動の待ち時間が過ぎるのを待っている状態である。
 	StateRestartWait
@@ -335,6 +335,8 @@ type extension struct {
 	stop chan struct{}
 	// stopping は、stop を閉じたかどうかである。
 	stopping bool
+	// reload は、[Host.Reload] で止めていることを表す。止まったら無効ではなく未起動へ移す。
+	reload bool
 }
 
 // New は、specs の拡張機能を管理する Host を作る。子プロセスは起動しない（FR-14、NFR-04）。
@@ -514,6 +516,8 @@ func (h *Host) Disable(id string) error {
 	if err != nil {
 		return err
 	}
+	// 先の Reload で止めている途中なら、止まった後も未起動へ戻さずに無効にする。
+	e.reload = false
 	switch e.state {
 	case StateNotStarted:
 		h.setStateLocked(e, StateDisabled, nil)
@@ -525,6 +529,76 @@ func (h *Host) Disable(id string) error {
 	case StateStopping, StateDisabled:
 	}
 	return nil
+}
+
+// Reload は、拡張機能の実行ファイルを入れ替えた後（:ext sync。基本設計 5.6）に、次の起動の契機で新しい実行ファイルを起動するようにする。
+//
+// 起動中か稼働中なら、[Host.Disable] と同じ手順（shutdown、期限後に SIGTERM、さらに期限後に SIGKILL）で正常に止め、
+// プロセスが終わったら、無効ではなく未起動（[StateNotStarted]）へ移す。停止中なら、止まった後に未起動へ移す。
+// 再起動待ちなら待つのをやめ、無効なら連続の失敗の数を 0 に戻して、未起動へ移す。未起動なら何もしない。止めるのは非同期で、待たずに戻る。
+// 止めたことは連続の失敗に数えない。
+//
+// 未起動へ移した時点で、開いているバッファのファイルの種類で起動の契機（filetype）が成り立てば、すぐに起動し直す。
+// ファイルの種類の契機はバッファを開いたときにしか成り立たないので、そうしないと、開いたままのバッファの
+// LSP や構文の色の拡張機能が、別のファイルを開くまで起動しない（PR #220 のレビュー）。
+// それ以外の契機（操作、コマンド、socket）の拡張機能は、次にその契機が成り立ったときに起動する。
+//
+// 宣言ファイルは読み直さない。New に渡した Spec の起動の契機と command のパスのまま、そのパスの実行ファイルを起動する。
+func (h *Host) Reload(id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	e, err := h.lookupLocked(id)
+	if err != nil {
+		return err
+	}
+	switch e.state {
+	case StateNotStarted:
+	case StateStarting, StateRunning:
+		e.reload = true
+		h.requestStopLocked(e)
+		h.setStateLocked(e, StateStopping, nil)
+	case StateStopping:
+		e.reload = true
+	case StateRestartWait:
+		e.reload = true
+		h.requestStopLocked(e)
+	case StateDisabled:
+		e.failures = 0
+		h.setStateLocked(e, StateNotStarted, nil)
+		h.activateByDocsLocked(e)
+	}
+	return nil
+}
+
+// stoppedLocked は、利用者の指示（[Host.Disable] か [Host.Reload]）で止めた拡張機能 e を、無効か未起動へ移す。
+// 未起動へ移したら、開いているバッファのファイルの種類で起動し直す（activateByDocsLocked）。
+func (h *Host) stoppedLocked(e *extension) {
+	if e.reload {
+		e.reload = false
+		e.failures = 0
+		h.setStateLocked(e, StateNotStarted, nil)
+		h.activateByDocsLocked(e)
+		return
+	}
+	h.setStateLocked(e, StateDisabled, nil)
+}
+
+// activateByDocsLocked は、未起動の拡張機能 e のファイルの種類の契機が、開いているバッファのどれかで成り立てば起動する。
+func (h *Host) activateByDocsLocked(e *extension) {
+	if h.closing || e.state != StateNotStarted {
+		return
+	}
+	for _, a := range e.spec.Manifest.KnownActivation() {
+		if a.On != ext.ActivationFileType || a.Pattern == "" {
+			continue
+		}
+		for _, d := range h.docs {
+			if d.fileType == a.Pattern {
+				h.startLocked(e)
+				return
+			}
+		}
+	}
 }
 
 // requestStopLocked は、拡張機能の監視の goroutine へ、止めるよう知らせる。
@@ -618,6 +692,7 @@ func (h *Host) startLocked(e *extension) {
 	e.run = r
 	e.stop = make(chan struct{})
 	e.stopping = false
+	e.reload = false
 	h.setStateLocked(e, StateStarting, nil)
 	h.wg.Add(1)
 	go h.supervise(e, r, e.stop)

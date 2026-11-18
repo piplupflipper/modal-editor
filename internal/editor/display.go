@@ -32,6 +32,8 @@ type popupState struct {
 	text   string
 	// markdown は、本文の形式が markdown かどうかである（popup/show の format）。整形は ui が行う（ui.Frame.PopupMarkdown）。
 	markdown bool
+	// center は、カーソルの近くでなく画面の中央に出すかである（ui.Frame.PopupCenter。:ext sync の結果の内訳）。
+	center bool
 }
 
 var noMessage = ui.Message{}

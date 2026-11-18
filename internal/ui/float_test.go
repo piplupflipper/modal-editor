@@ -29,6 +29,24 @@ func TestGoldenPopup(t *testing.T) {
 	}))
 }
 
+// PopupCenter なら、カーソルの位置に依らず、バッファの表示領域の縦と横の中央に置く（:ext sync の結果の内訳）。
+func TestPopupCenter(t *testing.T) {
+	b := buffer.New("aaaaaaaaaaaaaaaaaaaa\nb\nc\nd\ne\nf\ng\n")
+	r := &Renderer{Width: 20, Height: 8, Theme: testTheme()}
+	s := r.Render(&Frame{Text: b, Cursor: pos(0, 0), Popup: "xy\nzw", PopupCenter: true})
+	rows := strings.Split(s.Grid.String(), "\n")
+	// 表示領域は 7 行（ステータス行を除き、コマンドラインの行は無い）なので、2 行の窓は 2 行目と 3 行目（0 から数える）。
+	// 窓の幅は本文の 2 列と余白の 2 列で 4 列なので、左の端は (20-4)/2 = 8 列目。
+	for i, want := range map[int]string{2: " xy ", 3: " zw "} {
+		if got := rows[i][8:12]; got != want {
+			t.Errorf("行 %d の 8〜11 列 = %q, want %q（画面:\n%s）", i, got, want, s.Grid.String())
+		}
+	}
+	if !strings.HasPrefix(rows[0], "aaaaaaaaaaaaaaaaaaaa") {
+		t.Errorf("カーソルの下に出した:\n%s", s.Grid.String())
+	}
+}
+
 // 選択の一覧（:registers）は、表示領域の上の端の横の中央に浮かべ、選んでいる項目の行を別の色で描いてカーソルを置く。
 // 項目が収まらなければ、選んでいる項目が見えるまでずらす。長い項目は右の端で切る。
 //
