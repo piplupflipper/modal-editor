@@ -11,8 +11,8 @@
 //
 // このパッケージは internal/editcmd（キーの型）と internal/ui（格子の型）を import する。
 // internal/ui と同じ層には置けないので、internal/editor と同じ層に置き、internal/editor は import しない。
-// internal/editor の Terminal の口（editor.Terminal）へは、cmd/modal-editor が Terminal を包んでつなぐ。
-// Event は editor.TermEvent と同じ形の構造体なので、型の変換だけで渡せる。
+// Terminal を使うのは編集の client（internal/client）で、イベントを server へ送り、server から届いた画面を Draw で出す（基本設計 1.2）。
+// Event は、client から server へ送る protocol.Event と同じ形の構造体なので、型の変換だけで渡せる。
 //
 // # 端末の前提
 //

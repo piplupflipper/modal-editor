@@ -59,6 +59,7 @@ type Terminal interface {
 	Size() (width, height int)
 	// Draw は、画面の内容とカーソルを端末へ出す。前回との差分だけを書くのは実装の自由である。
 	// Run の goroutine から呼ぶ。誤りはログに記録し、編集は続ける。
+	// s の格子は描くたびに新しく作り、渡した後に変えない。実装は s を別の goroutine へ渡して後で出してもよい（internal/server）。
 	Draw(s ui.Screen) error
 	// SetClipboard は、text をホストのクリップボードへ送る（FR-56。実物の端末では OSC 52 の制御シーケンス）。
 	// 端末の応答は待たない。Run の goroutine から呼ぶ。誤りはログに記録し、編集は続ける。
@@ -76,7 +77,13 @@ type TermEvent struct {
 	// Resize は、端末の大きさが Width と Height に変わったことを表す。
 	Resize        bool
 	Width, Height int
+	// Client は、このイベントを受けた client である（基本設計 2.1 の段階 3）。internal/server が接続ごとに割り当てる。
+	// 今は編集の client が 1 つだけなので、イベントループは読まない。複数の client のタブを分けるときに使う（FR-62）。
+	Client ClientID
 }
+
+// ClientID は、server に繋いだ client の識別子である。0 は「client を区別しない」（server を通さずに端末をつないだ場合）を表す。
+type ClientID uint64
 
 // Config は、エディタの設定である。ゼロ値の項目は既定値を使う。
 // 設定ファイル（FR-40、FR-41）の読み込みは #9 の裁定の後に作り、読み込んだ値をこの形で渡す。
