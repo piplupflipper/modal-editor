@@ -57,7 +57,10 @@ import (
 //	    "settings": { "lsp": { "servers": [] } },
 //	    "activation": { "lsp": [{ "on": "filetype", "pattern": "python" }] }
 //	  },
-//	  "registers": { "historySize": 100, "maxEntryBytes": 1048576, "deleteToHistory": true, "clipboard": "osc52" }
+//	  "registers": { "historySize": 100, "maxEntryBytes": 1048576, "deleteToHistory": true, "clipboard": "osc52" },
+//	  "colors": { "diagnostic.error": { "sp": "#e27878", "undercurl": true }, "statusline": { "fg": 7, "bg": 0 } },
+//	  "symbols": { "sign.breakpoint": "●", "popup.border": "┌─┐│┘─└│" },
+//	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] }
 //	}
 type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
@@ -121,6 +124,18 @@ type Config struct {
 	// 誤りのある項目は除いてある。
 	// editor.Config.ReadOnlyPaths にそのまま渡す。
 	ReadOnlyPaths []string
+	// Colors は colors の値で、色の名前から属性への対応である（基本設計 7.1。FR-91）。本体の既定の対応を名前ごとに置き換える。
+	// 誤りのある項目は除いてある。名前が本体の知るものかは CheckAppearance で確かめる。
+	Colors map[string]Style
+	// Symbols は symbols の値で、記号の名前から描く文字列への対応である（基本設計 7.1。FR-93）。
+	// 名前と文字列が使えるかは CheckAppearance で確かめる。
+	Symbols map[string]string
+	// StatusLine は statusline の値で、ステータス行に並べる部品の ID の列である（基本設計 7.1。FR-92）。
+	// 項目が無いか誤りなら nil で、本体の既定の並びを使う。部品の ID は CheckAppearance で確かめる。
+	StatusLine *StatusLine
+
+	// pos は、見た目の設定の項目を書いた位置である（CheckAppearance）。
+	pos appearancePos
 
 	// extPos は、extensions.settings と extensions.activation に書いた拡張機能の ID の位置である。
 	// 見つからない拡張機能の ID を LoadExtensions が知らせるのに使う。
@@ -207,6 +222,12 @@ func Parse(path string, data []byte) (Config, []error) {
 			s.registers(m.value, &cfg)
 		case "readonlyPaths":
 			cfg.ReadOnlyPaths = s.readOnlyPaths(m.value)
+		case "colors":
+			cfg.Colors = s.colors(m.value, &cfg)
+		case "symbols":
+			cfg.Symbols = s.symbols(m.value, &cfg)
+		case "statusline":
+			cfg.StatusLine = s.statusLine(m.value, &cfg)
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", join("", m.name))
 		}

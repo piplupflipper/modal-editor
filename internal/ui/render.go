@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
-	"strings"
 )
 
 // CursorShape は、カーソルの形である。
@@ -57,6 +56,11 @@ type Renderer struct {
 	// GutterWidth は、バッファの表示領域の左に必ず空ける欄（印、行番号）の列数である。テキストはその右から描く。
 	// 印か診断があれば、少なくとも印の列の 2 列を空ける。
 	GutterWidth int
+	// Symbols は、記号の名前から描く文字列への対応（設定の symbols。FR-93）である。表に無い名前は DefaultSymbols の値を使う。
+	// 値は CheckSymbol を通したものにする。
+	Symbols Symbols
+	// StatusLine は、ステータス行に並べる部品の列（設定の statusline。FR-92）である。nil なら DefaultStatusLine を使う。
+	StatusLine *StatusLine
 
 	top  int // 表示領域の最初の行の番号（0 から数える）
 	left int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
@@ -562,49 +566,6 @@ func (r *Renderer) drawText(g *Grid, row, col, limit int, s string, a Attr) int 
 		off += gl.size
 	}
 	return col
-}
-
-// drawStatus は、row 行目（バッファの表示領域のすぐ下）にステータス行を描く。
-//
-// 左にモードとバッファの名前と変更の有無（[+]）を、右にマクロの記録中の表示と、カーソルの位置と、表示している範囲の位置を出す。
-// カーソルの位置は Vim のルーラーと同じく「行,バイトの列-表示の列」で、2 つの列が同じなら表示の列を省き、空の行では "0-1" と出す。
-// 範囲の位置は Vim と同じく All、Top、Bot、または上に隠れた行の割合である。
-// 幅が足りなければ、左の部分を右の端で切る。
-func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cursorPlace, row int) {
-	a := theme.attr(StyleStatusLine)
-	for c := range r.Width {
-		g.set(row, c, blank(a))
-	}
-
-	name := f.Name
-	if name == "" {
-		name = "[No Name]"
-	}
-	leftPart := " " + f.Mode.String() + "  " + name
-	if f.Modified {
-		leftPart += " [+]"
-	}
-
-	var right []string
-	if f.Recording != 0 {
-		right = append(right, "recording @"+string(f.Recording))
-	}
-	var ruler string
-	switch {
-	case len(text.Line(cur.line)) == 0:
-		ruler = fmt.Sprintf("%d,0-1", cur.line+1)
-	case cur.byte == cur.col:
-		ruler = fmt.Sprintf("%d,%d", cur.line+1, cur.byte+1)
-	default:
-		ruler = fmt.Sprintf("%d,%d-%d", cur.line+1, cur.byte+1, cur.col+1)
-	}
-	right = append(right, ruler, r.position(text.LineCount()))
-	rightPart := strings.Join(right, "  ") + " "
-
-	rw := StringWidth(rightPart, r.TabStop)
-	start := max(r.Width-rw, 0)
-	r.drawText(g, row, start, r.Width, rightPart, a)
-	r.drawText(g, row, 0, start-1, leftPart, a)
 }
 
 // position は、表示している範囲の位置を、Vim のルーラーと同じ形（All、Top、Bot、NN%）で返す。

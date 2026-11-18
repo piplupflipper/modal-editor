@@ -165,6 +165,10 @@ type Frame struct {
 	Name string
 	// Modified は、バッファに保存していない変更があるかどうかである。
 	Modified bool
+	// ReadOnly は、バッファの編集を禁止しているかどうかである（基本設計 4.6）。true ならステータス行に編集の禁止の印を出す（FR-87）。
+	ReadOnly bool
+	// FileType は、バッファのファイルの種類の名前（基本設計 6.7）である。ステータス行の部品 StatusPartFileType に出す。空なら出さない。
+	FileType string
 	Mode     Mode
 	// Cursor は、カーソルの位置である。範囲の外なら、最も近いバッファの中の位置として描く。
 	Cursor    buffer.Position

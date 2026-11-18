@@ -13,9 +13,9 @@ const (
 	outputMaxRows = 10
 )
 
-// signMark は、印の列に出す 1 つの印の表記と色と優先順位である。
+// signMark は、印の列に出す 1 つの印の色と優先順位である。
+// 表記は、色の名前と同じ名前の記号（SymbolSign...。既定は defaultSymbols。設定の symbols で変えられる。FR-93）である。
 type signMark struct {
-	text  string // 2 列に収まる表記
 	style string
 	rank  int // 大きいほど優先する
 }
@@ -31,18 +31,18 @@ type signMark struct {
 //
 // デバッガーの印を診断の印より上にするのは、デバッグ中に利用者が見る位置（止まった行と置いたブレークポイント）を、
 // 編集中に出る診断で隠さないためである。止まった行のブレークポイントは "=>" に隠れるが、続行すると印が戻る。
-// 表記は ASCII にし、端末の文字幅（'ambiwidth'）で列がずれないようにする。
+// 既定の表記（=>、B、b、E、W、I、H）は ASCII にし、端末の文字幅（'ambiwidth'）で列がずれないようにする。
 var (
 	signMarks = map[SignKind]signMark{
-		SignExecutionPoint:       {text: "=>", style: StyleSignExecutionPoint, rank: 7},
-		SignBreakpoint:           {text: "B ", style: StyleSignBreakpoint, rank: 6},
-		SignBreakpointUnverified: {text: "b ", style: StyleSignBreakpointUnverified, rank: 5},
+		SignExecutionPoint:       {style: StyleSignExecutionPoint, rank: 7},
+		SignBreakpoint:           {style: StyleSignBreakpoint, rank: 6},
+		SignBreakpointUnverified: {style: StyleSignBreakpointUnverified, rank: 5},
 	}
 	diagnosticMarks = map[Severity]signMark{
-		SeverityError:   {text: "E ", style: StyleSignDiagnosticError, rank: 4},
-		SeverityWarning: {text: "W ", style: StyleSignDiagnosticWarning, rank: 3},
-		SeverityInfo:    {text: "I ", style: StyleSignDiagnosticInfo, rank: 2},
-		SeverityHint:    {text: "H ", style: StyleSignDiagnosticHint, rank: 1},
+		SeverityError:   {style: StyleSignDiagnosticError, rank: 4},
+		SeverityWarning: {style: StyleSignDiagnosticWarning, rank: 3},
+		SeverityInfo:    {style: StyleSignDiagnosticInfo, rank: 2},
+		SeverityHint:    {style: StyleSignDiagnosticHint, rank: 1},
 	}
 )
 
@@ -101,7 +101,9 @@ func (d *drawer) signsByLine(rows int) []signMark {
 	return out
 }
 
-// drawSign は、表示領域の row 行目の印の列を描く。
+// drawSign は、表示領域の row 行目の印の列を描く。印の表記は記号の設定（Renderer.Symbols）で変えられる。
+//
+// req: FR-93
 func (d *drawer) drawSign(row int, m signMark) {
 	w := min(d.r.gutter, d.r.Width)
 	for c := range w {
@@ -110,7 +112,12 @@ func (d *drawer) drawSign(row int, m signMark) {
 	if m.rank == 0 {
 		return
 	}
-	d.r.drawText(d.g, row, 0, min(signColumnWidth, w), m.text, d.theme.attr(m.style))
+	// 1 列の印は、右の 1 列を印の色の空白で埋める。
+	a := d.theme.attr(m.style)
+	limit := min(signColumnWidth, w)
+	for c := d.r.drawText(d.g, row, 0, limit, d.r.symbol(m.style), a); c < limit; c++ {
+		d.g.set(row, c, blank(a))
+	}
 }
 
 // outputRow は、出力の欄に出す 1 行の、Lines の行の番号とバイトの範囲 [start, end) である。

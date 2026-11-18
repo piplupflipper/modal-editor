@@ -1,5 +1,10 @@
 package ui
 
+import (
+	"maps"
+	"slices"
+)
+
 // 色の種類の名前（論理名）。名前から属性への対応は Theme が持つ。
 //
 // 構文の色の名前は、基本設計 6.1 の decoration/set の style の表（仮）と同じである。
@@ -47,14 +52,71 @@ const (
 	StyleSignDiagnosticWarning    = "sign.diagnostic.warning"
 	StyleSignDiagnosticInfo       = "sign.diagnostic.info"
 	StyleSignDiagnosticHint       = "sign.diagnostic.hint"
+	// StylePopupBorder は、浮かべる窓（popup/show の本文と Frame.List）の枠線である（記号 SymbolPopupBorder を設定したときだけ描く）。
+	// 表に無ければ StylePopup で描く。
+	StylePopupBorder = "popup.border"
+	// StyleStatusLineMode などは、ステータス行の部品ごとの色である。名前は "statusline." と部品の ID（StatusPart...）をつないだもの。
+	// 部品は StyleStatusLine の上に重ねて描く（Attr.Over）ので、文字の色だけを変えることもできる。既定の対応には無い。
+	StyleStatusLineMode      = "statusline.mode"
+	StyleStatusLineName      = "statusline.name"
+	StyleStatusLineModified  = "statusline.modified"
+	StyleStatusLineReadOnly  = "statusline.readonly"
+	StyleStatusLineFileType  = "statusline.filetype"
+	StyleStatusLineRecording = "statusline.recording"
+	StyleStatusLineRuler     = "statusline.ruler"
+	StyleStatusLinePosition  = "statusline.position"
+	// StyleStatusLineModeNormal などは、モードごとのモードの部品の色である。StyleStatusLineMode の上に重ねる。
+	// ビジュアルモードは文字単位と行単位で同じ名前を使う。
+	StyleStatusLineModeNormal      = "statusline.mode.normal"
+	StyleStatusLineModeInsert      = "statusline.mode.insert"
+	StyleStatusLineModeVisual      = "statusline.mode.visual"
+	StyleStatusLineModeCommandLine = "statusline.mode.commandline"
 )
+
+// styleNames は、本体が色を付ける対象の名前の全部である（StyleNames）。
+var styleNames = []string{
+	StyleComment, StyleKeyword, StyleString, StyleNumber, StyleConstant, StyleFunction, StyleType, StyleVariable,
+	StyleOperator, StylePunctuation,
+	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey,
+	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
+	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
+	StylePopup, StylePopupSelected, StylePopupBorder,
+	StyleSignBreakpoint, StyleSignBreakpointUnverified, StyleSignExecutionPoint,
+	StyleSignDiagnosticError, StyleSignDiagnosticWarning, StyleSignDiagnosticInfo, StyleSignDiagnosticHint,
+	StyleStatusLineMode, StyleStatusLineName, StyleStatusLineModified, StyleStatusLineReadOnly, StyleStatusLineFileType,
+	StyleStatusLineRecording, StyleStatusLineRuler, StyleStatusLinePosition,
+	StyleStatusLineModeNormal, StyleStatusLineModeInsert, StyleStatusLineModeVisual, StyleStatusLineModeCommandLine,
+}
+
+// StyleNames は、本体が色を付ける対象の名前（設定の colors に書ける名前。FR-91）を、定義の順に返す。
+// 拡張機能の decoration/set の style も、この名前から選ぶ（基本設計 6.1、7.1）。返す列は呼び出しごとに作り直す。
+func StyleNames() []string {
+	return slices.Clone(styleNames)
+}
+
+// IsStyleName は、name が本体の色を付ける対象の名前（StyleNames）かを返す。
+func IsStyleName(name string) bool {
+	return slices.Contains(styleNames, name)
+}
 
 // Theme は、色の種類の名前から属性への対応である。
 // 表に無い名前の範囲には色を付けない（基本設計 6.1）。
 type Theme map[string]Attr
 
+// WithColors は、t を写したものに、colors の名前ごとの属性を上書きした対応を返す（設定の colors。FR-91）。
+// 上書きは名前ごとの置き換えで、既定の属性と混ぜない（文字の色だけを書いた名前は、既定の背景の色と飾りを持たない）。
+// t は変更しない。
+//
+// req: FR-91
+func (t Theme) WithColors(colors map[string]Attr) Theme {
+	out := make(Theme, len(t)+len(colors))
+	maps.Copy(out, t)
+	maps.Copy(out, colors)
+	return out
+}
+
 // DefaultTheme は、既定の対応（仮）を返す。色は端末の 16 色の番号で、Vim の暗い背景の既定の色に近いものを選んだ。
-// 設定から差し替える仕組みは、設定（internal/config）を作るときに足す。
+// 設定の colors は WithColors で名前ごとに上書きする（FR-91）。
 func DefaultTheme() Theme {
 	return Theme{
 		StyleComment:  {Fg: Indexed(14)},

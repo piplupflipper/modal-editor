@@ -1,0 +1,78 @@
+## 下に置く
+size 16x10 cursor 0,2 block
+   |line0           |
+   |li┌──────────┐  |
+fg |..cccccccccccc..|
+   |li│ func f() │  |
+fg |..c..........c..|
+fx |   vvvvvvvvvv   |
+   |li│ ok       │  |
+fg |..c..........c..|
+fx |   vvvvvvvvvv   |
+   |li└──────────┘  |
+fg |..cccccccccccc..|
+   |line5           |
+   |line6           |
+   |line7           |
+   | NORMA 1,3  All |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## 下に収まらなければ上に置く
+size 16x10 cursor 6,0 block
+   |line0           |
+   |line1           |
+   |┌───┐           |
+fg |ccccc...........|
+   |│ a │           |
+fg |c...c...........|
+fx | vvv            |
+   |│ b │           |
+fg |c...c...........|
+fx | vvv            |
+   |└───┘           |
+fg |ccccc...........|
+   |line6           |
+   |line7           |
+   | NORMA 7,1  All |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## 右の端で左へ寄せる
+size 16x10 cursor 1,4 block
+   |line0           |
+   |line1           |
+   |┌──────────────┐|
+fg |cccccccccccccccc|
+   |│ abcdefghijkl │|
+fg |c..............c|
+fx | vvvvvvvvvvvvvv |
+   |└──────────────┘|
+fg |cccccccccccccccc|
+   |line5           |
+   |line6           |
+   |line7           |
+   | NORMA 2,5  All |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
+## 選択の一覧
+size 16x10 cursor 3,6 block
+   |line┌─────┐     |
+fg |....ccccccc.....|
+   |line│ reg │     |
+fg |....c.....c.....|
+fx |     vvvvv      |
+   |line│ a   │     |
+fg |....c.....c.....|
+fx |     vvvvv      |
+   |line│ b   │     |
+fg |....c.....c.....|
+   |line└─────┘     |
+fg |....ccccccc.....|
+   |line5           |
+   |line6           |
+   |line7           |
+   | NORMA 1,1  All |
+fx |SSSSSSSSSSSSSSSS|
+   |                |

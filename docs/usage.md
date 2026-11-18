@@ -100,6 +100,122 @@ dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor main.
 設定のどこに `leader` を書いても結果は同じである。
 Vim の `mapleader` は、マッピングを定義した時点の値で置き換えるので、この点が違う（[vim-differences.md](vim-differences.md)）。
 
+## 見た目の設定
+
+設定ファイルの `colors`、`symbols`、`statusline` で、配色、記号、ステータス行の並びを変えられる（要件定義 FR-91〜FR-93、基本設計 7.1）。
+iceberg に近い配色の例を、リポジトリの直下と配布物に `config.example.jsonc` として同梱している。
+例をそのまま使うときは、`config.example.jsonc` を設定ファイルの場所へ写す。
+
+```jsonc
+{
+  "colors": {
+    "keyword": { "fg": "#84a0c6" },
+    "diagnostic.error": { "sp": "#e27878", "undercurl": true },
+    "statusline": { "fg": "#c6c8d1", "bg": "#0f1117" },
+    "statusline.mode.insert": { "fg": "#161821", "bg": "#84a0c6", "bold": true },
+  },
+  "symbols": { "readonly": "[読]", "sign.breakpoint": "●", "popup.border": "╭─╮│╯─╰│" },
+  "statusline": {
+    "left": ["mode", "name", "modified", "readonly"],
+    "right": ["filetype", "ruler", "position"],
+  },
+}
+```
+
+設定に誤り（知らない名前、読めない色、使えない記号）があると、起動後にコマンドラインの行へ位置と内容を出し、その項目だけを使わない。
+
+### 配色
+
+`colors` は、色を付ける対象の名前から、属性のオブジェクトへの対応である。
+属性のオブジェクトには次の項目を書ける。
+
+| 項目 | 値 |
+|---|---|
+| `fg`、`bg`、`sp` | 文字の色、背景の色、下線と波線の色。`"#rrggbb"` の 24 ビットの色か、0〜255 の 256 色の番号。書かなければ端末の既定の色 |
+| `bold`、`italic`、`underline`、`undercurl`、`reverse` | 太字、斜体、下線、波線、文字と背景の色の入れ替え。真偽値 |
+
+名前ごとに既定の属性を置き換え、既定の属性とは混ぜない。
+例えば既定の `statusline` は反転と太字なので、`{ "bg": "#0f1117" }` だけを書くと反転と太字は消える。
+ステータス行の部品の色（`statusline.` で始まる名前）だけは、`statusline` の属性の上に重ねる。
+部品の色に `fg` だけを書けば、背景は `statusline` の色のままになる。
+
+色を付ける対象の名前は次のとおりである。
+構文の色の 10 個の名前は、拡張機能（tree-sitter など）が `decoration/set` の `style` で使う名前と同じで、前に `syntax.` を付けない。
+表に無い名前の範囲には色を付けない。
+
+| 名前 | 対象 | 既定 |
+|---|---|---|
+| `comment`、`keyword`、`string`、`number`、`constant`、`function`、`type`、`variable`、`operator`、`punctuation` | 構文の色（基本設計 6.1） | 端末の 16 色の一部。`variable` と `punctuation` は色なし |
+| `visual` | ビジュアルモードの選択の範囲 | 反転 |
+| `statusline` | ステータス行 | 反転と太字 |
+| `statuslinenc` | 出力の欄の下の行 | 反転 |
+| `statusline.<部品の ID>` | ステータス行の部品（`statusline.mode`、`statusline.name`、`statusline.modified`、`statusline.readonly`、`statusline.filetype`、`statusline.recording`、`statusline.ruler`、`statusline.position`）。`statusline` の上に重ねる | なし |
+| `statusline.mode.normal`、`statusline.mode.insert`、`statusline.mode.visual`、`statusline.mode.commandline` | モードごとのモードの部品。`statusline.mode` の上に重ねる。`visual` は文字単位と行単位の両方 | なし |
+| `nontext` | バッファの最終行より後の `~` | 端末の 16 色の 12 |
+| `specialkey` | `^A` や `<80>` の形で出した文字 | 端末の 16 色の 12 |
+| `message.info`、`message.warning`、`message.error` | コマンドラインの行のメッセージ | 順に色なし、黄色、赤の背景 |
+| `diagnostic.error`、`diagnostic.warning`、`diagnostic.info`、`diagnostic.hint` | 診断の範囲 | 波線か下線 |
+| `popup` | 浮かべる窓（ホバーの説明、`:registers` の一覧） | 灰色の背景 |
+| `popup.selected` | `:registers` の一覧の選んでいる項目 | 水色の背景 |
+| `popup.border` | 浮かべる窓の枠線。書かなければ `popup` の色 | なし |
+| `sign.executionPoint`、`sign.breakpoint`、`sign.breakpointUnverified` | 印の列のデバッガーの印 | 順に黄色、赤、灰色 |
+| `sign.diagnostic.error`、`sign.diagnostic.warning`、`sign.diagnostic.info`、`sign.diagnostic.hint` | 印の列の診断の印 | 順に赤、黄色、青、灰色 |
+
+既定の属性の値は `internal/ui/theme.go` の `DefaultTheme` にある。
+
+### 記号
+
+`symbols` は、本体が描く記号の名前から、文字列への対応である。
+書かなかった名前は既定の文字を使う。
+
+| 名前 | 対象 | 既定 | 書ける文字列 |
+|---|---|---|---|
+| `sign.executionPoint` | 止まった位置の印 | `=>` | 表示幅が 1 か 2 の文字列 |
+| `sign.breakpoint`、`sign.breakpointUnverified` | ブレークポイントの印 | `B`、`b` | 同上 |
+| `sign.diagnostic.error`、`sign.diagnostic.warning`、`sign.diagnostic.info`、`sign.diagnostic.hint` | 診断の印 | `E`、`W`、`I`、`H` | 同上 |
+| `readonly` | ステータス行の編集の禁止の印 | `[RO]` | 任意の文字列 |
+| `modified` | ステータス行の未保存の印 | `[+]` | 任意の文字列 |
+| `popup.border` | 浮かべる窓の枠線 | 空（枠線なし） | 空か、表示幅が 1 の文字を 8 つ。並びは左上、上、右上、右、右下、下、左下、左 |
+
+どの記号にも、タブと制御文字は書けない。
+印の列は 2 列なので、表示幅が 1 の印は右に空白を置いて描く。
+既定の記号は ASCII にしてある。
+罫線（`─`）や `●` のような、Unicode で幅が曖昧と定められた文字は、本体は 1 列と数える（Vim の `'ambiwidth'` の既定の `single` と同じ）。
+端末がそれらの文字を 2 列で描く設定だと、列がずれる。
+
+### ステータス行の並び
+
+`statusline` は、`left` と `right` の 2 つの項目を持つオブジェクトで、どちらも部品の ID の配列である。
+`left` の部品は左の端から、`right` の部品は右の端に寄せて、配列の順に並べる。
+並べなかった部品は出さない。
+`statusline` を書かなければ、次の既定の並びを使う。
+`statusline` を書いて `left` か `right` を省くと、省いた側には何も出さない。
+
+```jsonc
+{
+  "statusline": {
+    "left": ["mode", "name", "modified", "readonly"],
+    "right": ["recording", "ruler", "position"],
+  },
+}
+```
+
+| 部品の ID | 中身 |
+|---|---|
+| `mode` | モードの名前（`NORMAL`、`INSERT`、`VISUAL`、`VISUAL LINE`、`COMMAND`） |
+| `name` | バッファの名前（ファイルのパス）。無ければ `[No Name]` |
+| `modified` | 未保存の変更があるときの印（`symbols` の `modified`） |
+| `readonly` | 編集を禁止しているときの印（`symbols` の `readonly`） |
+| `filetype` | ファイルの種類（`go` など）。判定できなければ出さない |
+| `recording` | マクロの記録中の表示（`recording @q`） |
+| `ruler` | カーソルの位置。Vim のルーラーと同じ「行,バイトの列-表示の列」 |
+| `position` | 表示している範囲の位置（`All`、`Top`、`Bot`、`NN%`） |
+
+部品は、中身の左右に空白を 1 つずつ置き、部品の色で描く。
+`modified` と `readonly` は、前に部品があれば左の空白を置かずに続ける（`a.go [+]`）。
+幅が足りなければ、右の部品を優先し、左の部品を右の端で切る。
+拡張機能が部品を足す口（基本設計 7.1 の `contributes.statusline`）と、タブの行の並び（`tabline`）は、まだ無い。
+
 ## 拡張機能のコマンドを呼ぶ
 
 拡張機能のコマンドは、コマンドラインで `:` の後にコマンドの ID を打って呼ぶ（`:lsp.hover`、`:dap.start`）。
@@ -198,6 +314,8 @@ ID の後に空白を挟んで書いた文字列は、引数としてコマン�
 }
 ```
 
+禁止中のバッファでは、ステータス行の名前の後に `[RO]` が出る（FR-87）。
+印の文字と出す位置は、[見た目の設定](#見た目の設定)の `symbols` の `readonly` と `statusline` で変えられる。
 `-R` と `readonlyPaths` で禁止したバッファも、`:readonly` で解けば編集できる。
 禁止の前のアンドゥの履歴は残るので、解いた後に `u` で戻れる。
 拡張機能の編集（`buffer/edit`）も断り、拡張機能へは誤りの応答を返す。

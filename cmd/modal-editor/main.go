@@ -312,6 +312,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		var errs []error
 		cfg, errs = config.Load(path)
 		problems = append(problems, errs...)
+		problems = append(problems, cfg.CheckAppearance(appearanceCheck)...)
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -346,6 +347,9 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		FileTypes:        cfg.FileTypes,
 		FixEndOfLine:     cfg.FixEndOfLine,
 		ReadOnlyPaths:    cfg.ReadOnlyPaths,
+		Colors:           uiColors(cfg.Colors),
+		Symbols:          cfg.Symbols,
+		StatusLine:       uiStatusLine(cfg.StatusLine),
 		Registers: command.RegisterConfig{
 			HistorySize:     cfg.RegisterHistorySize,
 			MaxEntryBytes:   cfg.RegisterMaxEntryBytes,

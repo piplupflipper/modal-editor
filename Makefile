@@ -123,7 +123,7 @@ footprint-check: build ## make build の本体の起動時間と RSS を検査�
 dist: build ## 配布物を dist/ に作る（実行ファイルと宣言ファイルのディレクトリと tar.gz。NFR-01）
 	rm -rf $(DIST_ROOT)
 	mkdir -p $(DIST_DIR)/extensions $(DIST_DIR)/licenses/go $(DIST_DIR)/licenses/musl
-	cp $(BINARY) $(MCP_BRIDGE) $(DIST_DIR)/
+	cp $(BINARY) $(MCP_BRIDGE) config.example.jsonc $(DIST_DIR)/
 	for e in $(EXTENSIONS) $(CGO_EXTENSIONS); do \
 		if [ -f cmd/$$e/manifest.json ]; then \
 			d=$(DIST_DIR)/extensions/$${e#modal-editor-ext-}; \
