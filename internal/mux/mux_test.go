@@ -79,7 +79,7 @@ func TestNoneIsUnsupported(t *testing.T) {
 		err1, err2, err3,
 		n.OpenPopup(ctx, PopupOptions{Command: cmd}),
 		n.ClosePopup(ctx, ""),
-		n.FocusPane(ctx, "%1"),
+		n.FocusPane(ctx, "%0", "%1"),
 		n.ClosePane(ctx, "%1"),
 	}
 	for i, err := range errs {

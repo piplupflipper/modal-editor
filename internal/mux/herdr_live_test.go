@@ -89,7 +89,7 @@ func TestHerdrLive(t *testing.T) {
 	if err = h.call(ctx, "pane.current", map[string]any{}, &cur); err != nil {
 		t.Fatal(err)
 	}
-	if err = h.FocusPane(ctx, split); err != nil {
+	if err = h.FocusPane(ctx, pane, split); err != nil {
 		t.Fatal(err)
 	}
 	var after struct {
@@ -98,7 +98,7 @@ func TestHerdrLive(t *testing.T) {
 	if err = h.call(ctx, "pane.current", map[string]any{}, &after); err != nil {
 		t.Fatal(err)
 	}
-	if err = h.FocusPane(ctx, cur.Pane.PaneID); err != nil {
+	if err = h.FocusPane(ctx, split, cur.Pane.PaneID); err != nil {
 		t.Errorf("フォーカスを %s へ戻せない: %v", cur.Pane.PaneID, err)
 	}
 	t.Logf("FocusPane: フォーカスされたペイン %s → %s → %s", cur.Pane.PaneID, after.Pane.PaneID, cur.Pane.PaneID)

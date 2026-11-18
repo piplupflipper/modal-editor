@@ -165,7 +165,11 @@ func (h *Herdr) ClosePopup(ctx context.Context, _ string) error {
 }
 
 // FocusPane は、pane.focus でペインへフォーカスを移す。ペインが別のタブにあれば、そのタブへ移る。
-func (h *Herdr) FocusPane(ctx context.Context, pane string) error {
+// herdr の画面は 1 つなので、from は空でないことだけを確かめて使わない。
+func (h *Herdr) FocusPane(ctx context.Context, from, pane string) error {
+	if from == "" {
+		return ErrNoTarget
+	}
 	return h.call(ctx, "pane.focus", map[string]any{"pane_id": pane}, nil)
 }
 

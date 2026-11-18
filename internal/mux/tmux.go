@@ -112,7 +112,10 @@ const popupPoll = 5 * time.Millisecond
 // 印ができたら開いたとして戻り、印ができないまま display-popup が 0 で終わったら ErrPopupBusy を返す。
 // 印は一時ディレクトリに作り、戻る前に消す。
 //
-// ctx が先に終わったら ctx の誤りを返す。このとき display-popup のプロセスは止めないので、ポップアップは後から開きうる。
+// 開いたか分かる前に ctx が終わったら、ctx の誤りを返す。
+// このとき開きかけのポップアップは残さない。層は戻った後も display-popup のプロセスを見張り、
+// 印ができたら（ctx が終わった直後に開いた場合を含む）display-popup -C で閉じ、display-popup が終わってから印のディレクトリを消す。
+// このため、ctx の誤りが返った後に、中のコマンドが一瞬起動して閉じられることはある（部品の client が繋いですぐ切れる）。
 func (t *Tmux) OpenPopup(ctx context.Context, opts PopupOptions) error {
 	if err := checkCommand(opts.Target, opts.Command); err != nil {
 		return err
@@ -123,15 +126,22 @@ func (t *Tmux) OpenPopup(ctx context.Context, opts PopupOptions) error {
 	if err := checkPercent("height", opts.Height); err != nil {
 		return err
 	}
-	client, err := t.client(ctx, opts.Target)
+	c, err := t.client(ctx, opts.Target)
 	if err != nil {
 		return err
 	}
+	client := c.name
 	dir, err := os.MkdirTemp("", "modal-editor-popup-")
 	if err != nil {
 		return fmt.Errorf("tmux display-popup: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	// ctx が先に終わったときは、見張りの goroutine が印のディレクトリを消す。
+	keepDir := false
+	defer func() {
+		if !keepDir {
+			_ = os.RemoveAll(dir)
+		}
+	}()
 	ready := filepath.Join(dir, "ready")
 
 	args := []string{"display-popup", "-E", "-c", client, "-t", opts.Target}
@@ -187,7 +197,39 @@ func (t *Tmux) OpenPopup(ctx context.Context, opts PopupOptions) error {
 				return nil
 			}
 		case <-ctx.Done():
+			keepDir = true
+			go t.abandonPopup(p, dir, opened) //nolint:gosec // 呼び出しの ctx が終わった後の後始末なので、その ctx には結びつけない
 			return fmt.Errorf("tmux display-popup: %w", ctx.Err())
+		}
+	}
+}
+
+// popupAbandonTimeout は、ctx が終わった後に開いたポップアップを閉じる display-popup -C の期限である。
+const popupAbandonTimeout = 5 * time.Second
+
+// abandonPopup は、開いたか分かる前に ctx が終わった OpenPopup の display-popup を見張る。
+// 印ができたら display-popup -C でポップアップを閉じ、display-popup が終わったら印のディレクトリを消す。
+// 印ができている間は、この層の display-popup のプロセスが動いているので、-C が閉じるのはこの層のポップアップである。
+func (t *Tmux) abandonPopup(p *tmuxPopup, dir string, opened func() bool) {
+	defer func() { _ = os.RemoveAll(dir) }()
+	tick := time.NewTicker(popupPoll)
+	defer tick.Stop()
+	for {
+		select {
+		case <-p.exited:
+			return
+		case <-tick.C:
+			if !opened() {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), popupAbandonTimeout)
+			_, _ = t.run(ctx, "display-popup", "-C", "-c", p.client)
+			cancel()
+			select {
+			case <-p.exited:
+			case <-time.After(popupAbandonTimeout):
+			}
+			return
 		}
 	}
 }
@@ -231,14 +273,17 @@ func (t *Tmux) forgetPopup(target string, p *tmuxPopup) {
 	t.mu.Unlock()
 }
 
-// FocusPane は、ペインへフォーカスを移す。
+// FocusPane は、from のペインを表示している tmux の client を、pane のペインへ移す。
 //
-// tmux の client（最後に操作されたもの。キーを受けた編集の client を表示している tmux の client と推測する）が
-// ペインの window を表示していれば、select-pane だけを打つ。
+// 切り替える tmux の client は、ポップアップと同じ規則（client）で from のペインから選ぶ。
+// その client が pane の window を表示していれば、select-pane だけを打つ。
 // そうでなければ switch-client -c <client> -t <ペイン> で、その window とペインへ移る。
 // ペインを別のセッションの window へ動かした client（FR-112）へも、これで移れる。
 // tmux の client が 1 つも無ければ、select-window と select-pane で、ペインのセッションの中だけを切り替える。
-func (t *Tmux) FocusPane(ctx context.Context, pane string) error {
+func (t *Tmux) FocusPane(ctx context.Context, from, pane string) error {
+	if from == "" {
+		return ErrNoTarget
+	}
 	window, err := t.paneWindow(ctx, pane)
 	if err != nil {
 		return err
@@ -251,17 +296,15 @@ func (t *Tmux) FocusPane(ctx context.Context, pane string) error {
 		_, err = t.run(ctx, "select-window", "-t", pane, ";", "select-pane", "-t", pane)
 		return err
 	}
-	latest := clients[0]
-	for _, c := range clients[1:] {
-		if c.activity > latest.activity {
-			latest = c
-		}
+	c, err := t.client(ctx, from)
+	if err != nil {
+		return err
 	}
-	if latest.window == window {
+	if c.window == window {
 		_, err = t.run(ctx, "select-pane", "-t", pane)
 		return err
 	}
-	_, err = t.run(ctx, "switch-client", "-c", latest.name, "-t", pane)
+	_, err = t.run(ctx, "switch-client", "-c", c.name, "-t", pane)
 	return err
 }
 
@@ -331,21 +374,25 @@ func (t *Tmux) clients(ctx context.Context) ([]tmuxClient, error) {
 	return cs, nil
 }
 
-// client は、target のペインの上にポップアップを出す tmux の client の名前を返す。
+// client は、target のペインを表示している tmux の client を返す（ポップアップを出す先と、FocusPane で切り替える先）。
 // target のペインの window を表示している client を優先し、無ければ同じセッションの client を使う。
 // window の ID は tmux のサーバーの中で一意なので、window はセッションの ID に依らずに比べる。
 // グループにしたセッションでは、同じ window を表示している client のセッションの ID が、
 // display-message -t <ペイン> の session_id と異なりうるためである（PR #188 のレビュー）。
+//
 // 候補が複数なら、最後に操作された（client_activity の大きい）ものを選ぶ。
-func (t *Tmux) client(ctx context.Context, target string) (string, error) {
+// client_activity は秒の単位なので、同じ順位で同じ秒に操作された client が複数あれば、list-clients の先に出たものを選ぶ。
+// どれを選んでも target の window（または同じセッション）を表示している client なので、選び違えても別の window には出ない。
+// ただし、同じ window を 2 つの端末で表示していると、利用者が見ていない方の端末に出ることはある。
+func (t *Tmux) client(ctx context.Context, target string) (tmuxClient, error) {
 	where, err := t.run(ctx, "display-message", "-p", "-t", target, "#{session_id}\t#{window_id}")
 	if err != nil {
-		return "", err
+		return tmuxClient{}, err
 	}
 	session, window, _ := strings.Cut(strings.TrimSpace(where), "\t")
 	clients, err := t.clients(ctx)
 	if err != nil {
-		return "", err
+		return tmuxClient{}, err
 	}
 	var best *tmuxClient
 	bestRank := 0
@@ -365,9 +412,9 @@ func (t *Tmux) client(ctx context.Context, target string) (string, error) {
 		}
 	}
 	if best == nil {
-		return "", fmt.Errorf("tmux: no client is attached to the session of pane %s", target)
+		return tmuxClient{}, fmt.Errorf("tmux: no client is attached to the session of pane %s", target)
 	}
-	return best.name, nil
+	return *best, nil
 }
 
 // withSocket は、Socket があれば先頭に -S を足す。

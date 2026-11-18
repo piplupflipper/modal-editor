@@ -235,7 +235,7 @@ func TestTmuxFocusPaneInAnotherWindow(t *testing.T) {
 	if _, err := tt.run(ctx, "split-window", "-d", "-t", other, "sleep 600"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.FocusPane(ctx, other); err != nil {
+	if err := tt.FocusPane(ctx, tt.Pane, other); err != nil {
 		t.Fatal(err)
 	}
 	if got := tt.query(t, other, "#{window_active}#{pane_active}"); got != "11" {
@@ -257,7 +257,7 @@ func TestTmuxFocusPaneInAnotherSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := tt.attachClient(t, tt.session)
-	if err = tt.FocusPane(ctx, other); err != nil {
+	if err = tt.FocusPane(ctx, tt.Pane, other); err != nil {
 		t.Fatal(err)
 	}
 	out, err := tt.run(ctx, "list-clients", "-F", "#{client_name}\t#{session_name}\t#{pane_id}")
@@ -279,7 +279,7 @@ func TestTmuxFocusPaneSameWindow(t *testing.T) {
 	}
 	other = strings.TrimSpace(other)
 	tt.attachClient(t, tt.session)
-	if err = tt.FocusPane(ctx, other); err != nil {
+	if err = tt.FocusPane(ctx, tt.Pane, other); err != nil {
 		t.Fatal(err)
 	}
 	if got := tt.query(t, other, "#{pane_active}"); got != "1" {
@@ -287,10 +287,83 @@ func TestTmuxFocusPaneSameWindow(t *testing.T) {
 	}
 }
 
+// TestTmuxFocusPaneSwitchesFromClient は、tmux の client が 2 つあるとき、最後に操作された方ではなく、
+// from のペインを表示している方を切り替えることを確かめる（PR #188 の再レビュー。client_activity は秒の単位）。
+func TestTmuxFocusPaneSwitchesFromClient(t *testing.T) {
+	tt := newTestTmux(t)
+	ctx := testCtx(t)
+	target, err := tt.run(ctx, "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", tt.session, "sleep 600")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target = strings.TrimSpace(target)
+	if _, err = tt.run(ctx, "new-session", "-d", "-s", "other", "sleep 600"); err != nil {
+		t.Fatal(err)
+	}
+	mine := tt.attachClient(t, tt.session)
+	// 後から繋いだ方が、最後に操作された client になる（同じ秒なら list-clients の順による）。
+	others := tt.attachClient(t, "other")
+	if err = tt.FocusPane(ctx, tt.Pane, target); err != nil {
+		t.Fatal(err)
+	}
+	out, err := tt.run(ctx, "list-clients", "-F", "#{client_name}\t#{session_name}\t#{pane_id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		name, rest, _ := strings.Cut(line, "\t")
+		got[name] = rest
+	}
+	if want := "mux\t" + target; got[mine] != want {
+		t.Errorf("from の client %s = %q, want %q", mine, got[mine], want)
+	}
+	if !strings.HasPrefix(got[others], "other\t") {
+		t.Errorf("別の client %s = %q, want other のまま", others, got[others])
+	}
+}
+
 func TestTmuxFocusPaneUnknown(t *testing.T) {
 	tt := newTestTmux(t)
-	if err := tt.FocusPane(testCtx(t), "%999"); err == nil {
+	if err := tt.FocusPane(testCtx(t), tt.Pane, "%999"); err == nil {
 		t.Error("無いペインへ移って誤りにならなかった")
+	}
+	if err := tt.FocusPane(testCtx(t), "", tt.Pane); !errors.Is(err, ErrNoTarget) {
+		t.Errorf("from が空: err = %v, want ErrNoTarget", err)
+	}
+}
+
+// TestTmuxPopupContextCanceled は、開いたか分かる前に ctx が終わっても、ポップアップを開いたまま残さないことを確かめる。
+// display-popup の起動を遅らせる包みのスクリプトを Bin にして、印ができる前に ctx を切る（PR #188 の再レビュー）。
+func TestTmuxPopupContextCanceled(t *testing.T) {
+	tt := newTestTmux(t)
+	tt.attachClient(t, tt.session)
+	slow := filepath.Join(t.TempDir(), "slow-tmux")
+	// display-popup だけを遅らせる。
+	script := "#!/bin/sh\ncase \" $* \" in *' display-popup -E '*) sleep 0.5;; esac\nexec " + shellQuote(tt.Bin) + " \"$@\"\n"
+	if err := os.WriteFile(slow, []byte(script), 0o700); err != nil { //nolint:gosec // テスト用の実行ファイル
+		t.Fatal(err)
+	}
+	slowTmux := &Tmux{Bin: slow, Socket: tt.Socket, Pane: tt.Pane}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	out := filepath.Join(t.TempDir(), "out")
+	err := slowTmux.OpenPopup(ctx, PopupOptions{Target: tt.Pane, Command: Command{Args: writeCommand(out)}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+	// ポップアップは ctx が切れた後に開き、中のコマンドは起動するが、層がすぐ閉じる。
+	lines := strings.Split(waitFile(t, out), "\n")
+	pid, err := strconv.Atoi(lines[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for syscall.Kill(pid, 0) == nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("ctx が切れた後に開いたポップアップのプロセス %d が残っている", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -315,8 +388,8 @@ func TestTmuxPopupClientInGroupedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != showing {
-		t.Errorf("client = %s, want 元のペインの window を表示している %s", got, showing)
+	if got.name != showing {
+		t.Errorf("client = %s, want 元のペインの window を表示している %s", got.name, showing)
 	}
 }
 

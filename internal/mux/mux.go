@@ -151,9 +151,11 @@ type Mux interface {
 	// ClosePopup は部品の client が応答しないときの最後の手段にする。
 	ClosePopup(ctx context.Context, target string) error
 
-	// FocusPane は、ペインへフォーカスを移す（FR-63）。ペインが別の window（タブ）にあれば、その window（タブ）へ移る。
-	// 移せないときは誤りを返す。
-	FocusPane(ctx context.Context, pane string) error
+	// FocusPane は、from のペインから pane のペインへフォーカスを移す（FR-63）。
+	// ペインが別の window（タブ）にあれば、その window（タブ）へ移る。移せないときは誤りを返す。
+	// from は、操作を受けた元の client のペインで、空にしない（ErrNoTarget）。
+	// tmux では、from のペインの window を表示している tmux の client を切り替える。herdr では使わない。
+	FocusPane(ctx context.Context, from, pane string) error
 
 	// ClosePane は、ペインを閉じる。
 	ClosePane(ctx context.Context, pane string) error
@@ -202,7 +204,7 @@ func (None) OpenPopup(context.Context, PopupOptions) error { return ErrUnsupport
 func (None) ClosePopup(context.Context, string) error { return ErrUnsupported }
 
 // FocusPane は ErrUnsupported を返す。
-func (None) FocusPane(context.Context, string) error { return ErrUnsupported }
+func (None) FocusPane(context.Context, string, string) error { return ErrUnsupported }
 
 // ClosePane は ErrUnsupported を返す。
 func (None) ClosePane(context.Context, string) error { return ErrUnsupported }

@@ -289,7 +289,7 @@ func TestHerdrFocusAndClosePane(t *testing.T) {
 	})
 	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
 	ctx := testCtx(t)
-	if err := h.FocusPane(ctx, "wW:p1"); err != nil {
+	if err := h.FocusPane(ctx, "wW:p7", "wW:p1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.ClosePane(ctx, "wW:p2"); err != nil {
@@ -307,7 +307,7 @@ func TestHerdrFocusAndClosePane(t *testing.T) {
 func TestHerdrError(t *testing.T) {
 	f := newFakeHerdr(t, func(herdrRequest) map[string]any { return herdrErr("pane_not_found", "pane wW:p9 not found") })
 	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
-	err := h.FocusPane(testCtx(t), "wW:p9")
+	err := h.FocusPane(testCtx(t), "wW:p7", "wW:p9")
 	he, ok := errors.AsType[*HerdrError](err)
 	if !ok || he.Code != "pane_not_found" || he.Method != "pane.focus" {
 		t.Errorf("err = %v, want HerdrError pane_not_found", err)
@@ -330,7 +330,7 @@ func TestHerdrContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
 	start := time.Now()
-	err := h.FocusPane(ctx, "wW:p1")
+	err := h.FocusPane(ctx, "wW:p7", "wW:p1")
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}

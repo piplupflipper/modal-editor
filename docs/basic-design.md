@@ -174,7 +174,7 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 | 中央のポップアップを開く | `display-popup -E -c <tmux の client> -t <元の client のペイン>` | 同梱するプラグインの entrypoint を、`placement` を `popup` にして `plugin.pane.open` で開く |
 | ポップアップが既に開いているとき | 何も開かずに終了コード 0 で戻る。層はこれを見分けて `ErrPopupBusy` を返す | `ui_busy` が返る。層は `ErrPopupBusy` を返す |
 | ポップアップを閉じる | 中の client が終わると閉じる（`-E`）。外から閉じるときは、層が開いたものがまだ開いているときだけ `display-popup -C -c <tmux の client>` | 中の client が終わると閉じる。外から閉じるときは `popup.close`（誰が開いたものかを問わず閉じる） |
-| フォーカスを移す | 最後に操作された tmux の client がペインの window を表示していれば `select-pane`、そうでなければ `switch-client -c <tmux の client> -t <ペイン>` | `pane.focus`。ペインが別のタブにあれば、そのタブへ移る |
+| フォーカスを移す | 元の client のペインの window を表示している tmux の client が、移る先のペインの window を表示していれば `select-pane`、そうでなければ `switch-client -c <tmux の client> -t <ペイン>` | `pane.focus`。ペインが別のタブにあれば、そのタブへ移る |
 | ペインを閉じる | `kill-pane` | `pane.close` |
 | 自分のペイン | `TMUX_PANE` | `HERDR_PANE_ID` を `pane.get` で引いた今の ID |
 | server の単位の識別子 | `display -p -t "$TMUX_PANE" '#{socket_path}:#{window_id}'` | `HERDR_SOCKET_PATH` と、`pane.get` で引いた自分のペインの `tab_id` |
@@ -200,8 +200,13 @@ herdr の `popup.close` は引数を取らず、`plugin.pane.open` はポップ�
 このため herdr では、層が開いたポップアップかを確かめられず、利用者が入れた他のプラグイン（starkeep など）のポップアップも閉じうる。
 server が自分のポップアップを閉じるときは、ポップアップの部品の client へ server のソケットで終わりを伝える形を基本にし、層の `ClosePopup` は部品の client が応答しないときの最後の手段にする（仮）。
 
-tmux の `FocusPane` が切り替える tmux の client は、最後に操作されたものである。
-キーを受けた編集の client を表示している tmux の client がそれに当たると推測しているが、tmux の client が複数あって、キーを受けた後に別の tmux の client が操作された場合は、そちらを切り替える。
+開いたか分かる前に呼び出しの期限が切れたときは、層は誤りを返し、その後も `display-popup` を見張って、開いたら `-C` で閉じる（PR #188 の再レビュー）。
+このため、誤りが返った後に中のコマンドが一瞬起動して閉じられることはあるが、開いたまま残ることはない。
+
+tmux の `FocusPane` は、元の client のペイン（操作を受けた編集の client のペイン）も受け取り、ポップアップと同じ規則で、そのペインの window を表示している tmux の client を切り替える。
+最後に操作された tmux の client を選ぶ形にしなかったのは、`client_activity` が秒の単位で、同じ秒に操作された tmux の client を見分けられないためである（PR #188 の再レビュー）。
+同じ window を表示している tmux の client が複数あるときは、その中で最後に操作されたものを選び、同じ秒なら `list-clients` の先に出たものを選ぶ。
+どれを選んでも元の client のペインの window を表示している client だが、同じ window を 2 つの端末で表示していると、利用者が見ていない方の端末を切り替えることはある。
 
 herdr の層は、CLI ではなく socket API（`HERDR_SOCKET_PATH` のソケットに、改行で区切った JSON のリクエストを送る。protocol 22）を使う。
 herdr 0.9.0 の CLI には、ペインの ID を指定してフォーカスを移す操作が無く（`herdr pane focus` は向きだけを受け付ける）、socket API には `pane.focus` があるためである。
