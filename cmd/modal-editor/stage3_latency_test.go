@@ -44,9 +44,17 @@ const (
 	insertLineLen = 60
 )
 
+// envLatencyOps は、計測する操作を名前（latencyOp.name）のカンマ区切りで絞る環境変数である。空ならすべて測る。
+const envLatencyOps = "MODAL_EDITOR_LATENCY_OPS"
+
 // latencyOp は、計測する操作である。
 type latencyOp struct {
 	name string
+	// otherPre は、回ごとに計測するキーの前に打つ、計測しないキーである。待たずに打ち、その後に間隔を置く。
+	// 分けた構成ではもう 1 つの編集の client（-connect で同じ server に繋ぐ）で打ち、1 つのプロセスの構成では測る client で打つ（要件定義 8.1）。
+	otherPre string
+	// otherSetup は、分けた構成のもう 1 つの client で、計測の前に 1 回だけ打つキーと、打った後に待つその client の画面の条件である。
+	otherSetup func(s *latencySession)
 	// setup は、計測の前に 1 回だけ打つキーと、打った後に待つ画面の条件である。nil なら何もしない。
 	setup func(s *latencySession)
 	// step は、i 回目（0 から）に計測するキーと、その入力で変わった画面の条件を返す。
@@ -102,6 +110,40 @@ var latencyOps = []latencyOp{
 			return "", nil, "p", rulerIs(i+2, 1)
 		},
 	},
+	{
+		// もう 1 つの編集の client で yy した直後に、測る client で p を打つ（要件定義 8.1。#215）。
+		// 分けた構成では、もう 1 つの client（同じ server に -connect で繋いだもの）で「from-b」の行を作って毎回 yy し、
+		// 測る client の p の終わりは、ステータス行の位置が新しい行になり、画面に from-b が出たときとする。
+		// 1 つのプロセスの構成では、同じ client で yy してから p を打つ（貼るのは測る client の行）。
+		name:     "p-other",
+		otherPre: "yy",
+		otherSetup: func(s *latencySession) {
+			s.keys("ifrom-b\x1b", func(v *vscreen) bool { return strings.Contains(v.row(0), "from-b") })
+		},
+		step: func(i int) (string, func(*vscreen) bool, string, func(*vscreen) bool) {
+			return "", nil, "p", rulerIs(i+2, 1)
+		},
+	},
+}
+
+// screenHas は、画面のどこかに s があるかの条件を返す。
+func screenHas(s string) func(*vscreen) bool {
+	return func(v *vscreen) bool { return strings.Contains(v.String(), s) }
+}
+
+// selectedOps は、MODAL_EDITOR_LATENCY_OPS で絞った操作を返す。
+func selectedOps() []latencyOp {
+	names := os.Getenv(envLatencyOps)
+	if names == "" {
+		return latencyOps
+	}
+	var ops []latencyOp
+	for _, op := range latencyOps {
+		if slices.Contains(strings.Split(names, ","), op.name) {
+			ops = append(ops, op)
+		}
+	}
+	return ops
 }
 
 // TestStage3Latency は、要件定義 8.1 の段階 3 の応答を測る。
@@ -136,7 +178,7 @@ func TestStage3Latency(t *testing.T) {
 		split    bool
 	}
 	results := map[key]latencyStats{}
-	for _, op := range latencyOps {
+	for _, op := range selectedOps() {
 		for _, interval := range []time.Duration{20 * time.Millisecond, 200 * time.Millisecond} {
 			for _, split := range []bool{false, true} {
 				st := measureLatency(t, bin, file, op, interval, split)
@@ -153,7 +195,7 @@ func TestStage3Latency(t *testing.T) {
 	t.Logf("ENV loadavg before=%s after=%s cpu-busy=%.1f%% children-nivcsw=%d",
 		load0, load1, cpu1.busySince(cpu0), ru1.Nivcsw-ru0.Nivcsw)
 
-	for _, op := range latencyOps {
+	for _, op := range selectedOps() {
 		for _, interval := range []time.Duration{20 * time.Millisecond, 200 * time.Millisecond} {
 			one, sp := results[key{op.name, interval, false}], results[key{op.name, interval, true}]
 			delay := sp.p99 <= one.p99+1
@@ -311,13 +353,81 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		args = []string{"-connect", sock}
 	}
 
+	defer func() {
+		if srv != nil {
+			_ = srv.Process.Kill()
+			if werr := <-srvDone; werr != nil {
+				t.Logf("止めた server: %v", werr)
+			}
+		}
+	}()
+	s, stop := startLatencyClient(t, bin, args, env, logDir, name+"-client")
+	defer stop()
+	s.waitFor(rulerIs(1, 1))
+	if op.setup != nil {
+		op.setup(s)
+	}
+	// 分けた構成で otherPre を打つ操作は、同じ server にもう 1 つの編集の client を繋ぐ（#215）。
+	other := s
+	done := func(i int, keyDone func(*vscreen) bool) func(*vscreen) bool { return keyDone }
+	if split && op.otherPre != "" {
+		var stopOther func()
+		other, stopOther = startLatencyClient(t, bin, args, env, logDir, name+"-other")
+		defer stopOther()
+		other.waitFor(screenHas("NORMAL"))
+		if op.otherSetup != nil {
+			op.otherSetup(other)
+		}
+		done = func(_ int, keyDone func(*vscreen) bool) func(*vscreen) bool {
+			return func(v *vscreen) bool { return keyDone(v) && screenHas("from-b")(v) }
+		}
+	}
+	runs := latencyRuns
+	if n, aerr := strconv.Atoi(os.Getenv(envLatencyRuns)); aerr == nil && n > 0 {
+		runs = n
+	}
+	var samples []time.Duration
+	var b strings.Builder // 回ごとの記録（MODAL_EDITOR_LATENCY_LOG）。計測の後にまとめて書く
+	for i := range latencyWarmup + runs {
+		pre, preDone, key, keyDone := op.step(i)
+		if pre != "" {
+			s.keys(pre, preDone)
+		}
+		if op.otherPre != "" {
+			if _, err = other.master.WriteString(op.otherPre); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(interval)
+		s.drain()
+		if other != s {
+			other.drain()
+		}
+		start := time.Now()
+		if _, err = s.master.WriteString(key); err != nil {
+			t.Fatal(err)
+		}
+		end := s.waitFor(done(i, keyDone))
+		if i >= latencyWarmup {
+			samples = append(samples, end.Sub(start))
+		}
+		fmt.Fprintf(&b, "%s,%d,%d,%d\n", name, i, start.UnixNano(), end.Sub(start).Nanoseconds())
+	}
+	appendLog(t, logDir, "samples.csv", b.String())
+	return statsOf(samples)
+}
+
+// startLatencyClient は、80 列 24 行の偽の端末の上で本体を args で起動し、その画面を読む latencySession と、止める関数を返す。
+// logDir が空でなければ、本体の標準エラー出力を logDir/<name>.log に書き、起動した時刻を procs.csv に書く。
+func startLatencyClient(t *testing.T, bin string, args, env []string, logDir, name string) (*latencySession, func()) {
+	t.Helper()
 	master, tty := ptytest.Open(t, latencyWidth, latencyHeight)
 	cmd := exec.Command(bin, args...) //nolint:gosec // 計測する本体を偽の端末の上で起動する
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
 	if logDir != "" {
 		// GODEBUG=gctrace=1 の行を画面に混ぜないよう、標準エラー出力だけをファイルへ出す（本体は標準入力と標準出力で端末を使う）。
-		cmd.Stderr = createLog(t, filepath.Join(logDir, name+"-client.log"))
+		cmd.Stderr = createLog(t, filepath.Join(logDir, name+".log"))
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	reads := make(chan ptyRead, 4096)
@@ -334,55 +444,19 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 			}
 		}
 	}()
-	if err = cmd.Start(); err != nil {
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	appendLog(t, logDir, "procs.csv", fmt.Sprintf("%s,client,%d\n", name, time.Now().UnixNano()))
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	defer func() {
+	stop := func() {
 		_ = cmd.Process.Kill() // 終わっていなければ止める
 		if werr := <-done; werr != nil {
 			t.Logf("止めた client: %v", werr)
 		}
-		if srv != nil {
-			_ = srv.Process.Kill()
-			if werr := <-srvDone; werr != nil {
-				t.Logf("止めた server: %v", werr)
-			}
-		}
-	}()
-
-	s := &latencySession{t: t, master: master, reads: reads, screen: newVScreen(latencyWidth, latencyHeight)}
-	s.waitFor(rulerIs(1, 1))
-	if op.setup != nil {
-		op.setup(s)
 	}
-	runs := latencyRuns
-	if n, aerr := strconv.Atoi(os.Getenv(envLatencyRuns)); aerr == nil && n > 0 {
-		runs = n
-	}
-	var samples []time.Duration
-	var b strings.Builder // 回ごとの記録（MODAL_EDITOR_LATENCY_LOG）。計測の後にまとめて書く
-	for i := range latencyWarmup + runs {
-		pre, preDone, key, keyDone := op.step(i)
-		if pre != "" {
-			s.keys(pre, preDone)
-		}
-		time.Sleep(interval)
-		s.drain()
-		start := time.Now()
-		if _, err = master.WriteString(key); err != nil {
-			t.Fatal(err)
-		}
-		end := s.waitFor(keyDone)
-		if i >= latencyWarmup {
-			samples = append(samples, end.Sub(start))
-		}
-		fmt.Fprintf(&b, "%s,%d,%d,%d\n", name, i, start.UnixNano(), end.Sub(start).Nanoseconds())
-	}
-	appendLog(t, logDir, "samples.csv", b.String())
-	return statsOf(samples)
+	return &latencySession{t: t, master: master, reads: reads, screen: newVScreen(latencyWidth, latencyHeight)}, stop
 }
 
 // createLog は、計測の記録のファイルを作る。テストの終わりで閉じる。
