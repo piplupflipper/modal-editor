@@ -345,6 +345,9 @@ func (s *State) execute(cmd editcmd.Command) error {
 	if err := s.checkNames(cmd); err != nil {
 		return err
 	}
+	if err := s.checkReadOnly(cmd); err != nil {
+		return err
+	}
 	switch cmd.Kind {
 	case editcmd.KindMotion:
 		if s.mode.visual() {

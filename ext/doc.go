@@ -52,4 +52,5 @@ package ext
 // 0.2.0 で、decoration/set の範囲の一覧の JSON を整数の列（DecorationSetParams の MarshalJSON）に変えた（#53）。
 // 0.3.0 で、buffer/edit に noLines と endOfLine を足した（BufferEditParams。#98）。
 // 古い本体はこの 2 つを黙って捨てるので、ACP の拡張機能の書き込みの結果が Vim と揃わない。
+// #198 で編集を禁止したバッファへの buffer/edit を誤りの応答（ErrorCodeReadOnly）で断るようにしたが、メッセージの JSON の形は変えていないので、バージョンは上げていない。
 const APIVersion = "0.3.0"

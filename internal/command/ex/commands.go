@@ -35,8 +35,11 @@ type command struct {
 	bang     bool   // "!" を付けられるか
 	rng      rangeKind
 	inGlobal bool // :g の中で実行できるか（:g 自身は、入れ子を E147 で断るために true にする）
-	bar      barKind
-	run      func(c *execCtx, inv *invocation) error
+	// modify は、バッファのテキストを変えるコマンドであることを表す（Vim の EX_MODIFY）。
+	// 編集を禁止したバッファでは、範囲と引数を確かめる前に E21 で断る（FR-85。Vim 9.1 と同じく :5d も :2,1d も E21）。
+	modify bool
+	bar    barKind
+	run    func(c *execCtx, inv *invocation) error
 }
 
 // invocation は、解析したコマンドの呼び出しである。
@@ -69,10 +72,10 @@ func init() {
 		{name: "xit", min: 1, bang: true, rng: rangeWhole, run: runXit},
 		{name: "quit", min: 1, bang: true, rng: rangeWindow, run: runQuit},
 		{name: "edit", min: 1, bang: true, rng: rangeNone, run: runEdit},
-		{name: "substitute", min: 1, rng: rangeCurrent, inGlobal: true, bar: barSelf, run: runSubstitute},
+		{name: "substitute", min: 1, rng: rangeCurrent, inGlobal: true, modify: true, bar: barSelf, run: runSubstitute},
 		{name: "global", min: 1, bang: true, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal},
 		{name: "vglobal", min: 1, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal},
-		{name: "delete", min: 1, rng: rangeCurrent, inGlobal: true, run: runDelete},
+		{name: "delete", min: 1, rng: rangeCurrent, inGlobal: true, modify: true, run: runDelete},
 		{name: "output", min: 3, rng: rangeNone, run: runOutput},
 		{name: "outclose", min: 4, rng: rangeNone, run: runOutClose},
 		{name: "checktime", min: 6, rng: rangeNone, run: runCheckTime},
@@ -85,8 +88,9 @@ func init() {
 		{name: "ls", min: 2, bang: true, rng: rangeNone, run: runBufferList},
 		{name: "jumps", min: 2, rng: rangeNone, run: runJumps},
 		// "read" を "registers" より前に置き、:r と :re を :read にする（Vim と同じ）。
-		{name: "read", min: 1, bang: true, rng: rangeCurrent, bar: barNone, run: runRead},
+		{name: "read", min: 1, bang: true, rng: rangeCurrent, modify: true, bar: barNone, run: runRead},
 		{name: "registers", min: 3, rng: rangeNone, run: runRegisters},
+		{name: "readonly", min: 5, rng: rangeNone, run: runReadOnly},
 		{name: "wall", min: 2, bang: true, rng: rangeNone, run: runAll(true, false)},
 		{name: "qall", min: 2, bang: true, rng: rangeNone, run: runAll(false, true)},
 		{name: "wqall", min: 3, bang: true, rng: rangeNone, run: runAll(true, true)},
@@ -217,6 +221,25 @@ func runCheckTime(c *execCtx, inv *invocation) error {
 		return err
 	}
 	c.actions = append(c.actions, Action{Kind: ActionCheckTime})
+	return nil
+}
+
+// runReadOnly は :reado[nly] を実行する。バッファの編集の禁止を切り替え、切り替えた後の状態を通知で知らせる（FR-86）。
+// Vim に無い本体のコマンドである（名前は仮。基本設計 4.6）。
+// 禁止の状態はバッファが持つ（buffer.Buffer.SetReadOnly）ので、テキスト、アンドゥの履歴、保存済みの記録は変えない。
+//
+// req: FR-86
+func runReadOnly(c *execCtx, inv *invocation) error {
+	if err := noArg(inv); err != nil {
+		return err
+	}
+	on := !c.b.ReadOnly()
+	c.b.SetReadOnly(on)
+	if on {
+		c.notice = Notice{Text: "編集を禁止しました"}
+	} else {
+		c.notice = Notice{Text: "編集の禁止を解きました"}
+	}
 	return nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/rpc"
 )
 
 // fakeEditor は、テストで本体の役をする editorAPI である。バッファは行の列で持ち、buffer/edit を逐次の数え方で適用する。
@@ -24,6 +25,8 @@ type fakeEditor struct {
 	saved   []ext.BufferSaveParams
 	opened  []ext.EditorOpenParams
 	notSent map[ext.BufferID]bool
+	// editErr が nil でなければ、Edit はそれを返す（本体の誤りの応答）。
+	editErr error
 	// block が nil でなければ、EditorState は ctx が終わるまで待ち、blocked へ ctx の誤りを送る。
 	block   chan struct{}
 	blocked chan error
@@ -89,6 +92,9 @@ func (f *fakeEditor) Edit(_ context.Context, p ext.BufferEditParams) (ext.Buffer
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.edits = append(f.edits, p)
+	if f.editErr != nil {
+		return ext.BufferEditResult{}, f.editErr
+	}
 	b := f.info(p.Buffer)
 	if b == nil {
 		return ext.BufferEditResult{}, errors.New("unknown buffer")
@@ -437,6 +443,22 @@ func TestReadTools(t *testing.T) {
 	s.toolOK("get_diagnostics", map[string]any{"buffer": 2}, &diags)
 	if len(diags.Entries) != 0 {
 		t.Errorf("バッファ 2 の get_diagnostics = %+v", diags)
+	}
+}
+
+// 編集を禁止したバッファへの edit_buffer は、本体の E21 の誤りをそのまま返し、位置の数え方の注記を付けない。
+//
+// req: FR-118
+func TestEditBufferReadOnly(t *testing.T) {
+	s := startSession(t)
+	s.ed.mu.Lock()
+	s.ed.editErr = &rpc.Error{Code: ext.ErrorCodeReadOnly, Message: "E21: 編集を禁止したバッファは変更できません"}
+	s.ed.mu.Unlock()
+	isErr, text := s.tool(true, "edit_buffer", map[string]any{"buffer": 1, "version": 3, "edits": []any{
+		map[string]any{"range": rng(1, 1, 1, 1), "text": "x"},
+	}})
+	if !isErr || !strings.Contains(text, "E21") || strings.Contains(text, "0-based") {
+		t.Errorf("edit_buffer on a read-only buffer = %v %q", isErr, text)
 	}
 }
 

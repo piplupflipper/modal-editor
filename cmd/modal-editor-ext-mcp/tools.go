@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/ext/server"
 )
 
 // hostTimeout は、1 回のツールの呼び出しで本体の応答を待つ上限である（仮）。
@@ -621,6 +622,10 @@ var editBufferTool = tool{
 			}
 		}
 		res, err := ed.Edit(ctx, ext.BufferEditParams{Buffer: info.Buffer, Transaction: tx})
+		if server.IsReadOnly(err) {
+			// 編集を禁止したバッファ（FR-118）。位置の誤りではないので、位置の数え方の注記を付けない。
+			return nil, err
+		}
 		if err != nil {
 			// 本体の誤りの本文は、0 始まりの位置と、並べ替えた後のトランザクションの番号で書かれている。
 			return nil, fmt.Errorf("%w (positions in this message are 0-based and refer to the edits sorted from the end of the buffer)", err)

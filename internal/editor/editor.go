@@ -136,6 +136,12 @@ type Config struct {
 	// FixEndOfLine は、書き出すときに末尾の改行を補うかどうか（基本設計 4.1。Vim の 'fixendofline'）である。
 	// 開くバッファすべてに buffer.Buffer.SetFixEndOfLine で設定する。nil なら既定の有効（true）である。
 	FixEndOfLine *bool
+	// ReadOnlyArgs は、Open で開くファイル（起動の引数のファイル）を、編集を禁止した状態で開くことを表す（起動のオプション -R。FR-119）。
+	// :e などで後から開くファイルには効かない（基本設計 4.6）。
+	ReadOnlyArgs bool
+	// ReadOnlyPaths は、開いた時点で編集を禁止にするファイルの置き場所である（設定の readonlyPaths。FR-120）。
+	// 各項目はディレクトリの絶対パスか、"/" を含まないディレクトリの名前（"node_modules"）で、照合の規則は underReadOnlyPath にある。
+	ReadOnlyPaths []string
 	// Problems は、呼び出し側が設定ファイルと宣言ファイルを読んだときの誤り（位置と内容）である（基本設計 8 章）。
 	// New は、すべてをログに記録し、New 自身が見つけた設定の誤りより先に並べて、最初の 1 件を起動後のメッセージで知らせる。
 	Problems []error
@@ -496,8 +502,12 @@ func (e *Editor) MCPSocket() string { return e.cfg.MCPSocket }
 // 起動の引数のファイルを開くためのもので、ジャンプリストと裏のバッファ（<C-^> の移り先）には記録しない
 // （Vim が引数のファイルを開いたときと同じ）。バッファの番号は、開いた順に 1 から付ける。
 func (e *Editor) Open(path string) error {
-	_, err := e.openFile(path, true)
+	bs, err := e.openFile(path, true)
 	e.jumps, e.jumpIdx, e.alt = nil, 0, nil
+	if err == nil && e.cfg.ReadOnlyArgs {
+		// req: FR-119
+		bs.buf.SetReadOnly(true)
+	}
 	return err
 }
 
@@ -783,6 +793,8 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	}
 	// :e での読み直し（reload）は、元のバッファの設定を引き継ぐので、ここで設定するのは開くときだけである。
 	b.SetFixEndOfLine(e.fixEOL)
+	// req: FR-120
+	b.SetReadOnly(underReadOnlyPath(abs, e.cfg.ReadOnlyPaths))
 	prev := e.cur
 	if focus && reusable(prev) {
 		// Vim 9.1 と同じく、移る前の位置（1 行目）をジャンプリストに足す。番号が同じなので、開いたファイルの 1 行目を指す。

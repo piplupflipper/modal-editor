@@ -29,6 +29,7 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 make build
 bin/modal-editor [ファイル ...]   # 最初のファイルを表示して起動する。ファイルを省くと空のバッファで起動する
 bin/modal-editor --log ed.log a.go # ログを ed.log に追記する（既定ではログを書かない）
+bin/modal-editor -R a.go           # 引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）
 bin/modal-editor --version         # バージョン（ビルドしたコミット）を表示して終わる
 ```
 
