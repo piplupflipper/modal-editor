@@ -165,7 +165,9 @@ type Editor struct {
 	// exCommands は、コマンドラインから呼べる拡張機能のコマンドの ID から、宣言した拡張機能の ID への表である（buildExCommands）。
 	exCommands map[string]string
 	remap      *remapper
-	fileType   map[string]string
+	// leader は、<Leader> を置き換えたキーの列（Config.Leader を読んだもの。FR-97）である。キーの一覧（FR-90）で使う。
+	leader   []editcmd.Key
+	fileType map[string]string
 	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
 	fixEOL bool
 
@@ -369,6 +371,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	if err != nil {
 		warnings = append(warnings, err)
 	}
+	e.leader = leader
 	var w1 []error
 	e.keymap, w1 = buildKeymap(cfg.Extensions, leader)
 	warnings = append(warnings, w1...)

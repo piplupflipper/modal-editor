@@ -11,8 +11,44 @@ const DefaultLeader = "<Space>"
 // leaderName は、キーの表記で leader を表す名前である。大文字と小文字は区別しない（基本設計 7.2。Vim と同じ）。
 const leaderName = "<leader>"
 
+// LeadRole は、キーの解釈（internal/input の Parser）が、操作の表を引く前に先に読むキーの役割である。
+// 先に読むキーで始まる列は操作の表に登録できない（input.Keymap.Bind）。表は LeadRoleOf の 1 か所に置き、
+// input の登録の検査と、設定の leader の検査（ParseLeader）が共有する。
+type LeadRole int
+
+// 先に読むキーの役割。
+const (
+	// LeadNone は、先に読まないキーである。
+	LeadNone LeadRole = iota
+	// LeadCount は、回数の始まりの 1 から 9 の数字である（ノーマル、ビジュアル、オペレーターの後）。
+	LeadCount
+	// LeadRegister は、レジスターの指定の " である（ノーマル、ビジュアル）。
+	LeadRegister
+	// LeadMacro は、マクロとドットリピートの q、@、. である（ノーマル）。
+	LeadMacro
+)
+
+// LeadRoleOf は、k が Parser の先に読むキーなら、その役割を返す。修飾キーの付いたキーと特殊キーは LeadNone である。
+func LeadRoleOf(k Key) LeadRole {
+	if !k.Plain() {
+		return LeadNone
+	}
+	switch r := k.Rune; {
+	case r >= '1' && r <= '9':
+		return LeadCount
+	case r == '"':
+		return LeadRegister
+	case r == 'q' || r == '@' || r == '.':
+		return LeadMacro
+	}
+	return LeadNone
+}
+
 // ParseLeader は、設定の leader の値（ParseKeys の表記）をキーの列にする。
-// 空の列と、<Leader> を含む表記は誤りにする。
+// 次の値は誤りにする。
+//   - 空の列と、<Leader> を含む表記
+//   - 先頭が Parser の先に読むキー（LeadRoleOf）である列。<Leader> で始まるキーを操作の表に登録できなくなるため
+//   - 先頭が修飾キーの無い <Esc> か <CR> である列。モードを抜ける、コマンドラインを実行するキーが、leader の続きの待ちになるため
 func ParseLeader(s string) ([]Key, error) {
 	if indexLeader(s) >= 0 {
 		return nil, fmt.Errorf("leader %q に <Leader> は書けない", s)
@@ -23,6 +59,12 @@ func ParseLeader(s string) ([]Key, error) {
 	}
 	if len(keys) == 0 {
 		return nil, errors.New("leader が空である")
+	}
+	if LeadRoleOf(keys[0]) != LeadNone {
+		return nil, fmt.Errorf("leader %q は、回数、レジスター、マクロ、ドットリピートとして先に読まれるキーで始まる", s)
+	}
+	if k := keys[0]; k == Esc || k == Special(CodeEnter) {
+		return nil, fmt.Errorf("leader %q は、モードの操作に使う %s で始まる", s, k)
 	}
 	return keys, nil
 }

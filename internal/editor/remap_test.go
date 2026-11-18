@@ -53,7 +53,7 @@ func TestRemapperLeader(t *testing.T) {
 //
 // req: FR-97
 func TestLeaderKeysInvalid(t *testing.T) {
-	for _, bad := range []string{"<Leader>", "<Foo>"} {
+	for _, bad := range []string{"<Leader>", "<Foo>", "q", "1", `"`, "@", ".", "<Esc>", "<CR>"} {
 		keys, err := leaderKeys(bad)
 		if err == nil || editcmd.KeysString(keys) != "<Space>" {
 			t.Errorf("%q: keys = %q, err = %v", bad, editcmd.KeysString(keys), err)
@@ -94,10 +94,41 @@ func TestUserKeymapLeader(t *testing.T) {
 		Leader:  ",",
 		Keymap:  map[string]map[string]string{"normal": {"<Leader>d": "dd"}},
 	}, "a.txt")
+	if got := editcmd.KeysString(h.e.leader); got != "," {
+		t.Errorf("leader = %q", got)
+	}
 	h.keys(",d")
 	h.settle()
 	if got := h.text(); got != "two\nthree" {
 		t.Errorf(",d: text = %q", got)
+	}
+}
+
+// 左辺の表記が違っても置き換えた後のキーの列が同じになる項目は、表記をバイトの順に並べた最初の項目を使い、残りを誤りにする。
+// 何度作っても同じ項目が効く（Go の map の順に依らない）。
+//
+// req: FR-97
+func TestRemapperDuplicateLHS(t *testing.T) {
+	keymap := map[string]map[string]string{
+		"normal": {"<leader>w": "yy", "<Space>w": "x", "<Leader>w": "dd", "<space>w": "p"},
+	}
+	for range 50 {
+		r, errs := newRemapper(keymap, nil)
+		if len(errs) != 3 {
+			t.Fatalf("errs = %v", errs)
+		}
+		for _, err := range errs {
+			if !strings.Contains(err.Error(), `と同じキーの列 <Space>w になるので、"<Leader>w" を使う`) {
+				t.Errorf("err = %v", err)
+			}
+		}
+		var out []editcmd.Key
+		for _, k := range editcmd.MustParseKeys("<Space>w") {
+			out = append(out, r.feed(mapNormal, k)...)
+		}
+		if got := editcmd.KeysString(out); got != "dd" {
+			t.Fatalf("<Space>w → %q", got)
+		}
 	}
 }
 

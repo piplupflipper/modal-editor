@@ -139,6 +139,9 @@ func TestParseLeader(t *testing.T) {
 		{`{"leader": "<leader>"}`, "", 1},
 		{`{"leader": "<Foo>"}`, "", 1},
 		{`{"leader": 1}`, "", 1},
+		{`{"leader": "q"}`, "", 1},
+		{`{"leader": "1"}`, "", 1},
+		{`{"leader": "<Esc>"}`, "", 1},
 	}
 	for _, c := range cases {
 		cfg, errs := Parse("c", []byte(c.src))
@@ -151,6 +154,11 @@ func TestParseLeader(t *testing.T) {
 		line, col int
 		msg       string
 	}{{1, 12, `leader "<Leader>" を読めない`}})
+	_, errs = Parse("c", []byte("{\n  \"leader\": \"@\"\n}"))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{{2, 13, "先に読まれるキーで始まる"}})
 
 	cfg, errs := Parse("c", []byte(`{"keymap": {"normal": {"<Leader>w": ":w<CR>", "Q": "<leader>w", "<Leader>": "x"}}, "leader": ","}`))
 	if len(errs) != 0 {

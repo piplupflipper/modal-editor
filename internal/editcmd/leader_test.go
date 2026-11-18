@@ -46,12 +46,13 @@ func TestParseKeysLeader(t *testing.T) {
 //
 // req: FR-97
 func TestParseLeader(t *testing.T) {
-	for _, ok := range []string{"<Space>", ",", `\`, "<C-k>", ",,"} {
+	for _, ok := range []string{"<Space>", ",", `\`, "<C-k>", ",,", "0", "<C-q>", "<A-1>", ",q", "<S-CR>", "<Tab>"} {
 		if _, err := ParseLeader(ok); err != nil {
 			t.Errorf("%q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "<Leader>", "a<leader>", "<Foo>"} {
+	// パーサーの先に読むキー（回数、レジスター、マクロ、ドットリピート）と、モードの操作に使う <Esc> と <CR> で始まる値も誤りにする。
+	for _, bad := range []string{"", "<Leader>", "a<leader>", "<Foo>", "1", "9x", `"`, "q", "@", ".", "<Esc>", "<CR>", "<Esc>,"} {
 		if _, err := ParseLeader(bad); err == nil {
 			t.Errorf("%q: 誤りにならない", bad)
 		}

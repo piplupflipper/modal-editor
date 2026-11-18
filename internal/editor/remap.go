@@ -49,6 +49,9 @@ type remapper struct {
 //
 // 左辺と右辺の <Leader> は leader に置き換える（FR-97。editcmd.ParseKeysLeader）。leader が空なら editcmd.DefaultLeader を使う。
 //
+// 左辺の表記が違っても、置き換えた後のキーの列が同じになる項目（"<Leader>w"、"<leader>w"、"<Space>w"）は、
+// 左辺の表記をバイトの順に並べて最初の項目を使い、残りを誤りとして返す。Go の map の順に依らず、起動ごとに同じ項目が効く。
+//
 // req: FR-41, FR-97
 func newRemapper(cfg map[string]map[string]string, leader []editcmd.Key) (*remapper, []error) {
 	r := &remapper{maps: map[mapMode][]mapping{}}
@@ -64,7 +67,14 @@ func newRemapper(cfg map[string]map[string]string, leader []editcmd.Key) (*remap
 			errs = append(errs, fmt.Errorf("keymap: 未知のモード %q", name))
 			continue
 		}
-		for lhsText, rhsText := range cfg[name] {
+		lhsTexts := make([]string, 0, len(cfg[name]))
+		for t := range cfg[name] {
+			lhsTexts = append(lhsTexts, t)
+		}
+		sort.Strings(lhsTexts)
+		used := map[string]string{} // 置き換えた後の左辺（KeysString）から、使う項目の左辺の表記へ
+		for _, lhsText := range lhsTexts {
+			rhsText := cfg[name][lhsText]
 			lhs, err := editcmd.ParseKeysLeader(lhsText, leader)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("keymap.%s: キーの列 %q を読めない: %w", name, lhsText, err))
@@ -79,6 +89,12 @@ func newRemapper(cfg map[string]map[string]string, leader []editcmd.Key) (*remap
 				errs = append(errs, fmt.Errorf("keymap.%s: 展開する列 %q を読めない: %w", name, rhsText, err))
 				continue
 			}
+			key := editcmd.KeysString(lhs)
+			if first, ok := used[key]; ok {
+				errs = append(errs, fmt.Errorf("keymap.%s: %q は %q と同じキーの列 %s になるので、%q を使う", name, lhsText, first, key, first))
+				continue
+			}
+			used[key] = lhsText
 			r.maps[mode] = append(r.maps[mode], mapping{lhs: lhs, rhs: rhs})
 		}
 	}
