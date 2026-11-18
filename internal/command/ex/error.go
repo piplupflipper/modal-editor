@@ -26,6 +26,7 @@ func (e *Error) Error() string {
 const (
 	codeNoWrite          = "E37"  // 未保存の変更がある
 	codeMarkNotSet       = "E20"  // マークが設定されていない
+	codeReadOnly         = "E21"  // 編集を禁止したバッファを変えようとした（Vim の 'modifiable' が切れているとき）
 	codeNoPrevRegexp     = "E35"  // 直前のパターンが無い
 	codeInvalidRange     = "E16"  // 範囲がバッファの外にある
 	codeNoNestedGlobal   = "E147" // :g の入れ子
@@ -48,6 +49,9 @@ const CodeNoWrite = codeNoWrite
 // CodeBackwardsRange は、逆順の範囲（:4,2d）で確認が要ることを表すエラー番号である。
 // このとき Result.Confirm が nil でなければ、確認を得て Confirm.Resume で続きを実行できる。
 const CodeBackwardsRange = codeBackwardsRange
+
+// msgReadOnly は、E21 の文言である。buffer.ErrReadOnly の文言のエラー番号の後と同じにする（基本設計 4.6）。
+const msgReadOnly = "編集を禁止したバッファは変更できません"
 
 func errAt(pos int, code, format string, args ...any) *Error {
 	return &Error{Code: code, Pos: pos, Msg: fmt.Sprintf(format, args...)}

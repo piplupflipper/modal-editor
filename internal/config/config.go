@@ -49,6 +49,7 @@ import (
 //	  "autoread": true,
 //	  "checkIntervalMs": 1000,
 //	  "fileTypes": { ".tmpl": "html", "Justfile": "make" },
+//	  "readonlyPaths": ["~/go/pkg/mod", "/usr/include"],
 //	  "extensions": {
 //	    "syncTimeoutMs": 50,
 //	    "startSyncTimeoutMs": 1000,
@@ -115,6 +116,10 @@ type Config struct {
 	// RegisterClipboard は registers.clipboard の値で、レジスターの履歴の先頭をホストのクリップボードへ送る手段である（FR-56）。
 	// ClipboardOSC52 か ClipboardOff で、項目が無いか誤りなら空で、既定の ClipboardOSC52 として扱う。
 	RegisterClipboard string
+	// ReadOnlyPaths は readonlyPaths の値で、開いた時点で編集を禁止にするファイルの置き場所のディレクトリである（基本設計 4.6。FR-120）。
+	// どれも絶対パスで、"~" はホームのディレクトリに展開してある。誤りのある項目は除いてある。
+	// editor.Config.ReadOnlyPaths にそのまま渡す。
+	ReadOnlyPaths []string
 
 	// extPos は、extensions.settings と extensions.activation に書いた拡張機能の ID の位置である。
 	// 見つからない拡張機能の ID を LoadExtensions が知らせるのに使う。
@@ -199,6 +204,8 @@ func Parse(path string, data []byte) (Config, []error) {
 			s.extensions(m.value, &cfg)
 		case "registers":
 			s.registers(m.value, &cfg)
+		case "readonlyPaths":
+			cfg.ReadOnlyPaths = s.readOnlyPaths(m.value)
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", join("", m.name))
 		}

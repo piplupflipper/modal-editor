@@ -80,6 +80,9 @@ type Buffer struct {
 
 	// lastUndo は、直前の Undo か Redo の情報である（LastUndo）。
 	lastUndo UndoInfo
+
+	// readOnly は、編集を禁止しているかである（SetReadOnly。FR-85）。
+	readOnly bool
 }
 
 // step は、アンドゥとリドゥの 1 単位である。
@@ -354,13 +357,20 @@ func (b *Buffer) Slice(r Range) (string, error) {
 // ただし BeginUndoGroup でグループを開いている間は、グループの中の 2 回目以降の Apply を、最初の Apply の単位にまとめる。
 // Edits が空のトランザクションは、バージョン番号が一致していれば何もせず、Before と After が等しい Change を返す。
 //
-// req: FR-07, FR-15, FR-16
+// 編集を禁止したバッファ（ReadOnly）では、Edits が空でなければ、何も変えずに ErrReadOnly を返す（FR-85、FR-118）。
+// Apply は、利用者の操作と拡張機能の編集が通る入り口なので、ここで断れば操作ごとの判定の漏れが無くなる（基本設計 4.6）。
+// バージョン番号の不一致は、禁止より先に判定する（拡張機能が古い版で問い合わせ直す手順を変えない）。
+//
+// req: FR-07, FR-15, FR-16, FR-85, FR-118
 func (b *Buffer) Apply(tx Transaction) (Change, error) {
 	if tx.BaseVersion != b.version {
 		return Change{}, fmt.Errorf("%w: base %d, current %d", ErrVersionMismatch, tx.BaseVersion, b.version)
 	}
 	if len(tx.Edits) == 0 {
 		return Change{Before: b.version, After: b.version}, nil
+	}
+	if b.readOnly {
+		return Change{}, ErrReadOnly
 	}
 	edits := slices.Clone(tx.Edits)
 	inverse, err := b.applyAll(edits)
@@ -380,6 +390,8 @@ func (b *Buffer) Apply(tx Transaction) (Change, error) {
 // tx.Edits が空でも、末尾の改行の記録が変わるなら、編集の無い単位を記録してバージョン番号を 1 増やす。
 // 編集も記録の変化も無ければ、Apply と同じく何もしない。
 // 開いているアンドゥのグループは閉じる（読み直しを利用者の編集の単位にまとめない）。
+//
+// 編集を禁止したバッファ（ReadOnly）でも断らない。ApplyReload は、本体がファイルの中身へ合わせ直す入り口で、利用者の編集ではない（基本設計 4.6）。
 func (b *Buffer) ApplyReload(tx Transaction, eol bool) (Change, error) {
 	if tx.BaseVersion != b.version {
 		return Change{}, fmt.Errorf("%w: base %d, current %d", ErrVersionMismatch, tx.BaseVersion, b.version)
@@ -491,11 +503,13 @@ func (b *Buffer) CanRedo() bool {
 // 取り消せるものが無ければ、何もせずに false を返す。
 // 開いているアンドゥのグループは閉じる。
 // 取り消した単位のカーソルの記録と変わった行の範囲は、LastUndo で読める。
+// 編集を禁止したバッファ（ReadOnly）では、何もせずに false を返す（Vim の 'modifiable' が切れたときの u と同じく、変更として断る）。
+// 呼び出し側は、取り消すものが無いこととの違いを ReadOnly で見分ける。
 //
-// req: FR-07, FR-16
+// req: FR-07, FR-16, FR-85
 func (b *Buffer) Undo() (Change, bool) {
 	b.closeUndoGroup()
-	if len(b.undo) == 0 {
+	if len(b.undo) == 0 || b.readOnly {
 		return Change{}, false
 	}
 	s := b.undo[len(b.undo)-1]
@@ -515,11 +529,12 @@ func (b *Buffer) Undo() (Change, bool) {
 // やり直せるものが無ければ、何もせずに false を返す。
 // 開いているアンドゥのグループは閉じる。
 // やり直した単位のカーソルの記録と変わった行の範囲は、LastUndo で読める。
+// 編集を禁止したバッファ（ReadOnly）では、Undo と同じく何もせずに false を返す。
 //
-// req: FR-07, FR-16
+// req: FR-07, FR-16, FR-85
 func (b *Buffer) Redo() (Change, bool) {
 	b.closeUndoGroup()
-	if len(b.redo) == 0 {
+	if len(b.redo) == 0 || b.readOnly {
 		return Change{}, false
 	}
 	s := b.redo[len(b.redo)-1]

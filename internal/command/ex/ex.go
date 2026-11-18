@@ -34,6 +34,10 @@
 //	:bd[elete][!] [N|名前]  バッファを閉じる ActionBufferDelete を返す。未保存の変更の確認は呼び出し側が行う
 //	:{range}!{cmd}       範囲の行を cmd の標準入力へ渡し、出力で範囲を置き換える（FR-81。Result.Shell を返す）
 //	:[N]r[ead] !{cmd}    cmd の出力を N 行目（省くとカーソルの行）の後に入れる。:0r は 1 行目の前に入れる（FR-81。:r! も同じ）
+//	:reado[nly]          バッファの編集の禁止を切り替え、切り替えた後の状態を Notice で知らせる（FR-86。Vim に無い本体のコマンド。名前は仮）
+//
+// 編集を禁止したバッファ（buffer.Buffer.ReadOnly）では、テキストを変えるコマンド（:s、:d、:r、:{range}!）を、
+// 範囲と引数を確かめる前に E21 で断る（FR-85。Vim 9.1 で 'modifiable' を切ったときと同じ）。:g と :v は断らず、cmd の中のコマンドが断られる。
 //
 // :{range}! と :r ! は、"|" を含めて行末までを cmd としてシェルへ渡す（Vim と同じ）。
 // このパッケージはプロセスを起動しない。実行を Result.Shell で呼び出し側へ求め、呼び出し側が終わった後に
@@ -477,6 +481,10 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 	}
 	if c.inGlobal && !cmd.inGlobal {
 		return "", 0, false, errAt(namePos, codeNotAvailable, ":global の中では使えません: %s", cmd.name)
+	}
+	if cmd.modify && c.b.ReadOnly() {
+		// req: FR-85
+		return "", 0, false, errAt(namePos, codeReadOnly, "%s", msgReadOnly)
 	}
 
 	inv := invocation{name: name, namePos: namePos}

@@ -60,6 +60,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	showVersion := flags.Bool("version", false, "バージョンを表示して終了する")
 	logPath := flags.String("log", "", "ログを追記するファイル。指定しなければログを書かない（画面を崩さないため、標準エラー出力には書かない）")
+	// req: FR-119
+	readOnly := flags.Bool("R", false, "引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）")
 
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("引数の解釈に失敗: %w", err)
@@ -75,7 +77,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if !inOK || !outOK {
 		return errNotTerminal
 	}
-	return edit(flags.Args(), in, out, *logPath)
+	return edit(flags.Args(), *readOnly, in, out, *logPath)
 }
 
 var errNotTerminal = errors.New("標準入力と標準出力が端末のときだけ起動できる")
@@ -97,7 +99,8 @@ var errNotTerminal = errors.New("標準入力と標準出力が端末のとき�
 // 標準ライブラリの関数だけを呼ぶ goroutine（signal.NotifyContext の中のもの、exthost の子プロセスの回収の cmd.Wait、
 // exthost の context.AfterFunc が取り消しの関数を呼ぶもの）の panic と、
 // SIGKILL で終わったときは戻せない。
-func edit(files []string, in, out *os.File, logPath string) (err error) {
+// readOnly は起動のオプション -R で、files を編集を禁止した状態で開く（editor.Config.ReadOnlyArgs）。
+func edit(files []string, readOnly bool, in, out *os.File, logPath string) (err error) {
 	logger, closeLog, err := openLog(logPath)
 	if err != nil {
 		return err
@@ -118,7 +121,7 @@ func edit(files []string, in, out *os.File, logPath string) (err error) {
 	}
 	defer func() { _ = tm.Close() }() // Close は誤りを返さない
 	return guard(tm.Restore, func() error {
-		return runEditor(ctx, files, tm, logger)
+		return runEditor(ctx, files, readOnly, tm, logger)
 	})
 }
 
@@ -143,8 +146,9 @@ func guard(restore func() error, f func() error) (err error) {
 // server と client の間は protocol.Pipe でつなぐ。server の Run はこの goroutine で、client の Run は別の goroutine で動かす。
 // server の Run が戻ると接続が閉じ、client が端末を戻す。それを待ってから拡張機能を止める（editor.Editor.Close の doc の順序）。
 // ctx はシグナルで取り消される。起動の途中で取り消されていれば、Run は直ちに戻る。
-func runEditor(ctx context.Context, files []string, tm *term.Terminal, logger *slog.Logger) error {
+func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Terminal, logger *slog.Logger) error {
 	cfg := loadConfig(logger)
+	cfg.ReadOnlyArgs = readOnly
 	// editor、exthost、server が起こす goroutine の panic でも、その goroutine の上で端末を戻してから panic を続ける（基本設計 8 章）。
 	// 端末を持つのは client だが、同じプロセスの中なので server の側からも戻せる。
 	cfg.OnPanic = func() { _ = tm.Restore() } // panic を続けるので、戻す誤りは捨てる
@@ -236,6 +240,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		StartSyncTimeout: cfg.StartSyncTimeout,
 		FileTypes:        cfg.FileTypes,
 		FixEndOfLine:     cfg.FixEndOfLine,
+		ReadOnlyPaths:    cfg.ReadOnlyPaths,
 		Registers: command.RegisterConfig{
 			HistorySize:     cfg.RegisterHistorySize,
 			MaxEntryBytes:   cfg.RegisterMaxEntryBytes,

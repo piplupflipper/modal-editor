@@ -118,6 +118,11 @@ func (e *Editor) editRequest(ev *exthost.EditRequest) {
 		_ = ev.ReplyError(invalidParams("unknown buffer %d", ev.Params.Buffer))
 		return
 	}
+	if bs.buf.ReadOnly() {
+		// 編集を禁止したバッファは、編集の無い（noLines と endOfLine だけの）要求も断る（FR-118。readOnlyError の doc）。
+		_ = ev.ReplyError(readOnlyError())
+		return
+	}
 	ch, err := e.applyExternal(bs, fromExtTx(ev.Params.Transaction))
 	switch {
 	case errors.Is(err, buffer.ErrVersionMismatch):

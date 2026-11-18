@@ -13,7 +13,7 @@ import (
 var filterCommand command
 
 func init() {
-	filterCommand = command{name: "!", min: 1, rng: rangeCurrent, bar: barNone, run: runFilter}
+	filterCommand = command{name: "!", min: 1, rng: rangeCurrent, modify: true, bar: barNone, run: runFilter}
 }
 
 // reportLines は、Vim の 'report' の既定値である。変えた行の数がこれを超えたら通知を出す。
