@@ -562,7 +562,9 @@ func TestAutostartTmux(t *testing.T) {
 	}
 
 	// 別の window では、別の server になる
-	p3 := ts.run(t, "new-window", "-d", "-t", "t", "-P", "-F", "#{pane_id}", e3.command(pathB))
+	// -t は「t:」（セッション t の、空いている次の番号）にする。「t」だけでは、tmux の版によって番号 0 の window を指し、
+	// index 0 in use で失敗した（CI の run 44334802948）
+	p3 := ts.run(t, "new-window", "-d", "-t", "t:", "-P", "-F", "#{pane_id}", e3.command(pathB))
 	unit2 := ts.run(t, "display-message", "-p", "-t", p3, "#{socket_path}:#{window_id}")
 	if unit2 == unit1 {
 		t.Fatalf("別の window の単位 %q が同じ", unit2)
