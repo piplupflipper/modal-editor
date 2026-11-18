@@ -64,10 +64,10 @@ type Renderer struct {
 	// TabLine は、タブの行（Frame.Tabs）を出す場合である（設定の tabline。仮）。ゼロ値はタブが 2 つ以上のときだけ出す。
 	TabLine TabLineMode
 
-	top  int // 表示領域の最初の行の番号（0 から数える）
+	top int // 表示領域の最初の行の番号（0 から数える）
 	// tabRows は、直前の Render でタブの行に使った行数（0 か 1）である。Render の外から読む表示領域の行数（TextRows）から除く。
 	tabRows int
-	left int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
+	left    int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
 
 	// gutter と outRows は、直前の Render（layout）で決めた、左の欄の列数と出力の欄の中身の行数である。
 	gutter, outRows int

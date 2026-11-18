@@ -195,17 +195,23 @@ type popupMark struct {
 // マクロの再生の途中のホバー（FR-19。#210）は、再生を終えてからこの関数に届く（待つ間のイベントは hold で取っておく）。
 // 記録したときは次のキー（j、zz など）で消えていたので、再生の後に残さないためである。
 // 再生のキーも command.State.KeysFed が数えるので、移動しないキー（zz）や動いて戻るキー（jk）が続いても出さない（#217 のレビュー）。
+// 段階 3 では、バッファをカーソルのあるタブに持つ client の画面に出す（応答が届くまでに、別の client がキーを打っていてもよい。#215）。
 //
 // req: FR-30, FR-19
 func (e *Editor) showPopup(p ext.PopupShowParams) {
-	bs := e.cur
-	if bs.id != p.Buffer || uint64(p.Version) != bs.buf.Version() || bs.state.Cursor() != fromExtPos(p.Position) {
+	bs := e.findBuffer(p.Buffer)
+	if bs == nil || bs.owner == nil || uint64(p.Version) != bs.buf.Version() || bs.state.Cursor() != fromExtPos(p.Position) {
 		return
 	}
-	if m := e.popupMark; m.state == bs.state && m.keys != bs.state.KeysFed() {
-		return
-	}
-	e.popup = &popupState{bs: bs, cursor: bs.state.Cursor(), text: p.Text, markdown: p.Format == ext.PopupMarkdown}
+	e.withView(bs.owner, func() {
+		if e.cur != bs {
+			return
+		}
+		if m := e.popupMark; m.state == bs.state && m.keys != bs.state.KeysFed() {
+			return
+		}
+		e.popup = &popupState{bs: bs, cursor: bs.state.Cursor(), text: p.Text, markdown: p.Format == ext.PopupMarkdown}
+	})
 }
 
 // modeName は、command のモードを ext のモードの名前にする。

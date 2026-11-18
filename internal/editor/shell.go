@@ -38,7 +38,7 @@ type shellJob struct {
 	bs *bufferState
 	// client は、コマンドを打った client である。実行中は、この client のキーだけを列に残す（keyAllowed）。
 	client *clientView
-	req *ex.ShellRequest
+	req    *ex.ShellRequest
 	// cancel は、子プロセスのプロセスグループを終わらせる。
 	cancel context.CancelFunc
 	// interrupted は、<C-c> で中断したかである。
