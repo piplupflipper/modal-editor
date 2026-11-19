@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/piplupflipper/modal-editor/docs"
 	"github.com/piplupflipper/modal-editor/ext"
@@ -27,7 +28,8 @@ import (
 // extQuery.Action が helpAction へ渡す。引数を行末まで取ること、範囲と ! を取らないことは、拡張機能のコマンドと同じである。
 //
 // 接頭辞で絞ったキーの一覧は、接頭辞の後に ? を打って出す（<leader>l? で <leader>l に続くキー）。
-// <leader>l? と <leader>d? は本体の既定のキー（input の keyListKeys）で、他の接頭辞の ? は addKeyListBindings が作る。
+// <leader>l? と <leader>d? は本体の既定のキー（input の keyListKeys）で、接頭辞に加えて LSP と DAP の操作のキー（K、gq など）も出す。
+// 他の接頭辞の ? は addKeyListBindings が作る。
 // どちらも Ref.Extension を input.ProviderExtension、ID を input.KeyListPrefix で始まる値にした操作で、helpAction が受け取る。
 
 // helpExtension は、コマンドラインの表（exCommands）で :help と :keys に入れる拡張機能の ID の代わりの値である。
@@ -74,13 +76,13 @@ func (e *Editor) helpAction(bs *bufferState, ref editcmd.Ref, text string) (bool
 		if perr != nil {
 			return true, fmt.Errorf("E475: 無効な引数です: %s", text)
 		}
-		err = e.openKeyList(prefix)
+		err = e.openKeyList("", prefix)
 	case ref.Provider() && strings.HasPrefix(ref.ID, input.KeyListPrefix):
-		prefix, perr := editcmd.ParseKeys(strings.TrimPrefix(ref.ID, input.KeyListPrefix))
-		if perr != nil {
-			return true, fmt.Errorf("内部の誤り: キーの一覧の接頭辞 %q を読めない: %w", ref.ID, perr)
+		group, prefix, ok := input.ParseKeyListID(ref.ID)
+		if !ok {
+			return true, fmt.Errorf("内部の誤り: キーの一覧の操作 %q を読めない", ref.ID)
 		}
-		err = e.openKeyList(prefix)
+		err = e.openKeyList(group, prefix)
 	default:
 		return false, nil
 	}
@@ -126,7 +128,7 @@ func bufferTitle(bs *bufferState) string {
 }
 
 // openHelp は、:help の引数 word の説明を出す。word が空なら先頭を出す。
-// 説明は docs/usage.md（docs.Usage）に、読み込んだ拡張機能の操作の説明文（宣言ファイルの description）の節を足したものである。
+// 説明は docs/usage.md（docs.Usage）に、本体のキーの節と、読み込んだ拡張機能の操作の節を足したものである（helpText）。
 // 引き方は helpLine にある。見つからなければ E149 を返す（Vim と同じ番号）。
 //
 // req: FR-89
@@ -144,10 +146,16 @@ func (e *Editor) openHelp(word string) error {
 	return nil
 }
 
-// helpText は、:help に出す文書である。docs/usage.md の後に、読み込んだ拡張機能の操作の一覧の節を足す。
+// helpText は、:help に出す文書である。docs/usage.md の後に、本体のキーの節（helpKeyLines）と、
+// 読み込んだ拡張機能の操作の節（宣言ファイルの contributes の ID、種類、キー、description）を足す。
+// 拡張機能のキーの <Leader> は、キーの一覧と同じく設定の leader に置き換えて出す。
 func (e *Editor) helpText() string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimRight(docs.Usage, "\n"))
+	sb.WriteString("\n\n## 本体のキー\n\n")
+	sb.WriteString("本体の既定のキーと、LSP と DAP の操作の既定のキーの一覧である（キーの一覧の説明文と同じ）。")
+	sb.WriteString("括弧の中はモード（n はノーマル、v はビジュアル、o はオペレーターの後）である。\n\n")
+	sb.WriteString(strings.Join(helpKeyLines(e.keymap), "\n"))
 	sb.WriteString("\n")
 	var lines []string
 	for _, s := range e.cfg.Extensions {
@@ -165,7 +173,11 @@ func (e *Editor) helpText() string {
 			for _, c := range g.cs {
 				line := fmt.Sprintf("- `%s`（拡張機能 %s の%s", c.ID, m.ID, g.kind)
 				if c.Keys != "" {
-					line += fmt.Sprintf("。キーは `%s`", c.Keys)
+					keys := c.Keys
+					if ks, err := editcmd.ParseKeysLeader(c.Keys, e.leader); err == nil {
+						keys = editcmd.KeysString(ks)
+					}
+					line += fmt.Sprintf("。キーは `%s`", keys)
 				}
 				line += "）"
 				if c.Description != "" {
@@ -184,49 +196,116 @@ func (e *Editor) helpText() string {
 	return sb.String()
 }
 
-// helpLine は、:help の文書の行 lines から、語 word の説明の行を探し、その行番号（0 始まり）を返す（基本設計 7.2）。
-//
-// 語は、Ex コマンドの名前（:readonly。: は省いてもよい）、設定の項目の名前（registers.historySize）、キーの列（<C-o>）である。
-// 次の順に探し、各段で最初に当たった行を返す（仮。#227）。
-//
-//  1. 見出しの行（コードの区画の外の # で始まる行）のうち、`語` か語そのものを含む行
-//  2. `語` を含む行。語の後に空白が続く形（`:acp.prompt <プロンプト>`）も当てる
-//  3. 設定の例の JSON のキー（"語"）を含む行。点で区切った名前は、最後の部分（"historySize"）でも探す
-//  4. 語そのものを含む行
-//
-// 語の形は、: を足したもの（Ex コマンドの形）、そのままのものの順に探す（: で始まる語は、そのまま、: を除いたものの順）。
-// :help readonly が、記号の設定の `readonly` より先に :readonly の説明に当たるようにするためである。
-func helpLine(lines []string, word string) (int, bool) {
-	forms := []string{":" + word, word}
-	if rest, ok := strings.CutPrefix(word, ":"); ok {
-		forms = []string{word}
-		if rest != "" {
-			forms = append(forms, rest)
+// helpKeyLines は、:help の「本体のキー」の節の行を、キーの表記の順（compareKeyLabels）に返す。
+// 1 つのキーの表記に 1 行で、モードごとの説明を並べる（- `x`: 選択を消す（v）。カーソルの文字を消す（n））。
+// 他のキーの接頭辞になるノーマルモードのキー（s、g、<Space>）には、続くキーと、その一覧を出すキー（s?）を添える。
+// :help s が、囲みの sa、sd、sr へ案内する行に当たるようにするためである。
+func helpKeyLines(km *input.Keymap) []string {
+	descs := map[string][]string{}
+	next := map[string][]string{}
+	for _, b := range km.Bindings() {
+		if !b.Ref.Builtin() && !b.Ref.Provider() || strings.HasPrefix(b.Ref.ID, input.KeyListPrefix) {
+			continue
+		}
+		label := editcmd.KeysString(b.Keys)
+		descs[label] = append(descs[label], fmt.Sprintf("%s（%s）", b.Description, modeLetters(b.Modes)))
+		if b.Modes&input.MapNormal == 0 {
+			continue
+		}
+		for n := 1; n < len(b.Keys); n++ {
+			p, c := editcmd.KeysString(b.Keys[:n]), editcmd.KeysString(b.Keys[:n+1])
+			if !slices.Contains(next[p], c) {
+				next[p] = append(next[p], c)
+			}
+			if _, ok := descs[p]; !ok {
+				descs[p] = nil
+			}
 		}
 	}
-	quoted := func(l, f string) bool {
-		return strings.Contains(l, "`"+f+"`") || strings.Contains(l, "`"+f+" ")
+	labels := make([]string, 0, len(descs))
+	for l := range descs {
+		labels = append(labels, l)
 	}
-	// 1. 見出し。
+	slices.SortFunc(labels, compareKeyLabels)
+	lines := make([]string, 0, len(labels))
+	for _, l := range labels {
+		parts := slices.Clone(descs[l])
+		if cs := next[l]; len(cs) > 0 {
+			slices.SortFunc(cs, compareKeyLabels)
+			parts = append(parts, fmt.Sprintf("続くキーは `%s`（`%s?` で一覧）", strings.Join(cs, "`、`"), l))
+		}
+		lines = append(lines, fmt.Sprintf("- `%s`: %s", l, strings.Join(parts, "。")))
+	}
+	return lines
+}
+
+// helpLine は、:help の文書の行 lines から、語 word の説明の行を探し、その行番号（0 始まり）を返す（基本設計 7.2）。
+//
+// 語は、キーの列（w、<C-o>）、Ex コマンドの名前（:w、:readonly）、設定の項目の名前（registers.historySize）である。
+// Vim の :help と同じく、: の無い語はまずキーや設定の名前として、次に : を足した Ex コマンドとして引く。
+// : で始まる語は Ex コマンドとしてだけ引く。
+// 文書の中の `…`（コードの区画の外）を語の候補とし、次の順に探す。各段で、語の形の順に、最初に当たった行を返す（仮。#227）。
+//
+//  1. 定義の行（見出し、表の最初の列、`…` で始まる箇条書き）のうち、`語` が完全に一致する行。
+//     語の後に空白が続く形（`:acp.prompt <プロンプト>`）も完全な一致とみなす
+//  2. `語` が完全に一致する行
+//  3. 設定の例の JSON のキー（"語"）を含む行。点で区切った名前は、最後の部分（"historySize"）でも探す
+//  4. 定義の行のうち、語で始まる `…` を含む行（:help reg で `:registers`）
+//  5. 語が 2 文字以上なら、語を含む見出し
+//
+// 語の一部だけを含む見出し（:help w が「同じ window の…」）には当てない（PR #230 のレビュー）。
+func helpLine(lines []string, word string) (int, bool) {
+	forms := []string{word}
+	if !strings.HasPrefix(word, ":") {
+		forms = append(forms, ":"+word)
+	}
+	type mdLine struct {
+		spans   []string
+		defs    []string
+		heading bool
+	}
+	parsed := make([]mdLine, len(lines))
 	inCode := false
 	for i, l := range lines {
 		if strings.HasPrefix(l, "```") {
 			inCode = !inCode
 			continue
 		}
-		if !inCode && strings.HasPrefix(l, "#") && (quoted(l, forms[0]) || quoted(l, forms[len(forms)-1]) || strings.Contains(l, word)) {
-			return i, true
+		if inCode {
+			continue
 		}
+		p := mdLine{spans: codeSpans(l), heading: strings.HasPrefix(l, "#")}
+		switch {
+		case p.heading:
+			p.defs = p.spans
+		case strings.HasPrefix(l, "|"):
+			if cell, _, ok := strings.Cut(l[1:], " |"); ok && namesOnly(cell) {
+				p.defs = codeSpans(cell)
+			}
+		case strings.HasPrefix(l, "- `") && len(p.spans) > 0:
+			p.defs = p.spans[:1]
+		}
+		parsed[i] = p
 	}
-	// 2. `語`。
-	for _, f := range forms {
-		for i, l := range lines {
-			if quoted(l, f) {
-				return i, true
+	exact := func(span, f string) bool { return span == f || strings.HasPrefix(span, f+" ") }
+	find := func(pick func(mdLine) []string, match func(string, string) bool) (int, bool) {
+		for _, f := range forms {
+			for i, p := range parsed {
+				if slices.ContainsFunc(pick(p), func(s string) bool { return match(s, f) }) {
+					return i, true
+				}
 			}
 		}
+		return 0, false
 	}
-	// 3. JSON のキー。
+	defs := func(p mdLine) []string { return p.defs }
+	spans := func(p mdLine) []string { return p.spans }
+	if i, ok := find(defs, exact); ok {
+		return i, true
+	}
+	if i, ok := find(spans, exact); ok {
+		return i, true
+	}
 	keys := []string{`"` + word + `"`}
 	if j := strings.LastIndexByte(word, '.'); j >= 0 && j+1 < len(word) {
 		keys = append(keys, `"`+word[j+1:]+`"`)
@@ -238,57 +317,154 @@ func helpLine(lines []string, word string) (int, bool) {
 			}
 		}
 	}
-	// 4. 語そのもの。
-	for i, l := range lines {
-		if strings.Contains(l, word) {
-			return i, true
+	if i, ok := find(defs, strings.HasPrefix); ok {
+		return i, true
+	}
+	if utf8.RuneCountInString(word) >= 2 {
+		for i, p := range parsed {
+			if p.heading && strings.Contains(lines[i], word) {
+				return i, true
+			}
 		}
 	}
 	return 0, false
 }
 
-// keyRow は、キーの一覧の 1 行である。
-type keyRow struct {
-	keys, modes, origin, desc string
+// namesOnly は、表の列 cell が `…` の名前を並べただけ（`:w`、`:write`（`:w`）、`<C-]>` か `<leader>lD`）かを返す。
+// 名前の外に文が書かれた列（`dw`、`x` など、名前を省略した削除）は、その名前の定義の行として扱わない。
+func namesOnly(cell string) bool {
+	rest := cell
+	for {
+		i := strings.IndexByte(rest, '`')
+		if i < 0 {
+			break
+		}
+		j := strings.IndexByte(rest[i+1:], '`')
+		if j < 0 {
+			return false
+		}
+		rest = rest[:i] + " " + rest[i+1+j+1:]
+	}
+	return strings.Trim(rest, " 、/（）()か") == "" && strings.Contains(cell, "`")
 }
 
-// openKeyList は、接頭辞 prefix で始まるキーの一覧を出す。prefix が空ならすべてのキーを出す。
-// 該当するキーが無ければ誤りを返す。
+// codeSpans は、Markdown の行 l の `…` の中身を、左から順に返す。“ ` “ のように 2 つ以上の ` で囲んだものも扱う。
+func codeSpans(l string) []string {
+	var out []string
+	for {
+		i := strings.IndexByte(l, '`')
+		if i < 0 {
+			return out
+		}
+		n := 1
+		for i+n < len(l) && l[i+n] == '`' {
+			n++
+		}
+		fence := l[i : i+n]
+		rest := l[i+n:]
+		j := strings.Index(rest, fence)
+		if j < 0 {
+			return out
+		}
+		out = append(out, strings.TrimSpace(rest[:j]))
+		l = rest[j+n:]
+	}
+}
+
+// keySource は、キーの一覧の行の出どころである。
+type keySource int
+
+const (
+	// sourceBuiltin は、本体の既定のキー（LSP と DAP の既定のキーと、回数などの Parser が先に読むキーを含む）である。
+	sourceBuiltin keySource = iota
+	// sourceUser は、利用者のキーマップ（設定の keymap）である。
+	sourceUser
+	// sourceExtension は、拡張機能の宣言ファイルの contributes である。
+	sourceExtension
+)
+
+// keyRow は、キーの一覧の 1 行である。表示の文字列（keyListText）とは別に、キーの列と操作を持つ。
+// 一覧の部品（基本設計 1.4）で選んだキーを実行するときと、拡張機能が本体のキーの一覧を問い合わせるとき（FR-107）に使う想定である。
+type keyRow struct {
+	// Keys は、キーの列である。Parser が先に読むキー（{回数} など）では nil で、Label だけを持つ。
+	Keys []editcmd.Key
+	// Label は、キーの表記である（editcmd.KeysString。{回数} のような引数の名前を含むことがある）。
+	Label string
+	// Modes は、キーが効くモードである。CommandLine は、利用者のキーマップのコマンドラインモードの項目であることを表す。
+	Modes       input.MapMode
+	CommandLine bool
+	// Source は出どころで、Extension は sourceExtension のときの拡張機能の ID である。
+	Source    keySource
+	Extension string
+	// Kind と Ref は、キーマップの登録の操作である。利用者のキーマップの行では使わない。
+	Kind input.BindingKind
+	Ref  editcmd.Ref
+	// RHS は、利用者のキーマップの展開先のキーの列である。
+	RHS []editcmd.Key
+	// Description は、説明文である。
+	Description string
+	// Overridden は、利用者のキーマップが同じキーの列を同じモードで割り当てていて、この行の操作が効かないことを表す。
+	Overridden bool
+}
+
+// openKeyList は、接頭辞 prefix で始まるキーと、分類 group（input.KeyGroupLSP など。空なら無し）の操作のキーの一覧を出す。
+// どちらも空ならすべてのキーを出す。該当するキーが無ければ誤りを返す。
 //
 // req: FR-90
-func (e *Editor) openKeyList(prefix []editcmd.Key) error {
-	rows := e.keyRows(prefix)
+func (e *Editor) openKeyList(group string, prefix []editcmd.Key) error {
+	rows := e.keyRows(group, prefix)
 	if len(rows) == 0 {
 		return fmt.Errorf("%s で始まるキーはありません", editcmd.KeysString(prefix))
 	}
-	e.openScratch(keyListTitle, keyListText(prefix, rows), 0)
+	e.openScratch(keyListTitle, keyListText(group, prefix, rows), 0)
 	return nil
 }
 
-// keyRows は、接頭辞 prefix で始まるキーの一覧の行を、キーの表記の順に返す（基本設計 7.2）。
+// keyRows は、接頭辞 prefix で始まるキーと、分類 group の操作のキーの一覧の行を返す（基本設計 7.2）。
 //
 // 行は次の 3 つから作る。
 //
 //   - キーマップ（本体の既定のキー、LSP と DAP の既定のキー、拡張機能の contributes のキー）。説明は input.Binding.Description で、
-//     拡張機能の項目に説明文が無ければ操作の ID を出す
+//     拡張機能の項目に説明文が無ければ操作の ID を出す。group が空でなければ、その分類の LSP か DAP の操作のキー（K、gq、<C-]> など）も、
+//     接頭辞で始まらなくても出す（input.ProviderGroup。#227 のオーケストレータの決定）
 //   - 利用者のキーマップ（設定の keymap）。説明は展開先のキーの列である。説明文を書く項目は設定に足していない（仮）
-//   - Parser が表を引く前に読むキー（回数、レジスター、マクロ、ドットリピート。input.ParserKeys）。prefix が空のときだけ出す
+//   - Parser が表を引く前に読むキー（回数、レジスター、マクロ、ドットリピート。input.ParserKeys）。prefix と group が空のときだけ出す
 //
-// 利用者のキーマップが本体のキーと同じキーの列なら、両方を出す（効くのは利用者のキーマップ）。
-func (e *Editor) keyRows(prefix []editcmd.Key) []keyRow {
+// 利用者のキーマップが本体か拡張機能のキーと同じキーの列を同じモードで割り当てていれば、その行を Overridden にする（効くのは利用者のキーマップ）。
+// 並びは、キーの表記を大文字と小文字を区別せずに比べた順（同じなら小文字が先）で、キーの一覧の操作（? の行）は末尾に回す。
+// Parser が先に読むキーは、さらにその後に置く。
+func (e *Editor) keyRows(group string, prefix []editcmd.Key) []keyRow {
 	var rows []keyRow
-	for _, b := range e.keymap.Bindings() {
-		if !hasKeyPrefix(b.Keys, prefix) {
-			continue
-		}
-		origin, desc := "本体", b.Description
-		if !b.Ref.Builtin() && !b.Ref.Provider() {
-			origin = "拡張機能 " + b.Ref.Extension
-			if desc == "" {
-				desc = b.Ref.ID
+	user := map[input.MapMode]map[string]bool{}
+	if r := e.remap; r != nil {
+		for mode, mm := range map[mapMode]input.MapMode{mapNormal: input.MapNormal, mapVisual: input.MapVisual, mapInsert: input.MapInsert} {
+			user[mm] = map[string]bool{}
+			for _, m := range r.maps[mode] {
+				user[mm][editcmd.KeysString(m.lhs)] = true
 			}
 		}
-		rows = append(rows, keyRow{keys: editcmd.KeysString(b.Keys), modes: modeLetters(b.Modes), origin: origin, desc: desc})
+	}
+	for _, b := range e.keymap.Bindings() {
+		inGroup := group != "" && b.Ref.Provider() && input.ProviderGroup(b.Ref.ID) == group
+		if !hasKeyPrefix(b.Keys, prefix) && !inGroup {
+			continue
+		}
+		row := keyRow{
+			Keys: b.Keys, Label: editcmd.KeysString(b.Keys), Modes: b.Modes,
+			Kind: b.Kind, Ref: b.Ref, Description: b.Description,
+		}
+		if !b.Ref.Builtin() && !b.Ref.Provider() {
+			row.Source, row.Extension = sourceExtension, b.Ref.Extension
+			if row.Description == "" {
+				row.Description = b.Ref.ID
+			}
+		}
+		for mm, lhs := range user {
+			if b.Modes&mm != 0 && lhs[row.Label] {
+				row.Overridden = true
+			}
+		}
+		rows = append(rows, row)
 	}
 	if r := e.remap; r != nil {
 		for _, mode := range []mapMode{mapNormal, mapVisual, mapInsert, mapCommandLine} {
@@ -296,42 +472,95 @@ func (e *Editor) keyRows(prefix []editcmd.Key) []keyRow {
 				if !hasKeyPrefix(m.lhs, prefix) {
 					continue
 				}
-				rows = append(rows, keyRow{keys: editcmd.KeysString(m.lhs), modes: remapModeLetter[mode], origin: "設定", desc: "→ " + editcmd.KeysString(m.rhs)})
+				row := keyRow{
+					Keys: m.lhs, Label: editcmd.KeysString(m.lhs), Source: sourceUser, RHS: m.rhs,
+					Description: "→ " + editcmd.KeysString(m.rhs), CommandLine: mode == mapCommandLine,
+				}
+				switch mode {
+				case mapNormal:
+					row.Modes = input.MapNormal
+				case mapVisual:
+					row.Modes = input.MapVisual
+				case mapInsert:
+					row.Modes = input.MapInsert
+				case mapNone, mapCommandLine:
+				}
+				rows = append(rows, row)
 			}
 		}
 	}
-	slices.SortStableFunc(rows, func(a, b keyRow) int { return strings.Compare(a.keys, b.keys) })
-	if len(prefix) == 0 {
+	slices.SortStableFunc(rows, func(a, b keyRow) int {
+		ak, bk := strings.HasPrefix(a.Ref.ID, input.KeyListPrefix), strings.HasPrefix(b.Ref.ID, input.KeyListPrefix)
+		if ak != bk {
+			if ak {
+				return 1
+			}
+			return -1
+		}
+		return compareKeyLabels(a.Label, b.Label)
+	})
+	if len(prefix) == 0 && group == "" {
 		for _, k := range input.ParserKeys() {
-			rows = append(rows, keyRow{keys: k.Keys, modes: modeLetters(k.Modes), origin: "本体", desc: k.Description})
+			rows = append(rows, keyRow{Label: k.Keys, Modes: k.Modes, Description: k.Description})
 		}
 	}
 	return rows
 }
 
+// compareKeyLabels は、キーの表記を、大文字と小文字を区別せずに比べ、同じなら小文字を先にする順で比べる（<Space>ld、<Space>lD、<Space>le の順）。
+func compareKeyLabels(a, b string) int {
+	if c := strings.Compare(strings.ToLower(a), strings.ToLower(b)); c != 0 {
+		return c
+	}
+	return -strings.Compare(a, b)
+}
+
 // keyListText は、キーの一覧の行 rows を、列をそろえた文書にする。
-func keyListText(prefix []editcmd.Key, rows []keyRow) string {
-	head := fmt.Sprintf("キーの一覧（すべて。%d 件）", len(rows))
-	if len(prefix) > 0 {
+func keyListText(group string, prefix []editcmd.Key, rows []keyRow) string {
+	var head string
+	switch {
+	case group != "":
+		head = fmt.Sprintf("%s のキーの一覧（%s で始まるものと %s の操作。%d 件）", strings.ToUpper(group), editcmd.KeysString(prefix), strings.ToUpper(group), len(rows))
+	case len(prefix) > 0:
 		head = fmt.Sprintf("キーの一覧（%s で始まるもの。%d 件）", editcmd.KeysString(prefix), len(rows))
+	default:
+		head = fmt.Sprintf("キーの一覧（すべて。%d 件）", len(rows))
 	}
 	cols := [3]string{"キー", "モード", "出どころ"}
+	cells := make([][3]string, len(rows))
 	width := [3]int{}
 	for i, c := range cols {
 		width[i] = ui.StringWidth(c, 8)
 	}
-	for _, r := range rows {
-		width[0] = max(width[0], ui.StringWidth(r.keys, 8))
-		width[1] = max(width[1], ui.StringWidth(r.modes, 8))
-		width[2] = max(width[2], ui.StringWidth(r.origin, 8))
+	for i, r := range rows {
+		modes := modeLetters(r.Modes)
+		if r.CommandLine {
+			modes += "c"
+		}
+		origin := "本体"
+		switch r.Source {
+		case sourceUser:
+			origin = "設定"
+		case sourceExtension:
+			origin = "拡張機能 " + r.Extension
+		case sourceBuiltin:
+		}
+		cells[i] = [3]string{r.Label, modes, origin}
+		for j, c := range cells[i] {
+			width[j] = max(width[j], ui.StringWidth(c, 8))
+		}
 	}
 	pad := func(s string, w int) string { return s + strings.Repeat(" ", w-ui.StringWidth(s, 8)+2) }
 	var sb strings.Builder
 	sb.WriteString(head + "\n")
 	sb.WriteString("モードは n（ノーマル）、v（ビジュアル）、o（オペレーターの後）、i（インサート）、c（コマンドライン）。接頭辞の後に ? を打つか :keys {接頭辞} で絞る\n\n")
 	sb.WriteString(pad(cols[0], width[0]) + pad(cols[1], width[1]) + pad(cols[2], width[2]) + "説明\n")
-	for _, r := range rows {
-		sb.WriteString(pad(r.keys, width[0]) + pad(r.modes, width[1]) + pad(r.origin, width[2]) + r.desc + "\n")
+	for i, r := range rows {
+		desc := r.Description
+		if r.Overridden {
+			desc += "（設定の keymap が優先）"
+		}
+		sb.WriteString(pad(cells[i][0], width[0]) + pad(cells[i][1], width[1]) + pad(cells[i][2], width[2]) + desc + "\n")
 	}
 	return sb.String()
 }
@@ -355,13 +584,11 @@ func modeLetters(m input.MapMode) string {
 	return sb.String()
 }
 
-// remapModeLetter は、利用者のキーマップのモードの文字である。
-var remapModeLetter = map[mapMode]string{mapNormal: "n", mapVisual: "v", mapInsert: "i", mapCommandLine: "c"}
-
 // addKeyListBindings は、ノーマルモードのキーの登録の接頭辞のうち、それ自体は操作でないもの（<Space>、<Space>l、g、<C-w> など）に、
 // ? を続けたキーの一覧の操作（input.KeyListBinding）を足す（基本設計 7.2。仮）。
 // 接頭辞は、km の登録（本体、LSP と DAP、拡張機能）と、利用者のキーマップ remap の左辺から集める。
 // 既に登録のあるキーの列（既定の <leader>l? など）と、Parser が先に読むキーで始まるものは足さない。
+// g? は Vim の rot13 のオペレーターと重なるが、本体に rot13 は無い（docs/vim-differences.md）。
 //
 // req: FR-90
 func addKeyListBindings(km *input.Keymap, remap *remapper) {
@@ -395,6 +622,6 @@ func addKeyListBindings(km *input.Keymap, remap *remapper) {
 			continue
 		}
 		// 既にあるキーの列（既定の <leader>l?）と先に読むキーは、Bind が断る。断られたら足さない。
-		_ = km.Bind(input.KeyListBinding(p, name+" で始まるキーの一覧"))
+		_ = km.Bind(input.KeyListBinding(p, "", name+" で始まるキーの一覧"))
 	}
 }

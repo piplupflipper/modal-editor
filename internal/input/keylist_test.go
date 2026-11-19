@@ -27,10 +27,20 @@ func TestDescriptions(t *testing.T) {
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
-	for keys, id := range map[string]string{",l?": KeyListPrefix + ",l", ",d?": KeyListPrefix + ",d"} {
+	for keys, want := range map[string][2]string{",l?": {KeyGroupLSP, ",l"}, ",d?": {KeyGroupDAP, ",d"}} {
 		b, ok := km.Lookup(MapNormal, editcmd.MustParseKeys(keys))
-		if !ok || b.Ref.ID != id || !b.Ref.Provider() {
+		if !ok || !b.Ref.Provider() {
 			t.Errorf("Lookup(%s) = %+v, %v", keys, b, ok)
+			continue
+		}
+		g, prefix, ok := ParseKeyListID(b.Ref.ID)
+		if !ok || g != want[0] || editcmd.KeysString(prefix) != want[1] || ProviderGroup(b.Ref.ID) != want[0] {
+			t.Errorf("ParseKeyListID(%q) = %q, %q, %v", b.Ref.ID, g, editcmd.KeysString(prefix), ok)
+		}
+	}
+	for id, want := range map[string]string{"hover": KeyGroupLSP, "diagnostic.next": KeyGroupLSP, "format": KeyGroupLSP, "debug.stepIn": KeyGroupDAP, "breakpoint.toggle": KeyGroupDAP, "nope": ""} {
+		if got := ProviderGroup(id); got != want {
+			t.Errorf("ProviderGroup(%q) = %q, want %q", id, got, want)
 		}
 	}
 	for _, id := range ProviderOperations() {

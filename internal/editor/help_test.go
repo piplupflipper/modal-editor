@@ -5,7 +5,10 @@ import (
 	"testing"
 
 	"github.com/piplupflipper/modal-editor/docs"
+	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/command"
+	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/modal-editor/internal/input"
 )
 
 // cursorLine は、カーソルのあるバッファのカーソルの行を返す。
@@ -48,12 +51,24 @@ func TestHelp(t *testing.T) {
 		t.Errorf("x in the help: message %q", msg)
 	}
 
+	// PR #230 のレビューの入力（w、e、d、x、:e、s）は、語を含む別の単語の見出しへ飛ばず、そのキーかコマンドの行へ移る。
 	for _, tt := range []struct{ word, want string }{
-		{"readonly", "`:readonly`"},
+		{"w", "- `w`: 次の単語の先頭へ"},
+		{"e", "- `e`: 単語の末尾へ"},
+		{"d", "- `d`: 消す"},
+		{"x", "- `x`: "},
+		{"s", "`sa`、`sd`、`sr`"},
+		{":e", "| `:e`、`:edit`"},
+		{":w", "| `:w`、`:write`"},
+		{":s", "| `:s`、`:substitute`"},
+		{"readonly", "| `readonly` |"},
+		{":readonly", "`:readonly`"},
 		{":tabmove", "`:tabmove"},
+		{"reg", "`:registers`"},
 		{"registers.historySize", "historySize"},
 		{"leader", "`leader`"},
 		{"<lt>C-o>", "`<C-o>`"},
+		{"K", "`K`"},
 	} {
 		h.keys(":h " + tt.word + "<CR>")
 		h.settle()
@@ -73,7 +88,13 @@ func TestHelp(t *testing.T) {
 	}
 
 	// ファイルのタブから :help で、ヘルプのタブへ移る。
-	h.keys(":b 1<CR>:help readonly<CR>")
+	h.keys(":he<CR>")
+	h.settle()
+	if msg := h.message(); !strings.HasPrefix(msg, "E492") {
+		t.Errorf(":he: message %q", msg)
+	}
+
+	h.keys(":b 1<CR>:help :readonly<CR>")
 	h.settle()
 	h.e.do(func() { title = h.e.cur.title })
 	if title != helpTitle || !strings.Contains(h.cursorLine(), "`:readonly`") {
@@ -87,11 +108,19 @@ func TestHelp(t *testing.T) {
 func TestHelpExtensions(t *testing.T) {
 	specs := fakeSpecs(t)
 	specs[0].Manifest.Contributes.TextObjects[0].Description = "行のテスト用の説明"
-	h := start(t, Config{Extensions: specs})
+	c := &specs[0].Manifest.Contributes
+	c.Commands = append(c.Commands, ext.Contribution{ID: "fake.leader", Keys: "<Leader>z"})
+	h := start(t, Config{Extensions: specs, Leader: ","})
 	h.keys(":help fake.line<CR>")
 	h.settle()
 	if got := h.cursorLine(); got != "- `fake.line`（拡張機能 fake のテキストオブジェクト。キーは `il`）: 行のテスト用の説明" {
 		t.Errorf(":help fake.line: cursor line %q (message %q)", got, h.message())
+	}
+	// 宣言の <Leader> は、キーの一覧と同じく設定の leader に置き換えて出す。
+	h.keys(":help fake.leader<CR>")
+	h.settle()
+	if got := h.cursorLine(); got != "- `fake.leader`（拡張機能 fake のコマンド。キーは `,z`）" {
+		t.Errorf(":help fake.leader: cursor line %q (message %q)", got, h.message())
 	}
 }
 
@@ -105,7 +134,7 @@ func TestKeyList(t *testing.T) {
 	specs[0].Manifest.Contributes.TextObjects[0].Description = "行のテスト用の説明"
 	cfg := Config{
 		Extensions: specs,
-		Keymap:     map[string]map[string]string{"normal": {"<Leader>lx": ":w<CR>", ",gs": ":w<CR>"}},
+		Keymap:     map[string]map[string]string{"normal": {"<Leader>lx": ":w<CR>", ",gs": ":w<CR>", "<Leader>la": "dd"}},
 	}
 	h := start(t, cfg)
 
@@ -119,10 +148,12 @@ func TestKeyList(t *testing.T) {
 	}
 	text := h.text()
 	for _, want := range []string{
-		"キーの一覧（<Space>l で始まるもの。",
-		"<Space>la", "コードアクション（LSP）",
+		"LSP のキーの一覧（<Space>l で始まるものと LSP の操作。",
+		"コードアクション（LSP）（設定の keymap が優先）", "→ dd",
 		"<Space>lx", "設定", "→ :w<CR>",
 		"<Space>l?", "LSP のキーの一覧",
+		// <leader>l で始まらない LSP の操作のキー（#227 のオーケストレータの決定）。
+		"\nK ", "\ngq ", "\n<C-]> ", "整形する（LSP）",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("<Space>l? list lacks %q:\n%s", want, text)
@@ -130,6 +161,31 @@ func TestKeyList(t *testing.T) {
 	}
 	if strings.Contains(text, "<Space>dc") {
 		t.Errorf("<Space>l? list has <Space>dc:\n%s", text)
+	}
+	// 大文字と小文字を区別しない順（同じなら小文字が先）で、? の行は末尾に置く。
+	order := []string{"\n<Space>ld ", "\n<Space>lD ", "\n<Space>le ", "\n<Space>lE ", "\n<Space>lx ", "\n<Space>l? "}
+	for i := 1; i < len(order); i++ {
+		if a, b := strings.Index(text, order[i-1]), strings.Index(text, order[i]); a < 0 || b < 0 || a > b {
+			t.Errorf("%q (%d) should come before %q (%d):\n%s", order[i-1], a, order[i], b, text)
+		}
+	}
+	// 一覧の行は、表示の文字列のほかに、キーの列と操作を持つ。
+	var rows []keyRow
+	h.e.do(func() { rows = h.e.keyRows(input.KeyGroupLSP, editcmd.MustParseKeys("<Space>l")) })
+	var builtin, user *keyRow
+	for i := range rows {
+		if rows[i].Label == "<Space>la" && rows[i].Source == sourceBuiltin {
+			builtin = &rows[i]
+		}
+		if rows[i].Label == "<Space>la" && rows[i].Source == sourceUser {
+			user = &rows[i]
+		}
+	}
+	if builtin == nil || builtin.Ref.ID != "codeAction" || !builtin.Ref.Provider() || builtin.Kind != input.BindAction || !builtin.Overridden {
+		t.Errorf("builtin <Space>la row = %+v", builtin)
+	}
+	if user == nil || editcmd.KeysString(user.RHS) != "dd" || user.Modes != input.MapNormal || user.Overridden {
+		t.Errorf("user <Space>la row = %+v", user)
 	}
 
 	// 同じ client の 2 回目は、同じタブの中身を替える。

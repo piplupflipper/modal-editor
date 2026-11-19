@@ -2,6 +2,7 @@ package input
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
@@ -246,8 +247,9 @@ const (
 	ProviderDiagnosticListAll = "diagnostic.listAll"
 	ProviderDiagnosticNext    = "diagnostic.next"
 	ProviderDiagnosticPrev    = "diagnostic.prev"
-	// KeyListPrefix は、キーの一覧（FR-90）を出す操作の ID の接頭辞である。後ろは、一覧を絞る接頭辞のキーの列（editcmd.KeysString の表記）である。
-	// <leader>l? なら "keys.<Space>l" になる。提供者へは問い合わせず、internal/editor が一覧を出す。
+	// KeyListPrefix は、キーの一覧（FR-90）を出す操作の ID の接頭辞である。
+	// 後ろは「操作の分類（KeyGroupLSP などか空）:一覧を絞る接頭辞のキーの列（editcmd.KeysString の表記）」である（ParseKeyListID）。
+	// <leader>l? なら "keys.lsp:<Space>l"、g? なら "keys.:g" になる。提供者へは問い合わせず、internal/editor が一覧を出す。
 	// ProviderExtension の操作にするのは、ドットリピートに記録せず（command の repeatable）、
 	// 編集を禁止したバッファでも断らない（command の changesText）扱いを、テキストを変えない LSP の操作と揃えるためである。
 	KeyListPrefix = "keys."
@@ -305,22 +307,66 @@ var providerKeys = []providerSpec{
 	{keys: "<Leader>du", id: "debug.toggleUI", kind: BindAction, desc: "DAP のペインを切り替える（DAP）"},
 }
 
-// keyListKeys は、接頭辞で絞ったキーの一覧（FR-90）を出す既定のキーである（要件定義 4.11 の表の <leader>l? と <leader>d?）。
-// keys の最後の ? の手前が、一覧を絞る接頭辞である。
+// 操作の分類（ProviderGroup）。<leader>l? と <leader>d? の一覧は、接頭辞に加えてこの分類の操作のキーを出す
+// （K、gq、<C-]> のような <leader>l で始まらない LSP のキーを含めるため。#227 のオーケストレータの決定）。
+const (
+	KeyGroupLSP = "lsp"
+	KeyGroupDAP = "dap"
+)
+
+// keyListKeys は、キーの一覧（FR-90）を出す既定のキーである（要件定義 4.11 の表の <leader>l? と <leader>d?）。
+// keys の最後の ? の手前が一覧を絞る接頭辞で、group はその一覧に含める操作の分類である。
 // 他の接頭辞の ? は、internal/editor が登録の接頭辞から作る（基本設計 7.2）。
-var keyListKeys = []providerSpec{
-	{keys: "<Leader>l?", kind: BindAction, modes: MapNormal, desc: "LSP のキーの一覧"},
-	{keys: "<Leader>d?", kind: BindAction, modes: MapNormal, desc: "DAP のキーの一覧"},
+var keyListKeys = []struct {
+	keys, group, desc string
+}{
+	{keys: "<Leader>l?", group: KeyGroupLSP, desc: "LSP のキーの一覧"},
+	{keys: "<Leader>d?", group: KeyGroupDAP, desc: "DAP のキーの一覧"},
 }
 
-// KeyListBinding は、接頭辞 prefix で始まるキーの一覧（FR-90）を出す、prefix の後に ? を続けたキーの登録を返す。
-// 登録の ID は KeyListPrefix に prefix の表記を続けたもので、Ref.Extension は ProviderExtension である。
-func KeyListBinding(prefix []editcmd.Key, desc string) Binding {
+// KeyListBinding は、接頭辞 prefix で始まるキーと、分類 group（空なら無し）の操作のキーの一覧（FR-90）を出す、
+// prefix の後に ? を続けたキーの登録を返す。Ref.ID は KeyListPrefix で始まり（ParseKeyListID）、Ref.Extension は ProviderExtension である。
+func KeyListBinding(prefix []editcmd.Key, group, desc string) Binding {
 	keys := append(append([]editcmd.Key(nil), prefix...), editcmd.Rune('?'))
 	return Binding{
 		Kind: BindAction, Modes: MapNormal, Keys: keys, Description: desc,
-		Ref: editcmd.Ref{ID: KeyListPrefix + editcmd.KeysString(prefix), Extension: ProviderExtension},
+		Ref: editcmd.Ref{ID: KeyListPrefix + group + ":" + editcmd.KeysString(prefix), Extension: ProviderExtension},
 	}
+}
+
+// ParseKeyListID は、キーの一覧の操作の ID（KeyListBinding）から、分類と接頭辞を取り出す。キーの一覧の ID でなければ ok は false である。
+func ParseKeyListID(id string) (group string, prefix []editcmd.Key, ok bool) {
+	rest, ok := strings.CutPrefix(id, KeyListPrefix)
+	if !ok {
+		return "", nil, false
+	}
+	group, keys, ok := strings.Cut(rest, ":")
+	if !ok {
+		return "", nil, false
+	}
+	prefix, err := editcmd.ParseKeys(keys)
+	if err != nil {
+		return "", nil, false
+	}
+	return group, prefix, true
+}
+
+// ProviderGroup は、提供者へ振り分ける操作の ID の分類（KeyGroupLSP か KeyGroupDAP）を返す。
+// debug. と breakpoint. で始まる操作は DAP、それ以外の providerKeys の操作（診断を含む）は LSP である（要件定義 4.11 の 2 つの表）。
+// キーの一覧の操作はその一覧の分類を返す。どれでもなければ空を返す。
+func ProviderGroup(id string) string {
+	if g, _, ok := ParseKeyListID(id); ok {
+		return g
+	}
+	if strings.HasPrefix(id, "debug.") || strings.HasPrefix(id, "breakpoint.") {
+		return KeyGroupDAP
+	}
+	for _, s := range providerKeys {
+		if s.id == id {
+			return KeyGroupLSP
+		}
+	}
+	return ""
 }
 
 // ProviderOperations は、既定のキーで呼べる、提供者へ振り分ける操作の ID の一覧を、表の順に重なりなく返す。
@@ -366,7 +412,7 @@ func DefaultKeymapLeader(leader []editcmd.Key) (m *Keymap, errs []error) {
 	for _, s := range keyListKeys {
 		keys, err := editcmd.ParseKeysLeader(s.keys, leader)
 		if err == nil {
-			err = m.Bind(KeyListBinding(keys[:len(keys)-1], s.desc))
+			err = m.Bind(KeyListBinding(keys[:len(keys)-1], s.group, s.desc))
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("キーの一覧の既定のキー %s を登録できない: %w", s.keys, err))
