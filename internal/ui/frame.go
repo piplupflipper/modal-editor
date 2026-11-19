@@ -212,4 +212,6 @@ type Frame struct {
 	PopupCenter bool
 	// Tabs は、client のタブの並びである（FR-62）。Renderer.TabLine の場合に、画面の一番上の行にタブの行として出す。
 	Tabs []Tab
+	// Diff は、見比べている間の差分の色と詰め物の行である（FR-99。diff.go）。nil なら見比べていない。
+	Diff *Diff
 }
