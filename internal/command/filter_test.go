@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // shCommand は、テストの ex.State.Shell である。cmd を /bin/sh -c で実行し、標準出力と標準エラー出力を合わせて返す。

@@ -50,7 +50,7 @@ svg .tick{stroke:var(--muted);stroke-width:1}
 <text x="152" y="220" class="tx-m">描画</text>
 
 <rect x="200" y="30" width="300" height="380" rx="8" class="zone"/>
-<text x="212" y="50" class="tx-m">プロセス：modal-editor（本体）</text>
+<text x="212" y="50" class="tx-m">プロセス：vi-imitation（本体）</text>
 <rect x="220" y="64" width="260" height="60" rx="6" class="bx-acc"/>
 <text x="350" y="88" text-anchor="middle" class="tx-b">入力の解釈と編集コマンド</text>
 <text x="350" y="108" text-anchor="middle" class="tx-m">モード、ドットリピート、マクロ</text>

@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // testMemoryLimitMB は、上限を掛けるテストで使う RLIMIT_AS（MiB）である。

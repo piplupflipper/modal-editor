@@ -1,9 +1,0 @@
-{
-  "id": "dap",
-  "command": "./modal-editor-ext-dap",
-  "provides": [
-    "breakpoint.toggle", "breakpoint.conditional", "breakpoint.clear",
-    "debug.continue", "debug.pause", "debug.terminate", "debug.restart", "debug.runLast",
-    "debug.stepOver", "debug.stepIn", "debug.stepOut"
-  ]
-}

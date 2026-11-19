@@ -14,11 +14,11 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // 端末を子プロセスへ渡す実行と、待つだけの client（基本設計 4.7、4.9。FR-79、FR-80、FR-82、FR-83、FR-116、FR-117）。
@@ -32,9 +32,9 @@ import (
 //
 // # 待つだけの client
 //
-// 本体が起動する子プロセス（:! のシェル、:{range}! のシェル、拡張機能）の環境変数には、server のソケットのパス（MODAL_EDITOR_SOCKET）と
+// 本体が起動する子プロセス（:! のシェル、:{range}! のシェル、拡張機能）の環境変数には、server のソケットのパス（VI_IMITATION_SOCKET）と
 // EDITOR、GIT_EDITOR を入れる（FR-82。値は呼び出し側が Config.ChildEnv で渡す）。:! と :{range}! では、コマンドを打った client の識別子
-// （EnvClient）も入れる。この環境変数のもとで起動した modal-editor は、待つだけの client として server に繋ぎ（Wait）、
+// （EnvClient）も入れる。この環境変数のもとで起動した vi-imitation は、待つだけの client として server に繋ぎ（Wait）、
 // 渡されたファイルを、その識別子の client のタブで開かせ、それらのタブがすべて閉じられるまで待つ（FR-83）。
 // 識別子が無い（拡張機能の子プロセスなど）か、その client がもういなければ、操作中の client のタブに開く。
 //
@@ -44,7 +44,7 @@ import (
 // 待つだけの client が終わると、git がコミットを続ける。
 
 // EnvClient は、:! と :{range}! の子プロセスの環境変数に入れる、コマンドを打った client の識別子の名前である（仮。基本設計 4.9）。
-const EnvClient = "MODAL_EDITOR_CLIENT"
+const EnvClient = "VI_IMITATION_CLIENT"
 
 // DefaultElevateCommand は、権限を上げて書くときに tee の前に付けるコマンドの既定値である（FR-79）。
 var DefaultElevateCommand = []string{"sudo"}

@@ -124,7 +124,7 @@ func TestShellJoinRoundTrip(t *testing.T) {
 }
 
 func TestShellQuoteLeavesSafeWords(t *testing.T) {
-	for _, s := range []string{"modal-editor", "/usr/bin/x", "--popup", "%1", "w1:p2", "a,b+c@d"} {
+	for _, s := range []string{"vi-imitation", "/usr/bin/x", "--popup", "%1", "w1:p2", "a,b+c@d"} {
 		if got := shellQuote(s); got != s {
 			t.Errorf("shellQuote(%q) = %q, want unchanged", s, got)
 		}

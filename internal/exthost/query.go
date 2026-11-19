@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // Call は、拡張機能 id へリクエスト method を送り、応答を待つ（基本設計 5.4）。

@@ -10,9 +10,9 @@ import (
 	"os/exec"
 	"sync"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/term"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/term"
 )
 
 // このファイルは、server に頼まれて端末を子プロセスへ渡す処理である（基本設計 4.7、4.9。FR-79、FR-80、FR-117）。

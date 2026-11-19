@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // Search は、検索のパターンと向きである。

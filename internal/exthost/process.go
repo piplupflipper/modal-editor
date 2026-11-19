@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // 異常の理由（基本設計 5.2）。StateChange.Err と記録に使う。

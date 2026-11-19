@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command"
 )
 
 // TestFixEndOfLine は、Config.FixEndOfLine を開いたバッファの書き出しに使うことを確かめる（基本設計 4.1）。

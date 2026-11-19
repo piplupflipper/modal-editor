@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // 拡張機能が足した部品（Frame.ExtParts）は、本体の部品と同じく並びの位置に出す。

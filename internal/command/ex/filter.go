@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // filterCommand は、:{range}!{cmd} の表の行である。名前の "!" は英字でないので commands の表には置かず、runOne が直接引く。

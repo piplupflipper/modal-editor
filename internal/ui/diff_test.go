@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // diffTheme は、差分の色を背景の色の番号で読み分けるテーマである。

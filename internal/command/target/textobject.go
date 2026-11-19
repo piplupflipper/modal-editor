@@ -3,7 +3,7 @@ package target
 import (
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // この file の関数は、表 textObjects に登録するテキストオブジェクトである。

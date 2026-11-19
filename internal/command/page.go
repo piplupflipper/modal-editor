@@ -1,6 +1,6 @@
 package command
 
-import "github.com/piplupflipper/modal-editor/internal/editcmd"
+import "github.com/piplupflipper/vi-imitation/internal/editcmd"
 
 // Viewport は、画面のバッファの表示領域である。ページ単位のスクロール（<PageUp>、<PageDown>）が読み書きする。
 // 表示の状態（どの行から描くか）は描画の側が持つので、呼び出し側（internal/editor）が State.Viewport に差し込む。

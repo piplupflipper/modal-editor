@@ -5,18 +5,18 @@
 set -eu
 d=$1
 
-"$d/modal-editor" --version
-"$d/modal-editor-mcp-bridge" --version
+"$d/vi-imitation" --version
+"$d/vi-imitation-mcp-bridge" --version
 
 # 宣言ファイルのある拡張機能は、標準入力を閉じると接続が終わったとして終了コード 0 で終わる。
 for m in "$d"/extensions/*; do
 	name=${m##*/}
-	"$m/modal-editor-ext-$name" </dev/null
+	"$m/vi-imitation-ext-$name" </dev/null
 	echo "$name: ok"
 done
 
 # スクリプトの実行環境は、引数が無いと使い方を表示する。
-"$d/modal-editor-ext-script" 2>&1 | grep -q '^usage:'
+"$d/vi-imitation-ext-script" 2>&1 | grep -q '^usage:'
 echo "script: ok"
 
 # tree-sitter の拡張機能に Go のソースを 1 回解析させ、decoration/set が返ることを確かめる。
@@ -30,7 +30,7 @@ out=$(
 		msg '{"jsonrpc":"2.0","method":"buffer/open","params":{"buffer":1,"version":1,"fileType":"go","text":"package main\nfunc main() {}"}}'
 		# 解析は別の goroutine で行うので、応答を待ってから標準入力を閉じる。
 		sleep 2
-	} | "$d/extensions/treesitter/modal-editor-ext-treesitter"
+	} | "$d/extensions/treesitter/vi-imitation-ext-treesitter"
 )
 case $out in
 *'"method":"decoration/set"'*'"styles":["keyword","function"]'*) echo "treesitter parse: ok" ;;

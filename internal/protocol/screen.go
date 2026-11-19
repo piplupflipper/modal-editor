@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // このファイルは、画面の内容を送る単位を決める（基本設計 1.2）。

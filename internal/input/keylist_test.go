@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // 本体の既定のキーは、どれもキーの一覧に出す説明文を持つ（PR #189 と PR #209 の未確認事項の sa、sd、sr、<、>、LSP と DAP の操作を含む）。

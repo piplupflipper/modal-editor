@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // Decoded は、端末から読んだバイト列を解読した 1 件である。キー 1 つか、貼り付けたテキスト 1 つである。

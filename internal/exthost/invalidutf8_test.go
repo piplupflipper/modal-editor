@@ -9,8 +9,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // 不正な UTF-8 を含むバッファを拡張機能へ送らない取り決め（基本設計 4.1、5.3。#62）を確かめる。

@@ -14,11 +14,11 @@
 
 使い方は docs/measurements/nfr05-footprint.md にある。Python 3 の標準ライブラリだけを使い、Linux でだけ動く。
 
-    scripts/nfr05-footprint.py --runs 20 --label me-empty -- bin/modal-editor empty.txt
+    scripts/nfr05-footprint.py --runs 20 --label me-empty -- bin/vi-imitation empty.txt
 
 エディタの環境変数の XDG_CONFIG_HOME、XDG_DATA_HOME、XDG_STATE_HOME、XDG_CACHE_HOME は、
 1 回ごとに作る空の一時ディレクトリにする（利用者の設定と拡張機能を読まないため）。
---config を渡すと、その内容を $XDG_CONFIG_HOME/modal-editor/config.jsonc に置く。
+--config を渡すと、その内容を $XDG_CONFIG_HOME/vi-imitation/config.jsonc に置く。
 """
 
 import argparse
@@ -61,7 +61,7 @@ def descendants(pid):
         except OSError:
             continue
         # comm は括弧に囲まれ、空白を含みうるので、最後の ')' の後ろを読む。
-        # comm は 15 バイトで切れる（modal-editor-ext-lsp と modal-editor-ext-treesitter が同じになる）ので、名前は cmdline から取る。
+        # comm は 15 バイトで切れる（vi-imitation-ext-lsp と vi-imitation-ext-treesitter が同じになる）ので、名前は cmdline から取る。
         name = s[s.index("(") + 1 : s.rindex(")")]
         ppid = int(s[s.rindex(")") + 2 :].split()[1])
         try:
@@ -134,7 +134,7 @@ def run_once(argv, args, dump=None):
             os.makedirs(d)
             env[f"XDG_{name}_HOME"] = d
         if args.config:
-            d = os.path.join(tmp, "config", "modal-editor")
+            d = os.path.join(tmp, "config", "vi-imitation")
             os.makedirs(d)
             shutil.copy(args.config, os.path.join(d, "config.jsonc"))
         for kv in args.env:
@@ -211,7 +211,7 @@ def run_once(argv, args, dump=None):
             "children": [(name, status_kib(p, "VmRSS")) for p, name in descendants(proc.pid)],
         }
 
-        # modal-editor は :qa を持たないので、ファイルを 1 つだけ開いて :q! で終わらせる。
+        # vi-imitation は :qa を持たないので、ファイルを 1 つだけ開いて :q! で終わらせる。
         try:
             os.write(master, b"\x1b:q!\r")
         except OSError:
@@ -251,7 +251,7 @@ def main():
     p.add_argument("--rows", type=int, default=24)
     p.add_argument("--cols", type=int, default=80)
     p.add_argument("--term", default="xterm-256color", help="エディタに渡す TERM")
-    p.add_argument("--config", help="modal-editor の設定ファイルとして置くファイル")
+    p.add_argument("--config", help="vi-imitation の設定ファイルとして置くファイル")
     p.add_argument("--env", action="append", default=[], help="エディタに足す環境変数（K=V）")
     p.add_argument("--label", default="", help="出力の各行の先頭に付ける名前")
     p.add_argument("--no-answer", dest="answer", action="store_false", help="端末への問い合わせに応答しない")

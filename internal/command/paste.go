@@ -1,8 +1,8 @@
 package command
 
 import (
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // pasteAppend は、ノーマルモードとビジュアルモードの貼り付けを、ドットリピートに記録するときの値（a）である。

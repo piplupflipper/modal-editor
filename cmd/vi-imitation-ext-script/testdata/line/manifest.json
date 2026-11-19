@@ -1,0 +1,13 @@
+{
+  "id": "script-line",
+  "command": "./vi-imitation-ext-script",
+  "args": ["line.go"],
+  "activation": [
+    { "on": "textObject", "id": "script.inner" }
+  ],
+  "contributes": {
+    "textObjects": [
+      { "id": "script.inner", "keys": "is" }
+    ]
+  }
+}

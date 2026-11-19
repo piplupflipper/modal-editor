@@ -5,9 +5,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // readOnlyError は、編集を禁止したバッファへの buffer/edit に返す誤りの応答である（FR-118）。

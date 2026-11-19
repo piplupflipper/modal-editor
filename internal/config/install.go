@@ -11,9 +11,9 @@ import (
 // ExtensionInstall は、設定ファイルの extensions.install の 1 項目で、取得する拡張機能の 1 つである（基本設計 5.6。項目の名前は仮）。
 // 項目の名前と型と並びは extmgr.Spec と同じにしてあり、呼び出し側は extmgr.Spec(e) で変換できる。
 //
-//	{ "name": "surround", "repo": "https://github.com/example/modal-editor-surround", "version": "v0.1.0" }
+//	{ "name": "surround", "repo": "https://github.com/example/vi-imitation-surround", "version": "v0.1.0" }
 type ExtensionInstall struct {
-	// Name は、拡張機能を置くディレクトリの名前（$XDG_DATA_HOME/modal-editor/extensions/<Name>/）である。
+	// Name は、拡張機能を置くディレクトリの名前（$XDG_DATA_HOME/vi-imitation/extensions/<Name>/）である。
 	// 英数字で始まり、英数字と "."、"_"、"-" だけからなる。
 	Name string
 	// Repo は、取得元の git のリポジトリ（git clone に渡す URL か絶対パス）である。"-" で始まらず、相対パスでない。

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // createdBuffer は、タイトルが title のバッファの、編集の禁止、タブの持ち主の client の ID（タブでなければ 0）、その数を返す。

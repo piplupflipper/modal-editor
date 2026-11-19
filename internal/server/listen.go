@@ -23,7 +23,7 @@ const staleDialTimeout = 500 * time.Millisecond
 
 // Listen は、path で server のソケットを待ち受ける（基本設計 1.2）。
 //
-// path を置くディレクトリ（基本設計 1.2 の `<名前>/`）とその親（`$XDG_RUNTIME_DIR/modal-editor/` か `modal-editor-<利用者 ID>/`）は、
+// path を置くディレクトリ（基本設計 1.2 の `<名前>/`）とその親（`$XDG_RUNTIME_DIR/vi-imitation/` か `vi-imitation-<利用者 ID>/`）は、
 // 無ければ権限 0700 で作る。
 // どちらも、シンボリックリンクでないディレクトリで、持ち主が実効ユーザー ID で、他の利用者の権限が無いことを確かめ、満たさなければ待ち受けない。
 // 親を他の利用者が書けると、検査の後に `<名前>/` を入れ替えられるためである。

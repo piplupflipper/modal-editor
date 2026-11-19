@@ -4,9 +4,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // actionFunc は、本体の対象を取らない操作 1 つの実装である。

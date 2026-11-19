@@ -3,7 +3,7 @@ package command
 import (
 	"errors"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // maxPlayDepth は、マクロの再生の入れ子の上限である。マクロが自分を呼ぶ（qa@aq）と、失敗するまで再帰するための歯止めである。

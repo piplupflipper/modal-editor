@@ -12,7 +12,7 @@ import (
 
 	"github.com/tailscale/hujson"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // ManifestFileName は、拡張機能のディレクトリに置く宣言ファイルの名前である（基本設計 5.1。make dist の配置と同じ）。
@@ -32,7 +32,7 @@ type Extension struct {
 }
 
 // DefaultPath は、設定ファイルの置き場所（仮）を返す。
-// $XDG_CONFIG_HOME/modal-editor/config.jsonc で、XDG_CONFIG_HOME が空か相対パスなら（XDG Base Directory の決まり）、
+// $XDG_CONFIG_HOME/vi-imitation/config.jsonc で、XDG_CONFIG_HOME が空か相対パスなら（XDG Base Directory の決まり）、
 // $HOME/.config を使う。どちらも決まらなければ誤りを返す。
 func DefaultPath() (string, error) {
 	base, err := xdgDir("XDG_CONFIG_HOME", ".config")
@@ -45,7 +45,7 @@ func DefaultPath() (string, error) {
 // ExtensionDirs は、拡張機能を探すディレクトリ（仮）を、優先する順に返す。
 // executable は本体の実行ファイルのパス（os.Executable の結果）で、空なら 2 つ目を省く。
 //
-//  1. $XDG_DATA_HOME/modal-editor/extensions（利用者の拡張機能）。XDG_DATA_HOME が空か相対パスなら $HOME/.local/share を使い、
+//  1. $XDG_DATA_HOME/vi-imitation/extensions（利用者の拡張機能）。XDG_DATA_HOME が空か相対パスなら $HOME/.local/share を使い、
 //     どちらも決まらなければ省く
 //  2. executable と同じディレクトリの extensions（同梱の拡張機能。make dist の配置）
 //

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command/target"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/input"
 )
 
 // fakeExt は、拡張機能の問い合わせを記録し、決まった結果を返す。

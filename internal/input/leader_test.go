@@ -3,7 +3,7 @@ package input
 import (
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // LSP と DAP の操作の既定のキー（要件定義 4.11 の 2 つの表）は、leader に従って、提供者へ振り分ける操作として登録する。

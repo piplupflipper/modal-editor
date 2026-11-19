@@ -5,7 +5,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // mapMode は、利用者のキーマップを引くモードである。

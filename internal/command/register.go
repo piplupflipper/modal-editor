@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // Register は、レジスター 1 つの内容である（FR-04）。

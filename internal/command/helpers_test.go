@@ -1,8 +1,8 @@
 package command
 
 import (
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // newBuffer は、text の行をそのまま行とするバッファを作る（Vim の setline(1, split(text, "\n", 1)) と同じ行になる）。

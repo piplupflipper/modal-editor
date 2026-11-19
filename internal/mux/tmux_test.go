@@ -29,7 +29,7 @@ func newTestTmux(t *testing.T) *testTmux {
 	if err != nil {
 		t.Skip("tmux が無い")
 	}
-	name := fmt.Sprintf("modal-editor-mux-test-%d-%d", os.Getpid(), time.Now().UnixNano())
+	name := fmt.Sprintf("vi-imitation-mux-test-%d-%d", os.Getpid(), time.Now().UnixNano())
 	run := func(args ...string) string {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

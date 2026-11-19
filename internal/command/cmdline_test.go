@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
 )
 
 // コマンドラインモードは、入力中の文字列を CommandLine で見せ、<CR> で ex.Execute に渡す。

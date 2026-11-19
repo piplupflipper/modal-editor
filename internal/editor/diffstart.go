@@ -6,15 +6,15 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
 // 拡張機能が作るファイルでないバッファ（buffer/create、buffer/update、buffer/dispose）と、拡張機能から始める見比べ（diff/start）
 // （基本設計 5.3、6.8、6.9。FR-64、FR-88、FR-99、FR-104）。
 //
-// git 連携の拡張機能（cmd/modal-editor-ext-git）は、HEAD の版を buffer/create で編集を禁止したファイルでないバッファにし、
+// git 連携の拡張機能（cmd/vi-imitation-ext-git）は、HEAD の版を buffer/create で編集を禁止したファイルでないバッファにし、
 // diff/start でファイルのバッファと見比べさせる。
 //
 // buffer/create で作ったバッファは、どのタブにもせず、作った拡張機能（bufferState.creator）を覚える。
@@ -23,13 +23,13 @@ import (
 // 期限までに繋がなかった、分割に失敗した）は、まだタブでない作ったバッファを閉じる（discardCreated）。
 //
 // diff/start で、片方のバッファだけがタブなら、:diffsplit と同じくそのタブの client のペインを分割し、ファイルを渡さずに
-// 新しい編集の client を起動する。新しい client は、server のソケットを指定して繋ぎ（cmd/modal-editor の -connect）、
+// 新しい編集の client を起動する。新しい client は、server のソケットを指定して繋ぎ（cmd/vi-imitation の -connect）、
 // 環境変数 EnvSplit の印を Hello で知らせる。印が待ちと同じ client が繋いだら、名前の無い空のタブを作る代わりに、
 // もう片方のバッファをタブにして（diffAdopt）、見比べを始める（diffAttached）。
 
 // EnvSplit は、server が見比べのために分割したペインで起動する編集の client の、待ちの印を入れる環境変数の名前である（仮）。
 // client は Hello の Env でこの値を知らせ、attach がそれを取り出して、ClientInfo.Env から外す（外部のコマンドへ渡さない）。
-const EnvSplit = "MODAL_EDITOR_SPLIT"
+const EnvSplit = "VI_IMITATION_SPLIT"
 
 // takeSplitToken は、info.Env から EnvSplit の値を取り出して外し、その値を返す。無ければ空を返す。
 func takeSplitToken(info *ClientInfo) string {

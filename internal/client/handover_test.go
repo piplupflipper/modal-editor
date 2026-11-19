@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/term"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/term"
 )
 
 // handoverTerm は、端末を子プロセスへ渡せる偽の端末である。Release と Reacquire の呼び出しを記録する。
@@ -134,8 +134,8 @@ func startHandoverClient(t *testing.T) (*handoverTerm, protocol.ServerConn) {
 func TestTerminalRunShellPrompt(t *testing.T) {
 	tm, s := startHandoverClient(t)
 	if err := s.Send(protocol.TerminalRun{
-		ID: 4, Commands: []protocol.TerminalCommand{{Shell: `printf 'out %s\n' "$MODAL_EDITOR_CLIENT"; exit 3`}},
-		Env: []string{"MODAL_EDITOR_CLIENT=9"}, Prompt: true,
+		ID: 4, Commands: []protocol.TerminalCommand{{Shell: `printf 'out %s\n' "$VI_IMITATION_CLIENT"; exit 3`}},
+		Env: []string{"VI_IMITATION_CLIENT=9"}, Prompt: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

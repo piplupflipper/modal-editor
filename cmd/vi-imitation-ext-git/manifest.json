@@ -1,0 +1,12 @@
+{
+  "id": "git",
+  "command": "./vi-imitation-ext-git",
+  "activation": [
+    { "on": "command", "id": "git.diffHead" }
+  ],
+  "contributes": {
+    "commands": [
+      { "id": "git.diffHead", "keys": "<Leader>gd", "description": "バッファのファイルを git の HEAD の版と見比べる" }
+    ]
+  }
+}

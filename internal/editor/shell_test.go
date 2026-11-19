@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command"
 )
 
 // waitShell は、送ったキーを処理し、外部のコマンドが終わって結果を入れ終えるまで待つ。
@@ -40,13 +40,13 @@ func waitFile(t *testing.T, path string) {
 func TestShellFilterAndRead(t *testing.T) {
 	t.Setenv("SHELL", "/bin/sh")
 	dir := writeFiles(t, map[string]string{"a.txt": "c\nbb\na\n"})
-	h := start(t, Config{WorkDir: dir, ChildEnv: []string{"MODAL_EDITOR_TEST_VALUE=xyz"}}, "a.txt")
+	h := start(t, Config{WorkDir: dir, ChildEnv: []string{"VI_IMITATION_TEST_VALUE=xyz"}}, "a.txt")
 	h.keys(":2,3!tr a-z A-Z<CR>")
 	h.waitShell()
 	if got := h.text(); got != "c\nBB\nA" {
 		t.Fatalf(":2,3!tr: text = %q", got)
 	}
-	h.keys(":$r !pwd; echo $MODAL_EDITOR_TEST_VALUE<CR>")
+	h.keys(":$r !pwd; echo $VI_IMITATION_TEST_VALUE<CR>")
 	h.waitShell()
 	if got, want := h.text(), "c\nBB\nA\n"+dir+"\nxyz"; got != want {
 		t.Errorf(":r !pwd: text = %q, want %q", got, want)

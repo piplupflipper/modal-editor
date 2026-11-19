@@ -1,0 +1,13 @@
+{
+  "id": "lsp",
+  "command": "./vi-imitation-ext-lsp",
+  "saveHook": true,
+  "activation": [
+    { "on": "filetype", "pattern": "go" }
+  ],
+  "provides": [
+    "definition", "implementation", "typeDefinition", "hover",
+    "references", "documentSymbols", "workspaceSymbols",
+    "format", "rename"
+  ]
+}

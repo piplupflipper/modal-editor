@@ -3,7 +3,7 @@ package input
 import (
 	"slices"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // MaxCount は、回数の上限である。これを超える回数は MaxCount に丸める。

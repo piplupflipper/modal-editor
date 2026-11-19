@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // checkMCPSocket は、s のパスが parent の直下の prefix で始まるディレクトリの mcp.sock で、
@@ -30,8 +30,8 @@ func checkMCPSocket(t *testing.T, s *MCPSocket, parent, prefix string) {
 	}
 }
 
-// MCP のソケットのパスは、XDG_RUNTIME_DIR があればその下の modal-editor/<pid>-<乱数>/mcp.sock にし、
-// 使えなければ一時ディレクトリの下の modal-editor-<pid>-<乱数>/mcp.sock にする（基本設計 6.2）。
+// MCP のソケットのパスは、XDG_RUNTIME_DIR があればその下の vi-imitation/<pid>-<乱数>/mcp.sock にし、
+// 使えなければ一時ディレクトリの下の vi-imitation-<pid>-<乱数>/mcp.sock にする（基本設計 6.2）。
 func TestNewMCPSocket(t *testing.T) {
 	const pid = 4242
 	prefix := strconv.Itoa(pid) + "-"
@@ -41,13 +41,13 @@ func TestNewMCPSocket(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkMCPSocket(t, s, filepath.Join(rt, "modal-editor"), prefix)
-		fi, err := os.Stat(filepath.Join(rt, "modal-editor"))
+		checkMCPSocket(t, s, filepath.Join(rt, "vi-imitation"), prefix)
+		fi, err := os.Stat(filepath.Join(rt, "vi-imitation"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if fi.Mode().Perm() != 0o700 {
-			t.Errorf("modal-editor: mode = %v, want 0700", fi.Mode().Perm())
+			t.Errorf("vi-imitation: mode = %v, want 0700", fi.Mode().Perm())
 		}
 		// 同じプロセスで 2 つ作っても、別のパスになる。
 		s2, err := newMCPSocket(rt, tmp, pid)
@@ -82,7 +82,7 @@ func TestNewMCPSocket(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkMCPSocket(t, s, tmp, "modal-editor-"+prefix)
+			checkMCPSocket(t, s, tmp, "vi-imitation-"+prefix)
 		}
 	})
 	t.Run("runtime dir unusable", func(t *testing.T) {
@@ -96,31 +96,31 @@ func TestNewMCPSocket(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkMCPSocket(t, s, tmp, "modal-editor-"+prefix)
+		checkMCPSocket(t, s, tmp, "vi-imitation-"+prefix)
 		// パスが Unix ドメインソケットの上限を超える。
 		long := filepath.Join(t.TempDir(), strings.Repeat("d", 100))
 		s, err = newMCPSocket(long, tmp, pid)
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkMCPSocket(t, s, tmp, "modal-editor-"+prefix)
+		checkMCPSocket(t, s, tmp, "vi-imitation-"+prefix)
 		if _, err := os.Stat(long); !os.IsNotExist(err) {
 			t.Errorf("created a directory under the long path: %v", err)
 		}
 	})
 	t.Run("runtime dir not private", func(t *testing.T) {
 		tmp := t.TempDir()
-		// 既にある modal-editor が、他の利用者に開いている。
+		// 既にある vi-imitation が、他の利用者に開いている。
 		open := t.TempDir()
-		if err := os.Mkdir(filepath.Join(open, "modal-editor"), 0o700); err != nil {
+		if err := os.Mkdir(filepath.Join(open, "vi-imitation"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(filepath.Join(open, "modal-editor"), 0o755); err != nil { //nolint:gosec // 他の利用者に開いたディレクトリを作るのがこのケースである。
+		if err := os.Chmod(filepath.Join(open, "vi-imitation"), 0o755); err != nil { //nolint:gosec // 他の利用者に開いたディレクトリを作るのがこのケースである。
 			t.Fatal(err)
 		}
-		// 既にある modal-editor が、私用のディレクトリへのシンボリックリンクである。
+		// 既にある vi-imitation が、私用のディレクトリへのシンボリックリンクである。
 		link := t.TempDir()
-		if err := os.Symlink(t.TempDir(), filepath.Join(link, "modal-editor")); err != nil {
+		if err := os.Symlink(t.TempDir(), filepath.Join(link, "vi-imitation")); err != nil {
 			t.Fatal(err)
 		}
 		for _, rt := range []string{open, link} {
@@ -128,7 +128,7 @@ func TestNewMCPSocket(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkMCPSocket(t, s, tmp, "modal-editor-"+prefix)
+			checkMCPSocket(t, s, tmp, "vi-imitation-"+prefix)
 		}
 		private := filepath.Join(t.TempDir(), "private")
 		if err := os.Mkdir(private, 0o700); err != nil {
@@ -152,7 +152,7 @@ func TestNewMCPSocket(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.Remove() //nolint:errcheck // テストの後始末
-		checkMCPSocket(t, s, filepath.Join(rt, "modal-editor"), strconv.Itoa(os.Getpid())+"-")
+		checkMCPSocket(t, s, filepath.Join(rt, "vi-imitation"), strconv.Itoa(os.Getpid())+"-")
 		if want := ext.EnvMCPSocket + "=" + s.Path; s.Env() != want {
 			t.Errorf("Env = %q, want %q", s.Env(), want)
 		}

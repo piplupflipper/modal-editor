@@ -8,11 +8,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/input"
 )
 
 // 本体の操作を提供者へ振り分ける（基本設計 5.5。FR-94）。

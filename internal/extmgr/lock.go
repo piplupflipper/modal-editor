@@ -26,7 +26,7 @@ const lockVersion = 1
 //	  "version": 1,
 //	  "extensions": {
 //	    "surround": {
-//	      "repo": "https://github.com/example/modal-editor-surround",
+//	      "repo": "https://github.com/example/vi-imitation-surround",
 //	      "version": "v0.1.0",
 //	      "commit": "0123456789abcdef0123456789abcdef01234567"
 //	    }

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command/target"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // region は、オペレーターが働く範囲である。

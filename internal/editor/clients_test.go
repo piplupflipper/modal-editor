@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // exitTerm は、Run の途中で終わる client の端末（ClientExiter）を真似る偽の端末である。

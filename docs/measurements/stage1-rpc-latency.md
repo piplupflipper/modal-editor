@@ -19,7 +19,7 @@
 
 ## 計測したもの
 
-本体の側は `internal/exthost` の `Host` を使い、拡張機能の側は標準の拡張機能 `cmd/modal-editor-ext-line`（行のテキストオブジェクト `il` と `al`）を子プロセスとして起動した。
+本体の側は `internal/exthost` の `Host` を使い、拡張機能の側は標準の拡張機能 `cmd/vi-imitation-ext-line`（行のテキストオブジェクト `il` と `al`）を子プロセスとして起動した。
 イベントループ（`internal/editor`）は端末ライブラリの裁定（#9）を待っていて未実装なので、イベントループと画面の描画は計測に含まない。
 
 問い合わせの経路は 2 つある。
@@ -73,12 +73,12 @@ CPU の使用率は、計測の前後で読んだ `/proc/stat` の差から求�
 ## 手順
 
 リポジトリの最上位で次を打つ。
-計測のテスト（`internal/exthost` の `TestStage1Latency`）は、`cmd/modal-editor-ext-line` を一時ディレクトリへビルドし、宣言ファイル `manifest.json` と一緒に置いてから起動する。
-環境変数 `MODAL_EDITOR_LATENCY` が `1` でないときは読み飛ばすので、`make test` では動かない。
+計測のテスト（`internal/exthost` の `TestStage1Latency`）は、`cmd/vi-imitation-ext-line` を一時ディレクトリへビルドし、宣言ファイル `manifest.json` と一緒に置いてから起動する。
+環境変数 `VI_IMITATION_LATENCY` が `1` でないときは読み飛ばすので、`make test` では動かない。
 1 回の計測に約 3 分かかる。
 
 ```console
-$ MODAL_EDITOR_LATENCY=1 go test -run TestStage1Latency -count=1 -timeout 30m -v ./internal/exthost
+$ VI_IMITATION_LATENCY=1 go test -run TestStage1Latency -count=1 -timeout 30m -v ./internal/exthost
 ```
 
 `RESULT` で始まる行が各項目の結果である。

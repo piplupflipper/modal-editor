@@ -9,13 +9,13 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // ポップアップと表示の部品（基本設計 1.4。FR-68〜FR-72、FR-110）。

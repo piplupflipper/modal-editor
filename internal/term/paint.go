@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"strconv"
 
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // Painter は、ui の画面（ui.Screen）を端末へ書く制御シーケンスにする。

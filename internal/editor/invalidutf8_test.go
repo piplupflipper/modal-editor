@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
 // 不正な UTF-8 を含むバッファは拡張機能へ送らない（基本設計 4.1、5.3。#62）。
@@ -90,14 +90,14 @@ func TestInvalidUTF8Withheld(t *testing.T) {
 	h.eventually("送り直した複製", func() bool { return h.e.message.Text == `v2:"abc\ndef"` })
 }
 
-// treesitterExtension は、標準の拡張機能 modal-editor-ext-treesitter を一時ディレクトリへビルドし、宣言ファイルを Spec にする。
+// treesitterExtension は、標準の拡張機能 vi-imitation-ext-treesitter を一時ディレクトリへビルドし、宣言ファイルを Spec にする。
 // 文法を cgo でコンパイルするので、CGO_ENABLED は環境のまま（本体は cgo を使わない。NFR-02）。
 func treesitterExtension(t *testing.T) exthost.Spec {
 	t.Helper()
 	dir := t.TempDir()
-	src := filepath.Join("..", "..", "cmd", "modal-editor-ext-treesitter")
+	src := filepath.Join("..", "..", "cmd", "vi-imitation-ext-treesitter")
 	//nolint:gosec // 引数は定数と、テストが作った一時ディレクトリのパスだけである
-	cmd := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "modal-editor-ext-treesitter"), "./"+filepath.ToSlash(src))
+	cmd := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "vi-imitation-ext-treesitter"), "./"+filepath.ToSlash(src))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build extension: %v\n%s", err, out)
 	}

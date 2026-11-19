@@ -19,6 +19,7 @@ func readText(t *testing.T, name string) Text {
 
 // TestComputeRefineEditorGo は、日常の大きさの変更で塊が粗くならないことを確かめる（#228 のレビューの必須 2）。
 // 入力は、このリポジトリの 9c67b40 の internal/editor/editor.go の前と後の版（921 行と 928 行）である。
+// 改名（#197）で、両方の版の import のモジュールパスを同じように置き換えた。行の数と、行どうしが等しいかは変わらない。
 // 計算し直し（refine）が無いと、lcs の打ち切りで 467 行の塊ができ、塊の行は 989 行になった。
 //
 // 期待値は、2026-11-19 に手元の Vim 9.1（patches 1-16）の vim -d（diffopt=internal,filler）で数えたもので、

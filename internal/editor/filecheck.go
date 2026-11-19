@@ -8,11 +8,11 @@ import (
 	"slices"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // DefaultCheckInterval は、開いているバッファのファイルが外で変わっていないかを確かめる間隔の既定値（仮）である（基本設計 6.7）。

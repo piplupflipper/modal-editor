@@ -4,9 +4,9 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/command/target"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // Message は、操作が利用者に知らせる 1 行の通知である。

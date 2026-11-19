@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // stdHost は、標準の拡張機能のリクエストに決まった結果で答え、受け取った params を記録する本体の役である。

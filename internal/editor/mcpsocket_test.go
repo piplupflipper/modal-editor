@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // New は、起動ごとに一意な MCP のソケットのパスを決め、すべての拡張機能へ環境変数 ext.EnvMCPSocket で渡す（基本設計 6.2）。
@@ -22,8 +22,8 @@ func TestMCPSocketToExtensions(t *testing.T) {
 	t.Setenv(ext.EnvMCPSocket, "/stale")
 	h := start(t, Config{Extensions: fakeSpecs(t)})
 	sock := h.e.MCPSocket()
-	if filepath.Base(sock) != "mcp.sock" || filepath.Dir(filepath.Dir(sock)) != filepath.Join(rt, "modal-editor") {
-		t.Fatalf("MCPSocket = %q, want %s/modal-editor/*/mcp.sock", sock, rt)
+	if filepath.Base(sock) != "mcp.sock" || filepath.Dir(filepath.Dir(sock)) != filepath.Join(rt, "vi-imitation") {
+		t.Fatalf("MCPSocket = %q, want %s/vi-imitation/*/mcp.sock", sock, rt)
 	}
 	fi, err := os.Stat(filepath.Dir(sock))
 	if err != nil {

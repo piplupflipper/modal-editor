@@ -5,7 +5,7 @@
 //
 // このパッケージは読むだけで、読んだ値の適用（キーマップの展開、拡張機能の起動）は internal/editor と internal/exthost が行う。
 // 基本設計 2 章の層の規則で、同じ層の internal/exthost も、上の層の internal/editor も import しない。
-// 読んだ値は、editor.Config と exthost.Spec の項目と同じ型で返すので、呼び出し側（cmd/modal-editor）が項目を写す。
+// 読んだ値は、editor.Config と exthost.Spec の項目と同じ型で返すので、呼び出し側（cmd/vi-imitation）が項目を写す。
 //
 // # 誤りの扱い
 //
@@ -16,8 +16,8 @@
 //
 // 設定ファイルの置き場所と、本体が拡張機能を探す規則は、仮に次のとおりにする（PR #109。基本設計 7 章、要件定義 6 章）。
 //
-//   - 設定ファイル: $XDG_CONFIG_HOME/modal-editor/config.jsonc。XDG_CONFIG_HOME が空か相対パスなら ~/.config を使う（DefaultPath）
-//   - 拡張機能: $XDG_DATA_HOME/modal-editor/extensions/<名前>/（利用者）と、本体の実行ファイルの隣の extensions/<名前>/（同梱）。
+//   - 設定ファイル: $XDG_CONFIG_HOME/vi-imitation/config.jsonc。XDG_CONFIG_HOME が空か相対パスなら ~/.config を使う（DefaultPath）
+//   - 拡張機能: $XDG_DATA_HOME/vi-imitation/extensions/<名前>/（利用者）と、本体の実行ファイルの隣の extensions/<名前>/（同梱）。
 //     XDG_DATA_HOME が空か相対パスなら ~/.local/share を使う（ExtensionDirs）。各ディレクトリの manifest.json を宣言ファイルとして読み、
 //     同じ ID なら利用者のものを使う
 package config
@@ -33,8 +33,8 @@ import (
 
 	"github.com/tailscale/hujson"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // Config は、設定ファイルから読んだ値である（基本設計 7 章。項目の名前は仮）。
@@ -91,7 +91,7 @@ type Config struct {
 	CheckInterval *time.Duration
 	// MemoryLimitMB は extensions.memoryLimitMb の値（MiB）で、0 は「上限なし」である（FR-20）。
 	// 基本設計 7 章のとおり、拡張機能の子プロセスの RLIMIT_AS として設定する値で、
-	// 呼び出し側（cmd/modal-editor）が exthost.Config.MemoryLimitMB にそのまま写す。
+	// 呼び出し側（cmd/vi-imitation）が exthost.Config.MemoryLimitMB にそのまま写す。
 	MemoryLimitMB int64
 	// FileTypes は fileTypes の値で、editor.Config.FileTypes にそのまま渡す（基本設計 6.7 のファイルの種類の対応表）。
 	// キーは拡張子（".md"）かファイル名（"Makefile"）、値はファイルの種類の名前である。
@@ -158,7 +158,7 @@ type Config struct {
 const FileName = "config.jsonc"
 
 // appName は、XDG のディレクトリの下に置くディレクトリの名前である。
-const appName = "modal-editor"
+const appName = "vi-imitation"
 
 // mapModes は、keymap のモードの名前である。internal/editor の mapModeNames と同じにする。
 var mapModes = map[string]bool{"normal": true, "visual": true, "insert": true, "commandLine": true}

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // feed は、表記 s のキーを順に Feed し、全ての結果を返す。

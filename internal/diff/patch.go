@@ -3,7 +3,7 @@ package diff
 import (
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // Patch は、差分の塊を片側へ取り込む編集である（FR-101 の do と dp）。

@@ -1,0 +1,14 @@
+{
+  "id": "acp",
+  "command": "./vi-imitation-ext-acp",
+  "activation": [
+    { "on": "command", "id": "acp.prompt" },
+    { "on": "command", "id": "acp.cancel" }
+  ],
+  "contributes": {
+    "commands": [
+      { "id": "acp.prompt", "description": "エージェントにプロンプトを送る（:acp.prompt <プロンプト>）" },
+      { "id": "acp.cancel", "description": "処理中のプロンプトを取り消す" }
+    ]
+  }
+}

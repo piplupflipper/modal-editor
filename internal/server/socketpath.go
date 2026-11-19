@@ -30,24 +30,24 @@ func UnitDirName(unit string) string {
 //
 // ディレクトリは次の順に選び、使えた最初のものを返す。
 //
-//  1. runtimeDir（環境変数 XDG_RUNTIME_DIR）が既にある絶対パスのディレクトリなら、`<runtimeDir>/modal-editor/<名前>/`
-//  2. `<tempDir>/modal-editor-<実効ユーザー ID>/<名前>/`
+//  1. runtimeDir（環境変数 XDG_RUNTIME_DIR）が既にある絶対パスのディレクトリなら、`<runtimeDir>/vi-imitation/<名前>/`
+//  2. `<tempDir>/vi-imitation-<実効ユーザー ID>/<名前>/`
 //
 // 「使えない」のは、ソケットのパスが長さの上限を超える、ディレクトリを作れない、ディレクトリかその親が
 // 他の利用者のものか他の利用者の権限がある（PrepareDir）場合である。
 // 一時ディレクトリで他の利用者が先に同じ名前を作っていた場合も 2 が使えず、どちらも使えなければ両方の誤りを返す。
 // 呼び出し側は、そのことを知らせて 1 つのプロセスで動かす（FR-60 の構成。基本設計 1.2）。
 //
-// runtimeDir の下の modal-editor/ は、MCP のソケットのディレクトリ（internal/exthost の NewMCPSocket）と同じ親である。
+// runtimeDir の下の vi-imitation/ は、MCP のソケットのディレクトリ（internal/exthost の NewMCPSocket）と同じ親である。
 func SocketPathForUnit(unit, runtimeDir, tempDir string) (string, error) {
 	name := UnitDirName(unit)
 	var bases []string
 	if filepath.IsAbs(runtimeDir) {
 		if fi, err := os.Stat(runtimeDir); err == nil && fi.IsDir() {
-			bases = append(bases, filepath.Join(runtimeDir, "modal-editor"))
+			bases = append(bases, filepath.Join(runtimeDir, "vi-imitation"))
 		}
 	}
-	bases = append(bases, filepath.Join(tempDir, "modal-editor-"+strconv.Itoa(os.Geteuid())))
+	bases = append(bases, filepath.Join(tempDir, "vi-imitation-"+strconv.Itoa(os.Geteuid())))
 	var errs []error
 	for _, base := range bases {
 		dir := filepath.Join(base, name)

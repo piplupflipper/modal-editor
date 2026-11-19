@@ -7,7 +7,7 @@
 // # 層
 //
 // internal/term と internal/protocol を import するので、その上の層に置く。
-// internal/server と同じ層で、互いに import しない。両者をつなぐのは cmd/modal-editor である。
+// internal/server と同じ層で、互いに import しない。両者をつなぐのは cmd/vi-imitation である。
 package client
 
 import (
@@ -16,9 +16,9 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/term"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/term"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // Terminal は、client が使う端末の口である。*term.Terminal がこれを満たす。テストでは偽物を差し込む。

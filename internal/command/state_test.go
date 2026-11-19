@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // errOf は、結果の列の最初のエラーを返す。

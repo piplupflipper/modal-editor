@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // chattySpecs は、ファイルの種類 go のバッファを開くと message/show を続けて送る拡張機能（言語サーバーの拡張機能の代役）を返す。

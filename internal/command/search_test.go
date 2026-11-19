@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
 )
 
 // searchCase は、検索（/、?、n、N、*、#）を Vim 9.1 と突き合わせたケースである。

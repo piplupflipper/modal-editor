@@ -10,7 +10,7 @@ import (
 
 // EnvBuildDir は、`make build` が実行ファイルを置いたディレクトリを渡す環境変数の名前である。
 // 指定が無ければ、生成物を読むテストは飛ばす。
-const EnvBuildDir = "MODAL_EDITOR_BUILD_DIR"
+const EnvBuildDir = "VI_IMITATION_BUILD_DIR"
 
 // buildDir は、検査する実行ファイルのディレクトリを返す。
 // 環境変数の指定が無ければテストを飛ばす。
@@ -67,7 +67,7 @@ func assertStaticELF(t *testing.T, path string) {
 //
 // req: NFR-02
 func TestBuildMainStatic(t *testing.T) {
-	path := filepath.Join(buildDir(t), "modal-editor")
+	path := filepath.Join(buildDir(t), "vi-imitation")
 
 	cgo, ok := buildSetting(t, path, "CGO_ENABLED")
 	if !ok || cgo != "0" {
@@ -85,7 +85,7 @@ const mainSizeLimit = 10 * 1024 * 1024
 //
 // req: NFR-05
 func TestBuildMainSize(t *testing.T) {
-	path := filepath.Join(buildDir(t), "modal-editor")
+	path := filepath.Join(buildDir(t), "vi-imitation")
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // problemsOf は、errs を *Error の列にする。*Error でないものがあればテストを失敗させる。
@@ -497,9 +497,9 @@ func TestDefaultPath(t *testing.T) {
 		name, xdg, home, want string
 		wantErr               bool
 	}{
-		{"XDG", "/x/conf", "/home/u", "/x/conf/modal-editor/config.jsonc", false},
-		{"XDG が空", "", "/home/u", "/home/u/.config/modal-editor/config.jsonc", false},
-		{"XDG が相対パス", "rel", "/home/u", "/home/u/.config/modal-editor/config.jsonc", false},
+		{"XDG", "/x/conf", "/home/u", "/x/conf/vi-imitation/config.jsonc", false},
+		{"XDG が空", "", "/home/u", "/home/u/.config/vi-imitation/config.jsonc", false},
+		{"XDG が相対パス", "rel", "/home/u", "/home/u/.config/vi-imitation/config.jsonc", false},
 		{"どちらも無い", "", "", "", true},
 	}
 	for _, c := range cases {
@@ -517,15 +517,15 @@ func TestDefaultPath(t *testing.T) {
 func TestExtensionDirs(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "/x/data")
 	t.Setenv("HOME", "/home/u")
-	got := ExtensionDirs("/opt/me/modal-editor")
+	got := ExtensionDirs("/opt/me/vi-imitation")
 	// 利用者のディレクトリを、同梱のディレクトリより先にする。
-	want := []string{"/x/data/modal-editor/extensions", "/opt/me/extensions"}
+	want := []string{"/x/data/vi-imitation/extensions", "/opt/me/extensions"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ExtensionDirs = %v, want %v", got, want)
 	}
 	t.Setenv("XDG_DATA_HOME", "")
 	got = ExtensionDirs("")
-	want = []string{"/home/u/.local/share/modal-editor/extensions"}
+	want = []string{"/home/u/.local/share/vi-imitation/extensions"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ExtensionDirs = %v, want %v", got, want)
 	}

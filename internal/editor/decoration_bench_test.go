@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
-// jsonDecorations は、cmd/modal-editor-ext-treesitter のテストの bigJSON(n) と同じ形の行
+// jsonDecorations は、cmd/vi-imitation-ext-treesitter のテストの bigJSON(n) と同じ形の行
 // （{"id": N, "name": "itemN", "ok": true, "v": null},）に、tree-sitter の拡張機能が付けるのと同じ 8 つの範囲を付けた一覧を返す。
 // 色の種類の名前は、ext.DecorationSetParams の UnmarshalJSON と同じく、表の文字列を共有する。
 func jsonDecorations(n int) []ext.Decoration {

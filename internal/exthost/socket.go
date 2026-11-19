@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // acceptRetryDelay は、Accept が一時的な誤り（ファイル記述子の不足など）で失敗したときに、次に受け付けるまで待つ時間である。

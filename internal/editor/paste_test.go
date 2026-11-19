@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command"
 )
 
 // paste は、端末から貼り付けのイベントを送る。

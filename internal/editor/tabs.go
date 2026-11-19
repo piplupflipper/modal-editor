@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // タブ（基本設計 4.4 の段階 3 のタブとバッファ）。

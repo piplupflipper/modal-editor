@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // EnvDistDir は、`make dist` が配布物をまとめたディレクトリを渡す環境変数の名前である。
 // 指定が無ければ、配布物を読むテストは飛ばす。
-const EnvDistDir = "MODAL_EDITOR_DIST_DIR"
+const EnvDistDir = "VI_IMITATION_DIST_DIR"
 
 // distDir は、検査する配布物のディレクトリを返す。
 // 環境変数の指定が無ければテストを飛ばす。
@@ -33,7 +33,7 @@ func distDir(t *testing.T) string {
 func TestDistLayout(t *testing.T) {
 	dir := distDir(t)
 
-	for _, name := range []string{"modal-editor", "modal-editor-mcp-bridge", "modal-editor-ext-script"} {
+	for _, name := range []string{"vi-imitation", "vi-imitation-mcp-bridge", "vi-imitation-ext-script"} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(dir, name)
 			assertExecutable(t, path)

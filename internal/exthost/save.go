@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // 保存の流れ（基本設計 6.7）は、イベントループが次の順に進める。

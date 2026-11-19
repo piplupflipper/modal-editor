@@ -32,8 +32,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // 設定の既定値。すべて仮である。
@@ -123,8 +123,8 @@ type Config struct {
 	// RLIMIT_AS は実際に使っているメモリではなく仮想アドレスの量で数える。
 	// Go の実行時は起動時に大きな領域を予約するので、Go で書いた拡張機能はヒープが小さくても、上限が小さいと起動できない。
 	// 起動できるかどうかは上限について単調でなく、ある値で起動できても、それより大きい値で起動できないことがある。
-	// 2026-11-16 の計測（32 CPU の Linux、カーネル 7.0.0、Go 1.27.4）では、modal-editor-ext-line は 760 MiB と 2048 MiB で起動し、
-	// 1150〜1500 MiB では起動しなかった。modal-editor-ext-script は 2048 MiB で 2〜3 割が失敗し、2560 MiB 以上で 20/20 起動した。
+	// 2026-11-16 の計測（32 CPU の Linux、カーネル 7.0.0、Go 1.27.4）では、vi-imitation-ext-line は 760 MiB と 2048 MiB で起動し、
+	// 1150〜1500 MiB では起動しなかった。vi-imitation-ext-script は 2048 MiB で 2〜3 割が失敗し、2560 MiB 以上で 20/20 起動した。
 	// 言語サーバーも同じ値を継ぐので、値は言語サーバーの分も含めて決める（gopls v0.24.0 は 4096 MiB で失敗し、6144 MiB で通った）。
 	// 詳しい表は基本設計 7 章にある。
 	// -race でビルドした実行ファイルは、検出器が大きな領域を予約するので、上限の下では起動できない。

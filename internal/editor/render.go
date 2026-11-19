@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // uiMode は、command のモードを描画のモードにする。

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // 編集を禁止したバッファは、ステータス行の名前の後に [RO] を出す。未保存の印と並べるときは [+] の後に出す。

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // statusScript は、ステータス行に部品を足すスクリプトの拡張機能である（テスト用）。
@@ -28,8 +28,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 func rssMB() int {
@@ -84,9 +84,9 @@ func buildStatusScript(t *testing.T) exthost.Spec {
 		t.Skip("go が無い")
 	}
 	dir := t.TempDir()
-	src := filepath.Join("..", "..", "cmd", "modal-editor-ext-script")
+	src := filepath.Join("..", "..", "cmd", "vi-imitation-ext-script")
 	//nolint:gosec // 引数は定数と、テストが作った一時ディレクトリのパスだけである
-	cmd := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "modal-editor-ext-script"), "./"+filepath.ToSlash(src))
+	cmd := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "vi-imitation-ext-script"), "./"+filepath.ToSlash(src))
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build extension: %v\n%s", err, out)
@@ -95,7 +95,7 @@ func buildStatusScript(t *testing.T) exthost.Spec {
 		t.Fatal(err)
 	}
 	m := ext.Manifest{
-		ID: "st", Command: "./modal-editor-ext-script", Args: []string{"st.go"},
+		ID: "st", Command: "./vi-imitation-ext-script", Args: []string{"st.go"},
 		Contributes: ext.Contributes{
 			Commands: []ext.Contribution{{ID: "st.review"}, {ID: "st.crash"}},
 			StatusLine: []ext.StatusLinePart{

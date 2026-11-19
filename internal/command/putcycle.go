@@ -3,8 +3,8 @@ package command
 import (
 	"errors"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // putRecord は、直前の貼り付け（p、P、一覧からの貼り付け）の記録である。<C-p> と <C-n> が、貼ったテキストを履歴の別の項目に置き換えるのに使う（FR-55）。

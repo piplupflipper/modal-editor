@@ -32,7 +32,7 @@ func makefileVar(t *testing.T, name string) []string {
 // pureGoBinaries は、cgo を使わずに作る実行ファイルである（Makefile の BINARY、MCP_BRIDGE、EXTENSIONS）。
 func pureGoBinaries(t *testing.T) []string {
 	t.Helper()
-	return append([]string{"modal-editor", "modal-editor-mcp-bridge"}, makefileVar(t, "EXTENSIONS")...)
+	return append([]string{"vi-imitation", "vi-imitation-mcp-bridge"}, makefileVar(t, "EXTENSIONS")...)
 }
 
 // cgoBinaries は、cgo を使う実行ファイルである（Makefile の CGO_EXTENSIONS）。
@@ -42,7 +42,7 @@ func cgoBinaries(t *testing.T) []string {
 }
 
 // manifestExtensions は、Makefile の拡張機能のうち、宣言ファイル（cmd/<名前>/manifest.json）を持つものの名前を返す。
-// make dist は、これらを extensions/<名前から modal-editor-ext- を除いたもの>/ に置く。
+// make dist は、これらを extensions/<名前から vi-imitation-ext- を除いたもの>/ に置く。
 func manifestExtensions(t *testing.T) []string {
 	t.Helper()
 	var out []string

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // InheritedSocket は、本体が起動の契機 socket（ext.ActivationSocket）で引き継いだ、待ち受けているソケットと、

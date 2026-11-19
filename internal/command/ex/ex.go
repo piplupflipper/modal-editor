@@ -111,7 +111,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // ActionKind は、呼び出し側が行うエディタの動作の種類を表す。

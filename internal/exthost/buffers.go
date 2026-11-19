@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // ErrBufferState は、バッファの開閉や版の並びが食い違っていることを表す（開いていないバッファの変更、同じバッファを 2 回開くなど）。

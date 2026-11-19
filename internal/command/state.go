@@ -25,10 +25,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/command/target"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // Mode は、エディタのモードである（FR-01）。

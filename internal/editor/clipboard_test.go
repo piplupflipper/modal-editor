@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command"
 )
 
 // waitClipboard は、偽の端末へ送られたクリップボードのテキストが want になるまで待つ。

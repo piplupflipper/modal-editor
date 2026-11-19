@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // popupText は、読み込んでいる client のポップアップのバッファの中身を返す。ポップアップが無ければ空である。

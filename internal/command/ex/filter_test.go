@@ -3,7 +3,7 @@ package ex
 import (
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // TestTerminalShell は、範囲の無い :!{cmd} が、端末を渡す実行（ShellRequest.Terminal）を求め、

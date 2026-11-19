@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
 // 起動の引数のファイル（Open）は、ReadOnlyArgs（-R）なら編集を禁止して開く。:e で後から開くファイルは禁止しない。

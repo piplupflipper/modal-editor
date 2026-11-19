@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 func newServer(t *testing.T) *Server {

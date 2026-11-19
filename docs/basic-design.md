@@ -33,20 +33,20 @@
 
 | 実行ファイル（仮） | 役割 | cgo | 関係する要件 |
 |---|---|---|---|
-| `modal-editor` | 本体 | 不使用 | NFR-02 |
-| `modal-editor-ext-lsp` | LSP のクライアント | 不使用 | FR-30 |
-| `modal-editor-ext-dap` | DAP のクライアント | 不使用 | FR-31 |
-| `modal-editor-ext-mcp` | MCP のサーバー | 不使用 | FR-32 |
-| `modal-editor-mcp-bridge` | MCP の中継コマンド | 不使用 | FR-33 |
-| `modal-editor-ext-acp` | ACP のクライアント | 不使用 | FR-34 |
-| `modal-editor-ext-treesitter` | tree-sitter による構文解析 | 使用 | FR-35 |
-| `modal-editor-ext-script` | yaegi によるスクリプトの拡張機能の実行 | 不使用 | FR-36 |
+| `vi-imitation` | 本体 | 不使用 | NFR-02 |
+| `vi-imitation-ext-lsp` | LSP のクライアント | 不使用 | FR-30 |
+| `vi-imitation-ext-dap` | DAP のクライアント | 不使用 | FR-31 |
+| `vi-imitation-ext-mcp` | MCP のサーバー | 不使用 | FR-32 |
+| `vi-imitation-mcp-bridge` | MCP の中継コマンド | 不使用 | FR-33 |
+| `vi-imitation-ext-acp` | ACP のクライアント | 不使用 | FR-34 |
+| `vi-imitation-ext-treesitter` | tree-sitter による構文解析 | 使用 | FR-35 |
+| `vi-imitation-ext-script` | yaegi によるスクリプトの拡張機能の実行 | 不使用 | FR-36 |
 
 利用者が足す拡張機能も、標準の拡張機能と同じ仕組みで起動する。
 
-段階 3 の server、client、ポップアップの client（1.4）は、どれも同じ実行ファイル `modal-editor` を起動の引数と環境変数で動かし分ける（仮）。
+段階 3 の server、client、ポップアップの client（1.4）は、どれも同じ実行ファイル `vi-imitation` を起動の引数と環境変数で動かし分ける（仮）。
 実行ファイルを分けないのは、server と client の間の取り決めを同じビルドの中で閉じ、版の食い違いを起こさないためである。
-段階 3 で足す標準の拡張機能（6.9）の実行ファイルの名前は、上の表と同じく `modal-editor-ext-<名前>` にする（仮）。
+段階 3 で足す標準の拡張機能（6.9）の実行ファイルの名前は、上の表と同じく `vi-imitation-ext-<名前>` にする（仮）。
 配布物には、herdr のプラグインの宣言ファイル（`herdr-plugin.toml`。1.4）と、diff のライブラリ go-udiff のライセンスの文面（`licenses/`。9.1）を足す。
 
 ### 1.2 server と client
@@ -62,10 +62,10 @@ client は次の 4 種類に分ける（要件定義 4.6）。
 
 | 種類 | 起動するもの | 端末 | タブの行 | 関係する要件 |
 |---|---|---|---|---|
-| 編集の client | 利用者がペインで起動した `modal-editor` | 持つ | 持つ | FR-58、FR-61、FR-62 |
-| ポップアップの部品の client | server が中央のポップアップの中で起動する `modal-editor -popup <部品の ID>`（仮。#244） | 持つ | 持たない | FR-67 |
-| ペインの部品の client | server が `pane/open`（5.3）で開いたペインの中で起動する `modal-editor -pane <部品の ID>`（仮。#244） | 持つ | 持たない | FR-115 |
-| 待つだけの client | `MODAL_EDITOR_SOCKET` のもとで起動した `modal-editor`（4.9） | 使わない | 持たない | FR-83 |
+| 編集の client | 利用者がペインで起動した `vi-imitation` | 持つ | 持つ | FR-58、FR-61、FR-62 |
+| ポップアップの部品の client | server が中央のポップアップの中で起動する `vi-imitation -popup <部品の ID>`（仮。#244） | 持つ | 持たない | FR-67 |
+| ペインの部品の client | server が `pane/open`（5.3）で開いたペインの中で起動する `vi-imitation -pane <部品の ID>`（仮。#244） | 持つ | 持たない | FR-115 |
+| 待つだけの client | `VI_IMITATION_SOCKET` のもとで起動した `vi-imitation`（4.9） | 使わない | 持たない | FR-83 |
 
 部品の client は、自分を開いた元の編集の client（以後、元の client）を server に覚えてもらう。
 部品の client で受けたキーと、一覧や木で選んだ結果は、元の client の操作として扱う。
@@ -147,7 +147,7 @@ tmux の window ごとの server は、本体を build し直した後も残る�
 
 server のソケットのパスは、次の順に決める（仮。FR-59）。
 
-1. 環境変数 `MODAL_EDITOR_SOCKET`（仮。FR-82）があれば、そのパス
+1. 環境変数 `VI_IMITATION_SOCKET`（仮。FR-82）があれば、そのパス
 2. tmux の中（環境変数 `TMUX` がある）なら、`tmux display -p -t "$TMUX_PANE" '#{socket_path}:#{window_id}'` の結果から作った名前
 3. herdr の中なら、herdr のタブの ID から作った名前
 4. どれでもなければ、プロセス ID と乱数から作った名前で、server と編集の client を 1 つのプロセスで動かす（FR-60）
@@ -159,7 +159,7 @@ server のソケットのパスは、次の順に決める（仮。FR-59）。
 tmux の window の ID は、1 つの tmux のサーバーの中で一意である（同じく `tmux(1)` の「Sessions, window and panes are each numbered with a unique ID」）。
 名前にセッションの ID は含めない。
 グループにしたセッション（`new-session -t`）では、同じペインの `#{session_id}` が、セッションを足したり消したりするたびに変わった（PR #188 のレビューで、2026-11-18 に tmux 3.4 で確かめた）。
-セッションの ID を含めると、同じ window で後から起動した `modal-editor` が別の名前を作り、2 つ目の server を立ててしまう。
+セッションの ID を含めると、同じ window で後から起動した `vi-imitation` が別の名前を作り、2 つ目の server を立ててしまう。
 window の ID だけなら、セッションに依らずに「tmux の window ごとに 1 つ」の server を指せる。
 リンクした window（複数のセッションに出ている同じ window）は、1 つの server になる（PR #188 のオーケストレータの決定）。
 `tmux -L` で別の tmux のサーバーを動かすと ID が重なりうるので、名前には tmux のサーバーのソケットのパス（書式の `socket_path`）も含める（仮）。
@@ -171,24 +171,24 @@ herdr のプロセスは、自分のペインの ID（`HERDR_PANE_ID`）を herd
 
 server ごとにディレクトリ `<名前>/` を作り、その下に server のソケット `server.sock` と MCP のソケット `mcp.sock`（6.2）を置く（仮）。
 #201 の時点では、`<名前>/` に置くのは `server.sock` とロックのファイル `server.lock` だけで、MCP のソケットは段階 2 と同じくプロセス ID と乱数の名前のディレクトリに置いている。`mcp.sock` を `<名前>/` へ移すのは、中継コマンドが server を見つける規則（6.2）と合わせて行う。
-`<名前>/` は、`$XDG_RUNTIME_DIR/modal-editor/` の下に置き、使えなければ一時ディレクトリの `modal-editor-<利用者 ID>/` の下に置く。
-親のディレクトリ（`$XDG_RUNTIME_DIR/modal-editor/` と `modal-editor-<利用者 ID>/`）と `<名前>/` は、無ければ権限 0700 で作る。
-既にあれば、シンボリックリンクでないディレクトリで、持ち主が本体の実効ユーザー ID で、他の利用者の権限が無いことを確かめてから使い、満たさなければ使わない（6.2 の `$XDG_RUNTIME_DIR/modal-editor` の検査と同じ）。
+`<名前>/` は、`$XDG_RUNTIME_DIR/vi-imitation/` の下に置き、使えなければ一時ディレクトリの `vi-imitation-<利用者 ID>/` の下に置く。
+親のディレクトリ（`$XDG_RUNTIME_DIR/vi-imitation/` と `vi-imitation-<利用者 ID>/`）と `<名前>/` は、無ければ権限 0700 で作る。
+既にあれば、シンボリックリンクでないディレクトリで、持ち主が本体の実効ユーザー ID で、他の利用者の権限が無いことを確かめてから使い、満たさなければ使わない（6.2 の `$XDG_RUNTIME_DIR/vi-imitation` の検査と同じ）。
 段階 2 の MCP のソケットは、既にあるディレクトリを使わず、プロセス ID と乱数の名前で新しく作ることで安全を保っていた。
 段階 3 の server のディレクトリは、同じ window の他の client が見つけられるように名前を決めておく必要があるので、作り直す代わりに持ち主と権限を検査する。
 一時ディレクトリで他の利用者が先に同じ名前を作った場合は、持ち主の検査で使わずに失敗し、そのことをメッセージに出して 1 つのプロセスで動かす（仮）。
 #201 では、`$XDG_RUNTIME_DIR` が既にある絶対パスのディレクトリのときだけ規則の 1 つ目の置き場所を使い、ソケットのパスが 103 バイトを超える置き場所も使わない（`server.SocketPathForUnit`）。
 tmux か herdr の中なのに server を使えないとき（単位を引けない、どちらのディレクトリも使えない、server を起動できない）は、理由を起動後のメッセージで知らせて 1 つのプロセスで動かす。
 
-`modal-editor` を起動すると、まず上の規則でソケットのパスを決め、そのパスの server に繋いでみる。
+`vi-imitation` を起動すると、まず上の規則でソケットのパスを決め、そのパスの server に繋いでみる。
 繋がれば編集の client として動き、繋がらなければ自分の子として server を起動してから繋ぐ（仮）。
 server を子にしても、client が終わったときに server を終わらせない（FR-61。他の client が繋いでいる）ので、server は client のプロセスグループから外して起動する（仮）。
 同じ window の 2 つのペインで同時に起動したときに server が 2 つ立たないように、`<名前>/` の下のロックのファイル（仮に `server.lock`）に `flock` を掛けた側だけが server になる（仮）。
 ロックを取った server は、繋げない古い `server.sock`（server が SIGKILL で終わった後に残ったもの）を消してから `bind` する。
 ロックを取れなかった側は、`server.sock` に繋げるまで待ってから繋ぐ（仮に 1 秒まで）。
-`MODAL_EDITOR_SOCKET` の指す server がもう無い（シェルが server より長く残った）ときは、規則 1 を飛ばして規則 2 以降で決める（仮）。
+`VI_IMITATION_SOCKET` の指す server がもう無い（シェルが server より長く残った）ときは、規則 1 を飛ばして規則 2 以降で決める（仮）。
 
-#201 で、この手順を次のとおりに実装した（`cmd/modal-editor` の `autostart.go`。どれも仮）。
+#201 で、この手順を次のとおりに実装した（`cmd/vi-imitation` の `autostart.go`。どれも仮）。
 
 - client は、server を内部用のオプション `-server <パス>` で、新しいセッション（`setsid`。したがって新しいプロセスグループ）の子として起動する。標準入出力は `/dev/null` にし、端末の SIGHUP と SIGINT が server に届かないようにする
 - ロックは server の側が取る。client はロックを取らずに server を起動し、起動した server が、ロックを取れたか（`ready`）、取れなかったか（`locked`）、起動の誤りかを、3 番のファイル記述子のパイプで 1 行知らせる。ロックを取れなかった server はすぐ終わり、その client は、ロックを取った server のソケットに繋げるまで待つ
@@ -247,7 +247,7 @@ server は、ペインとその client の組を覚える。
 1 つのプロセスで動かすとき（FR-60）も、server のソケットは待ち受ける。
 端末を持つ client は、同じプロセスの中の編集の client 1 つで、server との間はプロセスの中の呼び出しでつなぐ。
 待つだけの client（4.9）と MCP の中継コマンド（6.2）は、ソケットで繋げる。
-#215 で、ソケットで繋いだ編集の client（`-connect`、`MODAL_EDITOR_SOCKET` の規則 1）も、2 つ目の編集の client として足すようにした。
+#215 で、ソケットで繋いだ編集の client（`-connect`、`VI_IMITATION_SOCKET` の規則 1）も、2 つ目の編集の client として足すようにした。
 server のソケットは、MCP のソケット（6.2）と同じディレクトリ（プロセス ID と乱数の名前）に置く（#190）。
 このディレクトリは `os.MkdirTemp` で排他的に作るので、親のディレクトリの検査は省く（`server.ListenInOwnDir`）。親を検査する `server.Listen` は、名前の決まったディレクトリ（`-listen` と、FR-59 の規則）で使う。
 待つだけの client も、ソケットで繋いだものを受け付ける（#226。#215 の時点では理由付きの `server/exit` を送って閉じていた）。
@@ -278,10 +278,10 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 
 #### 部品の client（#244）
 
-#244 で、部品の client を次のとおりに実装した（`internal/editor` の `component.go`、`internal/server` の `component.go`、`cmd/modal-editor` の `component.go`。どれも仮）。
+#244 で、部品の client を次のとおりに実装した（`internal/editor` の `component.go`、`internal/server` の `component.go`、`cmd/vi-imitation` の `component.go`。どれも仮）。
 
 - 部品（1.4 の `floatState`）は、開いた元の client の画面の状態に置いたままにする。中央のポップアップは元の client のポップアップ、ペインは元の client のペインの部品の並び（`viewFields.panes`）である。部品の client は、描く場所だけを替える。元の client は「部品がどの client の画面の状態にあるか」で決まるので、`client/hello` に元の client を載せない。部品の client は `client/hello` の `view` に部品の ID を載せ、server はその ID の部品を探す（`editor.Editor.AttachComponent`）
-- 起動のオプションは `-popup <部品の ID>` と `-pane <部品の ID>` にし、server のソケットは `-connect <パス>` で渡す（#245 の `:diffsplit` と同じ。`MODAL_EDITOR_SOCKET` で渡すと、その環境変数のもとで起動したものが待つだけの client になるため）。部品の ID は、ポップアップの ID（`ext.ViewID`）と同じ番号である
+- 起動のオプションは `-popup <部品の ID>` と `-pane <部品の ID>` にし、server のソケットは `-connect <パス>` で渡す（#245 の `:diffsplit` と同じ。`VI_IMITATION_SOCKET` で渡すと、その環境変数のもとで起動したものが待つだけの client になるため）。部品の ID は、ポップアップの ID（`ext.ViewID`）と同じ番号である
 - 中央のポップアップを開いた元の client がペインを知っていれば（tmux と herdr の中）、端末多重化ソフトのポップアップを開くよう頼み（`editor.Config.OpenPopup`）、部品の client が繋ぐまでは元の client の画面の中央に描く。繋いだら元の client の画面には描かず、部品の client の画面に、枠線を描かずに表示領域の全体へ広げて描く（`ui.Float.Fill`。端末多重化ソフトが枠線を描くため）。ステータス行、コマンドライン、メッセージ、問いは、元の client の画面と同じものを部品の client にも出す（元の client のペインは、端末多重化ソフトのポップアップの下に隠れるため）
 - 端末多重化ソフトのポップアップを開けなければ（herdr のプラグインを登録していない、利用者の他のポップアップが開いている）、誤りを元の client のメッセージの行に出し、元の client の画面の中央に描いたままにする。前のポップアップの部品の client を終わらせた直後は、端末多重化ソフトのポップアップがまだ閉じていないことがあるので、`mux.ErrPopupBusy` なら 1.5 秒まで 50 ms ごとに開き直す
 - `pane/open` は、元の client のペインを分割し（`editor.Config.OpenPane`）、その中で部品の client を起動する。応答の ID は、ペインを開き終える前に返す。開けなければ、同じ ID のまま中央のポップアップへ移し、理由をメッセージの行に出す
@@ -359,7 +359,7 @@ socket API の `pane.split` は起動するコマンドを受け付けないの�
 - 起動したときの `HERDR_TAB_ID` は、ペインが別のワークスペースへ動いた後、`tab.get` が `tab_not_found` を返す古い ID になっていた。`HERDR_PANE_ID` も古い ID になっていたが、`pane.get` はその古い ID で今のペイン（今の ID と `tab_id`）を返した。このため、自分のタブの ID は `HERDR_TAB_ID` ではなく `pane.get` で得る
 
 同梱するプラグインの宣言ファイルの雛形は `internal/mux/herdr-plugin/herdr-plugin.toml` に置き、本体に埋め込む（仮）。
-宣言ファイルには entrypoint を 1 つだけ書き、その `command` は、server が環境変数 `MODAL_EDITOR_MUX_COMMAND` に入れたコマンドの文字列（引数をシェルの引用で囲んでつないだもの）を `sh -c` で `exec` する。
+宣言ファイルには entrypoint を 1 つだけ書き、その `command` は、server が環境変数 `VI_IMITATION_MUX_COMMAND` に入れたコマンドの文字列（引数をシェルの引用で囲んでつないだもの）を `sh -c` で `exec` する。
 宣言ファイルに本体の実行ファイルのパスを書かずに済ませるためである。
 #244 で、`make dist` が宣言ファイルを配布物の `herdr-plugin/` に置き、利用者が `herdr plugin link <配布物>/herdr-plugin` で 1 回登録する形にした（仮。[使い方](usage.md)）。
 宣言ファイルに本体の実行ファイルのパスを書いていないので、配布物を入れ替えても登録し直さなくてよい。
@@ -499,7 +499,7 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 `internal/server`、`internal/client`、`internal/protocol` の層は、#182 で次のとおりに決めた。
 
 - `internal/protocol` は `internal/editcmd` と `internal/ui` を import するので、「組み立て」の層（`internal/editor`、`internal/term` と同じ層）に置く。ソケットの上の接続で、土台の `internal/rpc`（メッセージの区切り）も import する（#190）
-- `internal/server` は `internal/editor` を、`internal/client` は `internal/term` を import するので、「組み立て」と「入口」の間に層を 1 つ足して置く。2 つは同じ層で、互いに import しない。両方が `internal/protocol` を import し、`cmd/modal-editor` が両者をつなぐ
+- `internal/server` は `internal/editor` を、`internal/client` は `internal/term` を import するので、「組み立て」と「入口」の間に層を 1 つ足して置く。2 つは同じ層で、互いに import しない。両方が `internal/protocol` を import し、`cmd/vi-imitation` が両者をつなぐ
 - client から届いたキーには、server が接続ごとに割り当てた識別子（`editor.ClientID`）を付けてイベントループへ渡す（2.1）
 
 図 2 は段階 2 までの層で、この 3 つはまだ描いていない。
@@ -781,7 +781,7 @@ LSP の拡張機能の名前の変更（5.5、6.3）は、まだ開いていな�
 すべての編集を適用し終えて知らせを出した後に、開いたファイルへ `buffer/save`（保存の前の整形を通さない）を送る（#237）。
 知らせを先に出すのは、本体が出す変えたファイルの一覧を上書きしないためである。
 
-名前の変更は、全部のファイルを変えるか、何も変えないかにする（PR #240 の再レビューへのオーケストレータの決定。`cmd/modal-editor-ext-lsp` の `rename.go`）。
+名前の変更は、全部のファイルを変えるか、何も変えないかにする（PR #240 の再レビューへのオーケストレータの決定。`cmd/vi-imitation-ext-lsp` の `rename.go`）。
 
 - 編集を始める前に、対象のファイルをすべて開き、`editor/state` の `readOnly`、`changedOnDisk`（書き出させるファイルだけ）、バージョン番号で、編集できるかを確かめる。開けないものを含め、1 つでもだめなら何も変えずに「名前の変更を適用しなかった（どのファイルも変えていない）: ro/q.go（編集の禁止）」のように理由のファイルを知らせる
 - 確かめた後の適用の途中で断られたら（利用者が間に打った変更など）、それまでに変えたバッファを、編集の前の全文に戻す `buffer/edit` で元に戻し、知らせる。タブのバッファを先に、画面に出さないバッファを後に変える
@@ -1021,7 +1021,7 @@ client は端末を通常の状態へ戻し、シェル（環境変数 `SHELL`�
 `|` を含めて行末までをコマンドとして渡し、Vim と違ってコマンドの中の `!`（直前のコマンド）、`%`、`#` は展開しない（仮）。
 子プロセスはイベントループの外（別の goroutine）で動かし、終わったら結果をイベントとしてイベントループへ送り、そこで範囲の置き換えか読み込みをする。
 実行中も、拡張機能のイベント、他の client、server のソケットへの接続はイベントループで処理を続ける。
-FR-82 の環境変数のもとで子が起動した modal-editor（FR-83）が server に繋いでも、イベントループと待ち合わないためである。
+FR-82 の環境変数のもとで子が起動した vi-imitation（FR-83）が server に繋いでも、イベントループと待ち合わないためである。
 実行中は、そのコマンドを打った client のキーを `<C-c>`（中断）のほかは処理せずに保留し、終わってから処理する（仮）。
 `<C-c>` はプロセスグループごと終わらせ、バッファを変えず、`<C-c>` より前に打ったキーを捨てる（Vim と同じ）。
 待つ時間に上限は置かない（Vim にも無い）。
@@ -1044,22 +1044,22 @@ FR-83 の client が実行中に繋ぎ、キーを保留している client の�
 
 | 環境変数 | 値 |
 |---|---|
-| `MODAL_EDITOR_SOCKET`（仮） | server のソケットのパス（1.2）。1 つのプロセスで動かしているとき（FR-60）も server のソケットは待ち受けているので、同じく入れる |
-| `EDITOR`、`GIT_EDITOR` | `modal-editor`（本体の実行ファイルの絶対パス。仮） |
+| `VI_IMITATION_SOCKET`（仮） | server のソケットのパス（1.2）。1 つのプロセスで動かしているとき（FR-60）も server のソケットは待ち受けているので、同じく入れる |
+| `EDITOR`、`GIT_EDITOR` | `vi-imitation`（本体の実行ファイルの絶対パス。仮） |
 
-この環境変数のもとで起動した `modal-editor` は、新しい画面を作らずに `MODAL_EDITOR_SOCKET` の server へ繋ぎ、渡されたファイルを開かせ、それらのタブが全て閉じられるまで待ってから終わる（FR-83）。
-この `modal-editor` は端末に描かず、キーも受けない（以後、待つだけの client）。
+この環境変数のもとで起動した `vi-imitation` は、新しい画面を作らずに `VI_IMITATION_SOCKET` の server へ繋ぎ、渡されたファイルを開かせ、それらのタブが全て閉じられるまで待ってから終わる（FR-83）。
+この `vi-imitation` は端末に描かず、キーも受けない（以後、待つだけの client）。
 開いたタブは、待つだけの client を起動したプロセスの祖先にある client（`:!` を実行した client）に足す（仮）。
-server は、待つだけの client の接続が `:!` の子孫かどうかを、`:!` を実行した client が子プロセスの環境変数に入れる識別子（仮に `MODAL_EDITOR_CLIENT`）で見分ける。
+server は、待つだけの client の接続が `:!` の子孫かどうかを、`:!` を実行した client が子プロセスの環境変数に入れる識別子（仮に `VI_IMITATION_CLIENT`）で見分ける。
 `:!` の実行中にこれが起きたら、`:!` を実行した client が端末を取り戻して画面を描き、利用者がタブを閉じたら（`:wq` など）端末を再び子プロセスへ渡す（FR-117）。
-例: `:!git commit` で git が起動した `modal-editor` は待つだけの client になり、親の client にコミットのメッセージのタブが開く。`:wq` でタブを閉じると、待つだけの client が終わり、git がコミットを続ける。
+例: `:!git commit` で git が起動した `vi-imitation` は待つだけの client になり、親の client にコミットのメッセージのタブが開く。`:wq` でタブを閉じると、待つだけの client が終わり、git がコミットを続ける。
 識別子が無い（拡張機能の子プロセスなど、`:!` の外で起動した）ときは、操作中の client（1.2）にタブを足す（仮）。
 
 `:!` の実行中に親の client が端末を取り戻すには、子プロセスが端末を使っている間に親が端末の状態を変えることになる。
 子プロセス（git）は待つだけの client が終わるまで端末を読み書きしない前提で取り戻す。
 この前提が崩れる場合（`:!` が端末を使うプログラムを並行して動かす場合）の扱いは、下の「端末の取り合い」に書いた。
 
-`--new`（仮）を付けた `modal-editor` は、`MODAL_EDITOR_SOCKET` を無視して、新しい server と client を起動する（FR-84）。
+`--new`（仮）を付けた `vi-imitation` は、`VI_IMITATION_SOCKET` を無視して、新しい server と client を起動する（FR-84）。
 このときの server のソケットのパスは、1.2 の規則の 1 を飛ばして決める。
 同じ window の既存の server と重なるので、`--new` で起動した server は 1.2 の 2 と 3 の名前を使わず、プロセス ID と乱数から作った名前にする（仮）。
 
@@ -1071,9 +1071,9 @@ server は、待つだけの client の接続が `:!` の子孫かどうかを�
 - 実行は、`:{範囲}!` と同じく server に 1 つの外部のコマンドとして持ち、打った client のキーを保留する。`:!` は編集を禁止したバッファでも使える（バッファを変えないため）。コマンドが空なら何もしない（Vim 9.1 は空のコマンドを動かす。[vim-differences.md](vim-differences.md)）
 - 子プロセスは、Vim と同じく client と同じプロセスグループで動かす。端末の `<C-c>` と `<C-\>` の SIGINT と SIGQUIT は client にも届くので、子プロセスが動いている間だけ、client はそれらを `signal.Ignore` で無視にし、子プロセスの `Wait` が戻った後に元の受け取りへ戻す。無視にしてから子プロセスを起動すると子プロセスが無視を引き継ぐ（`<C-c>` で止まらない）ので、端末の ISIG を切った状態で起動し、client を無視にしてから ISIG を入れ、`Wait` の後は ISIG を切ってから無視を解く（`term.Terminal.TerminalSignals`）。端末が SIGINT を起こしうる間は必ず無視の間なので、取り戻した後に遅れて届くことが無い（無視の間に起きたシグナルはカーネルが捨てる）。PR #234 の CI で、無視をシグナルの受け手の goroutine の判断に任せていたときに、client が端末を取り戻した後に受け手が遅れて SIGINT を読み、client が終わった（1 CPU に絞った実行で 30 回中 5 回再現した）。この形に改めた後は、1 CPU に絞った `TestHandoverInPTY` が 150 回通った
 - `<C-z>`（SIGTSTP）は既定の扱いのままで、client と子プロセスがまとめて止まり、シェルの `fg` でまとめて続く。`bg` で背面で続けさせると、子プロセスは続き、終わった後に client が端末を取り戻そうとして SIGTTOU で止まり、`fg` で続く（client を起動したシェルのプロセスグループが前面なら、前面を奪わない。`term` の `takeForeground`）。シェルを通さずに起動した（`tmux new-session '<本体> a.txt'`）ときは、プロセスグループが孤立しているので、カーネルが子プロセスへの `<C-z>` の SIGTSTP を捨て、何も起きない。本体は SIGTSTP を受け取って自分で止まるので、端末を渡している間は、本体のプロセスグループが孤立していれば止まらない（`term` の `orphanedPgrp`。PR #234 の再レビュー 4）。Vim 9.1 との違いは [vim-differences.md](vim-differences.md) にある
-- 子プロセスの環境変数には、client の環境の後に、`MODAL_EDITOR_SOCKET`、`EDITOR`、`GIT_EDITOR`（server の `Config.ChildEnv`）と、打った client の識別子 `MODAL_EDITOR_CLIENT` を足す。`:{範囲}!` と `:r !` には `MODAL_EDITOR_CLIENT` を足さない（タブは操作中の client に開く）。拡張機能とその子プロセスには、`MODAL_EDITOR_SOCKET`、`EDITOR`、`GIT_EDITOR` を足す
-- `MODAL_EDITOR_SOCKET` のもとで起動した `modal-editor` は、そのソケットに繋げれば、端末を開かずに待つだけの client になる（`cmd/modal-editor` の `waitClient`）。繋げなければ、1.2 の規則 2 以降で決める編集の client として動く。`-listen`、`-connect`、`-server` を付けたときは待つだけの client にならない
-- 待つだけの client は、`client/hello` に、絶対パスにしたファイルと `-R` と、`MODAL_EDITOR_CLIENT` の値（`parent`）を載せる。server は、その client（いなければ操作中の client）のタブとしてファイルを開く。ファイルが無ければ名前の無い空のタブを開く。起動したときの名前の無い空のタブを使い直さない（使い直すと、そのタブを閉じたときに client の最後のタブになり、client が終わりうる）。別の client のタブになっているファイルは、そのタブが閉じられるまで待つ
+- 子プロセスの環境変数には、client の環境の後に、`VI_IMITATION_SOCKET`、`EDITOR`、`GIT_EDITOR`（server の `Config.ChildEnv`）と、打った client の識別子 `VI_IMITATION_CLIENT` を足す。`:{範囲}!` と `:r !` には `VI_IMITATION_CLIENT` を足さない（タブは操作中の client に開く）。拡張機能とその子プロセスには、`VI_IMITATION_SOCKET`、`EDITOR`、`GIT_EDITOR` を足す
+- `VI_IMITATION_SOCKET` のもとで起動した `vi-imitation` は、そのソケットに繋げれば、端末を開かずに待つだけの client になる（`cmd/vi-imitation` の `waitClient`）。繋げなければ、1.2 の規則 2 以降で決める編集の client として動く。`-listen`、`-connect`、`-server` を付けたときは待つだけの client にならない
+- 待つだけの client は、`client/hello` に、絶対パスにしたファイルと `-R` と、`VI_IMITATION_CLIENT` の値（`parent`）を載せる。server は、その client（いなければ操作中の client）のタブとしてファイルを開く。ファイルが無ければ名前の無い空のタブを開く。起動したときの名前の無い空のタブを使い直さない（使い直すと、そのタブを閉じたときに client の最後のタブになり、client が終わりうる）。別の client のタブになっているファイルは、そのタブが閉じられるまで待つ
 - 開いたファイルのバッファがすべて閉じられるか、どのタブでもなくなったら、server は理由の無い `server/exit` を送り、待つだけの client は終了コード 0 で終わる。開けないとき、タブを開いた client が終わったとき、server が終わるときは理由付きの `server/exit` を送り、0 でない終了コードで終わる（git はコミットをやめる）。待つだけの client の接続が先に切れたら、待つのをやめる（タブは残す）
 - タブを開いた client が外部のコマンドの実行中なら、その client のキーを処理するようにし、`:!` なら `terminal/reclaim` で端末を取り戻させる。端末を取り戻させるのは、待つだけの client の `parent` がその client を指すときだけにした（`:!` の外で起動した待つだけの client のために、`:!` のコマンドが使っている端末を取り上げない）。その client の待つだけの client がすべて終わるとき、`terminal/release` で端末を渡し直させ、`terminal/released` を受けてから待つだけの client を終わらせる。子プロセスが先に終わったら（`terminal/done`）、渡し直しを待たずに終わらせる
 - `--new` は、1 つのプロセスの構成（FR-60）で起動する。端末多重化ソフトの中でも、同じ window の server を探さない
@@ -1084,7 +1084,7 @@ server は、待つだけの client の接続が `:!` の子孫かどうかを�
 
 - 子プロセスが対話のシェル（`:!sh`）なら、シェルはジョブ制御のために自分のプロセスグループを作り、端末の前面をそれへ移す。2026-11-19 に tmux 3.4 の中で、`:!sh` から `ps -o pid,pgid` を打ち、`sh` の PGID が client と違うことを確かめた。その中の `git commit` が起動した待つだけの client のために端末を取り戻すとき、client は背面のプロセスグループにいる。背面から端末の設定を変えると SIGTTOU で、読むと SIGTTIN で止まる（tcsetpgrp(3) と termios(3) の決まり）
 - そのため client は、取り戻すときに前面のプロセスグループが自分でなければ、SIGTTOU を無視して前面を自分へ移し（`internal/term` の `Reacquire`）、渡し直すときに元の前面（git のプロセスグループ）へ返す（`Release`）。コマンドが終わった後にも、前面が自分でなければ自分へ戻す（シェルが前面を移したまま異常終了したときのため）。2026-11-19 に tmux 3.4 の中で、`:!sh` の中の `git commit --allow-empty` で、メッセージのタブの編集と `:wq` の後のコミットが通ることを確かめた
-- 子プロセスが待つだけの client を待たずに端末を使い続ける場合（`:!modal-editor a.txt & top` のように、背景で起動して前面で別のプログラムを動かす）は、client と前面のプログラムが同じ端末を読み書きして画面が混ざる。これは防いでいない。`git commit` のように、エディタの終わりを待つ使い方では起きない
+- 子プロセスが待つだけの client を待たずに端末を使い続ける場合（`:!vi-imitation a.txt & top` のように、背景で起動して前面で別のプログラムを動かす）は、client と前面のプログラムが同じ端末を読み書きして画面が混ざる。これは防いでいない。`git commit` のように、エディタの終わりを待つ使い方では起きない
 
 ## 5. 拡張機能
 
@@ -1100,7 +1100,7 @@ server は、待つだけの client の接続が `:!` の子孫かどうかを�
 {
   // 拡張機能の ID。ドットリピートの記録と設定で使う
   "id": "surround",
-  "command": "./modal-editor-ext-surround",
+  "command": "./vi-imitation-ext-surround",
   // 起動の契機。どれか 1 つが成り立った時点で起動する
   "activation": [
     { "on": "operator", "id": "surround.add" },
@@ -1121,7 +1121,7 @@ server は、待つだけの client の接続が `:!` の子孫かどうかを�
 
 拡張機能の子プロセスの作業ディレクトリは、本体の作業ディレクトリを引き継ぐ。
 ACP の拡張機能が `session/new` の `cwd` に本体の作業ディレクトリを渡すように（6.5）、拡張機能は作業ディレクトリから本体の作業ディレクトリを知る。
-宣言ファイルのディレクトリは、本体が環境変数 `MODAL_EDITOR_EXTENSION_DIR`（名前は仮。`ext.EnvExtensionDir`）に絶対パスで入れて渡す。
+宣言ファイルのディレクトリは、本体が環境変数 `VI_IMITATION_EXTENSION_DIR`（名前は仮。`ext.EnvExtensionDir`）に絶対パスで入れて渡す。
 宣言ファイルの隣に置いたファイル（スクリプトなど）は、拡張機能がこの環境変数から探す。
 
 段階 3 では、宣言ファイルに次の項目を足す（名前は仮）。
@@ -1138,7 +1138,7 @@ ACP の拡張機能が `session/new` の `cwd` に本体の作業ディレクト
 ```jsonc
 {
   "id": "lsp",
-  "command": "./modal-editor-ext-lsp",
+  "command": "./vi-imitation-ext-lsp",
   // 本体の操作のうち、この拡張機能が引き受けるもの（5.5）
   "provides": ["definition", "hover", "format", "references", "rename"],
   "contributes": {
@@ -1226,7 +1226,7 @@ ACP の拡張機能が `session/new` の `cwd` に本体の作業ディレクト
 このため、異常のときは拡張機能の子プロセスを終わらせる手順が走らない。
 拡張機能と同じプロセスグループにいる子プロセスは SIGKILL で終わる。
 拡張機能が別のプロセスグループで起動し、`Pdeathsig`（Linux の、親が終わったときに子へ送るシグナル）を設定しなかった子プロセスは残る。
-拡張機能は、子プロセスを別のプロセスグループにするなら、`Pdeathsig` と組にする（`cmd/modal-editor-ext-dap` は dlv を `Setpgid` と `Pdeathsig` の組で起動する）。
+拡張機能は、子プロセスを別のプロセスグループにするなら、`Pdeathsig` と組にする（`cmd/vi-imitation-ext-dap` は dlv を `Setpgid` と `Pdeathsig` の組で起動する）。
 
 どちらの場合も、拡張機能のプロセスが終わった後に、同じプロセスグループに残ったプロセスへ SIGKILL を送る。
 
@@ -1490,8 +1490,8 @@ nvim の作りを調べた結果（#177 の「参考」。nvim v0.12.5 の runti
 {
   "extensions": {
     "install": [
-      // 名前は $XDG_DATA_HOME/modal-editor/extensions/<名前>/ のディレクトリの名前になる
-      { "name": "surround", "repo": "https://github.com/example/modal-editor-surround", "version": "v0.1.0" }
+      // 名前は $XDG_DATA_HOME/vi-imitation/extensions/<名前>/ のディレクトリの名前になる
+      { "name": "surround", "repo": "https://github.com/example/vi-imitation-surround", "version": "v0.1.0" }
     ]
   }
 }
@@ -1500,7 +1500,7 @@ nvim の作りを調べた結果（#177 の「参考」。nvim v0.12.5 の runti
 コマンド `:ext sync`（仮）は、次の順に処理する。
 
 1. `extensions.install` に並んだ拡張機能を、取得元から `git clone` するか、既にあれば `git fetch` して版を取り出す
-2. 取り出したソースを `go build` でビルドし、実行ファイルと宣言ファイルを `$XDG_DATA_HOME/modal-editor/extensions/<名前>/` に置く（7 章の拡張機能を探す規則の置き場所）
+2. 取り出したソースを `go build` でビルドし、実行ファイルと宣言ファイルを `$XDG_DATA_HOME/vi-imitation/extensions/<名前>/` に置く（7 章の拡張機能を探す規則の置き場所）
 3. 取り出したコミットを、ロックファイル（仮に `extensions.lock.json`。設定ファイルと同じディレクトリ）に記録する（FR-103）
 4. `extensions.install` に無くなった名前のディレクトリのうち、`:ext sync` が入れたもの（ロックファイルに記録があるもの）を削除する（FR-122）
 
@@ -1521,7 +1521,7 @@ Go が無ければ、その旨をメッセージに出して止める。
 - `:ext sync` が入れたディレクトリには、印のファイル `.extmgr.json` を置く。印の無いディレクトリ（利用者が手で置いたもの）は、ロックファイルに記録があっても削除せず、同じ名前を `extensions.install` に並べても上書きしない
 - 設定ファイルの `extensions.install` に誤りが 1 つでもあれば（構文の誤りを含む。`config.Config.ExtensionInstallValid`）、その回の `:ext sync` は削除を一切しない。誤りの項目の拡張機能は、入っている版のまま残す。書き損じで拡張機能を消さないためである（PR #195 のレビュー）
 - `extensions.install` の `repo` は URL か絶対パスにする。相対パスは本体の作業ディレクトリによって指す先が変わるので、誤りにする
-- 取得したソースは `$XDG_DATA_HOME/modal-editor/extmgr/src/<名前>/` に置き、次の `:ext sync` で `git fetch` する。git のリポジトリとして読めないほど壊れていたら消して取得し直す。取得元に届かないだけ（ネットワークに出られないなど）なら消さない（#213）。ビルドは同じ `extmgr/tmp/` の下で行い、成功してからディレクトリの名前の変更で入れ替える。拡張機能のディレクトリの下に置かないのは、途中のディレクトリを本体が拡張機能として読まないようにするためである
+- 取得したソースは `$XDG_DATA_HOME/vi-imitation/extmgr/src/<名前>/` に置き、次の `:ext sync` で `git fetch` する。git のリポジトリとして読めないほど壊れていたら消して取得し直す。取得元に届かないだけ（ネットワークに出られないなど）なら消さない（#213）。ビルドは同じ `extmgr/tmp/` の下で行い、成功してからディレクトリの名前の変更で入れ替える。拡張機能のディレクトリの下に置かないのは、途中のディレクトリを本体が拡張機能として読まないようにするためである
 - 入れ替えで退けた前の版は `extmgr/old/` に置き、入れ替えが済めば消す。前の版を戻せなかったときは消さずに残し、メッセージにパスを出す
 - 同じ `extmgr/` を使う `:ext sync` は、`extmgr/lock` の flock で 1 つずつにする。server は window ごとにあるので（FR-59）、別の server の `:ext sync` が動いていれば、待たずにその旨を返す
 - git と go の子プロセスには、本体の環境の `GIT_DIR`、`GIT_WORK_TREE`、`GIT_INDEX_FILE` など、git のリポジトリの場所を変える環境変数を渡さない。本体を `GIT_EDITOR` にして `git commit` から起動すると、これらが本体の環境に残るためである
@@ -1623,7 +1623,7 @@ tree-sitter の拡張機能は、`buffer/open` と `buffer/change` を受け取�
 - 範囲の前と後ろに空白しか無い（行の全体を占める）ときは、行単位で返す。`daf` で関数の行が残らない
 - 関数の前のコメントは全体に含めない
 
-問い合わせは、メッセージを処理する goroutine では解析しない（2.1、`cmd/modal-editor-ext-treesitter` の `textObjects`）。
+問い合わせは、メッセージを処理する goroutine では解析しない（2.1、`cmd/vi-imitation-ext-treesitter` の `textObjects`）。
 構文ハイライトのために最後に解析した構文木の複製が問い合わせのバージョンのものならそれを使い、そうでなければ問い合わせの goroutine で全文から解析する。
 起動の契機は、文法を持つファイルの種類ごとの `filetype` の契機である。
 ファイルの種類は本体が判定して `buffer/open` の `fileType` で渡し、拡張機能には判定を問い合わせない（6.7）。
@@ -1717,7 +1717,7 @@ goroutine は、受け取った後に変えない一覧のスライスとバッ�
 - 本体の受信の goroutine での復号（同じく 112〜122 ms。この間、その拡張機能からの他のメッセージの処理が遅れる。ping の期限 2 秒には収まる）
 - 本体の別の goroutine での表づくり（この節の表。10 万行の JSON で約 25 ms、26 MB）
 
-`cmd/modal-editor-ext-treesitter` は、本文が上限（`maxDecorationSetBytes`、仮に 10 MiB）を超える一覧を送らず、空の一覧を送り、`message/show` で 1 回だけ知らせる。
+`cmd/vi-imitation-ext-treesitter` は、本文が上限（`maxDecorationSetBytes`、仮に 10 MiB）を超える一覧を送らず、空の一覧を送り、`message/show` で 1 回だけ知らせる。
 上限に当たるのは約 10 万行の JSON で、そのときの上の 3 つの合計は約 0.2 秒である。
 上限の値は、PR #73 で本体のイベントループの停止（当時 10 万行で約 0.1 秒）から決めたもので、仮のまま使う。
 停止が無くなったので、値を見直すときは、上の 3 つの時間と割り当てで決める。
@@ -1772,18 +1772,18 @@ MCP の拡張機能が再起動するときは、本体が待ち受けを再開�
 この 2 つは、異常の後に接続を待っている再起動待ちの間も同じである。
 ただし再起動の待ち時間の中では、利用者の起動し直しは待ち時間の後に起動し、コマンドの呼び出しは 5.2 の表のとおり失敗する。
 引き継ぐファイル記述子は 3 番から並べ、3 番が待ち受け、4 番からが受け付けた接続である。
-その数を環境変数 `MODAL_EDITOR_SOCKET_FDS`（仮。`ext.EnvSocketFDs`）で渡し、拡張機能は `ext/server` の `InheritedSocket` で受け取る。
+その数を環境変数 `VI_IMITATION_SOCKET_FDS`（仮。`ext.EnvSocketFDs`）で渡し、拡張機能は `ext/server` の `InheritedSocket` で受け取る。
 本体と拡張機能は同じ待ち受けを共有するので、本体は子プロセスを起動する前に自分の `Accept` を止め、同じ接続を取り合わないようにする（`internal/exthost` の `socketActivator`）。
 `socket` の契機を宣言した拡張機能が複数あれば、本体は最初の 1 つだけに使う。
-ソケットのパスは、本体が起動ごとに一意に決め、すべての拡張機能を起動するときに環境変数 `MODAL_EDITOR_MCP_SOCKET`（仮。#39 の中継コマンドが読む名前。`ext.EnvMCPSocket`）で渡す。
+ソケットのパスは、本体が起動ごとに一意に決め、すべての拡張機能を起動するときに環境変数 `VI_IMITATION_MCP_SOCKET`（仮。#39 の中継コマンドが読む名前。`ext.EnvMCPSocket`）で渡す。
 本体の環境に同じ名前の変数があっても、決めたパスで上書きする。
 ACP の拡張機能は、この変数から中継コマンドの引数を作る（6.5）。
 パスは次の順に決める（`internal/exthost` の `NewMCPSocket`）。
 
-1. 環境変数 `XDG_RUNTIME_DIR` が絶対パスなら、`$XDG_RUNTIME_DIR/modal-editor/<プロセス ID>-<乱数>/mcp.sock`
-2. 1 が使えなければ（変数が無い、ディレクトリを作れない、パスがソケットのパスの長さの上限の 103 バイトを超える、`$XDG_RUNTIME_DIR/modal-editor` が私用のディレクトリでない）、`<一時ディレクトリ>/modal-editor-<プロセス ID>-<乱数>/mcp.sock`。一時ディレクトリは Go の `os.TempDir`（`TMPDIR`、無ければ `/tmp`）である
+1. 環境変数 `XDG_RUNTIME_DIR` が絶対パスなら、`$XDG_RUNTIME_DIR/vi-imitation/<プロセス ID>-<乱数>/mcp.sock`
+2. 1 が使えなければ（変数が無い、ディレクトリを作れない、パスがソケットのパスの長さの上限の 103 バイトを超える、`$XDG_RUNTIME_DIR/vi-imitation` が私用のディレクトリでない）、`<一時ディレクトリ>/vi-imitation-<プロセス ID>-<乱数>/mcp.sock`。一時ディレクトリは Go の `os.TempDir`（`TMPDIR`、無ければ `/tmp`）である
 
-既にある `$XDG_RUNTIME_DIR/modal-editor` は、シンボリックリンクでないディレクトリで、持ち主が本体の実効ユーザー ID で、他の利用者の権限が無い場合だけ使う。
+既にある `$XDG_RUNTIME_DIR/vi-imitation` は、シンボリックリンクでないディレクトリで、持ち主が本体の実効ユーザー ID で、他の利用者の権限が無い場合だけ使う。
 `su`（`-` 無し）や `sudo -E` で他の利用者の `XDG_RUNTIME_DIR` を引き継いで起動したときに、元の利用者がソケットを置く場所を握れないようにするためである。
 `mcp.sock` を置くディレクトリは、本体が権限 0700 で新しく作り、終了時に中身ごと消す。
 既にあるディレクトリは使わないので、同じプロセス ID のディレクトリが異常終了で残っていても、共有の一時ディレクトリに他の利用者が先に同じ名前を作っていても、別のディレクトリになる。
@@ -1804,8 +1804,8 @@ MCP のソケットは server が待ち受けるので、パスは server ごと
 中継コマンドは、次の順に MCP のソケットのパスを決める（仮）。
 
 1. `--socket` の引数
-2. 環境変数 `MODAL_EDITOR_MCP_SOCKET`（ACP の拡張機能が起動したエージェントの中など、本体が渡した値）
-3. 環境変数 `MODAL_EDITOR_SOCKET`（FR-82。`:!` の中で起動したエージェントなど）の server の `mcp.sock`
+2. 環境変数 `VI_IMITATION_MCP_SOCKET`（ACP の拡張機能が起動したエージェントの中など、本体が渡した値）
+3. 環境変数 `VI_IMITATION_SOCKET`（FR-82。`:!` の中で起動したエージェントなど）の server の `mcp.sock`
 4. 1.2 の規則（tmux の window、herdr のタブ）で決めた server の `mcp.sock`
 
 このため、同じ tmux の window で動かしたエージェント（Claude Code など）の MCP の設定には、中継コマンドを引数無しで書けばよい。
@@ -1814,7 +1814,7 @@ MCP のソケットは server が待ち受けるので、パスは server ごと
 2026-11-16 に確かめた MCP の仕様の最新の版は 2026-07-28 である（[MCP の Tools](https://modelcontextprotocol.io/specification/latest/server/tools) のリンク先が `specification/2026-07-28/` を指す）。
 この版では、すべてのリクエストが `_meta` に `io.modelcontextprotocol/protocolVersion` などを含めることになっている（同ページの冒頭の注）。
 どの版を実装するかは MCP の拡張機能の中で閉じる事柄で、本体との取り決めには影響しない。
-MCP の拡張機能は、2026-07-28 と 2025-11-25 の 2 つの版を扱う（PR #95。`cmd/modal-editor-ext-mcp` の `modernVersion` と `legacyVersion`）。
+MCP の拡張機能は、2026-07-28 と 2025-11-25 の 2 つの版を扱う（PR #95。`cmd/vi-imitation-ext-mcp` の `modernVersion` と `legacyVersion`）。
 
 - 2026-07-28 の版のリクエストは、`params._meta` の版で受け付ける。版が欠けたリクエストと、扱わない版のリクエストは誤りで応答する
 - 2025-11-25 までのクライアントのために `initialize` も受け付け、求められた版によらず 2025-11-25 を返す。`initialize` を受けた接続では、`_meta` に版の無いリクエストも受け付ける
@@ -1958,9 +1958,9 @@ ACP の仕様は、クライアントがエージェントを子プロセスと�
 `session/new` は、作業ディレクトリ（`cwd`、絶対パス）と、エージェントが接続する MCP サーバーの一覧（`mcpServers`）を受け取る（[ACP の Session Setup](https://agentclientprotocol.com/protocol/session-setup)）。
 標準入出力の MCP サーバーは、`name`、実行ファイルの絶対パスの `command`、`args`、省略できる `env` で指定し、すべてのエージェントは標準入出力の MCP サーバーへの接続に対応しなければならない（同ページ）。
 拡張機能は、`cwd` に本体の作業ディレクトリを、`mcpServers` に中継コマンド（`command` に絶対パス、`args` に `--socket` とソケットのパス）を渡す（6.2）。
-ソケットのパスは、本体が決めて環境変数 `MODAL_EDITOR_MCP_SOCKET` で渡したもので、MCP の拡張機能が待ち受けるパスと同じである。
+ソケットのパスは、本体が決めて環境変数 `VI_IMITATION_MCP_SOCKET` で渡したもので、MCP の拡張機能が待ち受けるパスと同じである。
 変数が無いか、中継コマンドが見つからなければ、`mcpServers` を空にする。
-拡張機能は、中継コマンドの絶対パスを次の順に探す（仮。`cmd/modal-editor-ext-acp` の `mcpBridgePath`）。
+拡張機能は、中継コマンドの絶対パスを次の順に探す（仮。`cmd/vi-imitation-ext-acp` の `mcpBridgePath`）。
 
 1. 利用者の設定のうち ACP の拡張機能に向けた部分の `mcpBridge`（仮）
 2. 拡張機能の実行ファイルと同じディレクトリ
@@ -2023,19 +2023,19 @@ ACP の拡張機能は、最初のプロンプトの送信で `pane/open`（5.3�
 ### 6.6 スクリプト
 
 スクリプトの拡張機能は、利用者が置く Go のソースファイルと宣言ファイルの組である（FR-10、FR-36）。
-宣言ファイルの `command` に、スクリプトを実行する実行ファイル `modal-editor-ext-script` を書き、スクリプトのファイルを引数として渡す。
+宣言ファイルの `command` に、スクリプトを実行する実行ファイル `vi-imitation-ext-script` を書き、スクリプトのファイルを引数として渡す。
 このために、宣言ファイルに `args`（仮）を足す（6.7）。
-本体は、スクリプトの拡張機能を、コンパイルする拡張機能と同じく 1 つのプロセスとして起動し、`modal-editor-ext-script` はスクリプトを 1 つだけ実行する。
+本体は、スクリプトの拡張機能を、コンパイルする拡張機能と同じく 1 つのプロセスとして起動し、`vi-imitation-ext-script` はスクリプトを 1 つだけ実行する。
 1 つのプロセスで複数のスクリプトを実行しないのは、1 つのスクリプトの無限ループや panic で他のスクリプトを止めないためである（NFR-03）。
 
 スクリプトは、コンパイルする拡張機能と同じ `ext` と `ext/server` を import して書き、5.3 の既存のメソッドで本体とやり取りする。
 最初の範囲で足すメソッドは無い。
 yaegi を埋め込むプログラムは、スクリプトに使わせるパッケージの記号の表を `Use` で渡す。
 README の例は、標準ライブラリの記号の表 `stdlib.Symbols` を渡している（[yaegi の README](https://github.com/traefik/yaegi)）。
-`ext` と `ext/server` の記号の表は、yaegi の `extract` で生成し、`modal-editor-ext-script` に埋め込む（`cmd/modal-editor-ext-script/symbols.go` の `go:generate`）。
+`ext` と `ext/server` の記号の表は、yaegi の `extract` で生成し、`vi-imitation-ext-script` に埋め込む（`cmd/vi-imitation-ext-script/symbols.go` の `go:generate`）。
 生成したファイルが、いまの `ext` と `ext/server` から生成し直したものと一致することを、テスト（`TestSymbolsUpToDate`）で確かめる。
 
-`modal-editor-ext-script` は、yaegi を制限なしのモード（`Unrestricted`）で動かす。
+`vi-imitation-ext-script` は、yaegi を制限なしのモード（`Unrestricted`）で動かす。
 悪意のある拡張機能から守ることは対象外であり（要件定義 3.2、NFR-03 の注）、スクリプトはコンパイルする拡張機能と同じく利用者の権限で動く別のプロセスなので、制限のモードは守りにならない。
 制限のモードでは、環境変数が読めず、`os/exec` が使えず、`os.Exit` と `log.Fatal` が panic に置き換わる。
 制限なしのモードでは、これらがコンパイルした Go と同じく動き、`os.Exit` はプロセスの終了として本体の監視で扱われる。
@@ -2044,17 +2044,17 @@ README の例は、標準ライブラリの記号の表 `stdlib.Symbols` を渡�
 2026-11-16 に yaegi v0.16.3 で確かめた結果は次のとおりである。
 
 - yaegi は、記号の表に無いパッケージを `GOPATH/src` の下のソースから探す。モジュールのキャッシュは探さないので、`go.mod` で取得したモジュールは import できない
-- `GoPath` を指定すれば、`GOPATH/src` の形に置いたソースは import できる。`modal-editor-ext-script` は `GoPath` を空にし、使わせるのを標準ライブラリと `ext` と `ext/server` に限る
+- `GoPath` を指定すれば、`GOPATH/src` の形に置いたソースは import できる。`vi-imitation-ext-script` は `GoPath` を空にし、使わせるのを標準ライブラリと `ext` と `ext/server` に限る
 
-スクリプトの書き方（`package main` と `func main` で `server.Server` の `Run` を呼ぶ）、宣言ファイルの例、yaegi が Go の言語仕様と違う点は、`cmd/modal-editor-ext-script` のパッケージの doc に書く。
+スクリプトの書き方（`package main` と `func main` で `server.Server` の `Run` を呼ぶ）、宣言ファイルの例、yaegi が Go の言語仕様と違う点は、`cmd/vi-imitation-ext-script` のパッケージの doc に書く。
 
-`args` に相対パスで書いたスクリプトは、`modal-editor-ext-script` が、本体の渡す環境変数 `MODAL_EDITOR_EXTENSION_DIR`（5.1）の宣言ファイルのディレクトリから解決する。
+`args` に相対パスで書いたスクリプトは、`vi-imitation-ext-script` が、本体の渡す環境変数 `VI_IMITATION_EXTENSION_DIR`（5.1）の宣言ファイルのディレクトリから解決する。
 子プロセスの作業ディレクトリは本体のものなので（5.1）、作業ディレクトリからは解決しない。
 
-`modal-editor-ext-script` の実行ファイルは、複数のスクリプトで 1 つを共有できる。
+`vi-imitation-ext-script` の実行ファイルは、複数のスクリプトで 1 つを共有できる。
 本体は `command` を `PATH` から探さないので（5.1）、共有するには、`command` に共有の実行ファイルの絶対パスか、宣言ファイルのディレクトリからの相対パスを書く。
-`make dist` の配布物では、`modal-editor-ext-script` は宣言ファイルを持たないので、本体と同じディレクトリに置かれる。
-利用者のスクリプトの宣言ファイルは、7 章の拡張機能を探す規則では利用者のディレクトリ（`$XDG_DATA_HOME` の下）に置くので、配布物の `modal-editor-ext-script` を指すには、その宣言ファイルに配布物を置いた場所のパスを書くことになる。
+`make dist` の配布物では、`vi-imitation-ext-script` は宣言ファイルを持たないので、本体と同じディレクトリに置かれる。
+利用者のスクリプトの宣言ファイルは、7 章の拡張機能を探す規則では利用者のディレクトリ（`$XDG_DATA_HOME` の下）に置くので、配布物の `vi-imitation-ext-script` を指すには、その宣言ファイルに配布物を置いた場所のパスを書くことになる。
 配布物を置いた場所を宣言ファイルに書かずに指す方法は未決である（10 章）。
 
 ### 6.7 拡張機能をまたぐ取り決め
@@ -2078,7 +2078,7 @@ ACP の `fs/*` と MCP のツールが受け取るパスも絶対パスなので
 |---|---|---|---|
 | `activation` の `socket` の契機 | 宣言ファイル | MCP のソケットへの最初の接続で起動する。本体は待ち受けているソケットと受け付けた接続を子プロセスへ引き継ぐ（6.2） | MCP |
 | `saveHook` | 宣言ファイル | true なら、稼働中のときに `buffer/willSave` を受け取る | LSP |
-| `args` | 宣言ファイル | `command` に渡す引数の列。本体は解決せずにそのまま渡す。相対パスの引数は、拡張機能が環境変数 `MODAL_EDITOR_EXTENSION_DIR` の宣言ファイルのディレクトリから解決する（5.1） | スクリプト |
+| `args` | 宣言ファイル | `command` に渡す引数の列。本体は解決せずにそのまま渡す。相対パスの引数は、拡張機能が環境変数 `VI_IMITATION_EXTENSION_DIR` の宣言ファイルのディレクトリから解決する（5.1） | スクリプト |
 | 拡張機能ごとの `activation` の追加 | 利用者の設定 | 宣言ファイルの `activation` に `filetype` の契機を足す | LSP、tree-sitter |
 | ファイルの種類の対応表 | 利用者の設定 | 拡張子とファイル名から、ファイルの種類の名前への対応を足す | すべて |
 
@@ -2165,7 +2165,7 @@ Vim 9.1 は、autoread が有効でも作られたファイル（W13）は問う
 範囲の終わりと同じ位置は「範囲より後ろ」に数えてずらし、範囲の開始と同じ位置（終わりとは違う位置）は「重なる」に数えて開始に寄せる。
 このため、行の先頭への挿入（範囲が空で、開始が行の先頭）では、その行の先頭の印は挿入した行数だけ下へずれる。
 Vim で印のある行の上に `O` で行を足したときに、印が元の行に付いたままになる（2 行目の印は 3 行目へずれる。2026-11-16 に Vim 9.1 で確かめた）のと同じ動きである。
-行の印は行の先頭の位置として扱う。DAP の拡張機能は、自分の持つブレークポイントの行を同じ規則でずらす（`cmd/modal-editor-ext-dap` の `shiftLine`）。
+行の印は行の先頭の位置として扱う。DAP の拡張機能は、自分の持つブレークポイントの行を同じ規則でずらす（`cmd/vi-imitation-ext-dap` の `shiftLine`）。
 本体が持つ一覧は、このずらしによって、常に現在のバージョン番号の位置を指す。
 
 `diagnostic/set` と `sign/set` は、一覧を計算するもとにしたバージョン番号（`version`）を持つ。
@@ -2452,7 +2452,7 @@ git の HEAD と比べるときは、git の拡張機能が HEAD の版を編集
 | 項目 | 実装 |
 |---|---|
 | 見比べの単位 | 2 つのバッファの組。1 つのバッファは高々 1 つの組に入り、2 つのバッファの持ち主は別の client にする。どちらかのバッファを閉じると組も終わる |
-| `:diffsplit {ファイル}` | 端末多重化ソフトの層の `SplitPane` で、打った client のペインの右を分割し、フォーカスを移す。新しいペインでは、本体の実行ファイルを `-connect <この server のソケット> <ファイル>` で起動し、環境変数 `MODAL_EDITOR_SPLIT`（仮。`editor.EnvSplit`）に待ちの印（server の中で一意の番号）を入れる（`internal/server` の `splitPane`）。client は印を Hello の環境変数で知らせ、server は印が待ちと同じ client を相手にして、その client の環境変数から印を外す。#228 では `MODAL_EDITOR_SOCKET`（規則 1）でソケットを渡していたが、#226 の後はこの環境変数のもとで起動した `modal-editor` が待つだけの client（4.9）になり、ファイルが打った client のタブに開いて新しいペインに何も出なかった。#245 で `-connect` で繋ぐ形に直した。ソケットのパスの規則に頼らないので、打った client が別の window へ動いた後（FR-112）も、herdr のペインに `HERDR_PANE_ID` が入らないときも、この server に繋ぐ。その client が繋いだら見比べを始める（30 秒まで待ち、過ぎたら待ちを捨てる）。待っている間の次の分割（`:diffsplit`、`diff/start`）は断る。ファイルが既に別の client のタブなら、ペインを分割せずにそのタブと見比べる。同じ client のタブなら誤りにする |
+| `:diffsplit {ファイル}` | 端末多重化ソフトの層の `SplitPane` で、打った client のペインの右を分割し、フォーカスを移す。新しいペインでは、本体の実行ファイルを `-connect <この server のソケット> <ファイル>` で起動し、環境変数 `VI_IMITATION_SPLIT`（仮。`editor.EnvSplit`）に待ちの印（server の中で一意の番号）を入れる（`internal/server` の `splitPane`）。client は印を Hello の環境変数で知らせ、server は印が待ちと同じ client を相手にして、その client の環境変数から印を外す。#228 では `VI_IMITATION_SOCKET`（規則 1）でソケットを渡していたが、#226 の後はこの環境変数のもとで起動した `vi-imitation` が待つだけの client（4.9）になり、ファイルが打った client のタブに開いて新しいペインに何も出なかった。#245 で `-connect` で繋ぐ形に直した。ソケットのパスの規則に頼らないので、打った client が別の window へ動いた後（FR-112）も、herdr のペインに `HERDR_PANE_ID` が入らないときも、この server に繋ぐ。その client が繋いだら見比べを始める（30 秒まで待ち、過ぎたら待ちを捨てる）。待っている間の次の分割（`:diffsplit`、`diff/start`）は断る。ファイルが既に別の client のタブなら、ペインを分割せずにそのタブと見比べる。同じ client のタブなら誤りにする |
 | `:diffthis`、`:diffoff`、`:diffupdate` | `:diffthis` は 2 つの client のタブで打つと見比べを始める。同じ client で打ち直すと、後のタブが相手を待つ。`:diffoff` は組を終える（相手のタブも終わる）。`:diffupdate` はその場で計算し直す |
 | 差分の計算し直し | 描く前に、計算の後にバッファが変わった組を、写したテキストで別の goroutine で計算し直す。結果が届くまでは前の結果で描く。`]c`、`[c`、`do`、`dp` は、古い結果で行を取り違えないよう、その場で計算し直してから行う（`diff.Compute` だけなら、10,000 行で 0.1 ms 以下だった。PR #186 の測り） |
 | 詰め物の位置 | 塊の短い側の、塊の行の下（`internal/diff` の `Layout`）。Vim 9.1 の `vim -d` の画面と同じになることを、3 つの組で確かめた（`TestLayoutScreen`） |
@@ -2484,12 +2484,12 @@ cgo は使わないので、NFR-02 は変わらない。
 
 | 拡張機能 | 最初の範囲 | 使う取り決め |
 |---|---|---|
-| git 連携 | バッファのファイルの HEAD の版を、編集を禁止したファイルでないバッファとして開き、`diff/start`（6.8）で、別の編集の client のタブとして見比べる（FR-104）。他の範囲は要件定義 7 章の未決事項。#245 で `cmd/modal-editor-ext-git` として実装した（下の表） | `buffer/create`、`diff/start` |
+| git 連携 | バッファのファイルの HEAD の版を、編集を禁止したファイルでないバッファとして開き、`diff/start`（6.8）で、別の編集の client のタブとして見比べる（FR-104）。他の範囲は要件定義 7 章の未決事項。#245 で `cmd/vi-imitation-ext-git` として実装した（下の表） | `buffer/create`、`diff/start` |
 | markdown の描画 | 範囲は要件定義 7 章の未決事項で、要件の ID はまだ無い | 未定 |
 | ツリー型のファイラ | 作業ディレクトリの木を、端末多重化ソフトで分割したペインに木の部品で出し、選んだファイルを、ファイラを開いた元の編集の client（1.2）のタブで開く（FR-105） | `pane/open`、`view/update`、`view/select`、`editor/open` |
 | ファジーファインダー | 入力の行と一覧の部品を中央のポップアップに出し、入力が変わるたびに絞り込んで一覧を返す（FR-106）。対象は、ファイル、本体の一覧（`editor/list`。FR-107） | `popup/open`、`input/change`、`view/update`、`view/select`、`editor/list` |
 
-#245 で、git 連携の拡張機能を次のとおりに実装した（`cmd/modal-editor-ext-git`。どれも仮）。
+#245 で、git 連携の拡張機能を次のとおりに実装した（`cmd/vi-imitation-ext-git`。どれも仮）。
 
 | 項目 | 実装 |
 |---|---|
@@ -2509,7 +2509,7 @@ cgo は使わないので、NFR-02 は変わらない。
 
 `editor/list` で問い合わせられる一覧は、タブ（全ての client）、コマンド（本体の Ex コマンドと拡張機能のコマンド）、キーの一覧（7.2）、レジスターの履歴（4.5）、操作中の client のジャンプリスト（4.4）である（FR-107）。
 
-#246 で、ファジーファインダーの拡張機能（`cmd/modal-editor-ext-finder`）と `editor/list` を次のとおりに作った（どれも仮）。
+#246 で、ファジーファインダーの拡張機能（`cmd/vi-imitation-ext-finder`）と `editor/list` を次のとおりに作った（どれも仮）。
 
 - `editor/list` の params は一覧の種類（`list`。`tabs`、`commands`、`keys`、`registers`、`jumps`）で、result は問い合わせた種類の欄だけを埋める（`ext.EditorListResult`）。その拡張機能へ最後に問い合わせを始めた client（1.2）を読み込んで作るので、ジャンプリストとタブの `own` はその client のものである。キーの一覧の行は、PR #230 の行の値（`keyRow`）のキー、モード、出どころ、説明文、上書きされたモードである。コマンドの一覧は、`internal/command/ex` の表の名前と最短の形（`ex.Names`）の後に、拡張機能のコマンドの口から呼ぶもの（拡張機能のコマンド、`:help`、`:keys`、`:ext`、`provides` の操作の名前）を名前の順に並べる
 - 絞り込みは、入力を空白で区切ったすべての語に、語の文字が順に現れる候補を残す（fzf の既定のあいまい一致と AND）。大文字の無い語は大文字と小文字を区別しない（smart case）。点数は fzf v1 を簡単にしたもの（語の切れ目と続けての一致に加点し、間に挟んだ文字で減点）で、並びは点数、短さ、元の順である（`match.go`）。一覧に送るのは上位 300 件（設定の `limit`）で、見出しに「一致した数/候補の数」を出す
@@ -2590,19 +2590,19 @@ Go で書いた拡張機能が起動できるかどうかは、上限につい�
 
 | 拡張機能 | 上限（MiB） | 本体の方式 | exec の前 |
 |---|---|---|---|
-| `modal-editor-ext-line` | 760 | 5/5 | 5/5 |
-| `modal-editor-ext-line` | 1150、1200、1500 | 0/5 | 0/5 |
-| `modal-editor-ext-line` | 2048 | 20/20 | 5/5 |
-| `modal-editor-ext-lsp` | 1150 / 1500 / 2048 | 0/5 / 0/5 / 5/5 | 未計測 |
-| `modal-editor-ext-acp` | 1150 / 1500 / 2048 | 0/5 / 1/5 / 5/5 | 未計測 |
-| `modal-editor-ext-script`（`testdata/line/line.go`） | 2048 | 15/20、16/20（2 回） | 18/20 |
-| `modal-editor-ext-script` | 2560 / 3072 / 4096 | 20/20 / 20/20 / 20/20 | 未計測 |
+| `vi-imitation-ext-line` | 760 | 5/5 | 5/5 |
+| `vi-imitation-ext-line` | 1150、1200、1500 | 0/5 | 0/5 |
+| `vi-imitation-ext-line` | 2048 | 20/20 | 5/5 |
+| `vi-imitation-ext-lsp` | 1150 / 1500 / 2048 | 0/5 / 0/5 / 5/5 | 未計測 |
+| `vi-imitation-ext-acp` | 1150 / 1500 / 2048 | 0/5 / 1/5 / 5/5 | 未計測 |
+| `vi-imitation-ext-script`（`testdata/line/line.go`） | 2048 | 15/20、16/20（2 回） | 18/20 |
+| `vi-imitation-ext-script` | 2560 / 3072 / 4096 | 20/20 / 20/20 / 20/20 | 未計測 |
 
 単調でない理由は確かめていない。
 掛ける時機を変えても同じ帯で起動できないので、Go の実行時が上限に合わせて予約の仕方を変えることによると推測している。
 言語サーバーも同じ値を継ぐ。
 gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジトリ）を `prlimit --as` の下で動かすと、4096 MiB では 3/3 が失敗し（`out of memory: cannot allocate 4194304-byte block` など）、6144 MiB では 3/3 が成功した。
-したがって、この計測の条件では、`modal-editor-ext-lsp` で gopls を使うなら 6144 MiB 以上が要る。
+したがって、この計測の条件では、`vi-imitation-ext-lsp` で gopls を使うなら 6144 MiB 以上が要る。
 値は CPU の数、カーネル、Go の版、言語サーバーと開くプロジェクトで変わるので、設定するときは使う拡張機能と言語サーバーを実際に動かして確かめる。
 
 上限に当たった拡張機能は確保に失敗して異常終了し（Go の拡張機能は `fatal error: out of memory`）、本体は子プロセスの終了として扱う（5.2）。
@@ -2610,8 +2610,8 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 
 `fixendofline`（真偽値。既定は true）は、書き出すときに末尾の改行を補うかどうかである（4.1）。
 設定ファイルの置き場所と拡張機能を探す規則は、仮に次のとおりにする（PR #109。`internal/config` の `DefaultPath` と `ExtensionDirs`）。
-設定ファイルは `$XDG_CONFIG_HOME/modal-editor/config.jsonc`（未設定なら `~/.config` の下）に置く。空白とコメントだけのファイルは `{}` と同じに扱う。
-拡張機能は、`$XDG_DATA_HOME/modal-editor/extensions/<名前>/`（利用者。未設定なら `~/.local/share` の下）、本体の実行ファイルの隣の `extensions/<名前>/`（同梱。`make dist` の配置）の順に `manifest.json` を探し、ID が重なれば先の利用者のものを使う。
+設定ファイルは `$XDG_CONFIG_HOME/vi-imitation/config.jsonc`（未設定なら `~/.config` の下）に置く。空白とコメントだけのファイルは `{}` と同じに扱う。
+拡張機能は、`$XDG_DATA_HOME/vi-imitation/extensions/<名前>/`（利用者。未設定なら `~/.local/share` の下）、本体の実行ファイルの隣の `extensions/<名前>/`（同梱。`make dist` の配置）の順に `manifest.json` を探し、ID が重なれば先の利用者のものを使う。
 
 段階 3 では、設定ファイルに次の項目を足す（名前は仮）。
 
@@ -2793,7 +2793,7 @@ README によれば、F キーは段階 2 では押しても何もしないの�
 
 本体の panic で端末を戻す方式は、本体が起こす goroutine のそれぞれで recover し、端末を戻してから同じ値で panic を続ける形にする（#114）。
 Go の panic は、他の goroutine の recover で捕まえられないためである。
-`cmd/modal-editor` は、端末を戻す関数を、イベントループの goroutine では recover で、`internal/term` の goroutine では `term.Terminal.RestoreOnPanic` で、`internal/editor` と `internal/exthost` の goroutine では `editor.Config.OnPanic`（`exthost.Config.OnPanic`、拡張機能との接続は `rpc.WithPanicHook`）で呼ぶ。
+`cmd/vi-imitation` は、端末を戻す関数を、イベントループの goroutine では recover で、`internal/term` の goroutine では `term.Terminal.RestoreOnPanic` で、`internal/editor` と `internal/exthost` の goroutine では `editor.Config.OnPanic`（`exthost.Config.OnPanic`、拡張機能との接続は `rpc.WithPanicHook`）で呼ぶ。
 端末を戻す関数は何度呼んでもよく、どの goroutine からも呼べる。
 標準ライブラリの関数だけを呼ぶ goroutine（`signal.NotifyContext` の中のもの、子プロセスの回収の `cmd.Wait`、`internal/exthost` の `context.AfterFunc` が取り消しの関数を呼ぶもの）の panic と、本体が SIGKILL で終わったときは戻せない。
 これらまで覆うには、親のプロセスが本体を子として起動し、終わった後に端末を戻す形が要るが、1 章の「本体のプロセス 1 個」を変えるので採らない。
@@ -2849,7 +2849,7 @@ reqtrace は Makefile のコメントの注釈も実装として数える。
 
 ```makefile
 # req: NFR-02
-CGO_EXTENSIONS := modal-editor-ext-treesitter
+CGO_EXTENSIONS := vi-imitation-ext-treesitter
 ```
 
 検証は、ビルドの生成物を読む Go のテスト（`internal/distcheck`）に書く。
@@ -2874,7 +2874,7 @@ CI は `make build-check` の後に `make footprint-check` を実行する。
 | ターゲット | 検証すること | 要件 |
 |---|---|---|
 | `make build-check` | 本体の実行ファイルが 10 MiB 以下（`internal/distcheck`） | NFR-05 |
-| `make footprint-check` | 拡張機能なしで 10,000 行のファイルを偽の端末で開き、起動から文字を含む最初の画面までと、その後の本体の `VmRSS` を 20 回測った中央値が、20 ms 以下と 16 MiB 以下（`cmd/modal-editor`） | NFR-05 |
+| `make footprint-check` | 拡張機能なしで 10,000 行のファイルを偽の端末で開き、起動から文字を含む最初の画面までと、その後の本体の `VmRSS` を 20 回測った中央値が、20 ms 以下と 16 MiB 以下（`cmd/vi-imitation`） | NFR-05 |
 
 測り方と、目標値を決めた根拠の実測は [measurements/nfr05-footprint.md](measurements/nfr05-footprint.md) に書く。
 
@@ -2891,7 +2891,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 | 不正な UTF-8 を含むファイルのパスを拡張機能へ送るときの扱い（JSON の文字列では U+FFFD に置き換わる） | 4.1、5.3 |
 | 未保存のバッファを本体の panic から守る仕組み | 8 |
 | 補完の候補の表示と、インサートモードの入力ごとに言語サーバーへ問い合わせる契機 | 6.3 |
-| 利用者のスクリプトの宣言ファイルが、配布物の `modal-editor-ext-script` を、配布物を置いた場所を書かずに指す方法 | 6.6 |
+| 利用者のスクリプトの宣言ファイルが、配布物の `vi-imitation-ext-script` を、配布物を置いた場所を書かずに指す方法 | 6.6 |
 
 補完の候補の表示と問い合わせの契機を除く 4 項目は、2026-11-16 のオーナーの裁定（#157）で、今は手を付けずに未決のまま残すことにした。
 
@@ -2919,7 +2919,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 | `:{範囲}!` と `:r !` の実行中に、コマンドを打った client のキーを保留すること（仮）と、その間に FR-83 の client が繋いで開かせたタブを編集できるようにする扱い。#215 で、保留するのはコマンドを打った client のキーだけにし、外部のコマンドを中断するのはその client の `<C-c>` だけにした。マクロの再生（キーの解釈）と、再生中でない拡張機能の応答の待ち（入れ子の待ち）は、イベントループを止めるので、どの client の `<C-c>` でも中断する（仮）。再生中の拡張機能の応答の待ちは、#224 でイベントループを止めない形にしたので、外部のコマンドと同じく待っている client の `<C-c>` だけで中断する。外部のコマンドは server に 1 つだけ動かせるので、ある client の実行中に別の client が `:{範囲}!` か `:r !` を打つと E319 になる（PR #223 のレビューの推奨 1）。#226 で、FR-83 の client が開かせたタブはタブが閉じられるまで編集できるようにし（4.9）、`:!` と権限を上げた保存も同じ 1 つの枠で動かした（ある client の `:!` の実行中に、別の client の `:!` も E319）。client ごとに持つかは未決のまま | 4.9 |
 | 確認の問いと拡張機能の選択肢の問いの間、問いを出した client 以外のキーを処理せずに待たせること（#215 の仮の扱い。問いを出したバッファと範囲を変えないため） | 1.2、4.4 |
 | 端末の入力が閉じた client の、未保存の変更のあるタブのバッファを、どのタブでもないバッファとして残すこと（#215 の仮の扱い） | 1.2 |
-| 子プロセスが待つだけの client を待たずに端末を使い続けるとき（`:!modal-editor a.txt & top`）に、取り戻した client と画面が混ざること（#226 で確かめた。防いでいない） | 4.9 |
+| 子プロセスが待つだけの client を待たずに端末を使い続けるとき（`:!vi-imitation a.txt & top`）に、取り戻した client と画面が混ざること（#226 で確かめた。防いでいない） | 4.9 |
 | 権限を上げて書くかの問いを、本体の y/n の問いにしたこと（要件定義 FR-79 は「選択肢で聞く」。#226 の仮の扱い） | 4.7 |
 | 同じ操作を複数の拡張機能が `provides` で名乗ったときの選び方 | 5.5 |
 | 提供者が稼働中でも操作を引き受けられないとき（LSP の拡張機能は稼働中だが、そのファイルの種類の言語サーバーが起動に失敗したときなど）に、次の候補の提供者へ回すか（今は回さない。`exthost.Host.Provider` は拡張機能の状態だけを見る。#203 のレビュー） | 5.5 |

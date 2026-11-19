@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // spansOf は、d の n 行目の範囲を、[start end order style] の文字列にする。

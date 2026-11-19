@@ -1,0 +1,291 @@
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+	"sync"
+
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+)
+
+// maxDecorationSetBytes は、1 回の decoration/set の本文（JSON）の大きさの上限である。
+// 本体は一覧を受け取るたびに、イベントループの上で描画用の表を全体から作り直す（internal/editor の rebuildDecorations）。
+// 範囲を整数の列で送る形（基本設計 6.1）では 1 つの範囲が 10 バイトほどで、上限の 10 MiB は約 10 万行の JSON（約 80 万の範囲）に当たり、
+// そのときの本体のイベントループの停止は 83〜122 ms だった（PR #73 のレビューの実測。40 万行では 445〜459 ms）。
+// 値は仮である（基本設計 10 章）。
+const maxDecorationSetBytes = 10 << 20
+
+// tooLargeMessage は、一覧が maxDecorationSetBytes を超えたバッファについて、利用者へ 1 回だけ知らせる文言である。
+const tooLargeMessage = "tree-sitter: 色を付ける範囲の一覧が大きすぎるので、このバッファには色を付けない"
+
+// job は、まだ解析していない、1 つのバッファへの指示である。
+// ループ（Server がメッセージを処理する goroutine）が積み、解析の goroutine が取り出す。
+// 取り出す前に同じバッファの指示が続けて届いたら、1 つの job にまとめる。
+type job struct {
+	// reset は、全文から解析し直すための複製である。nil なら、解析の goroutine が持つ構文木に edits を適用する。
+	reset *server.Buffer
+	// lang は、reset から解析するときの言語である。
+	lang *language
+	// edits は、reset（nil なら前回の解析）の後に届いた buffer/change の編集を、届いた順に並べたものである。
+	edits []ext.Edit
+	// latest は、最後に届いた buffer/change の後の複製である。edits を適用できなかったときに全文から解析し直すのに使う。
+	latest *server.Buffer
+	// version は、edits をすべて適用した後のバージョン番号である。送る一覧にはこの番号を付ける。
+	version ext.Version
+	// drop は、構文木を捨てることを表す。clear が true なら、空の一覧を送って色を消す。
+	drop, clear bool
+}
+
+// highlighter は、バッファごとの構文木を持ち、buffer/open と buffer/change のたびに色を付ける範囲の一覧を本体へ送る。
+//
+// 解析と一覧の計算は時間がかかる（1 MB の JSON で 1 回 0.3 秒ほど）ので、ループの上では行わない（server.Server の doc の「処理の順序」）。
+// フックは、Buffer.Clone した複製と編集を job に積んで速やかに戻り、1 つの解析の goroutine（work）が job を取り出して解析する。
+// 解析の間に同じバッファの差分が溜まれば、次の 1 回でまとめて適用して 1 回だけ解析し直し、途中のバージョンの一覧は送らない。
+// 本体は、バージョンの古い一覧でも描画できる（基本設計 6.1）。
+type highlighter struct {
+	langs map[string]*language // ファイルの種類から言語へ。作った後は変えない
+	log   *log.Logger
+	// maxBytes は、decoration/set の本文の大きさの上限である。maxDecorationSetBytes を入れる。テストは小さくしてよい。
+	maxBytes int
+
+	// active は、ループが、解析の対象にしているバッファとその言語を覚える表である。ループだけが触る。
+	active map[ext.BufferID]*language
+
+	mu      sync.Mutex
+	pending map[ext.BufferID]*job // mu で守る
+	wake    chan struct{}         // job を積んだことを解析の goroutine に知らせる。容量 1
+	stop    chan struct{}
+	done    chan struct{} // 解析の goroutine が終わったら閉じる。start の前は nil
+
+	// trees は、解析の goroutine が解析した構文木の複製を、テキストオブジェクトの問い合わせ（objects）へ渡す。
+	trees   *treeStore
+	objects *textObjects
+
+	// 以下は解析の goroutine だけが触る。
+	docs map[ext.BufferID]*document
+	// warned は、一覧が大きすぎることを知らせたバッファの集合である。
+	warned map[ext.BufferID]bool
+	// send は decoration/set を、notify は message/show を送る関数である。server が Server のメソッドを入れる。
+	send   func(ext.DecorationSetParams) error
+	notify func(ext.MessageLevel, string) error
+}
+
+// newHighlighter は、languages のすべての言語のパーサーとクエリを用意する。
+// クエリを解釈できないなど、用意できない言語があれば誤りを返す。
+func newHighlighter() (*highlighter, error) {
+	h := &highlighter{
+		langs:    map[string]*language{},
+		log:      log.New(os.Stderr, "vi-imitation-ext-treesitter: ", log.LstdFlags),
+		maxBytes: maxDecorationSetBytes,
+		active:   map[ext.BufferID]*language{},
+		pending:  map[ext.BufferID]*job{},
+		wake:     make(chan struct{}, 1),
+		stop:     make(chan struct{}),
+		docs:     map[ext.BufferID]*document{},
+		warned:   map[ext.BufferID]bool{},
+	}
+	for _, spec := range languages {
+		l, err := newLanguage(spec)
+		if err != nil {
+			h.close()
+			return nil, err
+		}
+		h.langs[spec.fileType] = l
+	}
+	h.trees = newTreeStore()
+	h.objects = newTextObjects(h.langs, h.trees)
+	return h, nil
+}
+
+// close は、解析の goroutine を止めて終わりを待ち、すべての構文木とパーサーとクエリの C のメモリを解放する。
+// Serve が戻った後に呼ぶ。
+func (h *highlighter) close() {
+	if h.done != nil {
+		close(h.stop)
+		<-h.done
+		h.done = nil
+	}
+	if h.objects != nil {
+		h.objects.close()
+	}
+	if h.trees != nil {
+		h.trees.close()
+	}
+	for _, d := range h.docs {
+		d.close()
+	}
+	clear(h.docs)
+	for _, l := range h.langs {
+		l.close()
+	}
+	clear(h.langs)
+}
+
+// server は、フックを登録した Server を返し、解析の goroutine を動かし始める。
+func (h *highlighter) server() *server.Server {
+	s := server.New()
+	s.ErrorLog = h.log
+	s.OnBufferOpen(func(_ context.Context, e *server.BufferOpenEvent) { h.open(e.Buffer) })
+	s.OnBufferChange(func(_ context.Context, e *server.BufferChangeEvent) { h.change(e) })
+	s.OnBufferClose(func(_ context.Context, e *server.BufferCloseEvent) { h.closeBuffer(e.Buffer) })
+	h.objects.register(s)
+	h.send = s.SetDecorations
+	h.notify = s.ShowMessage
+	h.done = make(chan struct{})
+	go h.work()
+	return s
+}
+
+// open は、buffer/open で受け取った全文を、解析の goroutine で全文から解析させる。ループの上で呼ぶ。
+// 文法を持たない種類のファイルは解析しない。
+// 送り直された全文（buffer/resync の応答）でファイルの種類が文法を持たないものに変わっていたら、構文木を捨て、空の一覧を送って色を消させる。
+//
+// req: FR-35
+func (h *highlighter) open(b *server.Buffer) {
+	lang, ok := h.langs[b.FileType()]
+	if !ok {
+		if _, was := h.active[b.ID()]; was {
+			delete(h.active, b.ID())
+			h.put(b.ID(), &job{drop: true, clear: true, version: b.Version()})
+		}
+		return
+	}
+	h.active[b.ID()] = lang
+	h.put(b.ID(), &job{reset: b.Clone(), lang: lang, version: b.Version()})
+}
+
+// change は、buffer/change の編集を、まだ取り出されていない同じバッファの job に足す。ループの上で呼ぶ。
+//
+// req: FR-35
+func (h *highlighter) change(e *server.BufferChangeEvent) {
+	if _, ok := h.active[e.Buffer.ID()]; !ok {
+		return
+	}
+	latest := e.Buffer.Clone()
+	h.mu.Lock()
+	j, ok := h.pending[e.Buffer.ID()]
+	if !ok {
+		j = &job{}
+		h.pending[e.Buffer.ID()] = j
+	}
+	j.edits = append(j.edits, e.Edits...)
+	j.latest = latest
+	j.version = e.ToVersion
+	h.mu.Unlock()
+	h.signal()
+}
+
+// closeBuffer は、buffer/close を受け取ったバッファの構文木を捨てさせる。ループの上で呼ぶ。
+func (h *highlighter) closeBuffer(id ext.BufferID) {
+	if _, ok := h.active[id]; !ok {
+		return
+	}
+	delete(h.active, id)
+	h.put(id, &job{drop: true})
+}
+
+// put は、バッファの job を j で置き換える。まだ取り出されていない前の job は、j が全文から解析し直すか捨てるので要らない。
+func (h *highlighter) put(id ext.BufferID, j *job) {
+	h.mu.Lock()
+	h.pending[id] = j
+	h.mu.Unlock()
+	h.signal()
+}
+
+func (h *highlighter) signal() {
+	select {
+	case h.wake <- struct{}{}:
+	default:
+	}
+}
+
+// work は、解析の goroutine の本体である。stop が閉じるまで、積まれた job を取り出して処理する。
+func (h *highlighter) work() {
+	defer close(h.done)
+	for {
+		select {
+		case <-h.stop:
+			return
+		case <-h.wake:
+		}
+		h.mu.Lock()
+		jobs := h.pending
+		h.pending = map[ext.BufferID]*job{}
+		h.mu.Unlock()
+		for id, j := range jobs {
+			h.process(id, j)
+		}
+	}
+}
+
+// process は、1 つのバッファの job を処理し、一覧を送る。
+// 処理の間に同じバッファの次の job が積まれていれば、この結果は古いので送らない。
+func (h *highlighter) process(id ext.BufferID, j *job) {
+	if j.drop {
+		if d, ok := h.docs[id]; ok {
+			d.close()
+			delete(h.docs, id)
+		}
+		delete(h.warned, id)
+		h.trees.drop(id)
+		if j.clear {
+			h.publish(id, j.version, []ext.Decoration{})
+		}
+		return
+	}
+	d, ok := h.docs[id]
+	switch {
+	case j.reset != nil:
+		if ok && d.lang == j.lang {
+			d.reset(j.reset.Text())
+		} else {
+			if ok {
+				d.close()
+			}
+			d = newDocument(j.lang, j.reset.Text())
+			h.docs[id] = d
+		}
+	case !ok:
+		// 全文を受け取る前の差分は無い（open が先に job を積む）。念のため捨てる。
+		return
+	}
+	if len(j.edits) > 0 {
+		if err := d.applyEdits(j.edits); err != nil {
+			h.log.Printf("buffer %d: %v; reparsing the whole text", id, err)
+			d.reset(j.latest.Text())
+		}
+	}
+	h.trees.put(id, j.version, d.lang, d.tree.Clone())
+	decs := d.decorations()
+	if h.superseded(id) {
+		return
+	}
+	if size := (ext.DecorationSetParams{Buffer: id, Version: j.version, Decorations: decs}).JSONSize(); size > h.maxBytes {
+		h.log.Printf("buffer %d: decoration/set would be %d bytes (limit %d); sending an empty list", id, size, h.maxBytes)
+		decs = []ext.Decoration{}
+		if !h.warned[id] {
+			h.warned[id] = true
+			if err := h.notify(ext.MessageWarning, tooLargeMessage); err != nil {
+				h.log.Printf("buffer %d: message/show: %v", id, err)
+			}
+		}
+	}
+	h.publish(id, j.version, decs)
+}
+
+// superseded は、バッファの次の job が積まれているかどうかを返す。
+func (h *highlighter) superseded(id ext.BufferID) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.pending[id]
+	return ok
+}
+
+// publish は、decoration/set を送る。送れなければログに書く。
+func (h *highlighter) publish(id ext.BufferID, version ext.Version, decs []ext.Decoration) {
+	if err := h.send(ext.DecorationSetParams{Buffer: id, Version: version, Decorations: decs}); err != nil {
+		h.log.Printf("buffer %d: decoration/set: %v", id, err)
+	}
+}

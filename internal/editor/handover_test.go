@@ -107,7 +107,7 @@ func (p *handoverPeer) reply(r TerminalResult) {
 // req: FR-80, FR-82
 func TestTerminalShell(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "abc\n", "b.txt": "xyz\n"})
-	h := start(t, Config{WorkDir: dir, ChildEnv: []string{"MODAL_EDITOR_SOCKET=/run/s.sock", "EDITOR=/bin/me"}}, "a.txt")
+	h := start(t, Config{WorkDir: dir, ChildEnv: []string{"VI_IMITATION_SOCKET=/run/s.sock", "EDITOR=/bin/me"}}, "a.txt")
 	h.keys(":!true<CR>")
 	h.settle()
 	if msg := h.message(); !strings.Contains(msg, "E319") {
@@ -120,7 +120,7 @@ func TestTerminalShell(t *testing.T) {
 	if len(j.Commands) != 1 || j.Commands[0].Shell != "git commit | cat" || !j.Prompt {
 		t.Errorf("頼み = %+v", j)
 	}
-	if want := []string{"MODAL_EDITOR_SOCKET=/run/s.sock", "EDITOR=/bin/me", EnvClient + "=2"}; !slices.Equal(j.Env, want) {
+	if want := []string{"VI_IMITATION_SOCKET=/run/s.sock", "EDITOR=/bin/me", EnvClient + "=2"}; !slices.Equal(j.Env, want) {
 		t.Errorf("Env = %q, want %q", j.Env, want)
 	}
 	b.reply(TerminalResult{ID: j.ID, Status: 1})

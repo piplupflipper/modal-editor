@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 // innerLine は、テキストオブジェクト「行の内側」（行頭の空白を除いた行末まで）のハンドラーである。

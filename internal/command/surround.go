@@ -4,8 +4,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // 囲みの操作（sa、sd、sr）は、vim-sandwich の既定の動作を写す（FR-73〜FR-75、基本設計 4.8）。

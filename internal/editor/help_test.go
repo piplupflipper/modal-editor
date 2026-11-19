@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/docs"
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/vi-imitation/docs"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/input"
 )
 
 // cursorLine は、カーソルのあるバッファのカーソルの行を返す。

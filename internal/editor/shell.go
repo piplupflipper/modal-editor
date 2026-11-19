@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
 )
 
 // shellOutputLimit は、:{range}! と :r ! の外部のコマンドの出力（標準出力と標準エラー出力の合計）の上限のバイト数である（仮）。
@@ -77,7 +77,7 @@ type shellOutcome struct {
 // startShell は、:{range}!{cmd} と :r !{cmd} の外部のコマンドを別の goroutine で動かし始める（FR-81、基本設計 4.9）。
 //
 // イベントループは止めない。実行中は、拡張機能のイベント、リサイズ、外での変更の確認の結果などを処理し続ける。
-// FR-82 の環境変数のもとで子が起動した modal-editor（FR-83）が server に繋いでも、イベントループと待ち合わないためである。
+// FR-82 の環境変数のもとで子が起動した vi-imitation（FR-83）が server に繋いでも、イベントループと待ち合わないためである。
 // コマンドを打った client のキーは <C-c>（中断）のほかは処理せずに列に残し、終わってから処理する。
 // 他の client のキーは処理する（仮。基本設計 4.9。clients.go の doc）。
 // 作業ディレクトリと、足す環境変数は、コマンドを打った client のもの（ClientInfo）である。

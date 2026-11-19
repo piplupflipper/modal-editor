@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 var update = flag.Bool("update", false, "testdata の .golden を書き直す")

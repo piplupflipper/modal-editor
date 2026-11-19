@@ -15,18 +15,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
-// 段階 1 の検証（要件定義 8 章）として、標準の拡張機能 modal-editor-ext-line への textObject/resolve の往復時間を測る。
+// 段階 1 の検証（要件定義 8 章）として、標準の拡張機能 vi-imitation-ext-line への textObject/resolve の往復時間を測る。
 // 手順と結果は docs/measurements/stage1-rpc-latency.md にある。
 //
 // 計測は時間がかかり、go のツールチェーンで拡張機能をビルドするので、環境変数 latencyEnv が 1 のときだけ動く。
 // make test（-race つき）では読み飛ばす。計測は -race を付けずに動かす。
 //
-//	MODAL_EDITOR_LATENCY=1 go test -run TestStage1Latency -count=1 -v ./internal/exthost
-const latencyEnv = "MODAL_EDITOR_LATENCY"
+//	VI_IMITATION_LATENCY=1 go test -run TestStage1Latency -count=1 -v ./internal/exthost
+const latencyEnv = "VI_IMITATION_LATENCY"
 
 // 計測の回数。
 const (
@@ -191,13 +191,13 @@ func measureOpen(t *testing.T, h *Host, lines int) {
 	t.Logf("%d 行: 起動、全文の送信、最初の応答まで %s（1 回だけの値）", lines, time.Since(start))
 }
 
-// buildLineExtension は、cmd/modal-editor-ext-line をビルドし、宣言ファイルと一緒に一時ディレクトリへ置く。
+// buildLineExtension は、cmd/vi-imitation-ext-line をビルドし、宣言ファイルと一緒に一時ディレクトリへ置く。
 func buildLineExtension(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	src := filepath.Join("..", "..", "cmd", "modal-editor-ext-line")
+	src := filepath.Join("..", "..", "cmd", "vi-imitation-ext-line")
 	//nolint:gosec // 引数は定数と、テストが作った一時ディレクトリのパスだけである
-	cmd := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "modal-editor-ext-line"), "./"+filepath.ToSlash(src))
+	cmd := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "vi-imitation-ext-line"), "./"+filepath.ToSlash(src))
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build extension: %v\n%s", err, out)

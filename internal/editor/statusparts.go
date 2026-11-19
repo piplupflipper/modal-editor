@@ -3,9 +3,9 @@ package editor
 import (
 	"fmt"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // この節は、拡張機能がステータス行とタブ行に足す部品（宣言ファイルの contributes.statusline と statusline/set）を持つ

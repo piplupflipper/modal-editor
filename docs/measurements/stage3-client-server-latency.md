@@ -41,8 +41,8 @@
 
 | 構成 | 起動のしかた |
 |---|---|
-| 1 つのプロセスの構成（FR-60） | `modal-editor <ファイル>` を偽の端末の上で起動する。server と編集の client は同じプロセスの中で、チャネル（`protocol.Pipe`）でつながる。画面は格子をそのまま渡す |
-| 分けた構成 | `modal-editor -listen <ソケット> <ファイル>` で server だけを起動し（端末なし）、`modal-editor -connect <ソケット>` を偽の端末の上で起動する。2 つのプロセスは Unix ドメインソケットの上の JSON-RPC でつながり、画面は格子の差分（変わった行）で送る |
+| 1 つのプロセスの構成（FR-60） | `vi-imitation <ファイル>` を偽の端末の上で起動する。server と編集の client は同じプロセスの中で、チャネル（`protocol.Pipe`）でつながる。画面は格子をそのまま渡す |
+| 分けた構成 | `vi-imitation -listen <ソケット> <ファイル>` で server だけを起動し（端末なし）、`vi-imitation -connect <ソケット>` を偽の端末の上で起動する。2 つのプロセスは Unix ドメインソケットの上の JSON-RPC でつながり、画面は格子の差分（変わった行）で送る |
 
 偽の端末は 80 列 24 行の pty で、`make footprint-check` と同じ作り方（`internal/term/ptytest`）である。
 tmux は通さないので、tmux そのものの描画は計測に含まない（要件定義 8.1）。
@@ -115,26 +115,26 @@ worktree の最上位で、計測する本体と計測のテストをビルド�
 1 組目は a110b91 に計測のテストを足した作業ツリーで、2 組目は c364fb3 で行った。
 この 2 つのコミットは、PR を作る前に main（5c68691）へ rebase したので、ブランチの上では 527d58f と 7900b5b になった。
 rebase で取り込んだ main の変更は、外部のコマンド、拡張機能の管理、`<leader>` のもので、計測した経路（キーの解読、`j`、`x`、`dd`、`p`、描画）には掛からないと見ている（測り直してはいない）。
-3 組目は、aa291c0 に回ごとの記録（下の `MODAL_EDITOR_LATENCY_LOG`）を足した作業ツリーで行った。足したのは計測のテストだけで、本体は aa291c0 と同じである。
+3 組目は、aa291c0 に回ごとの記録（下の `VI_IMITATION_LATENCY_LOG`）を足した作業ツリーで行った。足したのは計測のテストだけで、本体は aa291c0 と同じである。
 aa291c0 は、誤ってコミットした実行ファイルを履歴から消したときに 39760ee に書き換わった。ソースは同じである。
 その後、大きさの上限を、断る形から切り詰める形に変えた（PR #200 の再レビューの必須 2）。上限に届かない 80 列 24 行の計測の経路には掛からないので、測り直していない。
 計測の間は、この作業のビルドとテストを他に走らせていない。
 1 組目と 2 組目の間は、同じマシンで他の作業（別の worktree のビルドとテスト）が動いていた可能性があり、そのため負荷を記録した。
 
 ```console
-$ CGO_ENABLED=0 go build -o "$DIR/modal-editor" ./cmd/modal-editor
-$ go test -c -o "$DIR/cmd.test" ./cmd/modal-editor
-$ cd cmd/modal-editor
-$ MODAL_EDITOR_LATENCY=1 MODAL_EDITOR_BUILD_DIR="$DIR" "$DIR/cmd.test" -test.run TestStage3Latency -test.count=1 -test.timeout 40m -test.v
+$ CGO_ENABLED=0 go build -o "$DIR/vi-imitation" ./cmd/vi-imitation
+$ go test -c -o "$DIR/cmd.test" ./cmd/vi-imitation
+$ cd cmd/vi-imitation
+$ VI_IMITATION_LATENCY=1 VI_IMITATION_BUILD_DIR="$DIR" "$DIR/cmd.test" -test.run TestStage3Latency -test.count=1 -test.timeout 40m -test.v
 ```
 
-計測のテストは `cmd/modal-editor/stage3_latency_test.go` の `TestStage3Latency` である。
-環境変数 `MODAL_EDITOR_LATENCY` が `1` でないときは飛ばすので、`make test` では動かない。
-`MODAL_EDITOR_BUILD_DIR` を指定しなければ、テストが `go build` で本体を作る。
+計測のテストは `cmd/vi-imitation/stage3_latency_test.go` の `TestStage3Latency` である。
+環境変数 `VI_IMITATION_LATENCY` が `1` でないときは飛ばすので、`make test` では動かない。
+`VI_IMITATION_BUILD_DIR` を指定しなければ、テストが `go build` で本体を作る。
 1 回の計測に約 10 分かかる。
 `RESULT` で始まる行が組み合わせごとの結果で、`VERDICT` で始まる行が 8.1 の 2 つの基準の判定である。
 
-環境変数 `MODAL_EDITOR_LATENCY_LOG` にディレクトリを渡すと、回ごとの記録を書く（3 組目と診断の回で使った）。
+環境変数 `VI_IMITATION_LATENCY_LOG` にディレクトリを渡すと、回ごとの記録を書く（3 組目と診断の回で使った）。
 `samples.csv` は組み合わせ、回、キーを書いた時刻（UNIX ナノ秒）、値（ナノ秒）で、`procs.csv` は本体のプロセスを起動した時刻、`<組み合わせ>-server.log` と `-client.log` は本体の標準エラー出力である。
 診断の回は、これに `GODEBUG=gctrace=1` を足して、本体の GC の記録を標準エラー出力のファイルに出した。
 
@@ -179,7 +179,7 @@ $ MODAL_EDITOR_LATENCY=1 MODAL_EDITOR_BUILD_DIR="$DIR" "$DIR/cmd.test" -test.run
 ### 診断の回（判定に使わない）
 
 静か: 3 組目の後に、同じ状態で `GODEBUG=gctrace=1` を付けて 1 回測った。
-負荷: 続けて、`go build -a -o /dev/null ./cmd/modal-editor` を繰り返す負荷を掛けて、同じく 1 回測った（他のワーカーのビルドを模した）。
+負荷: 続けて、`go build -a -o /dev/null ./cmd/vi-imitation` を繰り返す負荷を掛けて、同じく 1 回測った（他のワーカーのビルドを模した）。
 
 | 操作 | 間隔 | 静か: 1 つのプロセスの構成の p99 / 分けた構成の p99 / 分けた構成の最大 | 負荷: 1 つのプロセスの構成の p99 / 分けた構成の p99 / 分けた構成の最大 |
 |---|---|---|---|
@@ -293,7 +293,7 @@ GC の停止（STW）は、診断（静か）の server と client の 511 回�
 | 回数と統計 | 最初の 20 回を捨てて 300 回。p50、p99（297 番目）、最大。これを 3 回 |
 | 日時 | 2026-11-19 の 01:53〜02:03（JST） |
 | マシンの状態 | 計測の前に、他の重いプロセスが動いていないことを `ps` で確かめた（CPU の使用率の上位は 7.3% の python で、他は 2% 未満）。ロードアベレージ（1 分）0.52〜0.96、1 秒ごとの CPU の使用率（`top`）は 3 回とも平均 1.5〜1.6%、最大 10.5〜11.2% |
-| 計測の起動 | `MODAL_EDITOR_LATENCY=1 MODAL_EDITOR_LATENCY_OPS=p-other MODAL_EDITOR_BUILD_DIR=<本体のディレクトリ> go test -count=1 -run TestStage3Latency -v ./cmd/modal-editor/`（`MODAL_EDITOR_LATENCY_OPS` は #215 で足した、操作を名前で絞る環境変数） |
+| 計測の起動 | `VI_IMITATION_LATENCY=1 VI_IMITATION_LATENCY_OPS=p-other VI_IMITATION_BUILD_DIR=<本体のディレクトリ> go test -count=1 -run TestStage3Latency -v ./cmd/vi-imitation/`（`VI_IMITATION_LATENCY_OPS` は #215 で足した、操作を名前で絞る環境変数） |
 
 | 回 | 間隔 | 1 つのプロセスの構成（p50 / p99 / 最大、ms） | 分けた構成（p50 / p99 / 最大、ms） | 遅れの基準（p99 の差 ≦ 1 ms） | 最大の基準（≦ 20 ms） |
 |---|---|---|---|---|---|
