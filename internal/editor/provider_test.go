@@ -14,6 +14,9 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 )
 
+// hoverText は、fakeProvider の hover が popup/show で出す本文である。ポップアップの中で j を打てるように 2 行にする。
+const hoverText = "hover-popup\nsecond"
+
 // stepDelay は、fakeProvider の debug.stepOver が止まるまでの時間である。
 const stepDelay = 150 * time.Millisecond
 
@@ -43,7 +46,7 @@ func registerFakeProvider(s *server.Server) {
 	// hover は、LSP の拡張機能と同じく、本文を問い合わせた位置の popup/show で出す。
 	s.Provider(ext.OpHover, func(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
 		show(p)
-		_ = s.ShowPopup(ext.PopupShowParams{Buffer: p.Buffer, Version: p.Version, Position: p.Cursor, Text: "hover-popup", Format: ext.PopupPlainText})
+		_ = s.ShowPopup(ext.PopupShowParams{Buffer: p.Buffer, Version: p.Version, Position: p.Cursor, Text: hoverText, Format: ext.PopupPlainText})
 		return ext.ProviderInvokeResult{OK: true}, nil
 	})
 	// debug.stepOver は、デバッガーのステップ実行の代役である。stepDelay の後に、カーソルの次の行で止まったことにする。
@@ -258,7 +261,7 @@ func TestReplayProviderWaits(t *testing.T) {
 
 	// 途中のホバーは再生の後に残らない。
 	h.keys("ggqbK")
-	h.eventually("記録のときのホバー", func() bool { return popupOf() == "hover-popup" })
+	h.eventually("記録のときのホバー", func() bool { return popupOf() == hoverText })
 	h.keys("jq")
 	h.settle()
 	h.keys("gg@b")
@@ -271,7 +274,7 @@ func TestReplayProviderWaits(t *testing.T) {
 	h.keys("qcKq")
 	h.settle()
 	h.keys("jk@c")
-	h.eventually("@c のホバー", func() bool { return popupOf() == "hover-popup" })
+	h.eventually("@c のホバー", func() bool { return popupOf() == hoverText })
 
 	// 移動しないキー（zz）や、動いて戻るキー（jk）が続いても、記録したときと同じく再生の後に残らない（#217 のレビュー）。
 	// 拡張機能の操作（<Space>db）が続いても残らない（#224 のコメント）。

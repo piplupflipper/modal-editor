@@ -213,6 +213,9 @@ type Editor struct {
 	popupKeys map[string][]popupKeyBinding
 	// floatSeq は、最後に開いたポップアップの番号である（floatState.id）。
 	floatSeq uint64
+	// noRecord は、feedKey がマクロに記録せずに State へ渡す間であることを表す（キーの一覧で選んだキー。selectKeyRow）。
+	// 選んだ <CR> がもう記録されているので、選んだキーまで記録すると、再生で 2 回動くためである。
+	noRecord bool
 
 	// mcpSocket は、New が決めた MCP のソケットのパスである。Config.MCPSocket を指定したときと、決められなかったときは nil。
 	mcpSocket *exthost.MCPSocket
@@ -823,6 +826,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Interrupted = e.interrupt.Load
+	bs.state.KeyHook = func(k editcmd.Key, insert bool) (bool, error) { return e.popupStateKey(bs, k, insert) }
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
 		ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text(),
 		NoFinalNewline: !finalNewline(b),

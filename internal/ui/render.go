@@ -88,6 +88,9 @@ type Renderer struct {
 	// 窓が替わるか無くなったら作り直す。
 	float   *Renderer
 	floatID uint64
+	// posFrom は、ステータス行の範囲の位置（StatusPartPosition）を、この Renderer の代わりに数える Renderer である。
+	// フォーカスのあるポップアップのステータス行を描く間だけ、窓の子の Renderer を入れる。
+	posFrom *Renderer
 }
 
 // fractionMult は、fraction の単位である（Vim の FRACTION_MULT と同じ値）。
@@ -250,7 +253,14 @@ func (r *Renderer) render(f *Frame) Screen {
 		screen.Cursor = *listCursor
 	}
 	if r.Height >= 2 {
-		r.drawStatus(g, theme, text, f, cur, rows)
+		if fl := f.Float; listCursor != nil && fl != nil && fl.Focused && r.float != nil {
+			// フォーカスのあるポップアップでは、ルーラーと範囲の位置をキーを受けるポップアップのバッファのものにする（PR #242 のレビュー）。
+			r.posFrom = r.float
+			r.drawStatus(g, theme, fl.View.Text, f, r.float.placeCursor(fl.View.Text, fl.View), rows)
+			r.posFrom = nil
+		} else {
+			r.drawStatus(g, theme, text, f, cur, rows)
+		}
 	}
 	if r.outRows > 0 {
 		r.drawOutput(g, theme, f.Output, rows+1)

@@ -105,7 +105,11 @@ func (r *Renderer) statusPart(id string, text Text, f *Frame, cur cursorPlace) (
 		}
 		return ruler, []string{StyleStatusLineRuler}
 	case StatusPartPosition:
-		return r.position(text.LineCount()), []string{StyleStatusLinePosition}
+		pr := r
+		if r.posFrom != nil {
+			pr = r.posFrom
+		}
+		return pr.position(text.LineCount()), []string{StyleStatusLinePosition}
 	default:
 		// 本体の部品でなければ、拡張機能が足した部品として引く（FR-92）。
 		if p, ok := f.ExtParts[id]; ok && p.Text != "" {

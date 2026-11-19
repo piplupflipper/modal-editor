@@ -455,12 +455,16 @@ func (e *Editor) selectKeyRow(r keyRow) {
 		e.message = infoMessage(fmt.Sprintf("%s はノーマルモードのキーではないので、一覧からは実行できません", r.Label))
 		return
 	}
+	// 選んだ <CR> はマクロに記録されている（popupStateKey）ので、選んだキーは記録せずに渡す。再生では <CR> がもう一度選ぶ。
+	e.noRecord = true
+	defer func() { e.noRecord = false }()
 	for _, k := range r.Keys {
 		e.feedMapped(e.remap.feed(e.mapMode(), k))
 		if e.suspension() != nil {
 			return
 		}
 	}
+	e.feedMapped(e.remap.flush())
 }
 
 // keyRows は、接頭辞 prefix で始まるキーと、分類 group の操作のキーの一覧の行を返す（基本設計 7.2）。

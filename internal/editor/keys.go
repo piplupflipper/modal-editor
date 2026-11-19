@@ -238,9 +238,6 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		return
 	}
 	e.message = noMessage
-	if e.floatKey(k) {
-		return
-	}
 	// 利用者がコマンドラインで打ったキー（:acp.prompt ...<CR> の <CR>）かを覚える。afterKey が、拡張機能のコマンドの後に
 	// 記録した問いを出してよいかを決めるのに使う。キーマップの展開で入ったコマンドラインは、利用者のキーがノーマルモードなので数えない。
 	e.fromCmdline = e.cur.state.Mode() == command.ModeCommandLine
@@ -305,6 +302,9 @@ func (e *Editor) flushKeys() {
 // マクロの記録はこの Feed が行うので、コマンドラインのキーも記録される。
 func (e *Editor) feedKey(k editcmd.Key) bool {
 	bs := e.cur
+	if e.noRecord {
+		return e.handleResult(bs, bs.state.FeedUnrecorded(k)) == nil
+	}
 	return e.handleResult(bs, bs.state.Feed(k)) == nil
 }
 

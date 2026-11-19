@@ -129,8 +129,17 @@ func runFakeExt(mode string) int {
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
 		s.OnView(func(_ context.Context, e *server.ViewEvent) {
-			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("view %d kind=%d item=%s key=%s", e.View, e.Kind, e.Item, e.Key))
+			msg := fmt.Sprintf("view %d kind=%d item=%s key=%s", e.View, e.Kind, e.Item, e.Key)
+			if e.Kind == server.ViewExpanded {
+				msg += fmt.Sprintf(" expanded=%v", e.Expanded)
+			}
+			_ = s.ShowMessage(ext.MessageInfo, msg)
 			switch {
+			case e.Kind == server.ViewExpanded && e.Item == "lazy" && e.Expanded:
+				// 子を後から読む項目の子を足して送り直す。dir の Expanded は false のままで、本体は利用者が開いた状態を保つ。
+				c := fakePopup("tree").Component
+				c.Items[1].Children = []ext.ViewItem{{ID: "lazy/x", Label: "lazy/x"}}
+				_ = s.UpdateView(ext.ViewUpdateParams{View: e.View, Component: c})
 			case e.Kind == server.ViewSelected && e.Item == "close":
 				_ = s.CloseView(e.View)
 			case e.Kind == server.ViewSelected && e.Item == "update":
@@ -385,6 +394,7 @@ func fakePopup(kind string) ext.PopupOpenParams {
 	case "tree":
 		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewTree, Title: "tree", Items: []ext.ViewItem{
 			{ID: "dir", Label: "dir", Children: []ext.ViewItem{{ID: "dir/a", Label: "a"}, {ID: "dir/b", Label: "b"}}},
+			{ID: "lazy", Label: "lazy", HasChildren: true},
 			{ID: "top", Label: "top"},
 		}}}
 	case "input":

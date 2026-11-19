@@ -19,6 +19,7 @@ func init() {
 		"IsReadOnly":         reflect.ValueOf(server.IsReadOnly),
 		"New":                reflect.ValueOf(server.New),
 		"ViewClosed":         reflect.ValueOf(server.ViewClosed),
+		"ViewExpanded":       reflect.ValueOf(server.ViewExpanded),
 		"ViewInputChanged":   reflect.ValueOf(server.ViewInputChanged),
 		"ViewKey":            reflect.ValueOf(server.ViewKey),
 		"ViewSelected":       reflect.ValueOf(server.ViewSelected),

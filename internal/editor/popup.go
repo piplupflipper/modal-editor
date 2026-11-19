@@ -90,9 +90,10 @@ type floatState struct {
 	transient bool
 	// scratch は、bs をこのポップアップのために作ったことを表す。閉じたら bs も閉じる。
 	scratch bool
-	// shrunk は、bs が :popup で縮めたタブであることを表す。閉じたらタブの並びへ戻す。
-	shrunk bool
-	title  string
+	// shrunk は、bs が :popup で縮めたタブであることを表す。閉じたらタブの並びの tabIndex 番目（縮める前の位置）へ戻す。
+	shrunk   bool
+	tabIndex int
+	title    string
 	// peek は、「ポップアップで見る」（FR-110）の本物の位置である。:tabopen でこの位置を開く。
 	peek *ext.EditorOpenParams
 	// ext と view は、拡張機能の popup/open で開いたポップアップの、持ち主の拡張機能の ID とポップアップの ID である。
@@ -174,6 +175,16 @@ func (e *Editor) openFloat(f *floatState) {
 	}
 }
 
+// errFocusedPopup は、フォーカスのあるポップアップの中から、カーソルの近くのポップアップを出そうとしたことを表す。
+var errFocusedPopup = errors.New("ポップアップの中では、カーソルの近くのポップアップ（ホバー、ポップアップで見る、診断の一覧）を出せません")
+
+// inFocusedPopup は、読み込んでいる client がフォーカスのあるポップアップを出しているかを返す。
+// そのときは、カーソルの近くのポップアップを出さない。出すと前のポップアップ（:popup で縮めたタブなど）を閉じて置き換え、
+// 置き換えた窓の基準のタブも替わるためである（PR #242 のレビューの推奨 1）。
+func (e *Editor) inFocusedPopup() bool {
+	return e.float != nil && e.float.focused
+}
+
 // switchFocus は、キーを受けるバッファを to にする。マクロの記録、レジスター、直前の検索などを、:b でバッファを移るときと同じく引き継ぐ。
 // タブの行とスクロールの位置は変えない。
 func (e *Editor) switchFocus(to *bufferState) {
@@ -233,7 +244,7 @@ func (e *Editor) closeFloat(notify bool) {
 	}
 	switch {
 	case f.shrunk:
-		e.restoreTab(f.bs, f.base)
+		e.restoreTab(f.bs, f.tabIndex)
 	case f.scratch && slices.Contains(e.bufs, f.bs):
 		e.closeBufferState(f.bs)
 	}
@@ -252,14 +263,14 @@ func (e *Editor) firstTab() *bufferState {
 	return e.view.tabs[0]
 }
 
-// restoreTab は、:popup で縮めたバッファ bs を、読み込んでいる client のタブの並びの after の右へ戻す。カーソルのあるタブは変えない。
-func (e *Editor) restoreTab(bs, after *bufferState) {
+// restoreTab は、:popup で縮めたバッファ bs を、読み込んでいる client のタブの並びの at 番目（縮める前の位置。並びに収まる範囲）へ戻す。
+// カーソルのあるタブは変えない。
+func (e *Editor) restoreTab(bs *bufferState, at int) {
 	c := e.view
 	if slices.Contains(c.tabs, bs) || !slices.Contains(e.bufs, bs) {
 		return
 	}
-	i := slices.Index(c.tabs, after)
-	c.tabs = slices.Insert(c.tabs, i+1, bs)
+	c.tabs = slices.Insert(c.tabs, min(max(at, 0), len(c.tabs)), bs)
 	bs.owner = c
 	bs.state.Viewport = viewport{r: e.renderer}
 }
@@ -316,27 +327,35 @@ func (e *Editor) dismissFloat(k editcmd.Key) {
 // ctrlW は、<C-w> のキーである。
 var ctrlW = editcmd.MustParseKeys("<C-w>")[0]
 
-// floatKey は、フォーカスのあるポップアップで、利用者のキー k をポップアップの操作として扱えれば扱い、true を返す（handleKey）。
+// popupStateKey は、バッファ bs の State の KeyHook である（command.State.KeyHook）。
+// bs が読み込んでいる client のフォーカスのあるポップアップのバッファなら、キー k をポップアップの操作として扱えれば扱い（floatKey）、
+// true を返す。State がキーを解釈する前に呼ぶので、扱ったキーもマクロに記録され、再生でも同じく扱う（PR #242 のレビューの必須 1）。
+// ポップアップを閉じてキーを受けるバッファが替わったら command.ErrBufferSwitched を返し、再生の残りを移った先で続けさせる。
+func (e *Editor) popupStateKey(bs *bufferState, k editcmd.Key, insert bool) (bool, error) {
+	f := e.float
+	if f == nil || !f.focused || f.bs != bs {
+		return false, nil
+	}
+	if !e.floatKey(f, k, insert) {
+		return false, nil
+	}
+	if e.cur != bs {
+		return true, command.ErrBufferSwitched
+	}
+	return true, nil
+}
+
+// floatKey は、フォーカスのあるポップアップ f で、キー k をポップアップの操作として扱えれば扱い、true を返す。
+// State がノーマルモードでキーの列の途中でないときか、インサートモードのときに呼ばれる（popupStateKey）。
 //
 //   - contributes.popupKeys のキー（拡張機能のポップアップの、ノーマルモード）: 持ち主へ view/key を送る（FR-69）
 //   - ノーマルモードの <Esc>: ポップアップを閉じる（FR-68）
 //   - 一覧と木のノーマルモードの <CR>: カーソルの行の項目を選ぶ。木で子を持つ項目なら開閉する
 //   - 入力の行のノーマルモードかインサートモードの <CR>: 中身を選んだものとして知らせる
 //
-// どれもキーの列の途中（State.Pending、キーマップの途中）では扱わない。
-//
 // req: FR-68
-func (e *Editor) floatKey(k editcmd.Key) bool {
-	f := e.float
-	if f == nil || !f.focused {
-		return false
-	}
-	st := e.cur.state
-	mode := st.Mode()
-	if st.Pending() || e.remap.pendingKeys() || (mode != command.ModeNormal && mode != command.ModeInsert) {
-		return false
-	}
-	if mode == command.ModeInsert {
+func (e *Editor) floatKey(f *floatState, k editcmd.Key, insert bool) bool {
+	if insert {
 		if f.kind == floatInput && k == editcmd.Special(editcmd.CodeEnter) {
 			e.selectFloat(f)
 			return true
@@ -358,7 +377,8 @@ func (e *Editor) floatKey(k editcmd.Key) bool {
 }
 
 // popupKey は、拡張機能のポップアップ f で、k までのキーの列が持ち主の contributes.popupKeys のキーに当たれば view/key を送る（FR-69）。
-// キーの列の途中なら覚えて true を返す。当たらなければ、覚えていたキーを通常のキーとして処理してから false を返す（k は呼び出し側が処理する）。
+// キーの列の途中なら覚えて true を返す。当たらなければ、覚えていたキーを捨てて false を返す（k は State が解釈する）。
+// 覚えていたキーを State へ渡し直さないのは、State がキーを解釈する途中（KeyHook）から同じ State へ入れ直せないためである（仮）。
 //
 // req: FR-69
 func (e *Editor) popupKey(f *floatState, k editcmd.Key) bool {
@@ -388,14 +408,7 @@ func (e *Editor) popupKey(f *floatState, k editcmd.Key) bool {
 		f.pending = seq
 		return true
 	}
-	held := f.pending
 	f.pending = nil
-	for _, h := range held {
-		e.feedMapped(e.remap.feed(e.mapMode(), h))
-		if e.suspension() != nil {
-			break
-		}
-	}
 	return false
 }
 
@@ -440,8 +453,11 @@ func (e *Editor) selectFloat(f *floatState) {
 	}
 	r := f.rows[row]
 	if f.kind == floatTree && r.parent {
-		f.expanded[r.id] = !f.expanded[r.id]
-		e.setFloatContent(f, ext.ViewComponent{Kind: ext.ViewTree, Items: f.tree}, false)
+		// 開閉は本体が持ち、拡張機能へ view/expand で知らせる。子を後から読む項目（HasChildren）は、拡張機能が子を view/update で送る。
+		open := !f.expanded[r.id]
+		f.expanded[r.id] = open
+		e.setFloatContent(f, ext.ViewComponent{Kind: ext.ViewTree, Items: f.tree})
+		e.notifyView(f, ext.MethodViewExpand, ext.ViewExpandParams{View: ext.ViewID(f.id), Item: r.id, Expanded: open})
 		return
 	}
 	if f.onSelect != nil {
@@ -467,6 +483,13 @@ func (e *Editor) afterFloatKey() {
 	if f == nil || f.kind != floatInput || !slices.Contains(e.bufs, f.bs) {
 		return
 	}
+	if f.bs.buf.LineCount() > 1 {
+		// 入力の行は 1 行だけにする（o や行単位の p で増えた行を捨てる。PR #242 のレビューの推奨 3）。
+		// カーソルは 1 行目の末尾に置く（o の後に打った文字は、1 行目の末尾に入る）。
+		e.reload(f.bs, buffer.New(f.bs.buf.Line(0)))
+		f.bs.state.SetCursor(buffer.Position{Byte: len(f.bs.buf.Line(0))})
+		e.message = infoMessage("入力の行は 1 行だけです")
+	}
 	if text := f.bs.buf.Line(0); text != f.input {
 		f.input = text
 		e.notifyView(f, ext.MethodInputChange, ext.InputChangeParams{View: ext.ViewID(f.id), Text: text})
@@ -478,11 +501,11 @@ func (e *Editor) afterFloatKey() {
 func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, rows []floatRow, decs []ext.Decoration) {
 	switch c.Kind {
 	case ext.ViewText:
-		text := c.Text
 		if c.Format == ext.PopupMarkdown {
-			text = ui.StripCodeFences(text)
+			lines, decs = markdownLines(c.Text, c.Highlights)
+			return lines, nil, decs
 		}
-		return strings.Split(strings.TrimRight(text, "\n"), "\n"), nil, c.Highlights
+		return strings.Split(strings.TrimRight(c.Text, "\n"), "\n"), nil, c.Highlights
 	case ext.ViewInput:
 		return []string{c.Text}, nil, nil
 	case ext.ViewList, ext.ViewTree:
@@ -493,7 +516,7 @@ func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, 
 			prefix := ""
 			if c.Kind == ext.ViewTree {
 				mark := "  "
-				if len(it.Children) > 0 {
+				if len(it.Children) > 0 || it.HasChildren {
 					mark = "▸ "
 					if expanded[it.ID] {
 						mark = "▾ "
@@ -503,7 +526,7 @@ func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, 
 			}
 			line := len(lines)
 			lines = append(lines, prefix+it.Label)
-			rows = append(rows, floatRow{id: it.ID, parent: len(it.Children) > 0})
+			rows = append(rows, floatRow{id: it.ID, parent: len(it.Children) > 0 || it.HasChildren})
 			for _, s := range it.Highlights {
 				decs = append(decs, ext.Decoration{
 					Range: ext.Range{
@@ -525,32 +548,74 @@ func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, 
 	return lines, rows, decs
 }
 
-// initExpanded は、木の項目の最初の開閉の状態（ext.ViewItem.Expanded）を集める。
-func initExpanded(items []ext.ViewItem, m map[string]bool) {
-	for _, it := range items {
-		if it.Expanded {
-			m[it.ID] = true
+// markdownLines は、Markdown の本文 text からコードの囲みの行を除いた行（ui.StripCodeFences と同じ規則）と、
+// 色を付ける範囲 decs を除いた後の行の位置へずらしたものを返す（ext.ViewComponent.Highlights の契約。PR #242 のレビューの必須 3）。
+// 始まりか終わりが除いた行にある範囲は捨てる。
+func markdownLines(text string, decs []ext.Decoration) ([]string, []ext.Decoration) {
+	src := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	to := make([]int, len(src)) // 元の行から、除いた後の行への対応。除いた行は -1
+	var lines []string
+	for i, l := range src {
+		t := strings.TrimLeft(l, " ")
+		if len(l)-len(t) <= 3 && (strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")) {
+			to[i] = -1
+			continue
 		}
-		initExpanded(it.Children, m)
+		to[i] = len(lines)
+		lines = append(lines, l)
+	}
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	var out []ext.Decoration
+	for _, d := range decs {
+		s, e := d.Range.Start.Line, d.Range.End.Line
+		if s < 0 || e < 0 || s >= len(src) || e >= len(src) || to[s] < 0 || to[e] < 0 {
+			continue
+		}
+		d.Range.Start.Line, d.Range.End.Line = to[s], to[e]
+		out = append(out, d)
+	}
+	return lines, out
+}
+
+// initExpanded は、木の項目の開閉の状態を m に入れる。前の状態 prev に同じ ID があればその状態を、無ければ ext.ViewItem.Expanded を使う
+// （view/update で送り直しても、利用者が開閉した項目を保つ。PR #242 のレビューの必須 2）。
+func initExpanded(items []ext.ViewItem, prev, m map[string]bool) {
+	for _, it := range items {
+		if v, ok := prev[it.ID]; ok {
+			m[it.ID] = v
+		} else {
+			m[it.ID] = it.Expanded
+		}
+		initExpanded(it.Children, prev, m)
 	}
 }
 
-// setFloatContent は、ポップアップ f のバッファの中身を部品 c にする。カーソルの行は、行数に収まる範囲で保つ。
+// setFloatContent は、ポップアップ f のバッファの中身を部品 c にする。
+// 一覧と木では、カーソルのあった項目の ID が c にもあればその行へカーソルを置き、無ければ行の番号を行数に収まる範囲で保つ。
+// 木の開閉の状態は、前の木にあった ID の項目はそのまま保ち、新しい ID の項目は c の Expanded にする（PR #242 のレビューの必須 2）。
 // 中身を替えるのは、編集の禁止の判定を通らない読み直しの入り口で行う（基本設計 4.6 の「ファイルでないバッファの中身の更新」）。
-// reset なら、木の開閉の状態を c の Expanded に戻す。
-func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent, reset bool) {
+func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent) {
 	if c.Kind == ext.ViewTree {
 		f.tree = c.Items
-		if reset || f.expanded == nil {
-			f.expanded = map[string]bool{}
-			initExpanded(c.Items, f.expanded)
-		}
+		m := map[string]bool{}
+		initExpanded(c.Items, f.expanded, m)
+		f.expanded = m
+	}
+	cursor := f.bs.state.Cursor()
+	curID := ""
+	if cursor.Line < len(f.rows) {
+		curID = f.rows[cursor.Line].id
 	}
 	lines, rows, decs := floatLines(c, f.expanded)
 	f.rows = rows
-	cursor := f.bs.state.Cursor()
 	e.reload(f.bs, buffer.New(strings.Join(lines, "\n")))
 	line := min(cursor.Line, f.bs.buf.LineCount()-1)
+	if i := slices.IndexFunc(rows, func(r floatRow) bool { return r.id == curID }); curID != "" && i >= 0 {
+		// 一覧と木では、カーソルのあった項目の行へカーソルを置く（行が増減しても同じ項目を指す）。
+		line = i
+	}
 	f.bs.state.SetCursor(buffer.Position{Line: line, Byte: min(cursor.Byte, len(f.bs.buf.Line(line)))})
 	if c.Kind == ext.ViewInput {
 		f.input = c.Text
@@ -573,7 +638,7 @@ func (e *Editor) newComponentFloat(c ext.ViewComponent, extID string) *floatStat
 	case ext.ViewTree:
 		f.kind = floatTree
 		f.expanded = map[string]bool{}
-		initExpanded(c.Items, f.expanded)
+		initExpanded(c.Items, nil, f.expanded)
 		f.tree = c.Items
 	case ext.ViewInput:
 		f.kind = floatInput
@@ -604,6 +669,10 @@ func (e *Editor) popupOpenRequest(ev *exthost.PopupOpenRequest) {
 	p := ev.Params
 	if e.cur == nil {
 		_ = ev.ReplyError(errors.New("no client to show the popup"))
+		return
+	}
+	if p.Placement != ext.PopupCenter && e.inFocusedPopup() {
+		_ = ev.ReplyError(errFocusedPopup)
 		return
 	}
 	f := e.newComponentFloat(p.Component, ev.Extension)
@@ -637,7 +706,7 @@ func (e *Editor) viewUpdate(ev *exthost.ViewUpdate) {
 		if ev.Params.Component.Title != "" {
 			f.title = ev.Params.Component.Title
 		}
-		e.setFloatContent(f, ev.Params.Component, true)
+		e.setFloatContent(f, ev.Params.Component)
 	})
 }
 
@@ -673,6 +742,10 @@ func (e *Editor) openTextFloat(title, text string, center bool) *floatState {
 
 // openLinesFloat は、openTextFloat の、行を折り返さない形である。長い行は窓の中で横にスクロールする（診断の一覧）。
 func (e *Editor) openLinesFloat(title string, lines []string, center bool) *floatState {
+	if !center && e.inFocusedPopup() {
+		e.showError(errFocusedPopup)
+		return nil
+	}
 	f := &floatState{kind: floatText, title: title, scratch: true, center: center, focused: center, transient: !center}
 	f.bs = e.newPopupBuffer(cmp.Or(title, "[ポップアップ]"), strings.Join(lines, "\n"), "", true)
 	e.openFloat(f)
@@ -704,12 +777,17 @@ func (e *Editor) showPopup(p ext.PopupShowParams) {
 		if m := e.popupMark; m.state == bs.state && m.keys != bs.state.KeysFed() {
 			return
 		}
+		if e.inFocusedPopup() {
+			e.showError(errFocusedPopup)
+			return
+		}
 		text := p.Text
 		if p.Format == ext.PopupMarkdown {
 			text = ui.StripCodeFences(text)
 		}
-		f := e.openTextFloat("", text, false)
-		f.keys, f.trackKeys = bs.state.KeysFed(), true
+		if f := e.openTextFloat("", text, false); f != nil {
+			f.keys, f.trackKeys = bs.state.KeysFed(), true
+		}
 	})
 }
 
@@ -726,6 +804,10 @@ const (
 //
 // req: FR-110
 func (e *Editor) peekOpen(p ext.EditorOpenParams) (*bufferState, error) {
+	if e.inFocusedPopup() {
+		e.showError(errFocusedPopup)
+		return nil, errFocusedPopup
+	}
 	var src *bufferState
 	path := p.Path
 	if p.Buffer != nil {
@@ -831,7 +913,7 @@ func (e *Editor) shrinkTab(bs *bufferState) error {
 	}
 	e.enter(next)
 	c.tabs = slices.Delete(c.tabs, i, i+1)
-	f := &floatState{kind: floatText, bs: bs, title: e.bufferName(bs), shrunk: true, center: true, focused: true}
+	f := &floatState{kind: floatText, bs: bs, title: e.bufferName(bs), shrunk: true, tabIndex: i, center: true, focused: true}
 	e.openFloat(f)
 	return nil
 }
@@ -865,7 +947,7 @@ func (e *Editor) expandFloat() error {
 	case f.shrunk:
 		f.shrunk = false
 		e.closeFloat(true)
-		e.restoreTab(f.bs, f.base)
+		e.restoreTab(f.bs, f.tabIndex)
 		e.enter(f.bs)
 		return nil
 	}

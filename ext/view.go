@@ -22,6 +22,7 @@ import (
 //   - input/change（本体 → 拡張機能、通知）: 入力の行の中身が変わったことを知らせる（InputChangeParams）
 //   - view/key（本体 → 拡張機能、通知）: 宣言ファイルの contributes.popupKeys のキーを、その拡張機能のポップアップの中で打ったことを
 //     知らせる（ViewKeyParams。FR-69）
+//   - view/expand（本体 → 拡張機能、通知）: 木の項目を利用者が開閉したことを知らせる（ViewExpandParams）
 //
 // 本体は、閉じた後や知らない ID の view/update と view/close を黙って捨てる（閉じた知らせと行き違いうるため）。
 const (
@@ -39,6 +40,8 @@ const (
 	MethodInputChange = "input/change"
 	// MethodViewKey は、本体から拡張機能への通知である。params は ViewKeyParams。
 	MethodViewKey = "view/key"
+	// MethodViewExpand は、本体から拡張機能への通知である。params は ViewExpandParams。
+	MethodViewExpand = "view/expand"
 )
 
 // ViewID は、本体が開いたポップアップに付けた番号である。本体の中で一意で、使い回さない。0 は使わない。
@@ -54,7 +57,8 @@ const (
 	ViewText ViewKind = "text"
 	// ViewList は、項目の一覧である。1 項目を 1 行に出し、<CR> で選ぶと view/select で項目の ID を知らせる。
 	ViewList ViewKind = "list"
-	// ViewTree は、項目の木である。子のある項目の <CR> は開閉で、子の無い項目の <CR> は view/select で ID を知らせる。
+	// ViewTree は、項目の木である。子のある項目（HasChildren を含む）の <CR> は開閉で view/expand を送り、
+	// 子の無い項目の <CR> は view/select で ID を知らせる。view/update では、項目の ID で開閉とカーソルの項目を保つ。
 	ViewTree ViewKind = "tree"
 	// ViewInput は、1 行の入力である。中身が変わるたびに input/change で知らせ、<CR> で view/select（Item は中身）を送る。
 	ViewInput ViewKind = "input"
@@ -79,6 +83,7 @@ type ViewComponent struct {
 	// Format は、ViewText の本文の形式である。PopupMarkdown なら、本体はコードの囲みの行を除いて出す（popup/show と同じ）。
 	Format PopupFormat `json:"format,omitempty"`
 	// Highlights は、ViewText の本文に色を付ける範囲である。位置は Format の整形の前の Text を指す（4.1 の位置）。
+	// Markdown で本体が除くコードの囲みの行の中の範囲（始まりか終わりがその行にあるもの）は捨てる。
 	// Style は 7.1 の色の名前（"keyword"、"diagnostic.error" など）で、知らない名前には色を付けない。
 	Highlights []Decoration `json:"highlights,omitempty"`
 	// Items は、ViewList と ViewTree の項目である。ViewTree では Children で木にする。
@@ -95,8 +100,23 @@ type ViewItem struct {
 	Highlights []ViewSpan `json:"highlights,omitempty"`
 	// Children は、ViewTree の子の項目である。ViewList では使わない。
 	Children []ViewItem `json:"children,omitempty"`
-	// Expanded は、ViewTree で子を開いて出すかの最初の状態である。開閉は本体が持ち、view/update で置き換えると、この値に戻る。
+	// HasChildren は、ViewTree で、Children が空でも子を持つ項目（子を後から読む項目）であることを表す。
+	// 本体は開閉の印を付け、<CR> で開くと view/expand で知らせる。拡張機能は子を読んで view/update で送る
+	// （ファイラのディレクトリ、DAP の変数の variablesReference。FR-105、FR-108）。ViewList では使わない。
+	HasChildren bool `json:"hasChildren,omitempty"`
+	// Expanded は、ViewTree で子を開いて出すかの最初の状態である。開閉は本体が項目の ID ごとに持ち、view/update で送り直しても、
+	// 前の木にあった ID の項目は利用者が開閉した状態を保つ。Expanded は、新しく現れた ID の項目にだけ使う。
 	Expanded bool `json:"expanded,omitempty"`
+}
+
+// ViewExpandParams は、view/expand の params である。
+// 木の子を持つ項目（Children か HasChildren のある項目）を、利用者が <CR> で開いたか閉じたかを知らせる。
+type ViewExpandParams struct {
+	View ViewID `json:"view"`
+	// Item は、開閉した項目の ID である。
+	Item string `json:"item"`
+	// Expanded は、開いたなら true、閉じたなら false である。
+	Expanded bool `json:"expanded"`
 }
 
 // ViewSpan は、項目の表示の文字列の中の、色を付けるバイトの範囲 [Start, End) である。
@@ -129,8 +149,8 @@ func (c *ViewComponent) Validate() error {
 				return fmt.Errorf("%s.id %q が重複する", p, it.ID)
 			case containsNewline(it.Label):
 				return fmt.Errorf("%s.label が改行を含む", p)
-			case c.Kind != ViewTree && len(it.Children) > 0:
-				return fmt.Errorf("%s.children は tree でだけ使える", p)
+			case c.Kind != ViewTree && (len(it.Children) > 0 || it.HasChildren):
+				return fmt.Errorf("%s.children と hasChildren は tree でだけ使える", p)
 			}
 			seen[it.ID] = true
 			for j, s := range it.Highlights {
@@ -197,7 +217,9 @@ type PopupOpenResult struct {
 }
 
 // ViewUpdateParams は、view/update の params である。
-// 本体は、部品の種類が開いたときと同じ場合だけ置き換える。カーソルの行は、項目の数に収まる範囲で保つ。
+// 本体は、部品の種類が開いたときと同じ場合だけ置き換える。
+// 一覧と木では、カーソルのあった項目の ID が新しい中身にもあれば、その項目の行へカーソルを置く。無ければ、行の番号を行数に収まる範囲で保つ。
+// テキストと入力の行では、行の番号を保つ。木の開閉の状態は、項目の ID ごとに保つ（ViewItem.Expanded）。
 type ViewUpdateParams struct {
 	View      ViewID        `json:"view"`
 	Component ViewComponent `json:"component"`

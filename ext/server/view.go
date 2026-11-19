@@ -47,6 +47,8 @@ const (
 	ViewInputChanged
 	// ViewKey は、view/key である。Key に contributes.popupKeys の項目の ID が、Item にカーソルの行の項目の ID が入る。
 	ViewKey
+	// ViewExpanded は、view/expand である。Item に開閉した木の項目の ID が、Expanded に開いたかどうかが入る。
+	ViewExpanded
 )
 
 // ViewEvent は、本体からポップアップの利用者の操作の知らせ（view/closed、view/select、input/change、view/key）を受け取ったことを表す。
@@ -58,6 +60,8 @@ type ViewEvent struct {
 	Item string
 	// Key は、ViewKey のときの contributes.popupKeys の項目の ID である。
 	Key string
+	// Expanded は、ViewExpanded のときの、項目を開いたかどうかである。
+	Expanded bool
 }
 
 // OnView は、ポップアップの利用者の操作の知らせを受け取ったときに呼ぶ関数を登録する。Serve の後に呼ぶと panic する。
@@ -89,6 +93,10 @@ func (s *Server) viewNotification(ctx context.Context, n *rpc.Notification) {
 		var p ext.ViewKeyParams
 		err = decodeParams(n, &p)
 		e = ViewEvent{Kind: ViewKey, View: p.View, Item: p.Item, Key: p.ID}
+	case ext.MethodViewExpand:
+		var p ext.ViewExpandParams
+		err = decodeParams(n, &p)
+		e = ViewEvent{Kind: ViewExpanded, View: p.View, Item: p.Item, Expanded: p.Expanded}
 	default:
 		return
 	}

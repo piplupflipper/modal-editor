@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ func TestHoverPopupFocus(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.provft": "abc\ndef\n"})
 	h := start(t, Config{WorkDir: dir, Extensions: providerSpecs(t), FileTypes: map[string]string{".provft": "provft"}}, "a.provft")
 	h.keys("K")
-	h.eventually("ホバー", func() bool { return popupText(h.e) == "hover-popup" })
+	h.eventually("ホバー", func() bool { return popupText(h.e) == hoverText })
 	if fi, _ := h.float(); fi.focused || fi.center {
 		t.Errorf("ホバー: %+v, want カーソルの近くでフォーカスなし", fi)
 	}
@@ -58,7 +59,7 @@ func TestHoverPopupFocus(t *testing.T) {
 	}
 
 	h.keys("kK")
-	h.eventually("2 回目のホバー", func() bool { return popupText(h.e) == "hover-popup" })
+	h.eventually("2 回目のホバー", func() bool { return popupText(h.e) == hoverText })
 	h.keys("<C-w>w")
 	h.settle()
 	if fi, ok := h.float(); !ok || !fi.focused {
@@ -181,13 +182,93 @@ func TestShrinkExpandTab(t *testing.T) {
 	if _, ok := h.float(); ok || tabs != 2 || cur != id || !modified || h.text() != "xby" {
 		t.Errorf(":tabopen: popup %v, tabs %d, buffer %d (want %d), modified %v, text %q", ok, tabs, cur, id, modified, h.text())
 	}
-	// <Esc> で閉じると、タブの並びへ戻り、カーソルのあるタブは縮めたときに移ったタブのまま。
-	h.keys(":popup<CR><Esc>")
+	// フォーカスのある間は、ステータス行のルーラーはポップアップのバッファ（a.txt の 1,1）のもので、
+	// 開いたときのタブ（b.txt の 1,3）のものではない（PR #242 のレビューの推奨 2）。
+	h.keys("<C-^>:popup<CR>")
+	h.settle()
+	if scr := h.term.screen(); !strings.Contains(scr, " 1,1 ") || strings.Contains(scr, "1,3") {
+		t.Errorf("ruler in the popup:\n%s", scr)
+	}
+	// <Esc> で閉じると、縮める前の位置へ戻り、カーソルのあるタブは縮めたときに移ったタブのまま（推奨 4）。
+	h.keys("<Esc>")
 	h.settle()
 	var name string
-	h.e.do(func() { tabs, name = len(h.e.view.tabs), filepath.Base(h.e.cur.path) })
-	if _, ok := h.float(); ok || tabs != 2 || name != "a.txt" {
-		t.Errorf("<Esc> after :popup: popup %v, tabs %d, cursor in %q", ok, tabs, name)
+	var order []string
+	h.e.do(func() {
+		tabs, name = len(h.e.view.tabs), filepath.Base(h.e.cur.path)
+		for _, t := range h.e.view.tabs {
+			order = append(order, filepath.Base(t.path))
+		}
+	})
+	if _, ok := h.float(); ok || tabs != 2 || name != "b.txt" || strings.Join(order, ",") != "a.txt,b.txt" {
+		t.Errorf("<Esc> after :popup: popup %v, tabs %v, cursor in %q", ok, order, name)
+	}
+}
+
+// :popup で縮めたタブの中で、カーソルの近くのポップアップ（ホバー）を出そうとすると、縮めたタブを閉じずに断る（推奨 1）。
+//
+// req: FR-70
+func TestNoHoverInFocusedPopup(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.provft": "abc\n", "b.txt": "b\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: providerSpecs(t), FileTypes: map[string]string{".provft": "provft"}}, "b.txt")
+	h.keys(":e a.provft<CR>:popup<CR>K")
+	h.eventually("断った知らせ", func() bool { return strings.Contains(h.e.message.Text, "ポップアップの中では") })
+	var shrunk bool
+	h.e.do(func() { shrunk = h.e.float != nil && h.e.float.shrunk && h.e.float.focused })
+	if !shrunk {
+		t.Errorf("K closed the shrunk tab")
+	}
+}
+
+// ポップアップを閉じる <Esc> と、項目を選ぶ <CR> も、マクロに記録され、再生で同じく閉じて選ぶ（PR #242 のレビューの必須 1）。
+//
+// req: FR-05, FR-68
+func TestPopupMacro(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.provft": "l0\nl1\nl2\nl3\nl4\n"})
+	cfg := Config{
+		WorkDir: dir, Extensions: providerSpecs(t), FileTypes: map[string]string{".provft": "provft"},
+		Keymap: map[string]map[string]string{"normal": {"<Leader>zz": "dd"}},
+	}
+	h := start(t, cfg, "a.provft")
+	reg := func(r rune) string {
+		var s string
+		h.e.do(func() {
+			v, _ := h.e.cur.state.Registers().Get(r)
+			s = v.Text
+		})
+		return s
+	}
+	// レビューの再現: ホバーの中で 1 行下がり、<Esc> で閉じ、元のバッファで 1 行下がる。
+	h.keys("qbK")
+	h.eventually("記録のときのホバー", func() bool { return popupText(h.e) == hoverText })
+	h.keys("<C-w>wj<Esc>jq")
+	h.settle()
+	if got := reg('b'); got != "K\x17wj\x1bj" {
+		t.Errorf(`"b = %q`, got)
+	}
+	h.keys("gg@b")
+	h.settle()
+	h.eventually("再生の後", func() bool { return h.e.float == nil && h.e.cur.state.Cursor().Line == 1 })
+
+	// ヘルプも同じく、<Esc> で閉じるところまで再生する。
+	h.keys(":help<CR>qdjj<Esc>q")
+	h.settle()
+	h.keys(":help<CR>@d")
+	h.settle()
+	if _, ok := h.float(); ok {
+		t.Errorf("@d left the help open")
+	}
+
+	// キーの一覧の <CR> も記録し、再生で選んだキーを 1 回だけ実行する。
+	h.keys("ggqe<Space>z?<CR>q")
+	h.settle()
+	if got := h.text(); got != "l1\nl2\nl3\nl4" {
+		t.Fatalf("<CR> in the key list: text %q", got)
+	}
+	h.keys("@e")
+	h.settle()
+	if got := h.text(); got != "l2\nl3\nl4" {
+		t.Errorf("@e: text %q, register e %q", got, reg('e'))
 	}
 }
 
@@ -242,26 +323,40 @@ func TestExtensionPopup(t *testing.T) {
 		t.Errorf("<Esc> did not close the popup %d", view)
 	}
 
-	// 木は、子を持つ項目の <CR> で開閉し、子の無い項目の <CR> で選ぶ。
+	// 木は、子を持つ項目の <CR> で開閉して view/expand を送り、子の無い項目の <CR> で選ぶ。
+	// 子を後から読む項目（hasChildren）を開くと、拡張機能が子を足した木を view/update で送る。
+	// 送り直しても、利用者が開いた項目は開いたままで、カーソルは同じ項目に残る（PR #242 のレビューの必須 2）。
 	open("tree")
-	if fi, _ := h.float(); fi.text != "▸ dir\n  top" {
+	if fi, _ := h.float(); fi.text != "▸ dir\n▸ lazy\n  top" {
 		t.Errorf("tree: %q", fi.text)
 	}
 	h.keys("<CR>")
-	h.settle()
-	if fi, _ := h.float(); fi.text != "▾ dir\n    a\n    b\n  top" {
+	h.waitMessage("kind=4 item=dir key= expanded=true")
+	if fi, _ := h.float(); fi.text != "▾ dir\n    a\n    b\n▸ lazy\n  top" {
 		t.Errorf("tree after <CR>: %q", fi.text)
 	}
-	h.keys("j<CR>")
-	h.waitMessage("kind=1 item=dir/a")
+	h.keys("jjj<CR>")
+	h.eventually("子を足した木", func() bool { return strings.Contains(popupText(h.e), "lazy/x") })
+	var cursor int
+	h.e.do(func() { cursor = h.e.float.bs.state.Cursor().Line })
+	if fi, _ := h.float(); fi.text != "▾ dir\n    a\n    b\n▾ lazy\n    lazy/x\n  top" || cursor != 3 {
+		t.Errorf("tree after view/update: %q, cursor line %d", fi.text, cursor)
+	}
+	h.keys("k<CR>")
+	h.waitMessage("kind=1 item=dir/b")
 
-	// 入力の行は編集でき、中身が変わるたびに input/change で、<CR> で view/select で知らせる。
+	// 入力の行は編集でき、中身が変わるたびに input/change で、<CR> で view/select で知らせる。2 行目は作れない（推奨 3）。
 	open("input")
 	h.keys("A!")
 	h.waitMessage("kind=2 item=old!")
 	h.keys("<CR>")
 	h.waitMessage("kind=1 item=old!")
-	h.keys("<Esc><Esc>")
+	h.keys("<Esc>oxyz<Esc>")
+	h.settle()
+	if fi, _ := h.float(); fi.text != "old!xyz" {
+		t.Errorf("input after o: %q", fi.text)
+	}
+	h.keys("<Esc>")
 	h.settle()
 
 	// placement が cursor のテキストは、フォーカスを入れずにカーソルの近くに出し、次のキーで閉じる。
@@ -273,6 +368,37 @@ func TestExtensionPopup(t *testing.T) {
 	h.waitMessage("kind=0")
 	if _, ok := h.float(); ok {
 		t.Errorf("text popup is still open after l")
+	}
+}
+
+// Markdown のテキストの部品の色を付ける範囲は、整形の前の本文を指す（ext.ViewComponent.Highlights）。
+// コードの囲みの行を除いた分だけ行をずらし、囲みの行の中の範囲は捨てる（PR #242 のレビューの必須 3）。
+//
+// req: FR-72
+func TestMarkdownHighlights(t *testing.T) {
+	rng := func(l0, b0, l1, b1 int) ext.Range {
+		return ext.Range{Start: ext.Position{Line: l0, Byte: b0}, End: ext.Position{Line: l1, Byte: b1}}
+	}
+	c := ext.ViewComponent{
+		Kind: ext.ViewText, Format: ext.PopupMarkdown, Text: "intro\n```go\nfunc main()\n```\ntail",
+		Highlights: []ext.Decoration{
+			{Range: rng(2, 0, 2, 4), Style: "keyword"}, // func
+			{Range: rng(4, 0, 4, 4), Style: "string"},  // tail
+			{Range: rng(1, 0, 1, 3), Style: "comment"}, // 囲みの行
+			{Range: rng(0, 0, 2, 4), Style: "comment"}, // 行をまたぐ
+		},
+	}
+	lines, _, decs := floatLines(c, nil)
+	if got := strings.Join(lines, "\n"); got != "intro\nfunc main()\ntail" {
+		t.Errorf("lines = %q", got)
+	}
+	want := []ext.Decoration{
+		{Range: rng(1, 0, 1, 4), Style: "keyword"},
+		{Range: rng(2, 0, 2, 4), Style: "string"},
+		{Range: rng(0, 0, 1, 4), Style: "comment"},
+	}
+	if fmt.Sprint(decs) != fmt.Sprint(want) {
+		t.Errorf("decorations = %v, want %v", decs, want)
 	}
 }
 
