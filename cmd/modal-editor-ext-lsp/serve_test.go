@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,6 +57,12 @@ type host struct {
 	opens   chan ext.EditorOpenParams
 	edits   chan ext.BufferEditParams
 	choices chan ext.ChoiceAskParams
+	saves   chan ext.BufferSaveParams
+
+	// mu は、本体の役が editor/open（focus が false）で開いたファイルの記録（offscreen）を守る。
+	// 開いたファイルの番号は offscreenBase から振る。
+	mu        sync.Mutex
+	offscreen map[string]ext.BufferID
 
 	// choose は、choice/ask に答える選択肢の ID である。
 	choose string
@@ -90,6 +97,7 @@ func startHost(t *testing.T, o hostOptions) *host {
 		diags: make(chan ext.DiagnosticSetParams, 100), popups: make(chan ext.PopupShowParams, 100),
 		msgs: make(chan ext.MessageShowParams, 100), opens: make(chan ext.EditorOpenParams, 100),
 		edits: make(chan ext.BufferEditParams, 100), choices: make(chan ext.ChoiceAskParams, 100),
+		saves: make(chan ext.BufferSaveParams, 100), offscreen: map[string]ext.BufferID{},
 		choose: o.choose, texts: map[ext.BufferID]string{}, vers: map[ext.BufferID]ext.Version{},
 	}
 	gocfg := map[string]any{
@@ -163,7 +171,24 @@ func (h *host) request(_ context.Context, req *rpc.Request, reply rpc.Replier) {
 	case ext.MethodEditorOpen:
 		p := decode[ext.EditorOpenParams](h.t, req.Params)
 		h.opens <- p
+		if p.Path != "" && !p.Focus {
+			// 本体と同じく、画面に出さないバッファとして開き、応答の前に buffer/open を送る（FR-109）。
+			id, err := h.openOffscreen(p.Path)
+			_ = reply(ext.EditorOpenResult{Buffer: id, Version: 1}, err)
+			return
+		}
 		_ = reply(ext.EditorOpenResult{Moved: true}, nil)
+	case ext.MethodEditorState:
+		// 本体の役が開いたバッファは、テストの open で開いたものだけとして答える（画面に出さないバッファは数えない）。
+		_ = reply(ext.EditorStateResult{Buffers: []ext.BufferInfo{}}, nil)
+	case ext.MethodBufferSave:
+		p := decode[ext.BufferSaveParams](h.t, req.Params)
+		h.saves <- p
+		v := ext.Version(0)
+		if p.Version != nil {
+			v = *p.Version
+		}
+		_ = reply(ext.BufferSaveResult{Saved: true, Version: v}, nil)
 	case ext.MethodBufferEdit:
 		p := decode[ext.BufferEditParams](h.t, req.Params)
 		h.edits <- p
@@ -212,6 +237,32 @@ func (h *host) open(id ext.BufferID, name, text string) string {
 		h.t.Fatal(err)
 	}
 	return path
+}
+
+// offscreenBase は、本体の役が editor/open（focus が false）で開いたファイルに振る番号の始まりである。
+const offscreenBase ext.BufferID = 100
+
+// openOffscreen は、本体の役が path を画面に出さないバッファとして開き、buffer/open を送って番号を返す（FR-109）。
+// 拡張機能の要求の処理の中から呼ぶ。
+func (h *host) openOffscreen(path string) (ext.BufferID, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, &rpc.Error{Code: rpc.CodeInvalidParams, Message: err.Error()}
+	}
+	h.mu.Lock()
+	id, ok := h.offscreen[path]
+	if !ok {
+		id = offscreenBase + ext.BufferID(len(h.offscreen))
+		h.offscreen[path] = id
+	}
+	h.mu.Unlock()
+	if !ok {
+		text := strings.TrimSuffix(string(data), "\n")
+		if err := h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: id, Path: path, FileType: "go", Version: 1, Text: text}); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
 }
 
 // change は、バッファ id に編集の列を適用し、buffer/change を送る。
@@ -731,6 +782,66 @@ func TestReplayRename(t *testing.T) {
 	}
 	if m := receive(t, h.msgs, "message/show"); m.Text != "名前を renamed に変えた（2 ファイル）" {
 		t.Errorf("message/show = %q", m.Text)
+	}
+}
+
+// TestRenameUnopened は、名前の変更が本体で開いていないファイルに及ぶとき、そのファイルを editor/open（focus が false）で
+// 本体の画面に出さないバッファとして開き、届いた複製の版で buffer/edit を送り、知らせの後に skipHooks の buffer/save で書き出させることを確かめる
+// （FR-109。基本設計 4.4、6.3）。開いていたファイル（a.go）は書き出させない。sync が true（再生中）でも同じである。
+//
+// req: FR-109
+func TestRenameUnopened(t *testing.T) {
+	for _, sync := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sync=%v", sync), func(t *testing.T) {
+			other := filepath.Join(t.TempDir(), "other.go")
+			if err := os.WriteFile(other, []byte("package p\n\nvar _ = TARGET\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h := startHost(t, hostOptions{args: []string{"-defpath", other}, maxRestarts: -1})
+			h.open(1, "a.go", "var TARGET = 1")
+			h.diagnosticsAt(1, 1)
+			res := h.invoke(ext.ProviderInvokeParams{
+				Operation: ext.OpRename, Buffer: 1, Version: h.vers[1], Cursor: pos(0, 4), Args: json.RawMessage(`{"text":"renamed"}`), Sync: sync,
+			})
+			if !res.OK {
+				t.Fatalf("rename = %+v", res)
+			}
+			o := receive(t, h.opens, "editor/open")
+			if o.Path != other || o.Focus {
+				t.Errorf("editor/open = %+v, want path %s without focus", o, other)
+			}
+			var edits []ext.BufferEditParams
+			if !sync {
+				edits = append(edits, receive(t, h.edits, "buffer/edit"))
+			} else if res.Transaction == nil {
+				t.Fatal("sync rename: no transaction for the queried buffer")
+			}
+			edits = append(edits, receive(t, h.edits, "buffer/edit"))
+			var off *ext.BufferEditParams
+			for i := range edits {
+				if edits[i].Buffer == offscreenBase {
+					off = &edits[i]
+				}
+			}
+			if off == nil {
+				t.Fatalf("buffer/edit = %+v, want an edit of buffer %d", edits, offscreenBase)
+			}
+			if got := applyEdits("package p\n\nvar _ = TARGET", off.Transaction.Edits); got != "package p\n\nvar _ = renamed" || off.Transaction.BaseVersion != 1 {
+				t.Errorf("buffer/edit of other.go = %+v (applied %q)", *off, got)
+			}
+			if m := receive(t, h.msgs, "message/show"); m.Text != "名前を renamed に変えた（2 ファイル）" {
+				t.Errorf("message/show = %q", m.Text)
+			}
+			s := receive(t, h.saves, "buffer/save")
+			if s.Buffer != offscreenBase || !s.SkipHooks || s.Version == nil || *s.Version != 2 {
+				t.Errorf("buffer/save = %+v, want buffer %d at version 2 with skipHooks", s, offscreenBase)
+			}
+			select {
+			case s := <-h.saves:
+				t.Errorf("extra buffer/save = %+v", s)
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
 	}
 }
 

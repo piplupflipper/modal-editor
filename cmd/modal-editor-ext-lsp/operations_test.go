@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"reflect"
 	"testing"
 
@@ -107,8 +106,13 @@ func TestRenameEdits(t *testing.T) {
 	}
 
 	w = parse(`{"changes": {"file:///m/a.go": [{"range": ` + rg(0, 4, 7) + `, "newText": "bar"}], "file:///m/c.go": [{"range": ` + rg(0, 0, 1) + `, "newText": "bar"}]}}`)
-	if _, unopened, err := c.renameEdits(w, encUTF8); !errors.Is(err, errRenameUnopened) || !reflect.DeepEqual(unopened, []string{"/m/c.go"}) {
-		t.Errorf("unopened: %v, %v", unopened, err)
+	// 同期していないファイルの編集は、パスごとに分けて返す（呼び出し側が本体に開かせる。FR-109）。
+	if got, unopened, err := c.renameEdits(w, encUTF8); err != nil || len(got) != 1 || len(unopened) != 1 || len(unopened["/m/c.go"]) != 1 {
+		t.Errorf("unopened: edits %v, unopened %v, %v", got, unopened, err)
+	}
+	w = parse(`{"changes": {"untitled:x": [{"range": ` + rg(0, 0, 1) + `, "newText": "bar"}]}}`)
+	if _, _, err := c.renameEdits(w, encUTF8); err == nil {
+		t.Error("non-file URI: err = nil")
 	}
 	w = parse(`{"documentChanges": [{"kind": "rename", "oldUri": "file:///m/a.go", "newUri": "file:///m/d.go"}]}`)
 	if _, _, err := c.renameEdits(w, encUTF8); err == nil {

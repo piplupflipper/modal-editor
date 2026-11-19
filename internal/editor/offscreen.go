@@ -22,7 +22,9 @@ import (
 type offscreenNote struct {
 	ext   string
 	names []string
-	msg   ui.Message
+	// dirs は、書き出すときに作ったディレクトリの数である（FR-78）。
+	dirs int
+	msg  ui.Message
 }
 
 // closeOffscreen は、拡張機能 extID の buffer/save で書き出した画面に出さないバッファ bs を閉じ、
@@ -31,12 +33,21 @@ type offscreenNote struct {
 // 一覧は「拡張機能 X が N 個のファイルを変えました: a.go、b.go」の 1 行にする（文言は仮。基本設計 4.4）。
 // 前に出した同じ拡張機能の知らせがメッセージの行に残っていれば、その行に足す（ACP のエージェントが続けて書いたファイルを 1 行にまとめる）。
 // 画面の幅に収まらなければ、件数だけを出す。本体の誤りが出ている間は、拡張機能のメッセージと同じく上書きしない（showExtMessage）。
+// made は、書き出すときに作ったディレクトリ（FR-78）で、空でなければファイル名に「（ディレクトリ "…" を作りました）」を添える。
+// 件数だけを出すときは、作ったディレクトリの数を添える（作った知らせそのものは、呼び出し側がメッセージの履歴に残す）。
 //
-// req: FR-109
-func (e *Editor) closeOffscreen(extID string, bs *bufferState) {
+// req: FR-78, FR-109
+func (e *Editor) closeOffscreen(extID string, bs *bufferState, made string) {
 	name := filepath.Base(bs.path)
 	e.closeBufferState(bs)
 	e.withView(e.extView(extID), func() {
+		if made != "" {
+			// 作業ディレクトリの下なら、相対のパスで出す（shortName と同じ）。
+			if rel, err := filepath.Rel(e.workDir(), made); err == nil && filepath.IsLocal(rel) {
+				made = rel
+			}
+			name += fmt.Sprintf("（ディレクトリ \"%s\" を作りました）", made)
+		}
 		n := e.offscreenNote
 		if n.ext != extID || e.message != n.msg || n.msg.Text == "" {
 			n = offscreenNote{ext: extID}
@@ -45,9 +56,15 @@ func (e *Editor) closeOffscreen(extID string, bs *bufferState) {
 			e.msgHistory = e.msgHistory[:k-1]
 		}
 		n.names = append(slices.Clone(n.names), name)
+		if made != "" {
+			n.dirs++
+		}
 		text := fmt.Sprintf("拡張機能 %s が %d 個のファイルを変えました: %s", extID, len(n.names), strings.Join(n.names, "、"))
 		if ui.StringWidth(text, 1) > e.renderer.Width {
 			text = fmt.Sprintf("拡張機能 %s が %d 個のファイルを変えました", extID, len(n.names))
+			if n.dirs > 0 {
+				text += fmt.Sprintf("（ディレクトリを %d 個作りました。:messages）", n.dirs)
+			}
 		}
 		n.msg = infoMessage(text)
 		e.showExtMessage(n.msg)

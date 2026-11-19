@@ -1,10 +1,14 @@
 package editor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/piplupflipper/modal-editor/ext"
 )
 
 // waitWrite は、fake.write が終わる（出力の欄 write に結果を書く）まで待ち、その結果の行を返す。
@@ -98,6 +102,105 @@ func TestOffscreenBufferLongList(t *testing.T) {
 	if got, want := h.message(), "拡張機能 fake が 3 個のファイルを変えました"; got != want {
 		t.Errorf("message = %q, want %q", got, want)
 	}
+}
+
+// 画面に出さないバッファを書き出すときに作ったディレクトリ（FR-78）は、変えたファイルの一覧に添え、メッセージの履歴にも残す
+// （PR #240 のレビューの必須 2）。
+//
+// req: FR-78, FR-109
+func TestOffscreenBufferMakesDir(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	sub := filepath.Join(dir, "newdir", "sub")
+	h.keys(":fake.write " + filepath.Join(sub, "n.txt") + "<CR>")
+	if out := h.waitWrite(); !strings.Contains(out, "errs=[]") {
+		t.Fatalf("fake.write = %s", out)
+	}
+	h.settle()
+	if got, want := h.message(), "拡張機能 fake が 1 個のファイルを変えました: n.txt（ディレクトリ \"newdir/sub\" を作りました）"; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+	var history []string
+	h.e.do(func() {
+		for _, m := range h.e.msgHistory {
+			history = append(history, m.Text)
+		}
+	})
+	if want := writtenText(filepath.Join(sub, "n.txt"), sub); !slices.Contains(history, want) {
+		t.Errorf("履歴 = %q, want %q を含む", history, want)
+	}
+}
+
+// 画面に出さないバッファの保存が失敗したら、変更を失わないようにタブの無いバッファとして残し、そのことと開き方を知らせる。
+// 外で変わったファイルへの保存を断ったときの案内は、:w! の前に :b でタブにする形にする（PR #240 のレビューの推奨 3、4）。
+//
+// req: FR-109
+func TestOffscreenBufferSaveFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root は書き込みの権限の無いディレクトリにも書ける")
+	}
+	// ro は書き込みの権限の無いディレクトリで、その中に無い x.txt は作れない。
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n", "ro/keep.txt": "", "y.txt": "y\n"})
+	ro := filepath.Join(dir, "ro")
+	if err := os.Chmod(ro, 0o500); err != nil { //nolint:gosec // ディレクトリなので実行の権限が要る
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) }) //nolint:gosec // 同上
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	h.keys(":fake.write " + filepath.Join(ro, "x.txt") + "<CR>")
+	h.waitWrite()
+	h.settle()
+	var id ext.BufferID
+	h.e.do(func() {
+		if bs := h.e.findPath(filepath.Join(ro, "x.txt")); bs != nil && bs.buf.Modified() {
+			id = bs.id
+		}
+	})
+	if id == 0 {
+		t.Fatalf("x.txt のバッファが、変更ありで残っていない（message=%q）", h.message())
+	}
+	if got, want := h.message(), fmt.Sprintf("（タブの無いバッファ %d として残しました。:b %d で開けます）", id, id); !strings.HasPrefix(got, "E212") || !strings.HasSuffix(got, want) {
+		t.Errorf("message = %q, want E212 … %q", got, want)
+	}
+
+	// 外で変わったファイル。
+	y := filepath.Join(dir, "y.txt")
+	h.e.do(func() {
+		bs, err := h.e.openFile(y, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bs.offscreen, id = true, bs.id
+	})
+	if err := os.WriteFile(y, []byte("changed outside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.e.do(func() { h.e.outputs = map[outputKey][]string{} })
+	h.keys(":fake.write " + y + "<CR>")
+	h.waitWrite()
+	h.settle()
+	if got, want := h.message(), fmt.Sprintf("(:b %d で開いてから :w! で上書きします)", id); !strings.HasSuffix(got, want) {
+		t.Errorf("message = %q, want …%q", got, want)
+	}
+}
+
+// 編集を禁止したパスのファイルでは、拡張機能の編集が断られるので、変更の無い画面に出さないバッファを残さずに閉じる（PR #240 のレビューの推奨 5）。
+//
+// req: FR-109, FR-120
+func TestOffscreenBufferReadOnlyPath(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n", "node_modules/x.txt": "x\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), ReadOnlyPaths: []string{"node_modules"}}, "a.txt")
+	x := filepath.Join(dir, "node_modules", "x.txt")
+	h.keys(":fake.write " + x + "<CR>")
+	if out := h.waitWrite(); !strings.Contains(out, "buffer/edit") {
+		t.Fatalf("fake.write = %s, want buffer/edit の誤り", out)
+	}
+	h.settle()
+	h.e.do(func() {
+		if h.e.findPath(x) != nil {
+			t.Error("編集を断った x.txt のバッファが残った")
+		}
+	})
 }
 
 // 画面に出さないバッファを利用者が :e でタブにしたら、ふつうのタブのバッファになり、拡張機能の保存の後も閉じない（基本設計 4.4。仮）。

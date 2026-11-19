@@ -5,6 +5,7 @@
 //
 //   - 文書を開くか変えるたびに、"ERR" の出現ごとにエラー、"WARN" の出現ごとに code 42 の警告の診断を、その版の番号で送る
 //   - textDocument/definition: 開いている文書と -defpath のファイルの中の "TARGET" の出現の位置をすべて返す
+//   - textDocument/rename: 開いている文書と、開いていなければ -defpath のファイルの中の "TARGET" を、すべて新しい名前にする
 //   - textDocument/hover: "char=<位置の文字>" を Markdown で返す
 //   - textDocument/formatting: "fmtme" の出現ごとに、同じ開始の位置の 2 つの編集（"<" の挿入と "FMTME" への置き換え）を、後ろの出現から順に返す。
 //     -fmt-whole なら、同じ結果の全文で、文書の全体（文書の末尾まで。末尾が改行なら、その後ろの空の行の先頭）を置き換える 1 つの編集を返す
@@ -195,12 +196,21 @@ func request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 		_ = json.Unmarshal(req.Params, &p)
 		changes := map[string][]map[string]any{}
 		mu.Lock()
-		for u, text := range docs {
+		add := func(u, text string) {
 			for _, o := range occurrences(text, "TARGET") {
 				changes[u] = append(changes[u], map[string]any{"range": rng{position(text, o), position(text, o+6)}, "newText": p.NewName})
 			}
 		}
+		for u, text := range docs {
+			add(u, text)
+		}
 		mu.Unlock()
+		// -defpath のファイルは、開いていなければ、ファイルの中身で数える（開いていない文書に及ぶ名前の変更。FR-109）。
+		if u := "file://" + *defPath; *defPath != "" && changes[u] == nil {
+			if data, err := os.ReadFile(*defPath); err == nil {
+				add(u, string(data))
+			}
+		}
 		if len(changes) == 0 {
 			_ = reply(nil, nil)
 			return

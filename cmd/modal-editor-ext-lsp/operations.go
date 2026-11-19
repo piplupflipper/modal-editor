@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -338,24 +339,22 @@ func wordAt(line string, at int) string {
 	return line[start:end]
 }
 
-// errRenameUnopened は、名前の変更が、この拡張機能が同期していないファイルに及ぶことを表す。
-var errRenameUnopened = errors.New("rename touches files that are not open")
-
 // rename は、本体の操作 rename を処理する（基本設計 5.5）。
 // 新しい名前はコマンドラインの引数（:rename 新しい名前）で受け取る。キーで呼ばれて引数が無ければ、引数の渡し方を知らせて失敗する
 // （入力の行の部品（基本設計 1.4）ができるまでの仮の形）。
 //
 // textDocument/rename の WorkspaceEdit を、文書ごとのトランザクションにして buffer/edit で適用する。
-// 編集が、この拡張機能が同期していないファイル（本体で開いていないファイル）に及ぶか、ファイルの作成などを含むときは、
-// 何も適用せずに知らせる。一部のファイルだけを変えると、コードが壊れたまま残るためである。
-// 開いていないファイルの編集は、画面に出さないバッファ（FR-109）ができてから扱う。
+// 編集が、この拡張機能が同期していないファイル（本体で開いていないファイル）に及ぶときは、そのファイルを editor/open（focus が false）で
+// 本体の画面に出さないバッファとして開いてから編集し、buffer/save で書き出させる（FR-109。基本設計 4.4、6.3）。
+// 本体は書き出した後にそのバッファを閉じ、変えたファイルの一覧をメッセージの行に出す。
+// 開けないファイルがあるか、ファイルの作成などを含むときは、何も適用せずに知らせる。一部のファイルだけを変えると、コードが壊れたまま残るためである。
 //
 // sync が true（マクロとドットリピートの再生中）なら、結果がそろってから応答し、問い合わせたバッファの編集を応答の transaction で返す
 // （基本設計 6 章の冒頭。後から buffer/edit で届けると、再生の次の操作でバージョン番号が進んだ後に届いて破棄される）。
 // 他のバッファの編集は、応答の後に buffer/edit で届ける（本体は応答を待つ間も buffer/edit を処理するが、再生の続きの後に届いても困らない）。
 // 結果を得られないか適用できなければ、ok を false にして再生を止める。
 //
-// req: FR-94, FR-19
+// req: FR-94, FR-19, FR-109
 func (x *extension) rename(ctx context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
 	newName := strings.TrimSpace(providerArgs(p).Text)
 	if newName == "" {
@@ -375,7 +374,7 @@ func (x *extension) rename(ctx context.Context, _ *server.Buffer, p *ext.Provide
 	}
 	if p.Sync {
 		go func() {
-			edits, ok := x.renameResult(ctx, r)
+			edits, saves, ok := x.renameResult(ctx, r)
 			if !ok {
 				reply(ext.ProviderInvokeResult{OK: false}, nil)
 				return
@@ -401,7 +400,7 @@ func (x *extension) rename(ctx context.Context, _ *server.Buffer, p *ext.Provide
 			}
 			bctx, cancel := x.background()
 			defer cancel()
-			x.applyRenameEdits(bctx, rest, done, newName)
+			x.applyRenameEdits(bctx, rest, saves, done, newName)
 		}()
 		return
 	}
@@ -409,48 +408,106 @@ func (x *extension) rename(ctx context.Context, _ *server.Buffer, p *ext.Provide
 	go func() {
 		ctx, cancel := x.background()
 		defer cancel()
-		edits, ok := x.renameResult(ctx, r)
+		edits, saves, ok := x.renameResult(ctx, r)
 		if ok && len(edits) > 0 {
-			x.applyRenameEdits(ctx, edits, 0, newName)
+			x.applyRenameEdits(ctx, edits, saves, 0, newName)
 		}
 	}()
 }
 
-// renameResult は、textDocument/rename の応答を待ち、同期している文書ごとの buffer/edit の params にする。
+// renameResult は、textDocument/rename の応答を待ち、文書ごとの buffer/edit の params にする。
+// 同期していないファイルは、openForRename で本体の画面に出さないバッファとして開いてから params にし、
+// そのうち書き出させるバッファ（それまで本体で開いていなかったもの）を saves に入れて返す。
 // 変更する箇所が無ければ、そのことを知らせて空の列と true を返す。
-// 応答を得られないか、適用できない形（開いていないファイルに及ぶものなど）なら、理由を知らせて false を返す。
-func (x *extension) renameResult(ctx context.Context, r *request) ([]ext.BufferEditParams, bool) {
+// 応答を得られないか、適用できない形（開けないファイルに及ぶもの、ファイルの作成などを含むもの）なら、理由を知らせて false を返す。
+// ctx はハンドラーの ctx でもよい（本体へのリクエストは、background の ctx で送る）。
+func (x *extension) renameResult(ctx context.Context, r *request) ([]ext.BufferEditParams, map[ext.BufferID]bool, bool) {
 	var raw json.RawMessage
 	if err := r.wait(ctx, &raw); err != nil {
 		x.logf("%s: %v", lspRename, err)
 		x.showMessage(ext.MessageError, fmt.Sprintf("名前を変更できない: %v", err))
-		return nil, false
+		return nil, nil, false
 	}
 	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
 		x.showMessage(ext.MessageInfo, "名前を変更する箇所が無い")
-		return nil, true
+		return nil, nil, true
 	}
 	var w workspaceEdit
 	if err := json.Unmarshal(raw, &w); err != nil {
 		x.showMessage(ext.MessageError, fmt.Sprintf("名前の変更の結果を読めない: %v", err))
-		return nil, false
+		return nil, nil, false
 	}
 	edits, unopened, err := r.c.renameEdits(&w, r.enc)
-	switch {
-	case errors.Is(err, errRenameUnopened):
-		x.showMessage(ext.MessageWarning, fmt.Sprintf("名前の変更は開いていないファイルに及ぶので、適用しなかった: %s", strings.Join(unopened, ", ")))
-		return nil, false
-	case err != nil:
+	if err != nil {
 		x.showMessage(ext.MessageError, fmt.Sprintf("名前の変更を適用できない: %v", err))
-		return nil, false
+		return nil, nil, false
 	}
-	return edits, true
+	if len(unopened) == 0 {
+		return edits, nil, true
+	}
+	bctx, cancel := x.background()
+	defer cancel()
+	more, saves, err := x.openForRename(bctx, unopened, r.enc)
+	if err != nil {
+		x.logf("%s: %v", lspRename, err)
+		x.showMessage(ext.MessageError, fmt.Sprintf("名前の変更は開いていないファイルに及ぶが、そのファイルを開けないので、適用しなかった: %v", err))
+		return nil, nil, false
+	}
+	return append(edits, more...), saves, true
+}
+
+// openForRename は、名前の変更が及ぶ、この拡張機能が同期していないファイル unopened（パスから LSP の編集の列へ）を、
+// editor/open（focus が false）で本体に開かせ、届いた複製の版の buffer/edit の params にする（FR-109）。
+// 開く前に本体で開いていなかったファイルは、本体が画面に出さないバッファにするので、書き出させる（saves）。
+// 本体で既に開いているファイル（この拡張機能の言語サーバーの対象でない種類のバッファなど）は、タブのバッファと同じく書き出さない。
+// どれかを開けなければ、誤りを返す。それまでに開いたファイルは、編集せずに残る（基本設計 4.4）。
+// ループの外の goroutine から呼ぶ。
+func (x *extension) openForRename(ctx context.Context, unopened map[string][]textEdit, enc encoding) ([]ext.BufferEditParams, map[ext.BufferID]bool, error) {
+	st, err := x.srv.EditorState(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("editor/state: %w", err)
+	}
+	open := map[string]bool{}
+	for _, b := range st.Buffers {
+		open[b.Path] = true
+	}
+	var out []ext.BufferEditParams
+	saves := map[ext.BufferID]bool{}
+	for _, path := range slices.Sorted(maps.Keys(unopened)) {
+		res, err := x.srv.OpenEditor(ctx, ext.EditorOpenParams{Path: path, Focus: false})
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: editor/open: %w", path, err)
+		}
+		b, err := x.srv.WaitBuffer(ctx, res.Buffer, res.Version)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", path, err)
+		}
+		ls := make(lines, b.LineCount())
+		for i := range ls {
+			ls[i] = b.Line(i)
+		}
+		t := formattingTransaction(ls, b.FinalNewline(), b.Version(), unopened[path], enc)
+		if t == nil {
+			continue
+		}
+		out = append(out, ext.BufferEditParams{Buffer: res.Buffer, Transaction: *t})
+		if !open[path] {
+			saves[res.Buffer] = true
+		}
+	}
+	return out, saves, nil
 }
 
 // applyRenameEdits は、名前の変更の編集を buffer/edit で順に適用し、適用したファイルの数を知らせる。
 // done は、先に適用したファイルの数（再生中に応答で返したもの）である。
-func (x *extension) applyRenameEdits(ctx context.Context, edits []ext.BufferEditParams, done int, newName string) {
+// 知らせた後に、saves のバッファ（画面に出さないバッファ）を buffer/save で書き出させる。本体は書き出したバッファを閉じ、
+// 変えたファイルの一覧をメッセージの行に出す（FR-109）。知らせを先に出すのは、一覧を上書きしないためである。
+// 保存の前の整形（buffer/willSave）は通さない（ACP の fs/write_text_file と同じ。基本設計 6.5）。
+//
+// req: FR-109
+func (x *extension) applyRenameEdits(ctx context.Context, edits []ext.BufferEditParams, saves map[ext.BufferID]bool, done int, newName string) {
 	n := done
+	versions := map[ext.BufferID]ext.Version{}
 	for _, e := range edits {
 		res, err := x.srv.Edit(ctx, e)
 		switch {
@@ -462,14 +519,31 @@ func (x *extension) applyRenameEdits(ctx context.Context, edits []ext.BufferEdit
 			x.showMessage(ext.MessageWarning, "名前の変更の間にバッファが変わったので、残りを適用しなかった")
 			return
 		}
+		versions[e.Buffer] = res.Version
 		n++
 	}
 	x.showMessage(ext.MessageInfo, fmt.Sprintf("名前を %s に変えた（%d ファイル）", newName, n))
+	for _, id := range slices.Sorted(maps.Keys(versions)) {
+		if !saves[id] {
+			continue
+		}
+		v := versions[id]
+		res, err := x.srv.SaveBuffer(ctx, ext.BufferSaveParams{Buffer: id, Version: &v, SkipHooks: true})
+		switch {
+		case err != nil:
+			x.logf("buffer/save: %v", err)
+			x.showMessage(ext.MessageError, fmt.Sprintf("名前を変えた開いていないファイルを書き出せない: %v", err))
+		case !res.Saved:
+			// 書き出せなかった理由は、本体が利用者へ表示している。
+			x.logf("buffer/save: buffer %d was not saved", id)
+		}
+	}
 }
 
 // renameEdits は、WorkspaceEdit を、同期している文書ごとの buffer/edit の params にする。
-// 同期していないファイルがあれば、そのパスの一覧と errRenameUnopened を返す。
-func (c *client) renameEdits(w *workspaceEdit, enc encoding) ([]ext.BufferEditParams, []string, error) {
+// 同期していないファイルの編集は、パスごとに unopened に入れて返す（呼び出し側が本体に開かせる。openForRename）。
+// ファイルでない URI か、ファイルの作成などを含めば誤りを返す。
+func (c *client) renameEdits(w *workspaceEdit, enc encoding) ([]ext.BufferEditParams, map[string][]textEdit, error) {
 	byURI, resourceOps, err := w.fileEdits()
 	if err != nil {
 		return nil, nil, err
@@ -480,21 +554,15 @@ func (c *client) renameEdits(w *workspaceEdit, enc encoding) ([]ext.BufferEditPa
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []ext.BufferEditParams
-	var unopened []string
-	uris := make([]string, 0, len(byURI))
-	for uri := range byURI {
-		uris = append(uris, uri)
-	}
-	slices.Sort(uris)
-	for _, uri := range uris {
+	unopened := map[string][]textEdit{}
+	for _, uri := range slices.Sorted(maps.Keys(byURI)) {
 		path, ok := uriToPath(uri)
 		if !ok {
-			unopened = append(unopened, uri)
-			continue
+			return nil, nil, fmt.Errorf("ファイルでない URI を含む: %s", uri)
 		}
 		d := c.docByPath(path)
 		if d == nil {
-			unopened = append(unopened, path)
+			unopened[path] = append(unopened[path], byURI[uri]...)
 			continue
 		}
 		cur := d.current()
@@ -503,8 +571,5 @@ func (c *client) renameEdits(w *workspaceEdit, enc encoding) ([]ext.BufferEditPa
 			out = append(out, ext.BufferEditParams{Buffer: d.buffer, Transaction: *t})
 		}
 	}
-	if len(unopened) > 0 {
-		return nil, unopened, errRenameUnopened
-	}
-	return out, nil, nil
+	return out, unopened, nil
 }
