@@ -19,12 +19,19 @@ const finderEmpty = "（一致する項目はありません）"
 // req: FR-106
 func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 	chars, bordered := r.border()
+	if fl.Fill {
+		// 端末多重化ソフトのポップアップの中の部品の client では、枠線を描かずに画面の全体を使う（drawFloat の Fill と同じ。#248）。
+		bordered = false
+	}
 	b := 0
 	if bordered {
 		b = 1
 	}
 	tabStop := tabStopOr(r.TabStop)
 	boxW := min(r.Width, popupMaxWidth) - 2*b
+	if fl.Fill {
+		boxW = r.Width
+	}
 	head, sep := 0, 0
 	if fl.Title != "" && !bordered {
 		head = 1

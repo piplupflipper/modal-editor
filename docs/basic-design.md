@@ -445,7 +445,7 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 
 #### #246 の入力の行と一覧の組
 
-#246 で、入力の行と一覧を組にした部品（`ext.ViewFinder`。部品の種類 `finder`）を足した（PR #242 のレビューの裁定要へのオーケストレータの決定のとおり、メッセージを足して拡張機能 API の版を 0.8.0 に上げた。#245 が先に 0.7.0 を使った）。どれも仮である。
+#246 で、入力の行と一覧を組にした部品（`ext.ViewFinder`。部品の種類 `finder`）を足した（PR #242 のレビューの裁定要へのオーケストレータの決定のとおり、メッセージを足して拡張機能 API の版を 0.9.0 に上げた。#245 が先に 0.7.0 を、#244 が 0.8.0 を使った）。どれも仮である。
 
 | 項目 | 決めたこと |
 |---|---|
@@ -1354,7 +1354,7 @@ Ex コマンドの確認の問い（逆順の範囲の E493）を出している
 `editor/list`、`buffer/create`、`diff/start` は、それぞれを使う issue で足す。
 `pane/open` は #244 で足した（`ext.PaneOpenParams`。拡張機能 API の版は 0.8.0）。params は、部品（`component`）、分割の向き（`direction`。`right` か `down`）、大きさの百分率（`size`。herdr では使わない）、新しいペインへフォーカスを移すか（`focus`）である。
 応答の `view` は、ペインでも、外で代わりに出す中央のポップアップでも、同じく `view/update`、`view/close`、`view/closed` などで使う。
-#246 で `editor/list` を足し（`ext/list.go`。6.9）、部品の種類 `finder` と、`input/change` と `view/update` の `seq`、`view/select` と `view/key` の `input`、`editor/state` の `workDir`（操作中の client の作業ディレクトリ）を足した（1.4。拡張機能 API の版は 0.8.0）。
+#246 で `editor/list` を足し（`ext/list.go`。6.9）、部品の種類 `finder` と、`input/change` と `view/update` の `seq`、`view/select` と `view/key` の `input`、`editor/state` の `workDir`（操作中の client の作業ディレクトリ）を足した（1.4。拡張機能 API の版は 0.9.0）。
 同じ版で、`editor/list` の `keys` と `commands` の項目を本体に実行させる `editor/execute`（拡張機能 → 本体、リクエスト。params は `selection` と、`keys` か `command`）と、`view/select` の `selection`（選択の番号）を足した（6.9。PR #249 のレビューの必須 1）。
 `editor/execute` を受け付けるのは、次をすべて満たすときだけである（PR #249 の再レビューの必須へのオーケストレータの決定）。満たさなければ実行せずに誤りで応答し、利用者のメッセージの行にも理由を出す。
 
@@ -2887,7 +2887,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-| 拡張機能 API のバージョンの付け方（いまは 0.8.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
+| 拡張機能 API のバージョンの付け方（いまは 0.9.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
 | 不正な UTF-8 を含むファイルのパスを拡張機能へ送るときの扱い（JSON の文字列では U+FFFD に置き換わる） | 4.1、5.3 |
 | 未保存のバッファを本体の panic から守る仕組み | 8 |
 | 補完の候補の表示と、インサートモードの入力ごとに言語サーバーへ問い合わせる契機 | 6.3 |

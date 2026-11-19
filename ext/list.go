@@ -6,7 +6,7 @@ import "fmt"
 //
 // 拡張機能は、editor/list（拡張機能 → 本体、リクエスト）で、本体が持つ一覧を 1 つずつ問い合わせる。
 // ファジーファインダーの拡張機能（FR-106）が、タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリストを候補にするために使う。
-// 応答は問い合わせた時点の写しで、後から変わっても知らせない。足したのは API 0.8.0 である。
+// 応答は問い合わせた時点の写しで、後から変わっても知らせない。足したのは API 0.9.0 である。
 const (
 	// MethodEditorList は、拡張機能から本体へのリクエストである。params は EditorListParams、result は EditorListResult。
 	MethodEditorList = "editor/list"

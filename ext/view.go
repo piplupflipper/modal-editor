@@ -63,7 +63,7 @@ const (
 	ViewTree ViewKind = "tree"
 	// ViewInput は、1 行の入力である。中身が変わるたびに input/change で知らせ、<CR> で view/select（Item は中身）を送る。
 	ViewInput ViewKind = "input"
-	// ViewFinder は、入力の行と一覧を組にした部品である（ファジーファインダー。FR-106。API 0.8.0 で足した）。
+	// ViewFinder は、入力の行と一覧を組にした部品である（ファジーファインダー。FR-106。API 0.9.0 で足した）。
 	// Text は入力の行の最初の中身、Items は一覧の項目（子を持たない）である。
 	// フォーカスは入力の行に置き、開いた時点でインサートモードにする。入力の行が変わるたびに input/change（Seq 付き）で知らせ、
 	// 拡張機能は絞り込んだ一覧を view/update（同じ Seq 付き）で返す。本体は、最後に知らせた Seq より古い Seq の一覧を出さない。
@@ -315,7 +315,7 @@ type ViewSelectParams struct {
 	Item string `json:"item"`
 	// Input は、ViewFinder の入力の行の中身である。他の部品では省く。
 	Input string `json:"input,omitempty"`
-	// Selection は、ViewList、ViewTree、ViewFinder の項目の選択に本体が付ける番号である（1 から。API 0.8.0 で足した）。
+	// Selection は、ViewList、ViewTree、ViewFinder の項目の選択に本体が付ける番号である（1 から。API 0.9.0 で足した）。
 	// 拡張機能は、この選択への応答として、同じ番号を付けた editor/execute（EditorExecuteParams.Selection）を 1 回だけ送れる。
 	// ViewInput では省く。
 	Selection uint64 `json:"selection,omitempty"`
@@ -326,7 +326,7 @@ type InputChangeParams struct {
 	View ViewID `json:"view"`
 	// Text は、変わった後の入力の行の中身である。
 	Text string `json:"text"`
-	// Seq は、そのポップアップの入力の行が変わるたびに 1 から 1 ずつ増やす番号である（API 0.8.0 で足した）。
+	// Seq は、そのポップアップの入力の行が変わるたびに 1 から 1 ずつ増やす番号である（API 0.9.0 で足した）。
 	// ViewFinder の拡張機能は、この入力への一覧を view/update の Seq に同じ値を入れて返す。
 	// 本体は、前の入力への一覧が届いていなくても次の input/change を送るので、拡張機能は古い入力への計算を捨ててよい。
 	Seq uint64 `json:"seq,omitempty"`
