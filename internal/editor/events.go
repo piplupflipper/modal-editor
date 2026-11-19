@@ -89,6 +89,8 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.bufferDisposeRequest(ev)
 	case *exthost.DiffStartRequest:
 		e.diffStartRequest(ev)
+	case *exthost.PaneOpenRequest:
+		e.withView(e.extView(ev.Extension), func() { e.paneOpenRequest(ev) })
 	case *exthost.ViewUpdate:
 		e.viewUpdate(ev)
 	case *exthost.ViewClose:

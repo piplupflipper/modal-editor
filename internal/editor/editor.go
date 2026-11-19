@@ -165,6 +165,16 @@ type Config struct {
 	// フォーカスを移す関数である（FR-63。internal/mux の Mux.FocusPane を包んだもの）。ペインは ClientInfo.Pane である。
 	// イベントループを止めないよう、別の goroutine で呼ぶ。nil なら移さず、メッセージだけを出す。
 	FocusPane func(from, pane string) error
+	// OpenPopup は、中央のポップアップ（基本設計 1.4。FR-67）を、端末多重化ソフトのポップアップとして開き、その中で部品 view を描く
+	// ポップアップの部品の client を、このエディタの server に繋ぐ形で起動する関数である（internal/mux の Mux.OpenPopup を包んだもの。component.go）。
+	// from は元の client のペイン、dir は起動するディレクトリである。部品の client が繋いだら、server が AttachComponent を呼ぶ。
+	// イベントループを止めないよう、別の goroutine で呼ぶ。nil か、元の client のペインを知らないときは、編集の client の画面の中央に描く。
+	// 誤りを返したら、誤りを元の client のメッセージの行に出し、編集の client の画面の中央に描く。
+	OpenPopup func(from string, view uint64, dir string) error
+	// OpenPane は、拡張機能の pane/open（FR-115）で、from のペインを分割し、新しいペインで部品 view を描くペインの部品の client を
+	// 起動する関数である（internal/mux の Mux.SplitPane を包んだもの。component.go）。使い方は OpenPopup と同じである。
+	// nil か、元の client のペインを知らないときは、ペインに代えて中央のポップアップに出す（FR-123）。
+	OpenPane func(from string, view uint64, dir string, opts PaneOptions) error
 	// Problems は、呼び出し側が設定ファイルと宣言ファイルを読んだときの誤り（位置と内容）である（基本設計 8 章）。
 	// New は、すべてをログに記録し、New 自身が見つけた設定の誤りより先に並べて、最初の 1 件を起動後のメッセージで知らせる。
 	Problems []error
@@ -215,6 +225,9 @@ type Editor struct {
 	popupKeys map[string][]popupKeyBinding
 	// floatSeq は、最後に開いたポップアップの番号である（floatState.id）。
 	floatSeq uint64
+	// paneActive と paneSaved は、ペインの部品の client のキーを処理している間（paneInput）の、そのペインの部品と、
+	// 退避した元の client のポップアップである（component.go）。処理していなければ nil である。
+	paneActive, paneSaved *floatState
 	// noRecord は、feedKey がマクロに記録せずに State へ渡す間であることを表す（キーの一覧で選んだキー。selectKeyRow）。
 	// 選んだ <CR> がもう記録されているので、選んだキーまで記録すると、再生で 2 回動くためである。
 	noRecord bool

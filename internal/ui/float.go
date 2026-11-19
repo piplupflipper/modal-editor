@@ -94,17 +94,24 @@ func StripCodeFences(s string) string {
 // 枠線が無ければ、見出しを窓の最初の行に描く。幅と行数の上限は枠線と見出しを含めて数える。
 // 窓の色は StylePopup で、テキストの色はその上に重ねる。CursorLine なら、カーソルの行を StylePopupSelected で描く。
 // フォーカスの無い窓に収まらない行があれば、最後の行に残りの行数を書く（フォーカスを入れればスクロールして読める）。
+// Fill なら、枠線を描かずに、窓をバッファの表示領域の全体（画面の幅と、表示領域の行数）に広げる（部品の client の画面）。
 func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int) (Cursor, bool) {
 	if fl.View == nil || fl.View.Text == nil {
 		return Cursor{}, false
 	}
 	chars, bordered := r.border()
+	if fl.Fill {
+		bordered = false
+	}
 	b := 0
 	if bordered {
 		b = 1
 	}
 	tabStop := tabStopOr(r.TabStop)
 	maxW := min(r.Width, popupMaxWidth) - 2*b
+	if fl.Fill {
+		maxW = r.Width
+	}
 	if maxW < 3 {
 		return Cursor{}, false
 	}
@@ -114,7 +121,7 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	for i := range min(n, floatScanLines) {
 		width = max(width, StringWidth(text.Line(i), tabStop))
 	}
-	if fl.Wide {
+	if fl.Wide || fl.Fill {
 		width = maxW
 	}
 	head := 0
@@ -127,13 +134,16 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	useAbove := !fl.Center && n > below && above > below
 	space := below
 	switch {
-	case fl.Center:
+	case fl.Center, fl.Fill:
 		space = textRows - 2*b - head
 	case useAbove:
 		space = above
 	}
 	h := min(n, space)
-	if !fl.Center {
+	if fl.Fill {
+		// 中身が短くても、表示領域の全体を窓にする。
+		h = space
+	} else if !fl.Center {
 		h = min(h, popupMaxRows-2*b-head)
 	}
 	if h <= 0 {
@@ -149,6 +159,8 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	top := curRow + 1 + b
 	x0 := max(min(curCol, r.Width-boxW-2*b), 0) + b
 	switch {
+	case fl.Fill:
+		top, x0 = 0, 0
 	case fl.Center:
 		top = (textRows-boxH-2*b)/2 + b
 		x0 = max((r.Width-boxW-2*b)/2, 0) + b

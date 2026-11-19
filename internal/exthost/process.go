@@ -590,6 +590,15 @@ func requestEvent(ctx context.Context, id string, req *rpc.Request, reply rpc.Re
 			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
 		}
 		return &DiffStartRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodPaneOpen:
+		var p ext.PaneOpenParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		if err := p.Validate(); err != nil {
+			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
+		}
+		return &PaneOpenRequest{Extension: id, Params: p, replyOnce: ro}, nil
 	}
 	return nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: "method not found: " + req.Method}
 }

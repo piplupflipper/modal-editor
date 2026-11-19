@@ -57,6 +57,16 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 	return run(tm, conn, logger, sent, nil)
 }
 
+// RunComponent は、tm を conn の先の server に、部品 view を描く部品の client（kind は protocol.KindPopup か KindPane）として繋ぎ、
+// Run と同じく、server が接続を閉じるか、端末の入力が終わるまで動かす（基本設計 1.2。FR-67、FR-115）。
+// 端末の受け渡し（protocol.FeatureTerminal）は宣言しない（server は部品の client に :! を頼まない）。
+// server が部品を閉じたら理由の無い終わりの知らせが届き、nil を返す。呼び出し側はそのまま終わり、端末多重化ソフトのポップアップかペインが閉じる。
+func RunComponent(tm Terminal, conn protocol.ClientConn, kind protocol.ClientKind, view uint64, logger *slog.Logger) error {
+	w, h := tm.Size()
+	sent := conn.Send(protocol.Hello{Kind: kind, Width: w, Height: h, View: view}) == nil
+	return run(tm, conn, logger, sent, nil)
+}
+
 // Start は、conn へ hello を送り、server から最初に届いたメッセージを返す。端末には何も出さない。
 // 呼び出し側は、最初のメッセージを見て、編集の client として続けるか（Continue）、接続を閉じて別の形で動くかを決める
 // （server が理由 server.BusyReason の終わりの知らせで断ったときに、1 つのプロセスで動かす。基本設計 1.2 の FR-62 までの扱い）。

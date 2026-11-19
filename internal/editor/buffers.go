@@ -319,6 +319,13 @@ func (e *Editor) enter(bs *bufferState) {
 	if e.cur == bs {
 		return
 	}
+	if e.paneActive != nil && e.float == e.paneActive {
+		// ペインの部品の中で打ったコマンドで移る（:e など）。ペインは閉じずに元の client のタブへ戻ってから移る（component.go）。
+		e.leavePane()
+		if e.cur == bs {
+			return
+		}
+	}
 	if f := e.float; f != nil && f.focused {
 		// フォーカスのあるポップアップから別のタブへ移るときは、ポップアップを閉じてから移る（popup.go）。
 		e.closeFloat(true)

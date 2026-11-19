@@ -14,6 +14,8 @@ import (
 // メソッドと向き（名前は仮）:
 //
 //   - popup/open（拡張機能 → 本体、リクエスト）: PopupOpenParams で部品を渡して開く。応答は PopupOpenResult
+//   - pane/open（拡張機能 → 本体、リクエスト）: PaneOpenParams で部品を渡し、端末多重化ソフトで分割したペインに開く（FR-115）。
+//     応答は PaneOpenResult。ペインもポップアップと同じ ID で指し、以下の通知はペインにも使う
 //   - view/update（拡張機能 → 本体、通知）: 開いたポップアップの部品の中身を置き換える（ViewUpdateParams）
 //   - view/close（拡張機能 → 本体、通知）: 開いたポップアップを閉じる（ViewCloseParams）。本体は view/closed を返さない
 //   - view/closed（本体 → 拡張機能、通知）: 利用者が閉じたか、本体が閉じた（別のポップアップで置き換えた、client が終わった）ことを
@@ -28,6 +30,8 @@ import (
 const (
 	// MethodPopupOpen は、拡張機能から本体へのリクエストである。params は PopupOpenParams、result は PopupOpenResult。
 	MethodPopupOpen = "popup/open"
+	// MethodPaneOpen は、拡張機能から本体へのリクエストである。params は PaneOpenParams、result は PaneOpenResult。
+	MethodPaneOpen = "pane/open"
 	// MethodViewUpdate は、拡張機能から本体への通知である。params は ViewUpdateParams。
 	MethodViewUpdate = "view/update"
 	// MethodViewClose は、拡張機能から本体への通知である。params は ViewCloseParams。
@@ -186,7 +190,8 @@ const (
 	// Focus が false なら、ホバーと同じく次のキーかカーソルの移動で閉じ、<C-w>w でフォーカスを入れられる。
 	PopupAtCursor PopupPlacement = "cursor"
 	// PopupCenter は、中央のポップアップである。開いている間はそれだけを操作する（FR-68）。
-	// 端末多重化ソフトのポップアップに出す部品の client（FR-66、FR-67）はまだ無いので、今は編集の client の画面の中央に描く（仮）。
+	// tmux と herdr の中では、端末多重化ソフトのポップアップの中の部品の client が描き（FR-66、FR-67）、
+	// 外と、端末多重化ソフトのポップアップを開けないときは、編集の client の画面の中央に描く。
 	PopupCenter PopupPlacement = "center"
 )
 
@@ -214,6 +219,58 @@ func (p *PopupOpenParams) Validate() error {
 // PopupOpenResult は、popup/open の result である。
 type PopupOpenResult struct {
 	// View は、開いたポップアップの ID である。
+	View ViewID `json:"view"`
+}
+
+// PaneDirection は、pane/open でペインを分割する向きである。
+type PaneDirection string
+
+// ペインを分割する向き。新しいペインは、元の client のペインの右か下に開く。
+const (
+	// PaneRight は、元の client のペインの右に開く（既定）。
+	PaneRight PaneDirection = "right"
+	// PaneDown は、元の client のペインの下に開く。
+	PaneDown PaneDirection = "down"
+)
+
+// PaneOpenParams は、pane/open の params である（基本設計 1.2、1.3、5.3。FR-115、FR-123）。
+//
+// 本体は、その拡張機能へ最後に問い合わせを始めた client（元の client）のペインを、端末多重化ソフト（tmux、herdr）で分割し、
+// 新しいペインの中で部品を描く client（ペインの部品の client）を起動する。拡張機能は端末多重化ソフトを直接操作しない。
+// ペインの中で打ったキーと選んだ項目は、元の client の操作として扱い、view/select などで知らせる。
+// ペインの中の <Esc> はペインを閉じない（ポップアップと違う）。利用者が端末多重化ソフトでペインを閉じるか、ペインの中で :q を打つと閉じ、
+// view/closed を送る。
+//
+// 端末多重化ソフトの外（FR-60）と、ペインを開けなかったとき（herdr のプラグインを登録していないなど）は、ペインに代えて
+// 元の client の画面の中央のポップアップに出す（FR-123）。このときは PopupCenter のポップアップと同じく <Esc> で閉じる。
+// どちらでも応答の View は同じ扱いで、拡張機能は違いを知らずに view/update と view/close を送れる。
+type PaneOpenParams struct {
+	Component ViewComponent `json:"component"`
+	// Direction は、分割の向きである。省くと PaneRight である。
+	Direction PaneDirection `json:"direction,omitempty"`
+	// Size は、新しいペインの大きさを、元のペインの分割の向きの大きさに対する百分率（1〜99）で表す。0 なら端末多重化ソフトの既定である。
+	// herdr 0.9.0 は分割の大きさを受け付けないので、herdr では使わない（基本設計 1.3）。
+	Size int `json:"size,omitempty"`
+	// Focus は、開いた新しいペインへフォーカスを移すかである。
+	Focus bool `json:"focus,omitempty"`
+}
+
+// Validate は、Component、Direction、Size を検査する。
+func (p *PaneOpenParams) Validate() error {
+	switch p.Direction {
+	case "", PaneRight, PaneDown:
+	default:
+		return fmt.Errorf("direction %q は知らない向きである", p.Direction)
+	}
+	if p.Size < 0 || p.Size > 99 {
+		return fmt.Errorf("size %d は 0〜99 でない", p.Size)
+	}
+	return p.Component.Validate()
+}
+
+// PaneOpenResult は、pane/open の result である。
+type PaneOpenResult struct {
+	// View は、開いたペイン（端末多重化ソフトの外では、代わりのポップアップ）の ID である。
 	View ViewID `json:"view"`
 }
 

@@ -11,7 +11,8 @@
 // 2 つ目からの client は server のソケットで受け付け、editor.Editor.Attach でイベントループへ渡す。
 // 1 つのプロセスの構成でも server のソケットを待ち受け（基本設計 1.2）、ソケットで繋いだ編集の client を受け付ける。
 // 待つだけの client（FR-83）は、server のソケットで受け付け、editor.Editor.Wait でファイルを開かせて、タブが閉じられるまで繋いでおく（serveWait）。
-// 部品の client は、まだ受け付けず、理由付きの終わりの知らせを送って閉じる。
+// 部品の client（FR-67、FR-115）は、server のソケットで受け付け、editor.Editor.AttachComponent で、その部品を開いた元の編集の client に繋ぐ
+// （component.go）。server は、端末多重化ソフトの層で部品の client を起動する関数を editor.Config.OpenPopup と OpenPane に入れる。
 //
 // # 端末の受け渡し
 //
@@ -102,6 +103,12 @@ func New(cfg editor.Config) (*Server, error) {
 	s := &Server{onPanic: cfg.OnPanic, log: logger}
 	if cfg.SplitPane == nil {
 		cfg.SplitPane = s.splitPane
+	}
+	if cfg.OpenPopup == nil {
+		cfg.OpenPopup = s.openPopup
+	}
+	if cfg.OpenPane == nil {
+		cfg.OpenPane = s.openPane
 	}
 	s.client = s.newTerm()
 	ed, err := editor.New(s.client, cfg)
@@ -379,11 +386,11 @@ func (s *Server) admit(a *acceptor, conn protocol.ServerConn) {
 		case <-ctx.Done():
 		}
 	}()
-	h, err := handshakeKinds(ctx, conn, protocol.KindEdit, protocol.KindWait)
+	h, err := handshakeKinds(ctx, conn, protocol.KindEdit, protocol.KindWait, protocol.KindPopup, protocol.KindPane)
 	cancel()
 	switch {
 	case errors.Is(err, errUnsupportedKind):
-		s.log.Info("編集の client でも待つだけの client でもない接続を断った", "err", err)
+		s.log.Info("知らない種類の client の接続を断った", "err", err)
 		s.reject(conn, UnsupportedReason)
 		return
 	case err != nil:
@@ -392,6 +399,9 @@ func (s *Server) admit(a *acceptor, conn protocol.ServerConn) {
 		return
 	case h.Kind == protocol.KindWait:
 		s.serveWait(a, conn, h)
+		return
+	case h.Kind == protocol.KindPopup, h.Kind == protocol.KindPane:
+		s.serveComponent(a, conn, h)
 		return
 	}
 	select {
@@ -455,8 +465,7 @@ func (s *Server) serveWait(a *acceptor, conn protocol.ServerConn, h protocol.Hel
 	}
 }
 
-// UnsupportedReason は、まだ受け付けない種類の client（部品の client）を断るときに、
-// 終わりの知らせ（protocol.Exit）の理由に載せる文言である。
+// UnsupportedReason は、知らない種類の client を断るときに、終わりの知らせ（protocol.Exit）の理由に載せる文言である。
 const UnsupportedReason = "この種類の client はまだ使えない"
 
 // rejectTimeout は、断る client へ終わりの知らせを送るのを待つ上限である。超えたら送らずに閉じる。

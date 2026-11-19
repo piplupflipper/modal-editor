@@ -20,6 +20,10 @@ const (
 	HerdrPluginEntrypoint = "run"
 )
 
+// HerdrPluginNotFound は、同梱のプラグインを herdr に登録していないときに、plugin.pane.open が返す誤りの種類（HerdrError.Code）である
+// （2026-11-19 に herdr 0.9.0 で、登録していない ID を渡して確かめた）。
+const HerdrPluginNotFound = "plugin_not_found"
+
 // HerdrCommandEnv は、herdr のプラグインのペインで起動するコマンドを渡す環境変数の名前である。
 // 値は、Command.Args をシェルの引用で囲んでつないだ 1 つの文字列で、プラグインの command が eval して exec する。
 const HerdrCommandEnv = "MODAL_EDITOR_MUX_COMMAND"

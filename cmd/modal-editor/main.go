@@ -77,6 +77,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	serverPath := flags.String("server", "", "内部用（利用者は指定しない）。tmux と herdr の中で起動した編集の client が、このパスのソケットの server として自分の子に起動する")
 	// req: FR-84
 	newServer := flags.Bool("new", false, "環境変数 "+envSocket+" があっても親の server に繋がず、新しい server と client を起動する（エディタの中で起動したエディタを、別のエディタとして使う）")
+	popupView := flags.Uint64(server.ComponentFlagPopup[1:], 0, "内部用（利用者は指定しない）。server が端末多重化ソフトのポップアップの中で、この ID の部品を描く client として起動する")
+	paneView := flags.Uint64(server.ComponentFlagPane[1:], 0, "内部用（利用者は指定しない）。server が端末多重化ソフトのペインの中で、この ID の部品を描く client として起動する")
 
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("引数の解釈に失敗: %w", err)
@@ -85,6 +87,21 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if *showVersion {
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
+	}
+	if *popupView != 0 || *paneView != 0 {
+		in, inOK := stdin.(*os.File)
+		out, outOK := stdout.(*os.File)
+		if !inOK || !outOK {
+			return errNotTerminal
+		}
+		if *popupView != 0 && *paneView != 0 {
+			return errors.New("-popup と -pane は同時に指定できない")
+		}
+		kind, view := protocol.KindPopup, *popupView
+		if *paneView != 0 {
+			kind, view = protocol.KindPane, *paneView
+		}
+		return component(kind, view, in, out, *logPath, *connect)
 	}
 	if sock := os.Getenv(envSocket); sock != "" && !*newServer && countSet(*listen, *connect, *serverPath) == 0 {
 		// :! などの子孫として起動した modal-editor は、待つだけの client になる（FR-83）。

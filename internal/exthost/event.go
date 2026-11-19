@@ -14,7 +14,7 @@ import (
 //
 //   - 拡張機能からのリクエスト: [EditRequest]、[EditorStateRequest]、[EditorOpenRequest]、[BufferSaveRequest]、
 //     [DiagnosticListRequest]、[ChoiceAskRequest]、[PopupOpenRequest]、[BufferCreateRequest]、[BufferUpdateRequest]、
-//     [BufferDisposeRequest]、[DiffStartRequest]
+//     [BufferDisposeRequest]、[DiffStartRequest]、[PaneOpenRequest]
 //   - 拡張機能からの通知: [DecorationSet]、[MessageShow]、[DiagnosticSet]、[SignSet]、[PopupShow]、[OutputAppend]、
 //     [ViewUpdate]、[ViewClose]
 //   - Host が作るもの: [StateChange]、[QueryResult]
@@ -272,6 +272,20 @@ func (r *DiffStartRequest) Reply(result ext.DiffStartResult) error {
 	return r.reply(result, nil)
 }
 
+// PaneOpenRequest は、拡張機能からの pane/open のリクエストである（基本設計 1.2、1.3、5.3。FR-115、FR-123）。
+// Params は ext.PaneOpenParams.Validate を通したものである。
+// イベントループは、ペイン（端末多重化ソフトの外では中央のポップアップ）を開いて ID を [PaneOpenRequest.Reply] で返す。
+type PaneOpenRequest struct {
+	Extension string
+	Params    ext.PaneOpenParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ pane/open の結果を返す。
+func (r *PaneOpenRequest) Reply(result ext.PaneOpenResult) error {
+	return r.reply(result, nil)
+}
+
 // ViewUpdate は、拡張機能からの view/update の通知である。読めない部品（ext.ViewComponent.Validate の誤り）は Host が捨てる。
 type ViewUpdate struct {
 	Extension string
@@ -336,6 +350,7 @@ func (*BufferCreateRequest) isEvent()   {}
 func (*DiffStartRequest) isEvent()      {}
 func (*BufferUpdateRequest) isEvent()   {}
 func (*BufferDisposeRequest) isEvent()  {}
+func (*PaneOpenRequest) isEvent()       {}
 func (*ViewUpdate) isEvent()            {}
 func (*ViewClose) isEvent()             {}
 func (*StateChange) isEvent()           {}
