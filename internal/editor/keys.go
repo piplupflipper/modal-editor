@@ -136,6 +136,9 @@ func (e *Editor) handleKeys() {
 	// ペインの部品の client のキーで選んだときは、このキーの処理の中で立て直す。
 	clear(e.extFromPane)
 	e.useClient(in.c)
+	// この client の前の選択への editor/execute は、次のキーを打った時点で無効にする（list.go の revokeExecute）。
+	// 部品の client（端末多重化ソフトのポップアップとペイン）で打ったキーも、元の client（in.c）のキーとして数える。
+	e.revokeExecute(in.c)
 	if in.comp != nil {
 		e.componentInput(in)
 		return

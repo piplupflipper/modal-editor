@@ -238,19 +238,21 @@ func TestFinderMacro(t *testing.T) {
 }
 
 // editor/execute は、その拡張機能のポップアップで利用者が選んだことへの応答として 1 回だけ、利用者がノーマルモードで入力の途中で
-// ないときだけ実行する。command は、コマンドの一覧の名前と完全に一致するものだけを受け付ける（PR #249 の再レビューの必須。
+// ないときだけ実行する。選んだ後にその client がキーを打ったら、その選択の番号は使えない。
+// command は、コマンドの一覧の名前と完全に一致するものだけを受け付ける（PR #249 の再レビューの必須と 3 回目の確認の推奨。
 // 入力はレビューで確かめたもの）。
 //
 // req: FR-107
 func TestEditorExecuteGuard(t *testing.T) {
-	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n"})
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\nbeta\n"})
 	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
-	grant := func() {
+	// selectWith は、fake.exec で x を覚えさせてから、偽の拡張機能の一覧を開いて keys で選ぶ。拡張機能は選んだ後に x を送る。
+	selectWith := func(x, keys string) {
 		t.Helper()
+		h.keys(":fake.exec " + x + "<CR>")
 		h.keys(":fake.popup list<CR>")
 		h.eventually("一覧", func() bool { return h.e.float != nil && h.e.float.ext == "fake" })
-		h.keys("j<CR>")
-		h.eventually("選んで閉じた一覧", func() bool { return h.e.float == nil })
+		h.keys(keys)
 	}
 	check := func(what, want string) {
 		t.Helper()
@@ -259,42 +261,49 @@ func TestEditorExecuteGuard(t *testing.T) {
 			t.Errorf("%s: text = %q, want %q", what, got, want)
 		}
 	}
+	const notSelected = "利用者が選んだ項目への応答としてだけ"
 
 	// 選んでいないのに頼まれた実行は断る。
-	h.keys(`:fake.exec {"keys":"x","selection":99}<CR>`)
-	h.waitMessage("利用者が選んだ項目への応答としてだけ")
-	check("選んでいない", "alpha")
+	h.keys(`:fake.exec {"keys":"x","selection":99,"now":true}<CR>`)
+	h.waitMessage(notSelected)
+	check("選んでいない", "alpha\nbeta")
 
-	// 届いたときにインサートモードなら断る（x を文字として入れない）。
-	grant()
-	h.keys(`:fake.exec {"keys":"x","delay":300}<CR>A`)
+	// 選んだ後に、届く前にキーを打ったら断る。インサートモードの x を文字として入れず（A）、:write を本文に入れず（Go）、
+	// 動いた先の行で x を実行しない（j。レビューの再現）。
+	for _, tt := range []struct{ x, after, want string }{
+		{`{"keys":"x","delay":300}`, "A", "alpha\nbeta"},
+		{`{"command":"write","delay":300}`, "Go", "alpha\nbeta\n"},
+		{`{"keys":"x","delay":300}`, "j", "alpha\nbeta"},
+	} {
+		selectWith(tt.x, "j<CR>")
+		h.eventually("選んで閉じた一覧", func() bool { return h.e.float == nil })
+		h.keys(tt.after)
+		h.waitMessage(notSelected)
+		check(tt.x+" "+tt.after, tt.want)
+		h.keys("<Esc>")
+		if tt.after == "Go" {
+			h.keys("u")
+		}
+		h.keys("gg")
+	}
+
+	// 選んだ後もフォーカスのあるポップアップが開いている（拡張機能が閉じなかった）なら断る。
+	selectWith(`{"keys":"x"}`, "<CR>")
 	h.waitMessage("入力の途中か待っている間")
-	check("インサートモード", "alpha")
 	h.keys("<Esc>")
-
-	// インサートモードの :write も、本文に入れずに断る。
-	grant()
-	h.keys(`:fake.exec {"command":"write","delay":300}<CR>Go`)
-	h.waitMessage("入力の途中か待っている間")
-	check("インサートモードの write", "alpha\n")
-	h.keys("<Esc>u")
+	check("開いたままのポップアップ", "alpha\nbeta")
 
 	// 範囲、引数、| の付いたコマンドは断る。
 	for _, c := range []string{`s/alpha/PWNED/`, `w | q`, `%d`} {
-		grant()
-		h.keys(fmt.Sprintf(`:fake.exec {"command":%q}<CR>`, c))
+		selectWith(fmt.Sprintf(`{"command":%q}`, c), "j<CR>")
 		h.waitMessage("コマンドの一覧にありません")
-		check(c, "alpha")
+		check(c, "alpha\nbeta")
 	}
 
 	// 選んだことへの応答なら実行する。同じ選択でもう一度は断る。
-	grant()
-	h.keys(`:fake.exec {"keys":"x"}<CR>`)
-	h.waitMessage("exec ok")
-	check("実行", "lpha")
-	h.keys(`:fake.exec {"keys":"x"}<CR>`)
-	h.waitMessage("利用者が選んだ項目への応答としてだけ")
-	check("2 回目", "lpha")
+	selectWith(`{"keys":"x","twice":true}`, "j<CR>")
+	h.waitMessage(notSelected)
+	check("実行と 2 回目", "lpha\nbeta")
 	var modified bool
 	h.e.do(func() { modified = h.e.cur.buf.Modified() })
 	if !modified {

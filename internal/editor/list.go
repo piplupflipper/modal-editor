@@ -58,6 +58,17 @@ func (e *Editor) grantExecute(extID string) uint64 {
 	return e.selectionSeq
 }
 
+// revokeExecute は、client c で選んだ選択への、まだ使っていない editor/execute の許しを無効にする（PR #249 の 3 回目の確認の推奨）。
+// その client が次のキーを打ったとき（handleKeys）と、ポップアップを利用者か本体が閉じたとき（closeFloat。拡張機能の view/close を除く）に呼ぶ。
+// 次の選択が起きたときは grantExecute が置き換える。拡張機能が送らなかった選択の番号で、後から関係の無い時点に実行させないためである。
+func (e *Editor) revokeExecute(c *clientView) {
+	for id, g := range e.execGrants {
+		if g.client == c {
+			delete(e.execGrants, id)
+		}
+	}
+}
+
 // errExecuteNotSelected は、利用者の選択への応答でない editor/execute を断る誤りである。
 var errExecuteNotSelected = errors.New("editor/execute は、拡張機能が開いた一覧で利用者が選んだ項目への応答としてだけ使えます")
 

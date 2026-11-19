@@ -283,6 +283,10 @@ func (e *Editor) closeFloat(notify bool) {
 		return
 	}
 	e.float = nil
+	if notify {
+		// 利用者か本体が閉じた（拡張機能の view/close でない）ら、この client の選択への editor/execute を無効にする（revokeExecute）。
+		e.revokeExecute(e.view)
+	}
 	if f == e.paneActive {
 		e.float = e.paneSaved
 		e.paneActive, e.paneSaved = nil, nil

@@ -198,30 +198,44 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
-		// fake.exec は、引数の JSON（ext.EditorExecuteParams と、待つ時間の "delay"（ミリ秒））を、待ってから editor/execute で送り、
-		// 結果を "exec err=<誤り>" と出す。selection を省くと、最後に届いた view/select の選択の番号を使う（PR #249 の再レビューの検証）。
-		var lastSelection atomic.Uint64
-		s.Command("fake.exec", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
-			var a struct{ Text string }
-			_ = json.Unmarshal(p.Args, &a)
-			var x struct {
-				ext.EditorExecuteParams
-				Delay int `json:"delay"`
-			}
-			_ = json.Unmarshal([]byte(a.Text), &x)
+		// fake.exec は、引数の JSON（ext.EditorExecuteParams と、待つ時間の "delay"（ミリ秒）、すぐ送るかの "now"、2 回送るかの "twice"）
+		// を覚え、次の view/select の後に、待ってからその選択の番号で editor/execute を送る（selection を書けばその番号で送る）。
+		// now なら、選択を待たずにすぐ送る。成功したら "exec ok" と出す（PR #249 の再レビューと 3 回目の確認の検証）。
+		type fakeExec struct {
+			ext.EditorExecuteParams
+			Delay int  `json:"delay"`
+			Now   bool `json:"now"`
+			Twice bool `json:"twice"`
+		}
+		var armed atomic.Pointer[fakeExec]
+		sendExec := func(x fakeExec, selection uint64) {
 			if x.Selection == 0 {
-				x.Selection = lastSelection.Load()
+				x.Selection = selection
 			}
-			go func() {
-				time.Sleep(time.Duration(x.Delay) * time.Millisecond)
-				err := s.Execute(hostCtx, x.EditorExecuteParams)
-				fmt.Fprintf(os.Stderr, "exec err=%v\n", err)
-				if err != nil {
-					// 本体が出した理由を上書きしないように、断られたら出さない。成功のときだけ出す。
+			time.Sleep(time.Duration(x.Delay) * time.Millisecond)
+			n := 1
+			if x.Twice {
+				n = 2
+			}
+			for range n {
+				if err := s.Execute(hostCtx, x.EditorExecuteParams); err != nil {
+					// 本体が出した理由を上書きしないように、断られたら出さない。
+					fmt.Fprintf(os.Stderr, "exec err=%v\n", err)
 					return
 				}
 				_ = s.ShowMessage(ext.MessageInfo, "exec ok")
-			}()
+			}
+		}
+		s.Command("fake.exec", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var a struct{ Text string }
+			_ = json.Unmarshal(p.Args, &a)
+			var x fakeExec
+			_ = json.Unmarshal([]byte(a.Text), &x)
+			if x.Now {
+				go sendExec(x, 0)
+			} else {
+				armed.Store(&x)
+			}
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
 		// fake.list は、引数の一覧（tabs、commands、keys、registers、jumps）を editor/list で問い合わせ、結果の JSON を出す（FR-107）。
@@ -239,9 +253,6 @@ func runFakeExt(mode string) int {
 			msg := fmt.Sprintf("view %d kind=%d item=%s key=%s", e.View, e.Kind, e.Item, e.Key)
 			if e.Kind == server.ViewExpanded {
 				msg += fmt.Sprintf(" expanded=%v", e.Expanded)
-			}
-			if e.Kind == server.ViewSelected {
-				lastSelection.Store(e.Selection)
 			}
 			if e.Seq != 0 || e.Input != "" {
 				msg += fmt.Sprintf(" seq=%d input=%s", e.Seq, e.Input)
@@ -293,6 +304,12 @@ func runFakeExt(mode string) int {
 					}
 					_ = s.ShowMessage(ext.MessageInfo, "picked "+e.Item)
 				}()
+			}
+			// fake.exec で覚えた実行は、閉じる view/close を送った後に送る（ファインダーと同じ順）。
+			if e.Kind == server.ViewSelected {
+				if x := armed.Swap(nil); x != nil {
+					go sendExec(*x, e.Selection)
+				}
 			}
 		})
 		s.Command("fake.jump", func(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
