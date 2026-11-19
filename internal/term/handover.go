@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -192,6 +194,62 @@ func takeForeground(fd int) int {
 		return 0
 	}
 	return pg
+}
+
+// orphanedPgrp は、本体のプロセスグループが孤立しているか（POSIX の orphaned process group）を返す。
+// 本体から親をたどり、本体と同じプロセスグループを出た最初の祖先が、同じセッションの別のプロセスグループにいれば、
+// そのプロセス（ふつうはシェル）が fg で再開させられるので、孤立していない。そうでなければ孤立している。
+// 同じプロセスグループの他のプロセス（:! の子プロセス）は本体の子孫なので、それらの親は本体のプロセスグループにいて、判断を変えない。
+// 親をたどれないときは、孤立していないとみなす（従来どおり止まる）。
+func orphanedPgrp() bool {
+	own, sid := unix.Getpgrp(), 0
+	if s, err := unix.Getsid(0); err == nil {
+		sid = s
+	} else {
+		return false
+	}
+	pid := os.Getpid()
+	for range 64 {
+		ppid, err := parentOf(pid)
+		if err != nil || ppid <= 1 {
+			return ppid <= 1 && err == nil
+		}
+		pg, err := unix.Getpgid(ppid)
+		if err != nil {
+			return false
+		}
+		if pg != own {
+			psid, err := unix.Getsid(ppid)
+			return err != nil || psid != sid
+		}
+		pid = ppid
+	}
+	return false
+}
+
+// parentOf は、プロセス pid の親のプロセス ID を、/proc/<pid>/stat から読む。
+func parentOf(pid int) (int, error) {
+	if pid == os.Getpid() {
+		return os.Getppid(), nil
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, fmt.Errorf("term: %w", err)
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 {
+		return 0, errors.New("term: malformed stat")
+	}
+	f := strings.Fields(s[i+1:])
+	if len(f) < 2 {
+		return 0, errors.New("term: malformed stat")
+	}
+	ppid, err := strconv.Atoi(f[1])
+	if err != nil {
+		return 0, fmt.Errorf("term: %w", err)
+	}
+	return ppid, nil
 }
 
 // setForeground は、端末 fd の前面のプロセスグループを pg にする。移せたかを返す。

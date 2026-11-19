@@ -362,6 +362,13 @@ func (t *Terminal) loop(chunks <-chan []byte) {
 		case sig := <-t.winch:
 			switch sig {
 			case syscall.SIGTSTP:
+				// 端末を子プロセスへ渡している間（:! の中の <C-z>）に、本体のプロセスグループが孤立している（親にジョブ制御が無い。
+				// シェルを通さずに起動した）なら止まらない。カーネルは、孤立したプロセスグループへの端末の SIGTSTP を、既定の扱いの子プロセスには
+				// 止めずに捨てる。本体は SIGTSTP を受け取って自分で止まるので、同じ判断をしないと、子プロセスは続くのに本体だけが、
+				// 再開させるものがいないまま止まる（PR #234 の再レビュー 4）。渡していないとき（外からの kill -TSTP）の扱いは変えない。
+				if t.HandedOver() && orphanedPgrp() {
+					continue
+				}
 				// 端末を戻してから自分を止める。SIGSTOP は捕まえられないので、そのまま止まる。
 				// 再開（SIGCONT）は、このチャネルへ届いてから resume する。
 				t.suspend()
