@@ -45,6 +45,13 @@ func TestReleaseReacquire(t *testing.T) {
 		t.Error("Release の後に HandedOver が false")
 	}
 	out.WaitForString(t, seqLeave)
+	// 渡した直後は ISIG を切り、TerminalSignals(true) で入れる（本体がシグナルを無視にしてから。TerminalSignals の doc）。
+	if got := ptytest.Termios(t, tty); got.Lflag&unix.ISIG != 0 {
+		t.Errorf("Release の直後に ISIG が入っている: lflag=%#x", got.Lflag)
+	}
+	if err := tm.TerminalSignals(true); err != nil {
+		t.Fatal(err)
+	}
 	if got := ptytest.Termios(t, tty); got != before {
 		t.Errorf("Release の後の端末の設定が元に戻っていない:\n before %+v\n after  %+v", before, got)
 	}

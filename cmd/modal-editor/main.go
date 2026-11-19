@@ -25,7 +25,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -151,7 +150,8 @@ func countSet(values ...string) int {
 // newServer（--new。FR-84）なら、端末多重化ソフトの中でも同じ window の server に繋がず、1 つのプロセスの構成で新しい server と client を動かす
 // （server のソケットは、プロセス ID と乱数の名前のディレクトリに置く。基本設計 4.9）。
 //
-// 端末を子プロセスへ渡している間（:!。FR-80）は、端末の <C-c> と <C-\> が本体にも SIGINT と SIGQUIT で届くので、それでは終わらない（signalContext）。
+// 端末を子プロセスへ渡している間（:!。FR-80）は、端末の <C-c> と <C-\> が本体にも SIGINT と SIGQUIT で届くので、
+// その間は internal/client が signal.Ignore で無視にし、終わったら signalContext の受け取りを登録し直す（term.Terminal.SetInterruptRestore）。
 func edit(files []string, readOnly bool, in, out *os.File, logPath, connect string, newServer bool) (err error) {
 	logger, closeLog, err := openLog(logPath)
 	if err != nil {
@@ -162,11 +162,7 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 		logger = slog.New(wrapLogHandler(logger.Handler()))
 	}
 
-	var handedOver atomic.Pointer[term.Terminal]
-	ctx, stop := signalContext(func() bool {
-		t := handedOver.Load()
-		return t != nil && t.HandedOver()
-	})
+	ctx, stop, renotify := signalContext()
 	defer stop()
 	tm, err := term.Open(in, out, term.Options{})
 	if errors.Is(err, term.ErrNotTerminal) {
@@ -175,7 +171,7 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 	if err != nil {
 		return fmt.Errorf("端末を開けない: %w", err)
 	}
-	handedOver.Store(tm)
+	tm.SetInterruptRestore(renotify)
 	defer func() { _ = tm.Close() }() // Close は誤りを返さない
 	return guard(tm.Restore, func() error {
 		if connect != "" {

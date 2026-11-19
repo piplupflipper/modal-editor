@@ -91,11 +91,12 @@ func waitClient(conn protocol.ClientConn, getenv func(string) string, files []st
 
 // signalContext は、SIGTERM、SIGHUP、SIGINT、SIGQUIT を受けたら取り消される ctx を返す（signal.NotifyContext と同じく、
 // 取り消しの原因は「<シグナル> signal received」）。
-// ただし、handedOver が true を返す間（端末を子プロセスへ渡している間。FR-80）の SIGINT と SIGQUIT では取り消さない。
-// :! の子プロセスは本体と同じプロセスグループで動くので、子プロセスへ打った <C-c> と <C-\> が本体にも届くためである（Vim と同じく無視する）。
+// :! の子プロセスは本体と同じプロセスグループで動くので、子プロセスへ打った <C-c> と <C-\> は本体にも届く（Vim と同じ）。
+// その間は internal/client が signal.Ignore で SIGINT と SIGQUIT を無視にするので、この受け取りには来ない（無視の間に起きたシグナルはカーネルが捨てる）。
+// 子プロセスが終わったら、renotify で SIGINT と SIGQUIT の受け取りを登録し直す（term.Terminal.SetInterruptRestore）。
 // raw モードの間は、<C-c> と <C-\> はキーとして届き、シグナルにならない。
 // stop は、シグナルの受け付けを止める。
-func signalContext(handedOver func() bool) (ctx context.Context, stop func()) {
+func signalContext() (ctx context.Context, stop, renotify func()) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
@@ -104,9 +105,6 @@ func signalContext(handedOver func() bool) (ctx context.Context, stop func()) {
 		for {
 			select {
 			case sig := <-sigs:
-				if (sig == syscall.SIGINT || sig == syscall.SIGQUIT) && handedOver() {
-					continue
-				}
 				cancel(errors.New(sig.String() + " signal received"))
 			case <-done:
 				return
@@ -114,8 +112,10 @@ func signalContext(handedOver func() bool) (ctx context.Context, stop func()) {
 		}
 	}()
 	return ctx, func() {
-		signal.Stop(sigs)
-		close(done)
-		cancel(context.Canceled)
-	}
+			signal.Stop(sigs)
+			close(done)
+			cancel(context.Canceled)
+		}, func() {
+			signal.Notify(sigs, syscall.SIGINT, syscall.SIGQUIT)
+		}
 }

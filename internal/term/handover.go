@@ -19,10 +19,9 @@ import (
 //
 // # 前面のプロセスグループ
 //
-// :! の子プロセスは、シェルのジョブ制御と同じく自分のプロセスグループで起動し、端末の前面をそれにする（internal/client の runCommands）。
-// 端末の <C-c> の SIGINT は子プロセスのプロセスグループにだけ届き、本体には届かない。
-// 子プロセスが自分で前面を変えることもある（:!sh の中のジョブ制御）。
-// どちらの場合も、その間に起動した modal-editor（待つだけの client。FR-83）のために端末を取り戻すとき（FR-117）、本体は背面のプロセスグループにいて、
+// :! の子プロセスは、Vim と同じく本体と同じプロセスグループで動かす（端末の <C-c> は子プロセスにも本体にも届き、本体は無視する。TerminalSignals）。
+// 子プロセスが対話のシェル（:!sh）なら、シェルはジョブ制御のために自分のプロセスグループを作り、端末の前面をそれへ移す。
+// その中で起動した modal-editor（待つだけの client。FR-83）のために端末を取り戻すとき（FR-117）、本体は背面のプロセスグループにいて、
 // 端末の設定を変えると SIGTTOU で止まり、読むと SIGTTIN で止まる。
 // そのため Reacquire は、前面が自分のプロセスグループでなければ、SIGTTOU を無視して前面を自分へ移し、元の前面を覚える。
 // 次の Release で、覚えた前面へ返す（待つだけの client の終わりを待つ git などのプロセスグループ）。
@@ -46,6 +45,10 @@ func (t *Terminal) Release() error {
 		_, werr = t.out.WriteString(seqLeave)
 	}
 	rerr := xterm.Restore(t.inFd, t.state)
+	if rerr == nil {
+		// 端末が <C-c> などから SIGINT を起こすのは、呼び出し側が本体のシグナルを無視にしてから（TerminalSignals）にする。
+		rerr = t.setISIG(false)
+	}
 	t.away, t.noScreen = true, false
 	if t.prevFg != 0 {
 		setForeground(t.inFd, t.prevFg) // 返せなくても続ける。子プロセスが端末を読むときに分かる
@@ -99,6 +102,64 @@ func (t *Terminal) Reacquire(screen bool) error {
 	return err
 }
 
+// TerminalSignals は、端末を渡している間（Release の後）の端末の ISIG（<C-c>、<C-\>、<C-z> からシグナルを起こすこと）を切り替える。
+//
+// :! の子プロセスは、Vim と同じく本体と同じプロセスグループで動かすので、端末の SIGINT と SIGQUIT は本体にも届く。
+// 本体は、それを IgnoreInterrupts で無視にする。ただし、無視にしてから子プロセスを起動すると、子プロセスが無視を引き継ぎ、<C-c> で止まらない。
+// そこで、ISIG を切った状態で子プロセスを起動し、本体を無視にしてから ISIG を入れる。子プロセスが終わったら、ISIG を切ってから無視を解く。
+// こうすると、端末が SIGINT を起こしうる間は、必ず本体がそれを無視にしている（時間に頼らない。無視の間に起きたシグナルはカーネルが捨てる）。
+// 渡していないときは何もしない（raw モードは ISIG を持たない）。
+func (t *Terminal) TerminalSignals(on bool) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.restored || !t.away {
+		return nil
+	}
+	return t.setISIG(on)
+}
+
+// setISIG は、端末の ISIG を on にする。呼び出し側が mu を持つ。
+func (t *Terminal) setISIG(on bool) error {
+	tio, err := unix.IoctlGetTermios(t.inFd, unix.TCGETS)
+	if err != nil {
+		return fmt.Errorf("term: tcgets: %w", err)
+	}
+	if on {
+		tio.Lflag |= unix.ISIG
+	} else {
+		tio.Lflag &^= unix.ISIG
+	}
+	if err := unix.IoctlSetTermios(t.inFd, unix.TCSETS, tio); err != nil {
+		return fmt.Errorf("term: tcsets: %w", err)
+	}
+	return nil
+}
+
+// SetInterruptRestore は、RestoreInterrupts で SIGINT と SIGQUIT の扱いを元に戻す関数を決める（cmd/modal-editor が、受け取りを登録し直す関数を渡す）。
+// nil なら、既定の扱い（終わる）に戻す。
+func (t *Terminal) SetInterruptRestore(f func()) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.restoreIntr = f
+}
+
+// IgnoreInterrupts は、本体の SIGINT と SIGQUIT を無視にする（signal.Ignore）。無視の間に起きたシグナルは、本体には届かずに捨てられる。
+func (t *Terminal) IgnoreInterrupts() {
+	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT)
+}
+
+// RestoreInterrupts は、IgnoreInterrupts の無視を解き、SetInterruptRestore の関数で元の扱いに戻す。
+func (t *Terminal) RestoreInterrupts() {
+	t.mu.Lock()
+	f := t.restoreIntr
+	t.mu.Unlock()
+	if f == nil {
+		signal.Reset(syscall.SIGINT, syscall.SIGQUIT)
+		return
+	}
+	f()
+}
+
 // HandedOver は、端末を子プロセスへ渡しているか（Release の後、Reacquire の前）を返す。
 func (t *Terminal) HandedOver() bool {
 	t.mu.Lock()
@@ -114,10 +175,17 @@ func (t *Terminal) screenOn() bool {
 // takeForeground は、端末 fd の前面のプロセスグループが自分のものでなければ、自分のものへ移し、元の前面を返す。
 // 移さなかったとき（もう自分が前面、端末を制御端末にしていない、移せない）は 0 を返す。
 // 背面のプロセスグループから前面を移すと SIGTTOU が届くので、その間は SIGTTOU を無視する（tcsetpgrp(3) の決まり）。
+//
+// 前面が本体を起動したシェル（親のプロセスのプロセスグループ）なら、移さない。本体が <C-z> の後に bg で背面のジョブとして続けられているときで、
+// 前面を奪うとシェルが端末を使えなくなる（PR #234 の再レビュー 3 の必須 2）。このとき呼び出し側の raw モードへの切り替えは SIGTTOU で止まり、
+// シェルの fg で続く（端末を使う背面のジョブと同じ）。
 func takeForeground(fd int) int {
 	pg, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP)
 	own := unix.Getpgrp()
 	if err != nil || pg == own || pg <= 0 {
+		return 0
+	}
+	if ppg, perr := unix.Getpgid(os.Getppid()); perr == nil && ppg == pg {
 		return 0
 	}
 	if !setForeground(fd, own) {

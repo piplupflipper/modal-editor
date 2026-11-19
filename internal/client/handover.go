@@ -8,11 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"sync"
-	"syscall"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/protocol"
@@ -30,11 +26,10 @@ import (
 //  3. コマンドが終わったら、Prompt なら「続けるには ENTER を押してください」を出してキーを 1 つ待ち、端末を取り戻して protocol.TerminalDone を返す。
 //     取り戻してあれば（2 の途中で終わった）、問わずに返す
 //
-// 子プロセスは、シェルのジョブ制御と同じく自分のプロセスグループで起動し、端末の前面をそのプロセスグループにする（runCommands）。
-// 端末の <C-c> と <C-\> の SIGINT と SIGQUIT は子プロセスにだけ届き、本体には届かない（PR #234 の CI で、本体と同じプロセスグループに
-// 置いていたときに、本体が端末を取り戻した後に遅れて読んだ SIGINT で終わったため）。
-// 子プロセスが <C-z> で止まったら、本体も前面を取り戻してから止まり、再開されたら前面を子プロセスへ返して続けさせる（waitStopped）。
-// 子プロセスが終わったら、本体が前面を取り戻す（Handover.EnsureForeground）。
+// 子プロセスは、Vim と同じく本体と同じプロセスグループで動かす。端末の <C-c> と <C-\> の SIGINT と SIGQUIT は本体にも届くので、
+// 子プロセスが動いている間だけ、本体はそれらを signal.Ignore で無視にする（runCommands。term.Terminal.TerminalSignals の doc の順序）。
+// 無視の間に起きたシグナルはカーネルが捨てるので、取り戻した後に遅れて届くことは無い（PR #234 の CI の失敗）。
+// <C-z>（SIGTSTP）は既定の扱いのままで、本体と子プロセスがまとめて止まり、シェルの fg でまとめて続く（Vim と同じ）。
 
 // Handover は、端末を子プロセスへ渡せる端末の口である。*term.Terminal が満たす。
 // Terminal がこれを満たさなければ、client は TerminalRun を断る（TerminalDone の Err）。
@@ -47,6 +42,11 @@ type Handover interface {
 	EnsureForeground()
 	// TTY は、子プロセスの標準入出力にする端末のファイルを返す。
 	TTY() (in, out *os.File)
+	// TerminalSignals は、渡している間の端末の ISIG を切り替える。IgnoreInterrupts と RestoreInterrupts は、本体の SIGINT と SIGQUIT を
+	// 無視にし、元に戻す。順序は term.Terminal.TerminalSignals の doc にある。
+	TerminalSignals(on bool) error
+	IgnoreInterrupts()
+	RestoreInterrupts()
 }
 
 // Features は、端末 tm の client が Hello で宣言する機能（protocol.Hello.Features）を返す。
@@ -132,10 +132,10 @@ func (h *handover) start(req protocol.TerminalRun) {
 
 // run は、req のコマンドを動かし、終わったら端末を取り戻して TerminalDone を返す。start が起こす goroutine で動く。
 func (h *handover) run(ho Handover, req protocol.TerminalRun) {
-	in, out := ho.TTY()
+	_, out := ho.TTY()
 	// 代替画面から戻った通常の画面の、前の出力（前回の :! の問いなど）の行の続きから書き始めないよう、改行してから動かす。
 	_, _ = out.Write([]byte("\r\n")) // 書けなくてもコマンドは動かす
-	status, errText := runCommands(req, in, out)
+	status, errText := runCommands(req, ho)
 	h.mu.Lock()
 	reclaimed := h.job.reclaimed
 	h.job.exited = true
@@ -248,6 +248,8 @@ func (h *handover) release(id uint64) {
 			if err := ho.Release(); err != nil {
 				h.logger.Error("端末を子プロセスへ渡し直せない", "err", err)
 			}
+			// コマンドは動いていて、本体は SIGINT と SIGQUIT を無視にしている（runCommands）ので、端末の ISIG を入れ直す。
+			_ = ho.TerminalSignals(true) // 入れられなければ、<C-c> が子プロセスに届かないだけである
 		}
 	}
 	h.send(protocol.TerminalReleased{ID: id})
@@ -265,13 +267,14 @@ func (h *handover) send(m protocol.ClientMessage) {
 	}
 }
 
-// runCommands は、req のコマンドを順に動かす。標準入出力は端末（in、out）で、Input があれば標準入力をそれにし、
+// runCommands は、req のコマンドを順に動かす。標準入出力は端末（ho.TTY）で、Input があれば標準入力をそれにし、
 // DiscardOutput なら標準出力を捨てる。作業ディレクトリは client のもの、環境変数は client の環境の後に req.Env を足したものである。
 // 最後に動かしたコマンドの終了コードを返す。0 でないコマンドがあれば、そこで止める。
 // 起動できないか、シグナルで終わったら、その理由を errText に入れて返す。
 //
 // req: FR-79, FR-80, FR-116
-func runCommands(req protocol.TerminalRun, in, out *os.File) (status int, errText string) {
+func runCommands(req protocol.TerminalRun, ho Handover) (status int, errText string) {
+	in, out := ho.TTY()
 	env := append(os.Environ(), req.Env...)
 	for _, c := range req.Commands {
 		var cmd *exec.Cmd
@@ -295,16 +298,14 @@ func runCommands(req protocol.TerminalRun, in, out *os.File) (status int, errTex
 		if c.DiscardOutput {
 			cmd.Stdout = nil // /dev/null
 		}
-		// 自分のプロセスグループで起動し、in が本体の制御端末なら、その前面にする（ファイルの doc）。
-		// 前面にするのは子プロセスが exec の前に行う（os/exec の Foreground。子プロセスはシグナルを止めた状態で行うので SIGTTOU で止まらない）。
-		ctty := controllingFd(in)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Foreground: ctty >= 0, Ctty: max(ctty, 0)}
+		// 端末の ISIG を切ったまま起動し（子プロセスは本体の無視を引き継がない）、本体を無視にしてから ISIG を入れる（ファイルの doc）。
 		err := cmd.Start()
 		if err == nil {
-			if ctty >= 0 {
-				waitStopped(cmd.Process.Pid, ctty)
-			}
+			ho.IgnoreInterrupts()
+			_ = ho.TerminalSignals(true) // 入れられなければ、<C-c> が子プロセスに届かないだけである
 			err = cmd.Wait()
+			_ = ho.TerminalSignals(false) // 切れなければ、無視を解いた後の <C-c> で本体が終わりうるが、続ける
+			ho.RestoreInterrupts()
 		}
 		var ee *exec.ExitError
 		switch {
@@ -320,54 +321,4 @@ func runCommands(req protocol.TerminalRun, in, out *os.File) (status int, errTex
 		}
 	}
 	return status, ""
-}
-
-// controllingFd は、f が本体の制御端末なら、そのファイル記述子を返す。そうでなければ（テストの /dev/null、制御端末でない pty）-1 を返す。
-func controllingFd(f *os.File) int {
-	rc, err := f.SyscallConn()
-	if err != nil {
-		return -1
-	}
-	fd := -1
-	_ = rc.Control(func(p uintptr) { fd = int(p) }) // 取れなければ -1 のまま
-	if fd < 0 {
-		return -1
-	}
-	if _, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP); err != nil {
-		return -1
-	}
-	return fd
-}
-
-// cldStopped は、waitid(2) の siginfo の si_code のうち、子プロセスが止まったこと（CLD_STOPPED）を表す値である。
-const cldStopped = 5
-
-// waitStopped は、端末の前面で動く子プロセス pid が終わるまで待つ（刈り取りは呼び出し側の cmd.Wait が行う）。
-// その間に子プロセスが止まったら（<C-z> の SIGTSTP）、シェルのジョブ制御と同じく、端末の前面を本体へ戻してから本体も止まり、
-// 本体を起動したシェルに端末を返す。fg などで本体が再開されたら、前面を子プロセスのプロセスグループへ戻し、SIGCONT で続けさせる。
-// 本体と子プロセスが同じプロセスグループだったときは、<C-z> で両方が一緒に止まっていたので、その動きを保つ。
-func waitStopped(pid, ctty int) {
-	for {
-		var info unix.Siginfo
-		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WSTOPPED|unix.WNOWAIT, nil)
-		if errors.Is(err, unix.EINTR) {
-			continue
-		}
-		if err != nil || info.Code != cldStopped {
-			return // 終わった（刈り取らずに残してある）か、待てない
-		}
-		// 止まった知らせを読み捨てる（WNOWAIT のままだと、同じ知らせが何度も返る）。
-		_ = unix.Waitid(unix.P_PID, pid, &info, unix.WSTOPPED, nil) // 読めなくても次の waitid で分かる
-		setForeground(ctty, unix.Getpgrp())
-		_ = unix.Kill(os.Getpid(), unix.SIGSTOP) // 止まれなければ、そのまま子プロセスを続けさせる
-		setForeground(ctty, pid)
-		_ = unix.Kill(-pid, unix.SIGCONT) // 子プロセスが既に終わっていれば届かない
-	}
-}
-
-// setForeground は、端末 fd の前面のプロセスグループを pg にする。背面から移すと SIGTTOU が届くので、その間は SIGTTOU を無視する。
-func setForeground(fd, pg int) {
-	signal.Ignore(syscall.SIGTTOU)
-	defer signal.Reset(syscall.SIGTTOU)
-	_ = unix.IoctlSetPointerInt(fd, unix.TIOCSPGRP, pg) // 移せなければ、端末を使うときに分かる
 }

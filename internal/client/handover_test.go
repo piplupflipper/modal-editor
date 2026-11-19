@@ -56,8 +56,12 @@ func (h *handoverTerm) Reacquire(screen bool) error {
 	}
 	return nil
 }
-func (h *handoverTerm) EnsureForeground()       {}
-func (h *handoverTerm) TTY() (in, out *os.File) { return h.devnull, h.out }
+func (h *handoverTerm) EnsureForeground()  {}
+func (h *handoverTerm) IgnoreInterrupts()  {}
+func (h *handoverTerm) RestoreInterrupts() {}
+
+func (h *handoverTerm) TerminalSignals(bool) error { return nil }
+func (h *handoverTerm) TTY() (in, out *os.File)    { return h.devnull, h.out }
 
 func (h *handoverTerm) callList() []string {
 	h.hmu.Lock()
