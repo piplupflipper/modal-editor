@@ -198,6 +198,13 @@ type OutputAppend struct {
 	Params    ext.OutputAppendParams
 }
 
+// StatusLineSet は、拡張機能からの statusline/set の通知である（基本設計 7.1。FR-92）。
+// 宣言ファイルで足した部品かどうかは、イベントループが確かめる。
+type StatusLineSet struct {
+	Extension string
+	Params    ext.StatusLineSetParams
+}
+
 // StateChange は、拡張機能の状態が変わったことを知らせる。
 // 異常による遷移（再起動待ちと無効）では、Err に異常の内容が入る。利用者への 1 行のメッセージに使う（基本設計 8 章）。
 type StateChange struct {
@@ -244,6 +251,7 @@ func (*DiagnosticSet) isEvent()         {}
 func (*SignSet) isEvent()               {}
 func (*PopupShow) isEvent()             {}
 func (*OutputAppend) isEvent()          {}
+func (*StatusLineSet) isEvent()         {}
 func (*StateChange) isEvent()           {}
 func (*QueryResult) isEvent()           {}
 

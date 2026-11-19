@@ -49,6 +49,7 @@ func (e *Editor) frame() *ui.Frame {
 		Output:          e.uiOutput(),
 		Tabs:            e.uiTabs(),
 		Diff:            e.uiDiff(bs),
+		ExtParts:        e.extParts,
 	}
 	f.HitEnter = e.hitEnter()
 	f.OperatorPending = st.Mode() == command.ModeNormal && st.Pending()

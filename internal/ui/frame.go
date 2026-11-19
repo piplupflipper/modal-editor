@@ -214,4 +214,16 @@ type Frame struct {
 	Tabs []Tab
 	// Diff は、見比べている間の差分の色と詰め物の行である（FR-99。diff.go）。nil なら見比べていない。
 	Diff *Diff
+	// ExtParts は、拡張機能が足した部品の ID から中身への対応である（statusline/set。FR-92）。
+	// ステータス行とタブ行の並び（Renderer.StatusLine、Renderer.TabLineParts）に書いた ID のうち、本体の部品でないものをここで引く。
+	// 対応に無い部品と、中身の Text が空の部品は出さない。
+	ExtParts map[string]ExtPart
+}
+
+// ExtPart は、拡張機能が足した部品の中身である（ext.StatusLineSetParams）。
+type ExtPart struct {
+	// Text は、部品に出す 1 行の文字列である。
+	Text string
+	// Style は、部品の色の名前である。StyleStatusLineExt の上に重ねる。空なら重ねない。
+	Style string
 }

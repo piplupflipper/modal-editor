@@ -65,6 +65,8 @@ const (
 	StyleStatusLineRecording = "statusline.recording"
 	StyleStatusLineRuler     = "statusline.ruler"
 	StyleStatusLinePosition  = "statusline.position"
+	// StyleStatusLineExt は、拡張機能が足した部品（Frame.ExtParts）の色である。部品の style（ExtPart.Style）は、この上に重ねる。
+	StyleStatusLineExt = "statusline.ext"
 	// StyleStatusLineModeNormal などは、モードごとのモードの部品の色である。StyleStatusLineMode の上に重ねる。
 	// ビジュアルモードは文字単位と行単位で同じ名前を使う。
 	StyleStatusLineModeNormal      = "statusline.mode.normal"
@@ -90,7 +92,7 @@ var styleNames = []string{
 	StyleSignBreakpoint, StyleSignBreakpointUnverified, StyleSignExecutionPoint,
 	StyleSignDiagnosticError, StyleSignDiagnosticWarning, StyleSignDiagnosticInfo, StyleSignDiagnosticHint,
 	StyleStatusLineMode, StyleStatusLineName, StyleStatusLineModified, StyleStatusLineReadOnly, StyleStatusLineFileType,
-	StyleStatusLineRecording, StyleStatusLineRuler, StyleStatusLinePosition,
+	StyleStatusLineRecording, StyleStatusLineRuler, StyleStatusLinePosition, StyleStatusLineExt,
 	StyleStatusLineModeNormal, StyleStatusLineModeInsert, StyleStatusLineModeVisual, StyleStatusLineModeCommandLine,
 	StyleTabLine, StyleTabLineSelected, StyleTabLineFill,
 	StyleDiffAdd, StyleDiffChange, StyleDiffDelete, StyleDiffText,

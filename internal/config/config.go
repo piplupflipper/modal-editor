@@ -61,7 +61,7 @@ import (
 //	  "colors": { "diagnostic.error": { "sp": "#e27878", "undercurl": true }, "statusline": { "fg": 7, "bg": 0 } },
 //	  "symbols": { "sign.breakpoint": "●", "popup.border": "┌─┐│┘─└│" },
 //	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] },
-//	  "tabline": { "show": "always" },
+//	  "tabline": { "show": "always", "left": ["tabs"], "right": ["mrreview.status"] },
 //	  "elevateCommand": ["sudo"]
 //	}
 type Config struct {
@@ -138,6 +138,9 @@ type Config struct {
 	// TabLineShow は tabline.show の値で、タブの行を出す場合である（基本設計 7.1。FR-62）。
 	// TabLineAlways か TabLineMultiple で、項目が無いか誤りなら空で、既定の TabLineAlways として扱う。
 	TabLineShow string
+	// TabLineParts は tabline の left と right の値で、タブの行に並べる部品の ID の列である（基本設計 7.1。FR-92）。
+	// left も right も書かなければ nil で、本体の既定の並び（タブの見出しの並びだけ）を使う。部品の ID は CheckAppearance で確かめる。
+	TabLineParts *StatusLine
 	// ElevateCommand は elevateCommand の値で、権限の不足で書けないファイルを書くときに tee <パス> の前に付けるコマンドと引数である
 	// （基本設計 4.7。FR-79。項目の名前は仮）。項目が無いか誤りなら nil で、editor の既定（["sudo"]）を使う。
 	// editor.Config.ElevateCommand にそのまま渡す。
@@ -238,7 +241,7 @@ func Parse(path string, data []byte) (Config, []error) {
 		case "statusline":
 			cfg.StatusLine = s.statusLine(m.value, &cfg)
 		case "tabline":
-			cfg.TabLineShow = s.tabLine(m.value)
+			cfg.TabLineShow, cfg.TabLineParts = s.tabLine(m.value, &cfg)
 		case "elevateCommand":
 			cfg.ElevateCommand = s.elevateCommand(m.value)
 		default:

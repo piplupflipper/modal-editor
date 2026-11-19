@@ -74,6 +74,8 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.showPopup(ev.Params)
 	case *exthost.OutputAppend:
 		e.appendOutput(ev.Extension, ev.Params)
+	case *exthost.StatusLineSet:
+		e.setStatusPart(ev.Extension, ev.Params)
 	case *exthost.EditorStateRequest:
 		_ = ev.Reply(e.editorState())
 	case *exthost.EditorOpenRequest:
@@ -136,6 +138,9 @@ func (e *Editor) stateChange(ev *exthost.StateChange) {
 	case exthost.StateNotStarted:
 		// 起動した後に未起動へ戻るのは、:ext sync が入れ替えの後に止めたとき（exthost.Host.Reload）だけである。
 		e.clearExtension(ev.Extension)
+		// 並びに部品を置いた拡張機能は、起動の契機を待たずに起動し直し、部品を送り直させる（PR #239 のレビューの必須 1）。
+		// activation の無い、部品だけを足す拡張機能は、Reload が契機で起動し直さないので、ここで起動しないと部品が消えたままになる。
+		e.restartStatusExtension(ev.Extension)
 	case exthost.StateStarting, exthost.StateRunning, exthost.StateStopping:
 	}
 }

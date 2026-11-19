@@ -356,6 +356,7 @@ func (e *Editor) decorationsBuilt(r decoBuilt) {
 
 // clearExtension は、異常で終わった拡張機能の表示のデータを、すべてのバッファから消す（基本設計 6.7）。
 func (e *Editor) clearExtension(extID string) {
+	e.clearStatusParts(extID)
 	for _, bs := range e.bufs {
 		delete(bs.diagnostics, extID)
 		delete(bs.signs, extID)
