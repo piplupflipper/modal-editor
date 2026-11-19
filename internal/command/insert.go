@@ -83,9 +83,9 @@ func (s *State) insertKey(k editcmd.Key) {
 // insertActions は、インサートモードの操作の ID（internal/input の builtinInsert の表）から実装への対応である（FR-127）。
 // 移動は insertMove、削除は insertInput に削除の種類（editcmd.InsertDeletePrev など）を渡す。
 // 削除は文字と同じ入力の記録（insertState.text）に、文字と別の種類として入れるので、アンドゥの単位、ドットリピート、
-// 回数による繰り返し（3i）、カーソルキーで区切った後の入力の始め直し（resumeInsert）は、3 つの削除で同じ扱いになる。
+// 回数による繰り返し（3i）、カーソルキーで区切った後の入力の始め直し（resumeInsert）は、5 つの削除で同じ扱いになる。
 //
-// req: FR-127
+// req: FR-127, FR-128
 var insertActions = map[string]func(*State){
 	"insert.left":               func(s *State) { s.insertMove(editcmd.CodeLeft) },
 	"insert.right":              func(s *State) { s.insertMove(editcmd.CodeRight) },
@@ -98,6 +98,10 @@ var insertActions = map[string]func(*State){
 	"insert.delete-prev-char":   func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeletePrev}) },
 	"insert.delete-char":        func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeleteChar}) },
 	"insert.delete-to-line-end": func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeleteToLineEnd}) },
+	"insert.delete-prev-word":   func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeletePrevWord}) },
+	"insert.delete-to-line-start": func(s *State) {
+		s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeleteToLineStart})
+	},
 }
 
 // InsertActionIDs は、実装のあるインサートモードの操作の ID を返す（順は決まらない）。
@@ -237,10 +241,15 @@ func (s *State) insertInput(in editcmd.InsertInput) {
 //     最後の行の行末と空のバッファでは何もしない。InsertDeleteChar は Vim 9.1 のインサートモードの <Del>
 //     （'backspace' が "indent,eol,start"）と同じ動きである。InsertDeleteToLineEnd は Vim に対応するキーが無く、
 //     行末の位置で次の行をつなげるのは Emacs の C-k に合わせた（#257 の決定）
+//   - editcmd.InsertDeletePrevWord はカーソルの前の単語を消す（prevWordStart）。行の先頭では InsertDeletePrev と同じく前の行とつなぐ
+//   - editcmd.InsertDeleteToLineStart はカーソルから行の先頭（列 0）までを消す。字下げの手前で止めない。行の先頭では何もしない
+//   - InsertDeletePrevWord と InsertDeleteToLineStart は、このインサートで入力した文字より前の文字も消す。
+//     Vim 9.1 の <C-w> と <C-u> は、'backspace' が "start" なら入力の始まりで 1 度止まり、<C-u> は行の先頭で前の行とつなぐ
+//     （#260 の決定。docs/vim-differences.md）
 //
 // 消したテキストは、レジスターにも履歴にも入れない。
 //
-// req: FR-127
+// req: FR-127, FR-128
 func (s *State) typeInput(in editcmd.InsertInput) error {
 	c := s.cursor
 	switch in.Op {
@@ -263,12 +272,16 @@ func (s *State) typeInput(in editcmd.InsertInput) error {
 			return err
 		}
 		s.cursor = c
-	case editcmd.InsertDeletePrev:
+	case editcmd.InsertDeletePrev, editcmd.InsertDeletePrevWord, editcmd.InsertDeleteToLineStart:
 		var from buffer.Position
 		switch {
-		case c.Byte > 0:
+		case c.Byte > 0 && in.Op == editcmd.InsertDeletePrev:
 			from = pos(c.Line, prevChar(s.line(c.Line), c.Byte))
-		case c.Line > 0:
+		case c.Byte > 0 && in.Op == editcmd.InsertDeletePrevWord:
+			from = s.prevWordStart(c)
+		case c.Byte > 0:
+			from = pos(c.Line, 0)
+		case c.Line > 0 && in.Op != editcmd.InsertDeleteToLineStart:
 			from = s.lineEnd(c.Line - 1)
 		default:
 			return nil
@@ -280,6 +293,25 @@ func (s *State) typeInput(in editcmd.InsertInput) error {
 	}
 	s.updateWant()
 	return nil
+}
+
+// prevWordStart は、インサートモードの insert.delete-prev-word で消す範囲の始まりを返す。c は行の先頭より後ろにある。
+// ノーマルモードの b（word-prev）と同じ単語の区切りで、カーソルの前の空白を飛ばし、その前の単語の先頭まで戻る（db の範囲）。
+// 文字の分類と、結合文字を前の文字と一緒に扱うことも b と同じである。
+// b が前の行へ戻るとき（カーソルの前が字下げか空白だけのとき）は、行の先頭で止める。行をまたいでは消さない（#260 の決定）。
+//
+// req: FR-128
+func (s *State) prevWordStart(c buffer.Position) buffer.Position {
+	start := pos(c.Line, 0)
+	f, ok := target.LookupMotion("word-prev")
+	if !ok {
+		return start
+	}
+	res, err := f(s.buf, target.Request{Cursor: c, Count: 1, Columns: s.Columns})
+	if err != nil || res.Pos.Line != c.Line {
+		return start
+	}
+	return res.Pos
 }
 
 // typeRune は、文字 1 つをカーソルの位置に入れる。'\n' は行を分け、他の文字（制御文字を含む）はそのまま入れる。

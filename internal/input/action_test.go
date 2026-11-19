@@ -35,6 +35,8 @@ func TestUserBinding(t *testing.T) {
 		{MapVisual, "Q", "format", BindOperator, ProviderExtension},
 		{MapInsert, "<C-a>", "insert.line-start", BindAction, ""},
 		{MapInsert, "<C-k>", "insert.delete-to-line-end", BindAction, ""},
+		{MapInsert, "<C-w>", "insert.delete-prev-word", BindAction, ""},
+		{MapInsert, "<C-u>", "insert.delete-to-line-start", BindAction, ""},
 	} {
 		b, err := UserBinding(tt.mode, k(tt.keys), tt.id)
 		if err != nil {

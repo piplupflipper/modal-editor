@@ -34,6 +34,7 @@ func TestConfigExample(t *testing.T) {
 		"<C-a>": "insert.line-start", "<C-e>": "insert.line-end", "<C-f>": "insert.right", "<C-b>": "insert.left",
 		"<C-n>": "insert.down", "<C-p>": "insert.up",
 		"<C-d>": "insert.delete-char", "<C-k>": "insert.delete-to-line-end",
+		"<C-w>": "insert.delete-prev-word", "<C-u>": "insert.delete-to-line-start", // #260
 	}
 	if !reflect.DeepEqual(cfg.KeymapActions, map[string]map[string]string{"insert": wantInsert}) {
 		t.Errorf("keymap の操作 = %v", cfg.KeymapActions)

@@ -23,6 +23,8 @@
       "<C-p>": { "action": "insert.up" }, // 上の行へ
       "<C-d>": { "action": "insert.delete-char" }, // カーソルの文字を消す
       "<C-k>": { "action": "insert.delete-to-line-end" }, // カーソルから行末まで消す（行末では次の行をつなげる）
+      "<C-w>": { "action": "insert.delete-prev-word" }, // 前の単語を消す（行の先頭では前の行とつなげる）
+      "<C-u>": { "action": "insert.delete-to-line-start" }, // カーソルから行の先頭まで消す
     },
   },
 

@@ -84,7 +84,8 @@ ID は、名前を変えずに保つ（利用者の設定が壊れるため）�
 修飾キーの付かない文字、`<Esc>`、`<CR>`、`<Tab>` は左辺に書けない。
 これらのキーは、1 文字の入力を速く保つために操作の表を通さず、今までどおり文字の入力とモードの切り替えに使う。
 `jk` で抜けるようなキーの列は、右辺をキーの列で書く（`"insert": { "jk": "<Esc>" }`）。
-同梱の `config.example.jsonc` には、インサートモードの Emacs 風のキー（`<C-a>`、`<C-e>`、`<C-f>`、`<C-b>`、`<C-n>`、`<C-p>`、`<C-d>`、`<C-k>`）の例がある。
+同梱の `config.example.jsonc` には、インサートモードの Emacs 風のキー（`<C-a>`、`<C-e>`、`<C-f>`、`<C-b>`、`<C-n>`、`<C-p>`、`<C-d>`、`<C-k>`、`<C-w>`、`<C-u>`）の例がある。
+`<C-w>` はノーマルモードではウィンドウの操作の前置キーだが、`keymap.insert` の割り当てはインサートモードでだけ効くので、ノーマルモードの `<C-w>` は変わらない。
 Ctrl-H は、端末からも tmux の中でも `^H`（0x08）で届き、本体は `<BS>` と読む（本体は、Ctrl-H を区別して送る端末の機能を有効にしない）。
 このため `<C-h>` に操作を割り当てても効かず、Ctrl-H は `<BS>` の割り当てのとおりに働く。既定では `insert.delete-prev-char` で前の文字を消す。
 `<BS>` を別の操作に割り当てると（`"<BS>": { "action": "insert.delete-char" }`）、Ctrl-H も同じ操作に変わる。
@@ -108,6 +109,11 @@ ID の書き方は、今は次のとおりである。
 - ノーマルモードの `~`（カーソルの文字を入れ替える）は `toggle-case-char`、オペレーターの `g~` は `toggle-case` である
 インサートモードの操作（`insert.` で始まるもの）の既定のキーは、一覧の順に `<Left>`、`<Right>`、`<Up>`、`<Down>`、`<Home>`、`<End>`、`<PageUp>`、`<PageDown>`、`<BS>`、`<Del>` である。
 `insert.delete-to-line-end` は既定のキーが無く、行末の位置で使うと次の行をつなげる（Emacs の `C-k`）。
+`insert.delete-prev-word` と `insert.delete-to-line-start` も既定のキーが無い（同梱の `config.example.jsonc` では `<C-w>` と `<C-u>` に割り当てている）。
+`insert.delete-prev-word` は、ノーマルモードの `db` と同じ単語の区切りで、カーソルの前の空白とその前の単語を消す。
+行の先頭で使うと `<BS>` と同じく前の行とつなげ、それ以外では行をまたいで消さない。
+`insert.delete-to-line-start` は、カーソルから行の先頭までを、字下げも含めて消す。行の先頭では何もしない。
+どちらも、このインサートで入力した文字より前の文字も消す（Vim の `<C-w>` と `<C-u>` との違いは [vim-differences.md](vim-differences.md) にある）。
 インサートモードで消した文字は、`<BS>` と同じくレジスターにも履歴にも入らない。
 
 <!-- action-ids:begin -->
@@ -225,6 +231,8 @@ ID の書き方は、今は次のとおりである。
 | `insert.delete-prev-char` | 操作 | `insert` | 前の文字を消す |
 | `insert.delete-char` | 操作 | `insert` | カーソルの文字を消す |
 | `insert.delete-to-line-end` | 操作 | `insert` | カーソルから行末まで消す（行末では次の行をつなげる） |
+| `insert.delete-prev-word` | 操作 | `insert` | 前の単語を消す（行の先頭では前の行とつなげる） |
+| `insert.delete-to-line-start` | 操作 | `insert` | カーソルから行の先頭まで消す |
 | `hover` | 操作 | `normal` | ホバー（LSP） |
 | `peek.definition` | 操作 | `normal` | 定義をポップアップで見る（LSP） |
 | `definition` | 操作 | `normal` | 定義へ移る（LSP） |

@@ -12,7 +12,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/input"
 )
 
-// emacsInsertKeys は、config.example.jsonc の keymap.insert と同じ、インサートモードの Emacs 風のキーである（#257）。
+// emacsInsertKeys は、config.example.jsonc の keymap.insert と同じ、インサートモードの Emacs 風のキーである（#257、#260）。
 // Ctrl-H は端末から <BS> として届くので、例には書かない（<BS> の既定の insert.delete-prev-char で前の文字を消す）。
 // テストでは、Ctrl-H を打ったときに届く <BS> を打つ。
 var emacsInsertKeys = map[string]string{
@@ -20,6 +20,7 @@ var emacsInsertKeys = map[string]string{
 	"<C-f>": "insert.right", "<C-b>": "insert.left",
 	"<C-n>": "insert.down", "<C-p>": "insert.up",
 	"<C-d>": "insert.delete-char", "<C-k>": "insert.delete-to-line-end",
+	"<C-w>": "insert.delete-prev-word", "<C-u>": "insert.delete-to-line-start",
 }
 
 // insertCase は、text（"|" がカーソル）で keys を打った後のテキストとカーソル（行:バイト）である。
@@ -128,7 +129,70 @@ func TestInsertDeleteToLineEnd(t *testing.T) {
 	})
 }
 
-// config.example.jsonc の Emacs 風の 8 個のキーと、<BS> として届く Ctrl-H は、#257 の表のとおりに働く。行頭、行末、最初と最後の行、空のバッファ、全角文字の上では、
+// insert.delete-prev-word（<C-w>）は、カーソルの前の単語を db と同じ区切りで消し、行の先頭では前の行とつなげる。行をまたいでは消さない。
+// insert.delete-to-line-start（<C-u>）は、カーソルから列 0 まで消し（字下げの手前で止めない）、行の先頭では何もしない。
+// どちらも、このインサートで入力した文字より前の文字も消す。消したテキストはレジスターと履歴に入れない。
+// アンドゥの単位、ドットリピート、回数による繰り返し、マクロは <BS> と同じ扱いである。
+//
+// 期待値は、TestInsertDeleteCharVim と同じ方法で Vim 9.1（パッチ 1-16）の <C-w> と <C-u> から取った。
+// 「Vim と違う」とした行は #260 の決めによる値で、Vim の値をコメントに書いた（docs/vim-differences.md）。
+//
+// req: FR-128
+func TestInsertDeleteWordAndLineStart(t *testing.T) {
+	runInsertCases(t, emacsKeymap(t), []insertCase{
+		// <C-w>。
+		{"foo b|ar", "A<C-w><Esc>", "foo ", "0:3"},
+		{"foo bar baz|x", "i<C-w><Esc>", "foo bar x", "0:7"},
+		{"foo bar  |", "A<C-w><Esc>", "foo ", "0:3"},
+		{"foo.bar|", "A<C-w><Esc>", "foo.", "0:3"},
+		{"foo..|", "A<C-w><Esc>", "foo", "0:2"},
+		{"abc\n|def", "i<C-w><Esc>", "abcdef", "0:2"},
+		{"abc\n|def", "i<C-w><C-w><Esc>", "def", "0:0"},
+		{"|abc", "i<C-w><Esc>", "abc", "0:0"},
+		{"  |foo", "i<C-w><Esc>", "foo", "0:0"},
+		{"  foo|", "A<C-w><Esc>", "  ", "0:1"},
+		{"  foo|", "A<C-w><C-w><Esc>", "", "0:0"},
+		{"abc\n  |foo", "i<C-w><C-w><Esc>", "abcfoo", "0:2"},
+		{"|", "i<C-w><Esc>", "", "0:0"},
+		{"abc\n|", "i<C-w><Esc>", "abc", "0:2"},
+		{"abc\n   |\nx", "A<C-w><Esc>", "abc\n\nx", "1:0"},
+		// 多バイト文字、全角空白、結合文字。
+		{"あいう|", "A<C-w><Esc>", "", "0:0"},
+		{"漢字かな|", "A<C-w><Esc>", "漢字", "0:3"},
+		{"abcあいう|", "A<C-w><Esc>", "abc", "0:2"},
+		{"あ　い|", "A<C-w><Esc>", "あ　", "0:3"},
+		{"x éé|", "A<C-w><Esc>", "x ", "0:1"},
+		// このインサートで入力した文字より前も消す（Vim は入力の始まりで 1 度止まり、どちらも "abc def" になる）。
+		{"abc def|", "Ax<C-w><Esc>", "abc ", "0:3"},
+		{"abc def|", "A x<C-w><C-w><Esc>", "abc ", "0:3"},
+		// <C-u>。
+		{"abc def|", "A<C-u><Esc>", "", "0:0"},
+		{"abc d|ef", "i<C-u><Esc>", "ef", "0:0"},
+		{"  abc def|", "A<C-u><Esc>", "", "0:0"},
+		{"|", "i<C-u><Esc>", "", "0:0"},
+		{"abc\n   |\nx", "A<C-u><Esc>", "abc\n\nx", "1:0"},
+		{"  |abc", "i<C-u><Esc>", "abc", "0:0"},
+		{"あい|う", "i<C-u><Esc>", "う", "0:0"},
+		// 行の先頭では何もしない（Vim は前の行とつなぎ、"abcdef" になる）。
+		{"abc\n|def", "i<C-u><Esc>", "abc\ndef", "1:0"},
+		{"|abc", "i<C-u>x<Esc>", "xabc", "0:0"},
+		// このインサートで入力した文字より前も消す（Vim は入力の始まりで 1 度止まり、"abc def" になる）。
+		{"abc def|", "Axy<C-u><Esc>", "", "0:0"},
+		// ドットリピート、マクロ、回数による繰り返し、アンドゥ。
+		{"a|bc def\nabc def", "A<C-w><Esc>j.", "abc \nabc ", "1:3"},
+		{"a|bc def\nabc def", "A<C-u>x<Esc>j.", "x\nx", "1:0"},
+		{"a|bc def", "A<C-w><Esc>u", "abc def", "0:6"},
+		{"a|bc def", "A<C-u>x<Esc>u", "abc def", "0:6"},
+		{"a|bc def\nabc def", "qaA<C-w><Esc>qj@a", "abc \nabc ", "1:3"},
+		{"a|bc def\nabc def", "qaA<C-u>x<Esc>qj@a", "x\nx", "1:0"},
+		{"a|bc def", "3A x<C-w><Esc>", "abc def   ", "0:9"},
+		// 回数による繰り返しでも、入力した文字より前を消す（Vim は "abc def"）。
+		{"a|bc def", "3Ax<C-u><Esc>", "", "0:0"},
+		{"a|bc def", "3Ax<C-u>y<Esc>", "y", "0:0"},
+	})
+}
+
+// config.example.jsonc の Emacs 風の 10 個のキーと、<BS> として届く Ctrl-H は、#257 と #260 の表のとおりに働く。行頭、行末、最初と最後の行、空のバッファ、全角文字の上では、
 // 動けない移動と消すものの無い削除は何もしない。
 //
 // req: FR-126, FR-127
@@ -153,7 +217,7 @@ func TestEmacsInsertKeys(t *testing.T) {
 		{"abc\n|de", "i<BS><Esc>", "abcde", "0:2"},
 		{"|abc", "i<BS>X<Esc>", "Xabc", "0:0"},
 		// 空のバッファ。
-		{"|", "i<C-a><C-e><C-f><C-b><C-n><C-p><BS><C-d><C-k>X<Esc>", "X", "0:0"},
+		{"|", "i<C-a><C-e><C-f><C-b><C-n><C-p><BS><C-d><C-k><C-w><C-u>X<Esc>", "X", "0:0"},
 		// 全角文字の上。
 		{"あ|いう", "i<C-f>X<Esc>", "あいXう", "0:6"},
 		{"あ|いう", "i<C-b>X<Esc>", "Xあいう", "0:0"},
