@@ -141,7 +141,10 @@ func (e *Editor) shellFinished(o shellOutcome) {
 	}
 	e.shell = nil
 	c := o.job.client
-	if c.intr.Load() {
+	// 終わったのと同じ頃に <C-c> を打っていた（Run が intrCh より先に終わりを取り出した）ら、中断として扱い、再生を続けない。
+	// 印だけを下ろして続けると、外部のコマンドを挟む再帰のマクロが <C-c> で止まらない（PR #249 の 4 回目の確認の必須）。
+	pendingIntr := c.intr.Load()
+	if pendingIntr {
 		e.interrupt.Store(false)
 		c.intr.Store(false)
 		e.keys.dropThrough(interruptKey, c)
@@ -156,7 +159,7 @@ func (e *Editor) shellFinished(o shellOutcome) {
 	e.useClient(c)
 	err := o.err
 	switch {
-	case o.job.interrupted:
+	case o.job.interrupted, pendingIntr:
 		err = command.ErrInterrupted
 	case errors.Is(err, errShellOutputLimit):
 		err = fmt.Errorf("外部のコマンドの出力が上限の %d バイトを超えたので、止めました", shellOutputLimit)

@@ -1,7 +1,6 @@
 package editor
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -163,7 +162,11 @@ func (e *Editor) interruptReplay() {
 func (e *Editor) replayAnswered(c *clientView, r *exthost.QueryResult) {
 	w := c.replay
 	c.replay = nil
+	// 結果が届いたのと同じ頃に <C-c> を打っていた（Run が intrCh より先に結果を取り出した）ら、結果が届いていても中断として扱う。
+	// 中断の印だけを下ろして続けると、待ちを挟む再帰のマクロが <C-c> で止まらない（PR #249 の 4 回目の確認の必須）。
+	interrupted := w.interrupted
 	if c.intr.Load() {
+		interrupted = true
 		e.interrupt.Store(false)
 		c.intr.Store(false)
 		e.keys.dropThrough(interruptKey, c)
@@ -180,9 +183,12 @@ func (e *Editor) replayAnswered(c *clientView, r *exthost.QueryResult) {
 	defer e.afterFloatKey()
 	var err error
 	switch {
-	case r.Err == nil:
-	case w.interrupted && errors.Is(r.Err, context.Canceled):
+	case interrupted:
 		err = command.ErrInterrupted
+	case c.inputClosed:
+		// 端末の入力が閉じた（端末多重化ソフトのペインが消えた、client が切れた）ら、続けずに止める（PR #249 の 4 回目の確認の必須）。
+		err = errors.New("端末が閉じたので、再生を止めました")
+	case r.Err == nil:
 	case e.host.Withheld(bs.id):
 		err = errWithheld(w.ref)
 	case errors.Is(r.Err, exthost.ErrTimeout):

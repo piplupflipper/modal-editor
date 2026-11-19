@@ -162,9 +162,9 @@ func (s *State) playKeys(keys []editcmd.Key, n int) {
 			}
 			if s.res.Err != nil {
 				if suspendsReplay(s.res.Err) {
-					s.res.Remaining = append(s.res.Remaining, ReplaySegment{Keys: keys[i+1:], Count: 1})
+					s.res.Remaining = append(s.res.Remaining, ReplaySegment{Keys: keys[i+1:], Count: 1, Depth: s.playDepth})
 					if rest := n - iter - 1; rest > 0 {
-						s.res.Remaining = append(s.res.Remaining, ReplaySegment{Keys: keys, Count: rest})
+						s.res.Remaining = append(s.res.Remaining, ReplaySegment{Keys: keys, Count: rest, Depth: s.playDepth})
 					}
 				}
 				return
@@ -196,10 +196,15 @@ func (s *State) stopInterrupted() {
 //
 // Dot が nil でなければ、キーを再生する代わりに、ドットリピートの対象を Dot にする印である（FR-57）。
 // 移る前のバッファで始めた再生（@a）が終わる位置に置き、移った先で再生を終えたときの対象を決める。
+//
+// Depth は、Keys を再生していたときの入れ子の深さ（playDepth）である。続き（ContinueReplay、ResumeReplay）はこの深さで再生するので、
+// 待ちを挟む再帰のマクロ（qa<Space>ff<Esc>@aq。拡張機能の結果、外部のコマンド、別のバッファへの移動で止まる）も、
+// 待ちを挟まない再帰と同じく maxPlayDepth で止まる（PR #249 の 4 回目の確認の必須）。0 なら 1 として扱う。
 type ReplaySegment struct {
 	Keys  []editcmd.Key
 	Count int
 	Dot   *editcmd.Command
+	Depth int
 }
 
 // ErrBufferSwitched は、マクロの再生の途中で、拡張機能の操作（再生中の command/execute の結果の open）が
@@ -252,8 +257,23 @@ func (s *State) playSegments(segs []ReplaySegment) {
 			s.finishPlayDot(seg.Dot)
 			continue
 		}
+		// 止める前に再生していた深さで続ける（ReplaySegment.Depth）。
+		depth := s.playDepth
+		s.playDepth = max(seg.Depth, 1)
 		s.playKeys(seg.Keys, seg.Count)
+		s.playDepth = depth
 	}
+}
+
+// segmentsDepth は、再生の残り segs の最初のキーの区切りの深さを返す（区切りが無ければ 1）。
+// ResumeReplay が、止めた操作を実行し直す深さに使う（止めた操作は、残りの最初の区切りと同じ深さで再生していた）。
+func segmentsDepth(segs []ReplaySegment) int {
+	for _, seg := range segs {
+		if seg.Dot == nil {
+			return max(seg.Depth, 1)
+		}
+	}
+	return 1
 }
 
 // stopSegments は、再生が止まったときに、まだ再生していない区切り segs を扱う（playSegments）。
@@ -303,7 +323,8 @@ func (s *State) ResumeReplay(d Deferred, ext Extensions, segs []ReplaySegment, e
 		}
 		s.playUndoStart = s.buf.UndoTip()
 	}
-	s.playDepth++
+	depth := s.playDepth
+	s.playDepth = segmentsDepth(segs)
 	switch {
 	case err != nil:
 		s.fail(err)
@@ -316,7 +337,7 @@ func (s *State) ResumeReplay(d Deferred, ext Extensions, segs []ReplaySegment, e
 		s.Extensions = saved
 	}
 	s.playSegments(segs)
-	s.playDepth--
+	s.playDepth = depth
 	if s.mode == ModeNormal || s.mode.visual() {
 		s.runResults(s.parser.Flush())
 	}

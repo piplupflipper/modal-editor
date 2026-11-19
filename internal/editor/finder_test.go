@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -234,6 +235,82 @@ func TestFinderMacro(t *testing.T) {
 	h.e.do(func() { text = h.e.findPath(filepath.Join(dir, "a.txt")).buf.Text() })
 	if text != "alpha" {
 		t.Errorf("a.txt after @c: %q", text)
+	}
+}
+
+// ファインダーを開く再帰のマクロ（qa<Space>ff<Esc>@aq の後の @a）は、待ちを挟まない再帰と同じく入れ子の上限（maxPlayDepth）で止まる。
+// <C-c> を打てば、上限より前に止まる（PR #249 の 4 回目の確認の必須）。
+//
+// req: FR-05, FR-106
+func TestFinderRecursiveMacroStops(t *testing.T) {
+	spec := buildFinder(t)
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, "a.txt")
+	h.keys("qa<Space>ff")
+	h.eventually("記録中のファインダー", func() bool { _, _, _, ok := finderOf(h.e); return ok })
+	h.keys("<Esc>@aq")
+	h.eventually("閉じたファインダー", func() bool { return h.e.float == nil })
+	stopped := func(what string) uint64 {
+		t.Helper()
+		var seq uint64
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			var done bool
+			h.e.do(func() { done, seq = h.e.float == nil && !h.e.replayPending(), h.e.floatSeq })
+			if done {
+				time.Sleep(300 * time.Millisecond)
+				var again uint64
+				h.e.do(func() { done, again = h.e.float == nil && !h.e.replayPending(), h.e.floatSeq })
+				if done && again == seq {
+					return seq
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: 再生が止まらない（ポップアップを %d 回開いた）", what, seq)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	var before uint64
+	h.e.do(func() { before = h.e.floatSeq })
+	h.keys("@a")
+	after := stopped("上限")
+	if n := after - before; n < 90 || n > 101 {
+		t.Errorf("上限: ポップアップを %d 回開いた（約 %d 回で止まるはず）", n, 100)
+	}
+	if got := h.text(); got != "alpha" {
+		t.Errorf("text = %q", got)
+	}
+	h.keys("@a<C-c>")
+	if n := stopped("<C-c>") - after; n >= 90 {
+		t.Errorf("<C-c>: ポップアップを %d 回開いた（中断で止まらなかった）", n)
+	}
+}
+
+// 拡張機能の結果の待ち（再生中の command/execute。PR #231）を挟む再帰のマクロも、入れ子の上限で止まる（PR #249 の 4 回目の確認の必須）。
+//
+// req: FR-05, FR-19
+func TestReplayWaitRecursiveMacroStops(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	h.keys(`qa\u@aq`)
+	h.settle()
+	h.keys("@a")
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		var done bool
+		h.e.do(func() { done = !h.e.replayPending() })
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("再生が止まらない")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	h.settle()
+	if got := h.text(); got != "ALPHA" {
+		t.Errorf("text = %q", got)
 	}
 }
 
