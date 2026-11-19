@@ -212,12 +212,22 @@ var ErrBufferSwitched = errors.New("command: replay continues in another buffer"
 // 再生中として扱い（Replaying が true）、変更はアンドゥの 1 単位にまとめる。
 // 区切りの Dot の印に来たら、ドットリピートの対象をその値にする。途中で失敗したら、残りの印のうち最後のもの
 // （いちばん外側の再生）を対象にする（FR-57）。
+// 外部のコマンドの出力を入れた（FinishShell）直後なら、残りの変更を、出力と止める前の再生の単位へつなぐ（#235。Vim の @a と同じく
+// 再生の全体を 1 回の u で戻す）。
 //
-// req: FR-05, FR-57
+// req: FR-05, FR-07, FR-57
 func (s *State) ContinueReplay(segs []ReplaySegment) Result {
 	s.res = Result{}
-	s.playUndoStart = s.buf.UndoTip()
-	s.buf.BeginUndoGroup()
+	j := s.shellJoin
+	s.shellJoin = nil
+	if j != nil && s.buf.JoinUndoGroup(j.tip) {
+		s.playUndoStart = j.start
+	} else {
+		if j == nil {
+			s.buf.BeginUndoGroup()
+		}
+		s.playUndoStart = s.buf.UndoTip()
+	}
 	s.playDepth++
 	s.playSegments(segs)
 	s.playDepth--

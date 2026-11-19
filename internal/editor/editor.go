@@ -342,12 +342,15 @@ type Editor struct {
 // bufferState は、開いているバッファ 1 つの状態である。
 type bufferState struct {
 	// owner は、このバッファをタブに持つ編集の client である（FR-62。tabs.go）。どのタブでもなければ nil。
-	owner    *clientView
-	id       ext.BufferID
-	buf      *buffer.Buffer
-	state    *command.State
-	path     string
-	fileType string
+	owner *clientView
+	// offscreen は、拡張機能が editor/open（focus が false）で、どのタブにもしないまま開いた、画面に出さないバッファであることを表す
+	// （FR-109。offscreen.go）。拡張機能の buffer/save で書き出したら閉じる。タブにしたら下ろす（addTab）。
+	offscreen bool
+	id        ext.BufferID
+	buf       *buffer.Buffer
+	state     *command.State
+	path      string
+	fileType  string
 	// title は、ファイルでないバッファ（:help のヘルプ、キーの一覧。help.go）の名前である。タブの行、ステータス行、:ls に
 	// path の代わりに出す。ファイルのバッファと、名前の無いバッファ（[No Name]）では空である。
 	title string

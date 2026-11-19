@@ -212,8 +212,13 @@ func TestClientKilledEndsServerInPTY(t *testing.T) {
 	}
 }
 
-// TestSingleProcessListensInPTY は、1 つのプロセスの構成でも、MCP のソケットと同じディレクトリで server のソケットを待ち受けることを確かめる（FR-60。基本設計 1.2）。
-// ソケットで繋いだ編集の client も足し（FR-62）、その client が :q で終わっても、最初の client の編集は続く。終了でディレクトリは消える。
+// TestSingleProcessListensInPTY は、tmux と herdr の外で起動したエディタが、server と編集の client を 1 つのプロセスで動かし、
+// MCP のソケットと同じディレクトリで server のソケットを待ち受けることを確かめる（FR-60。基本設計 1.2）。
+// ソケットで繋いだ編集の client も足し（FR-62）、その client が :q で終わっても、最初の client の編集は続く。
+// 待つだけの client（FR-83）もソケットで繋げ、そのファイルのタブを :wq で閉じると、待つだけの client は終了コード 0 で終わる。
+// 終了でディレクトリは消える。
+//
+// req: FR-60
 func TestSingleProcessListensInPTY(t *testing.T) {
 	runtime := t.TempDir()
 	p := startEditorIn(t, t.TempDir(), []string{"XDG_RUNTIME_DIR=" + runtime})
@@ -264,6 +269,33 @@ func TestSingleProcessListensInPTY(t *testing.T) {
 		t.Errorf("2 つ目の client の終わりの後の Recv = %v, want io.EOF", err)
 	}
 	_ = c.Close()
+
+	// 待つだけの client（MODAL_EDITOR_SOCKET の server に繋ぐ modal-editor）のファイルは、この client のタブに開く。
+	waited := filepath.Join(t.TempDir(), "waited.txt")
+	w := exec.Command(os.Args[0], waited) //nolint:gosec // テストの実行ファイル自身を待つだけの client として起動する
+	w.Env = append(muxFreeEnv(), envRunMain+"=1", envSocket+"="+sock)
+	var wout strings.Builder
+	w.Stdout, w.Stderr = &wout, &wout
+	if err := w.Start(); err != nil {
+		t.Fatal(err)
+	}
+	wdone := make(chan error, 1)
+	go func() { wdone <- w.Wait() }()
+	p.out.WaitForString(t, "waited.txt")
+	p.write(t, "iwaited\x1b:wq\r")
+	select {
+	case err := <-wdone:
+		if err != nil {
+			t.Errorf("待つだけの client の終了 = %v, want 正常終了。出力: %q", err, wout.String())
+		}
+	case <-time.After(10 * time.Second):
+		_ = w.Process.Kill()
+		t.Fatalf("待つだけの client が終わらない。出力: %q", wout.String())
+	}
+	if got, err := os.ReadFile(waited); err != nil || string(got) != "waited\n" {
+		t.Errorf("waited.txt = %q, %v", got, err)
+	}
+
 	p.write(t, ":q\r")
 	if err := p.wait(t); err != nil {
 		t.Fatalf("エディタの終了 = %v, want 正常終了。出力: %q", err, p.out.String())

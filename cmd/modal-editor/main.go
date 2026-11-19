@@ -226,6 +226,8 @@ func guard(restore func() error, f func() error) (err error) {
 // server の Run が戻ると接続が閉じ、client が端末を戻す。それを待ってから拡張機能を止める（editor.Editor.Close の doc の順序）。
 // ctx はシグナルで取り消される。起動の途中で取り消されていれば、Run は直ちに戻る。
 // problem が nil でなければ、端末多重化ソフトの中なのに server を使えなかった理由で、起動後のメッセージで知らせる（基本設計 1.2）。
+//
+// req: FR-60
 func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Terminal, logger *slog.Logger, problem error) error {
 	cfg := loadConfig(logger)
 	cfg.ReadOnlyArgs = readOnly

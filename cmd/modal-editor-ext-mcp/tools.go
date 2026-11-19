@@ -650,7 +650,9 @@ var openFileTool = tool{
 	name:  "open_file",
 	title: "Open file",
 	description: "Open a file in the editor (or switch to it if already open) and optionally move the cursor. " +
-		"Returns the buffer number and version. A file that does not exist yet opens as an empty buffer with that path.",
+		"Returns the buffer number and version. A file that does not exist yet opens as an empty buffer with that path. " +
+		"With focus false, a file that is not open yet is opened without a tab, and the editor closes it as soon as save_buffer writes it; " +
+		"open it again before editing it further.",
 	schema: `{
   "type": "object",
   "properties": {
@@ -712,7 +714,8 @@ var saveBufferTool = tool{
 	name:  "save_buffer",
 	title: "Save buffer",
 	description: "Write an open buffer to its file, the same way as the user's :w (including formatting on save by other extensions). " +
-		"If version is given, the buffer is written only when it is still at that version.",
+		"If version is given, the buffer is written only when it is still at that version. " +
+		"A buffer that open_file opened with focus false (not in a tab) is closed after it is written; open the file again to edit it further.",
 	schema: `{
   "type": "object",
   "properties": {

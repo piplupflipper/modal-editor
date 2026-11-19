@@ -3,7 +3,10 @@ package editor
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -156,6 +159,10 @@ func (e *Editor) editRequest(ev *exthost.EditRequest) {
 	}
 	if bs.buf.ReadOnly() {
 		// 編集を禁止したバッファは、編集の無い（noLines と endOfLine だけの）要求も断る（FR-118。readOnlyError の doc）。
+		// 画面に出さないバッファ（FR-109）なら、拡張機能はこの後も保存しないので、変更の無いまま残さずに閉じる。
+		if bs.offscreen && bs.owner == nil && !bs.buf.Modified() {
+			e.closeBufferState(bs)
+		}
 		_ = ev.ReplyError(readOnlyError())
 		return
 	}
@@ -294,17 +301,26 @@ func (e *Editor) editorState() ext.EditorStateResult {
 		res.Buffers = append(res.Buffers, ext.BufferInfo{
 			Buffer: bs.id, Path: bs.path, FileType: bs.fileType,
 			Version: ext.Version(bs.buf.Version()), Modified: bs.buf.Modified(),
+			ReadOnly: bs.buf.ReadOnly(), ChangedOnDisk: bs.path != "" && writeConflict(bs) != nil,
 		})
 	}
 	return res
 }
 
 // editorOpenRequest は、editor/open を処理する。
+// focus が false で、まだ開いていないファイルを開いたら、タブにせず、画面に出さないバッファにする（FR-109。offscreen.go）。
+//
+// req: FR-109
 func (e *Editor) editorOpenRequest(ev *exthost.EditorOpenRequest) {
-	bs, moved, err := e.editorOpen(ev.Params)
+	p := ev.Params
+	fresh := p.Buffer == nil && !p.Focus && p.Path != "" && e.findPath(e.absPath(p.Path)) == nil
+	bs, moved, err := e.editorOpen(p)
 	if err != nil {
 		_ = ev.ReplyError(err)
 		return
+	}
+	if fresh && bs.owner == nil {
+		bs.offscreen = true
 	}
 	_ = ev.Reply(ext.EditorOpenResult{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Moved: moved})
 }
@@ -350,6 +366,9 @@ func (e *Editor) editorOpen(p ext.EditorOpenParams) (*bufferState, bool, error) 
 }
 
 // bufferSaveRequest は、buffer/save を処理する。利用者の保存と同じ保存の流れを通る（基本設計 6.7）。
+// 画面に出さないバッファ（FR-109）は、書き出せたら、応答の前に閉じる（closeOffscreen）。
+//
+// req: FR-109
 func (e *Editor) bufferSaveRequest(ev *exthost.BufferSaveRequest) {
 	bs := e.findBuffer(ev.Params.Buffer)
 	if bs == nil {
@@ -366,17 +385,55 @@ func (e *Editor) bufferSaveRequest(ev *exthost.BufferSaveRequest) {
 	}
 	// 外で変わったファイルへは書き出さない。拡張機能の応答を待たせたまま利用者に問うと、問いの間に取っておくイベントが溜まるので、
 	// 問わずに断り、利用者が :w か :w! で決める（基本設計 6.7）。
+	offscreen := bs.offscreen && bs.owner == nil
 	err := writeConflict(bs)
-	if errors.Is(err, errChangedOnDisk) {
-		err = fmt.Errorf("警告: 読み込んだ後にファイル \"%s\" が変更されているので、拡張機能の保存を断りました (:w! で上書きします)", e.shortName(bs))
+	conflict := errors.Is(err, errChangedOnDisk)
+	if conflict {
+		how := ":w! で上書きします"
+		if offscreen {
+			// 画面に出さないバッファは、カーソルのあるタブではないので、:w! の前にタブにする。
+			how = fmt.Sprintf(":b %d で開いてから :w! で上書きします", bs.id)
+		}
+		err = fmt.Errorf("警告: 読み込んだ後にファイル \"%s\" が変更されているので、拡張機能の保存を断りました (%s)", e.shortName(bs), how)
+	}
+	if err == nil && offscreen && sameAsFile(bs) {
+		// 画面に出さないバッファの中身がファイルと同じ（拡張機能が編集を元に戻した。LSP の名前の変更の取り消し）なら、
+		// 書き出さずに閉じ、変えたファイルの一覧にも入れない。
+		version := ext.Version(bs.buf.Version())
+		e.closeBufferState(bs)
+		_ = ev.Reply(ext.BufferSaveResult{Saved: true, Version: version})
+		return
+	}
+	prev := e.message
+	// 保存がディレクトリを作るか（FR-78）を、作る前に調べる（makeParentDir は path の親が無ければそれを作る）。
+	var made string
+	if _, serr := os.Stat(filepath.Dir(bs.path)); errors.Is(serr, fs.ErrNotExist) {
+		made = filepath.Dir(bs.path)
 	}
 	if err == nil {
 		err = e.save(bs, bs.path, ev.Params.SkipHooks)
 	}
 	if err != nil {
+		if offscreen && !conflict && slices.Contains(e.bufs, bs) {
+			// 画面に出さないバッファは、変更を失わないように残す。利用者が見たことの無いバッファで :qa が E162 になるので、ここで知らせる。
+			err = fmt.Errorf("%w（タブの無いバッファ %d として残しました。:b %d で開けます）", err, bs.id, bs.id)
+		}
 		e.showError(err)
 	}
-	_ = ev.Reply(ext.BufferSaveResult{Saved: err == nil, Version: ext.Version(bs.buf.Version())})
+	version := ext.Version(bs.buf.Version())
+	// 保存の前の処理（buffer/willSave）を待つ間に、利用者がタブにしたか閉じたかもしれないので、改めて確かめる。
+	if err == nil && bs.offscreen && bs.owner == nil && slices.Contains(e.bufs, bs) {
+		// 書き込みの知らせは、変えたファイルの一覧（closeOffscreen）にまとめるので出さない。保存の前の処理の警告は残す。
+		// ディレクトリを作った知らせ（FR-78）は、一覧に添え、履歴にも残す。
+		if e.message.Level == ui.MessageInfo {
+			if made != "" {
+				e.noteMessage(e.message)
+			}
+			e.message = prev
+		}
+		e.closeOffscreen(ev.Extension, bs, made)
+	}
+	_ = ev.Reply(ext.BufferSaveResult{Saved: err == nil, Version: version})
 }
 
 // diagnosticList は、diagnostic/list の結果を作る。位置は編集に合わせてずらした、現在のバージョン番号の位置である。

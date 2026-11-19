@@ -122,9 +122,16 @@ func (s *State) applyExResult(res ex.Result, err error) {
 	}
 	if res.Shell != nil {
 		s.res.Shell = res.Shell
+		s.shellWait = nil
 		if s.playDepth > 0 {
 			// 再生の途中なら、ErrBufferSwitched と同じく残りのキーを Result.Remaining に積んで止める。
 			// 呼び出し側は、外部のコマンドが終わって出力を入れた後に ContinueReplay で続ける。
+			// 出力と続きの変更を、止める前の再生の単位へつなぎ、ドットリピートの値などを止めたときのものに戻すために控える（FinishShell）。
+			w := &shellSuspend{repeat: s.repeatState()}
+			if tip := s.buf.UndoTip(); tip != s.playUndoStart {
+				w.join = undoJoin{tip: tip, start: s.playUndoStart}
+			}
+			s.shellWait = w
 			s.fail(ErrShellPending)
 		}
 	}
@@ -181,16 +188,54 @@ func (s *State) applyExResult(res ex.Result, err error) {
 // err が nil でなければ（起動できない、中断した、出力が上限を超えた）、バッファを変えずに err を失敗として返す。
 // 変更はアンドゥの 1 単位で、カーソルと通知は ex.ShellRequest.Finish が Vim に合わせて決める。
 //
-// req: FR-81
+// マクロの再生の途中で求めた（ErrShellPending）外部のコマンドなら、Vim の @a と同じく再生の全体を 1 回の u で戻せるように、
+// 止める前の再生が作ったアンドゥの単位が履歴の末尾のままであれば、出力をそこへつなぐ（buffer.Buffer.JoinUndoGroup。ResumeReplay と同じ）。
+// 続く ContinueReplay は、再生の残りの変更を同じ単位へつなぐ。
+// 実行中に別の client の操作でドットリピートの値、直前の検索、直前の :s、直前の f、@@ のレジスターが替わっていても、
+// 止めたときの値に戻す（ResumeReplay と同じ）。
+// 実行中にバッファが変わっていれば、ex.ShellRequest.Finish が出力を捨てて誤りを返すので、再生も止まる（ResumeReplay の ErrStale に当たる）。
+//
+// req: FR-07, FR-81
 func (s *State) FinishShell(req *ex.ShellRequest, out []byte, status int, err error) Result {
 	s.res = Result{}
+	w := s.shellWait
+	s.shellWait, s.shellJoin = nil, nil
+	if w != nil {
+		s.setRepeatState(w.repeat)
+	}
 	if err != nil {
 		s.fail(err)
 		return s.take()
 	}
+	start := s.buf.UndoTip()
+	if w != nil && w.join.tip != 0 {
+		if s.buf.JoinUndoGroup(w.join.tip) {
+			start = w.join.start
+		}
+	} else {
+		s.buf.BeginUndoGroup()
+	}
 	res, err := req.Finish(s.buf, &s.Ex, s.cursor.Line, out, status)
+	s.buf.EndUndoGroup()
 	s.applyExResult(res, err)
+	if w != nil && s.res.Err == nil && s.buf.UndoTip() != start {
+		s.shellJoin = &undoJoin{tip: s.buf.UndoTip(), start: start}
+	}
 	return s.take()
+}
+
+// undoJoin は、止めた再生の続きの変更をつなぐアンドゥの単位である。
+// tip はその単位の識別子（buffer.Buffer.UndoTip）、start は再生を始めたときの末尾の識別子（State.playUndoStart）である。
+type undoJoin struct {
+	tip, start uint64
+}
+
+// shellSuspend は、再生の途中で外部のコマンドを待つために止めたときの控えである（applyExResult が作り、FinishShell が使う）。
+type shellSuspend struct {
+	// join は、止める前の再生が作ったアンドゥの単位である。単位を作っていなければ tip が 0 で、つながない。
+	join undoJoin
+	// repeat は、止めたときのドットリピートの値などである。
+	repeat repeatState
 }
 
 // Confirm は、Result.Confirm で求められた確認への利用者の答えを受け取り、yes なら Ex コマンドの続きを実行する。

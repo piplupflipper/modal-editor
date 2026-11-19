@@ -24,6 +24,8 @@ func (e *Editor) addTab(bs *bufferState) {
 	i := slices.Index(c.tabs, e.cur)
 	c.tabs = slices.Insert(c.tabs, i+1, bs)
 	bs.owner = c
+	// 画面に出さないバッファを利用者がタブにしたら、保存の後に閉じる扱いを外す（FR-109。基本設計 4.4）。
+	bs.offscreen = false
 	bs.state.Viewport = viewport{r: e.renderer}
 }
 
