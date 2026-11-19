@@ -16,6 +16,10 @@
 //	:e[dit][!] [file]    Action の ActionEdit を返す。file が無く（読み直し）、! が無く、未保存の変更があれば E37 で失敗する。
 //	                     file を開くのは新しいタブなので（FR-113）、file があれば未保存の変更を確かめない
 //	:tabm[ove] [N|+N|-N|$]  カーソルのあるタブを動かす ActionTabMove を返す（FR-65）
+//	:diffs[plit] {file}  file を別のペインの client で開いて見比べる ActionDiff（DiffSplit）を返す（FR-99。名前は仮）
+//	:difft[his]          ActionDiff（DiffThis）を返す
+//	:diffo[ff][!]        ActionDiff（DiffOff）を返す
+//	:diffu[pdate][!]     ActionDiff（DiffUpdate）を返す
 //	:[range]s[ubstitute]/pat/rep/[flags] [count]
 //	:[range]g[lobal][!]/pat/cmd
 //	:[range]v[global]/pat/cmd
@@ -153,6 +157,32 @@ const (
 	// Relative が true なら、Count だけ右（負なら左）へ動かす（:tabmove +N と :tabmove -N）。
 	// Text は、誤りの文言に出す引数である。並びの外を指すかは、タブを持つ呼び出し側が確かめる。
 	ActionTabMove
+	// ActionDiff は、2 つの client のタブの見比べ（基本設計 6.8。FR-99〜FR-101）の操作である。
+	// Diff に操作を、File に :diffsplit のファイルを、Count に ]c と [c の回数を入れる。
+	// 見比べの相手のバッファと差分を持つのは呼び出し側である。
+	ActionDiff
+)
+
+// DiffOp は、ActionDiff の操作である。
+type DiffOp int
+
+// 見比べの操作。
+const (
+	// DiffSplit は、File を別のペインの新しい編集の client のタブで開き、カーソルのあるタブと見比べる（:diffsplit。仮）。
+	DiffSplit DiffOp = iota
+	// DiffThis は、カーソルのあるタブを見比べの対象にする。別の client のタブでも打てば、その 2 つを見比べる（:diffthis）。
+	DiffThis
+	// DiffOff は、カーソルのあるタブの見比べを終える（:diffoff）。
+	DiffOff
+	// DiffUpdate は、差分を計算し直す（:diffupdate）。
+	DiffUpdate
+	// DiffNext と DiffPrev は、Count 個先と前の差分の始まりへ移る（]c と [c）。キーの操作だけが使う。
+	DiffNext
+	DiffPrev
+	// DiffObtain は、カーソルの差分を相手の内容で置き換える（do）。キーの操作だけが使う。
+	DiffObtain
+	// DiffPut は、相手の差分をカーソルの差分の内容で置き換える（dp）。キーの操作だけが使う。
+	DiffPut
 )
 
 // BufferOp は、ActionBuffer の操作である。
@@ -215,6 +245,8 @@ type Action struct {
 	// ClientOnly は、ActionWriteAll で、書き出すバッファを、コマンドを打った client のタブに限ることを表す（:wqa、:xa。基本設計 4.4）。
 	// false なら server のすべてのバッファを書き出す（:wa）。
 	ClientOnly bool
+	// Diff は、ActionDiff の操作である。
+	Diff DiffOp
 }
 
 // Deletion は、:d が消した行の記録である。

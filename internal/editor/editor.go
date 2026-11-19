@@ -150,6 +150,10 @@ type Config struct {
 	StatusLine *ui.StatusLine
 	// TabLine は、タブの行を出す場合（設定の tabline.show。FR-62）である。ゼロ値は、タブが 1 つでも出す（ui.TabLineAlways。#215 のオーナーの裁定）。
 	TabLine ui.TabLineMode
+	// SplitPane は、:diffsplit（基本設計 6.8。FR-99）で、from のペインを分割し、新しいペインで file を開く編集の client を、
+	// このエディタの server に繋ぐ形で起動する関数である（internal/mux の Mux.SplitPane を包んだもの）。dir は起動するディレクトリである。
+	// イベントループを止めないよう、別の goroutine で呼ぶ。nil なら :diffsplit は端末多重化ソフトの外として誤りにする。
+	SplitPane func(from, file, dir string) error
 	// FocusPane は、別の編集の client のタブのファイルを開こうとしたときに、from のペインから pane のペインへ
 	// フォーカスを移す関数である（FR-63。internal/mux の Mux.FocusPane を包んだもの）。ペインは ClientInfo.Pane である。
 	// イベントループを止めないよう、別の goroutine で呼ぶ。nil なら移さず、メッセージだけを出す。
@@ -226,6 +230,8 @@ type Editor struct {
 	endErr error
 	// finished は、Run が戻ると閉じる。Attach が、イベントループの終わりを知るために使う。
 	finished chan struct{}
+	// diff は、見比べ（diff.go。基本設計 6.8）の状態である。
+	diff *diffState
 
 	bufs   []*bufferState
 	nextID ext.BufferID
@@ -408,6 +414,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		keyFireCh: make(chan keyFire),
 		extClient: map[string]*clientView{},
 		finished:  make(chan struct{}),
+		diff:      newDiffState(),
 		outputs:   map[outputKey][]string{},
 		nextID:    1,
 	}
@@ -651,6 +658,8 @@ func (e *Editor) Run(ctx context.Context) error {
 			f()
 		case r := <-e.decoDone:
 			e.decorationsBuilt(r)
+		case r := <-e.diff.done:
+			e.diffBuilt(r)
 		case <-checkC:
 			if e.checkStalled() {
 				break // 確認が終わらないことを知らせたので描き直す

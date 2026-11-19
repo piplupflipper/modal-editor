@@ -41,6 +41,7 @@ const (
 	codeBackwardsRange   = "E493" // 逆順の範囲
 	codePositiveCount    = "E939" // 回数が 1 以上でない
 	codeInvalidArgument  = "E475" // 引数が正しくない
+	codeArgRequired      = "E471" // 引数が要る
 )
 
 // CodeNoWrite は、未保存の変更があるので :q や :e を実行できないことを表すエラー番号である。

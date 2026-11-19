@@ -186,6 +186,8 @@ func (n navigator) Navigate(a ex.Action, cursor buffer.Position) (buffer.Positio
 	switch {
 	case a.Kind == ex.ActionJump:
 		return e.jumpBy(n.bs, cursor, a.Count)
+	case a.Kind == ex.ActionDiff:
+		return e.diffNavigate(n.bs, a, cursor)
 	case a.Kind == ex.ActionBuffer && (a.Buffer == ex.BufferAlternate || a.Buffer == ex.BufferNext || a.Buffer == ex.BufferPrev):
 		if err := e.bufferAction(n.bs, a); err != nil {
 			return buffer.Position{}, false, err

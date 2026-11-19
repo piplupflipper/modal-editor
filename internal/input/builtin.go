@@ -201,6 +201,10 @@ var (
 		// Vim のノーマルモードの CTRL-P と CTRL-N は k と j と同じ移動で、ここでは移動に割り当てていない。
 		{keys: "<C-p>", id: "put-older", modes: MapNormal, desc: "貼った直後に、履歴の古い項目に貼り直す"},
 		{keys: "<C-n>", id: "put-newer", modes: MapNormal, desc: "貼った直後に、履歴の新しい項目に貼り直す"},
+		// 見比べ（基本設計 6.8。FR-101）。Vim と同じキーで、次と前の差分へ移る。
+		// do と dp は、Vim と同じく d のオペレーターの後の o と p として Parser が読む（Parser.match）ので、表には置かない。
+		{keys: "]c", id: "diff-next", modes: MapNormal, desc: "見比べで、次の差分へ"},
+		{keys: "[c", id: "diff-prev", modes: MapNormal, desc: "見比べで、前の差分へ"},
 	}
 )
 
@@ -212,6 +216,9 @@ var parserKeys = []KeyHelp{
 	{Keys: "q{レジスター}", Modes: MapNormal, Description: "マクロの記録を始める（記録中の q で終える）"},
 	{Keys: "@{レジスター}", Modes: MapNormal, Description: "マクロを再生する（@@ は直前のマクロ）"},
 	{Keys: ".", Modes: MapNormal, Description: "直前の変更を繰り返す"},
+	// do と dp は、d のオペレーターの後の o と p として Parser が読む（Parser.match）。
+	{Keys: "do", Modes: MapNormal, Description: "見比べで、カーソルの差分を相手の内容で置き換える"},
+	{Keys: "dp", Modes: MapNormal, Description: "見比べで、相手の差分をカーソルの差分の内容で置き換える"},
 }
 
 // KeyHelp は、Keymap に登録しないキーの、キーの一覧（FR-90）に出す説明である。

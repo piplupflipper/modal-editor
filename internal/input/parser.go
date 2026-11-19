@@ -117,7 +117,7 @@ func (p *Parser) Feed(k editcmd.Key) []editcmd.Result {
 // （本体の y と拡張機能の ys の y）。このときは最長の完成した登録に決め、残りのキーを続けて解釈する。
 // 本体の操作の途中（g、di、ci、3、"a、f）のように完成した候補が無い場合は、何もせず nil を返し、
 // 次のキーを待ち続ける。本体の操作だけの表では、完成した候補とより長い候補が両方ある列は無いので、
-// Flush は常に何もしない。
+// Flush は常に何もしない（見比べの do と dp も、表の列ではなく d のオペレーターの後の o と p として読む。match）。
 func (p *Parser) Flush() []editcmd.Result {
 	n := p.longestExact()
 	if n == 0 {
@@ -261,6 +261,10 @@ func (p *Parser) resolve(n int) (results []editcmd.Result, rest []editcmd.Key) {
 // match は、現在の状態で引く操作のうち、seq に一致するものと、より長い登録があるかを返す。
 // オペレーターの後では、重ね押し（オペレーターのキーの列そのものか、その最後のキー）も候補にする。
 // 重ね押しとモーションの両方に一致する場合は重ね押しを優先する。
+//
+// 本体の d のオペレーターの後の o と p は、どの登録にも一致しなければ、見比べの do と dp（FR-101）の操作にする。
+// Vim 9.1 の nv_open と nv_put_opt（src/normal.c）が、オペレーターが d のときに nv_diffgetput を呼ぶのと同じで、
+// キーの列ではないので、d の後に時間を置いても do と dp になる。
 func (p *Parser) match(seq []editcmd.Key) (exact *Binding, longer bool) {
 	if p.st == stNormal {
 		if p.visual {
@@ -277,8 +281,23 @@ func (p *Parser) match(seq []editcmd.Key) (exact *Binding, longer bool) {
 			longer = true
 		}
 	}
+	if exact == nil && !longer && len(seq) == 1 && seq[0].Plain() &&
+		p.cmd.Operator.Builtin() && p.cmd.Operator.ID == "delete" {
+		switch seq[0].Rune {
+		case 'o':
+			exact = &Binding{Kind: BindAction, Ref: editcmd.Ref{ID: DiffObtainID}}
+		case 'p':
+			exact = &Binding{Kind: BindAction, Ref: editcmd.Ref{ID: DiffPutID}}
+		}
+	}
 	return exact, longer
 }
+
+// 見比べの do と dp の操作の ID（match）。実行の側（internal/command）がこの ID で実装を引く。
+const (
+	DiffObtainID = "diff-obtain"
+	DiffPutID    = "diff-put"
+)
 
 // apply は、引いた操作を組み立て中の値に反映する。値が完成すれば結果を返す。
 func (p *Parser) apply(b Binding) []editcmd.Result {
@@ -311,6 +330,7 @@ func (p *Parser) apply(b Binding) []editcmd.Result {
 		}
 	case BindAction:
 		p.cmd.Kind = editcmd.KindAction
+		p.cmd.Operator = editcmd.Ref{} // d の後の o と p（do と dp。match）は、オペレーターを捨てて操作にする
 		p.cmd.Action = b.Ref
 		p.cmd.Mode = b.NextMode
 		if b.TakesChar {

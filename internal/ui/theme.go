@@ -93,6 +93,7 @@ var styleNames = []string{
 	StyleStatusLineRecording, StyleStatusLineRuler, StyleStatusLinePosition,
 	StyleStatusLineModeNormal, StyleStatusLineModeInsert, StyleStatusLineModeVisual, StyleStatusLineModeCommandLine,
 	StyleTabLine, StyleTabLineSelected, StyleTabLineFill,
+	StyleDiffAdd, StyleDiffChange, StyleDiffDelete, StyleDiffText,
 }
 
 // StyleNames は、本体が色を付ける対象の名前（設定の colors に書ける名前。FR-91）を、定義の順に返す。
@@ -161,6 +162,12 @@ func DefaultTheme() Theme {
 		StyleTabLine:         {Underline: true, Fg: Indexed(15), Bg: Indexed(8)},
 		StyleTabLineSelected: {Bold: true},
 		StyleTabLineFill:     {Reverse: true},
+		// 差分の色は、Vim 9.1 の暗い背景の既定と同じ番号にした（2026-11-19 に TERM=xterm-256color、background=dark の :hi で確かめた。
+		// DiffAdd は ctermbg=4、DiffChange は ctermbg=5、DiffDelete は ctermfg=12 ctermbg=6、DiffText は cterm=bold ctermbg=9）。
+		StyleDiffAdd:    {Bg: Indexed(4)},
+		StyleDiffChange: {Bg: Indexed(5)},
+		StyleDiffDelete: {Fg: Indexed(12), Bg: Indexed(6)},
+		StyleDiffText:   {Bg: Indexed(9), Bold: true},
 	}
 }
 

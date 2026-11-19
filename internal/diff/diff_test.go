@@ -545,7 +545,7 @@ func largeTexts(n, changes int) (Text, Text) {
 // TestComputeLarge は、NFR-05 の大きさ（10,000 行）のテキストの計算の時間を記録する。
 // 時間は負荷に左右されるので、上限は緩く置き、正しさ（塊の通りに置き換えると b になること）を主に確かめる。
 // 2026-11-18 の手元の計測（BenchmarkCompute10000）は、issue #185 の PR の説明に書いた。
-// 200 箇所では lcs の探索の上限に届き、近くの違いがまとまって塊の数が箇所の数より少なくなる（Compute の doc）。
+// 200 箇所では lcs の探索の上限に届くが、まとまった塊を計算し直して、塊の数は箇所の数と同じになる（Compute の doc）。
 func TestComputeLarge(t *testing.T) {
 	for _, changes := range []int{10, 40, 200} {
 		a, b := largeTexts(10000, changes)
@@ -555,6 +555,9 @@ func TestComputeLarge(t *testing.T) {
 		t.Logf("10,000 行、%d 箇所: %d 個の塊、%v", changes, len(r.Hunks), elapsed)
 		if got := applyHunks(r); !slices.Equal(got, b.Lines) {
 			t.Fatalf("%d 箇所: 塊の通りに置き換えた結果が b と違う", changes)
+		}
+		if len(r.Hunks) != changes {
+			t.Errorf("%d 箇所: 塊 = %d 個, want 箇所の数", changes, len(r.Hunks))
 		}
 		if elapsed > 2*time.Second {
 			t.Errorf("%d 箇所: 計算に %v かかった", changes, elapsed)

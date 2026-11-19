@@ -134,6 +134,7 @@ func (e *Editor) closeBufferState(bs *bufferState) {
 	if e.deferred != nil && e.deferred.bs == bs {
 		e.deferred = nil
 	}
+	e.diffClosed(bs)
 	e.eachView(func(*clientView) {
 		if e.alt == bs {
 			e.alt = nil

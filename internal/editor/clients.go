@@ -199,6 +199,7 @@ func (e *Editor) attach(req attachRequest) {
 		return
 	}
 	e.startClient(c)
+	e.diffAttached(c)
 	req.done <- nil
 }
 

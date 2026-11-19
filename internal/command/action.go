@@ -77,6 +77,10 @@ func init() {
 		"alternate-buffer":   actAlternate,
 		"tab-next":           actTab(1),
 		"tab-prev":           actTab(-1),
+		"diff-next":          actDiff(ex.DiffNext),
+		"diff-prev":          actDiff(ex.DiffPrev),
+		"diff-obtain":        actDiff(ex.DiffObtain),
+		"diff-put":           actDiff(ex.DiffPut),
 	}
 }
 

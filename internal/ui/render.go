@@ -65,6 +65,10 @@ type Renderer struct {
 	TabLine TabLineMode
 
 	top int // 表示領域の最初の行の番号（0 から数える）
+	// topFill は、見比べている間（Frame.Diff）に、最初の行の上に見せる詰め物の行の数である（diff.go。Vim の w_topfill）。
+	topFill int
+	// diffOn は、直前の Render が見比べている間（Frame.Diff が nil でない）だったかである。
+	diffOn bool
 	// tabRows は、直前の Render でタブの行に使った行数（0 か 1）である。Render の外から読む表示領域の行数（TextRows）から除く。
 	tabRows int
 	left    int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
@@ -92,6 +96,7 @@ func (r *Renderer) Left() int { return r.left }
 // 次の Render は、この位置からカーソルが画面に収まるようにスクロールする。
 func (r *Renderer) SetScroll(top, left int) {
 	r.top, r.left = max(top, 0), max(left, 0)
+	r.topFill = 0
 }
 
 // EnterBuffer は、表示するバッファを替えたときに、スクロールの位置を、替えた先のバッファ（行数 lineCount）のカーソルの行 line に合わせて決め直す。
@@ -106,6 +111,7 @@ func (r *Renderer) EnterBuffer(lineCount, line int) {
 	h := r.textRows()
 	r.top = max(min(line-(h-1)/2, lineCount-h), 0)
 	r.left = 0
+	r.topFill = 0
 }
 
 // Columns は、このレンダラーのタブ幅で数える Columns を返す。internal/command の State.Columns に差し込む。
@@ -170,8 +176,10 @@ func (r *Renderer) render(f *Frame) Screen {
 	g := NewGrid(r.Width, r.Height)
 	r.layout(f)
 	cur := r.placeCursor(text, f)
+	prevTop := r.top
 	resized := r.fitHeight(text.LineCount(), cur)
 	r.scroll(text.LineCount(), cur)
+	r.fitDiff(f, cur, prevTop)
 	if resized {
 		r.fracRow = cur.line - r.top + 1
 	}
@@ -181,17 +189,33 @@ func (r *Renderer) render(f *Frame) Screen {
 	d := drawer{r: r, g: g, theme: theme, text: text, f: f, cur: cur}
 	d.collectSpans(rows)
 	signs := d.signsByLine(rows)
-	for i := range rows {
-		n := r.top + i
+	// 見比べている間は、行の間に詰め物の行を描く（diff.go）。row は表示領域の中の行、n はバッファの行である。
+	row := 0
+	for ; row < r.topFill && row < rows; row++ {
+		d.drawFiller(row)
+	}
+	for n := r.top; row < rows; n++ {
+		if n > r.top {
+			for k := f.Diff.fill(n); k > 0 && row < rows; k-- {
+				d.drawFiller(row)
+				row++
+			}
+			if row >= rows {
+				break
+			}
+		}
 		if n >= text.LineCount() {
-			g.set(i, 0, Cell{Text: "~", Width: 1, Attr: theme.attr(StyleNonText)})
+			g.set(row, 0, Cell{Text: "~", Width: 1, Attr: theme.attr(StyleNonText)})
+			row++
 			continue
 		}
 		if signs != nil {
-			d.drawSign(i, signs[i])
+			d.drawSign(row, signs[n-r.top])
 		}
-		d.drawLine(i, n)
+		d.drawLine(row, n)
+		row++
 	}
+	curRow := r.screenRow(f, cur.line)
 	var listCursor *Cursor
 	if f.List != nil && rows > 0 {
 		if c, ok := r.drawList(g, theme, f.List); ok {
@@ -205,11 +229,11 @@ func (r *Renderer) render(f *Frame) Screen {
 		if f.PopupCenter {
 			r.drawPopup(g, theme, text, -1, -1)
 		} else {
-			r.drawPopup(g, theme, text, cur.line-r.top, r.textLeft()+cur.col-r.left)
+			r.drawPopup(g, theme, text, curRow, r.textLeft()+cur.col-r.left)
 		}
 	}
 	screen := Screen{Grid: g, Cursor: Cursor{
-		Row: cur.line - r.top, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,
+		Row: curRow, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,
 		Visible: rows > 0 && r.textWidth() > 0,
 	}}
 	switch {
@@ -475,8 +499,9 @@ func (d *drawer) prepare(row, line, ln int) {
 		}
 		w.spans = append(w.spans, span{start: start, end: end, order: ds.order, attr: a})
 	}
-	if len(d.diags[row]) > 0 {
-		w.spans = append(w.spans, d.diags[row]...)
+	ds := d.diffSpans(line, ln)
+	if dg := d.diags[row]; len(dg) > 0 || len(ds) > 0 {
+		w.spans = append(append(w.spans, dg...), ds...)
 		slices.SortStableFunc(w.spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
 	}
 }
@@ -499,11 +524,13 @@ func (d *drawer) attrAt(row, line, off, size int, base Attr) Attr {
 //
 // 行の先頭から文字の列を数え直すので、時間は行の長さ（表示の左の端より左の部分を含む）に比例する。
 // 文字ごとの割り当ては、^A などの表記を作るときと、行頭の結合文字だけである。
+// 見比べている間は、詰め物の行の分だけ row が line - top より大きくなる。診断と選択の範囲は line - top で引く。
 func (d *drawer) drawLine(row, line int) {
 	s := d.text.Line(line)
 	left, w, x0 := d.r.left, d.r.textWidth(), d.r.textLeft()
 	tabStop := tabStopOr(d.r.TabStop)
-	d.prepare(row, line, len(s))
+	idx := line - d.r.top
+	d.prepare(idx, line, len(s))
 	put := func(x int, c Cell) {
 		if x >= 0 && x < w {
 			d.g.set(row, x0+x, c)
@@ -522,7 +549,7 @@ func (d *drawer) drawLine(row, line int) {
 		if gl.kind == glyphSpecial {
 			base = d.theme.attr(StyleSpecialKey)
 		}
-		a := d.attrAt(row, line, gl.off, gl.size, base)
+		a := d.attrAt(idx, line, gl.off, gl.size, base)
 		x := gl.col - left
 		switch gl.kind {
 		case glyphTab:
@@ -550,10 +577,11 @@ func (d *drawer) drawLine(row, line int) {
 		}
 	}
 	if col >= left && col < left+w {
-		if a := d.attrAt(row, line, len(s), 0, Attr{}); a != (Attr{}) {
+		if a := d.attrAt(idx, line, len(s), 0, Attr{}); a != (Attr{}) {
 			put(col-left, blank(a))
 		}
 	}
+	d.diffFillRest(row, line, col+1)
 }
 
 // drawText は、row 行目の col 列から、列 limit の手前まで s を描き、描き終えた次の列を返す。

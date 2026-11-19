@@ -162,18 +162,35 @@ type Result struct {
 //
 // 計算は go-udiff の lcs パッケージ（golang.org/x/tools/internal/diff/lcs を写したもの）による。
 // 違う行が多いと、lcs は探索の深さの上限（違いがおよそ 50 箇所）で打ち切り、最小とは限らない差分を返す。
-// その場合は、近くの違いが 1 つの塊にまとまり、同じ行も塊に含まれうる（10,000 行に 200 箇所の違いで、塊は 75 個になった）。
-// その場合も、塊の通りに置き換えれば a が b になることは保たれる。
+// その場合は、近くの違いが 1 つの塊にまとまり、同じ行も塊に含まれる（10,000 行に 200 箇所の違いで、塊は 75 個になった）。
+//
+// 打ち切りでまとまった塊は、塊の範囲だけをもう一度 lcs で計算し直して細かく分ける（refine。#228 のレビューの必須 2）。
+// lcs の上限は呼び出しごとに数えるので、狭い範囲では最小の差分に近づく。
+// 日常の大きさの変更（9c67b40 の internal/editor/editor.go の 921 行と 928 行の版。201 行の変更）でも、分けなければ 467 行の塊ができ、
+// do が離れた変更をまとめて取り込んだ。分けると塊は 38 個、塊の行は 211 行、最大の塊は 28 行になった（Vim 9.1 は 41 個、201 行）。
+// 10,000 行に 200 箇所の違いでは、塊は 200 個になった。
+// どの場合も、塊の通りに置き換えれば a が b になることは保たれる。
 func Compute(a, b Text) *Result {
-	ds := lcs.DiffLines(a.Lines, b.Lines)
-	if len(ds) == 0 {
-		return &Result{a: a, b: b}
+	return &Result{Hunks: refine(a.Lines, b.Lines, 0, 0, nil), a: a, b: b}
+}
+
+// refineMin は、計算し直す塊の、両側の行の数の和の下限である。これより小さい塊は、lcs の打ち切りに掛からず最小の差分なので、そのまま使う。
+const refineMin = 8
+
+// refine は、a と b（それぞれ全体の offA 行目と offB 行目から始まる範囲）の差分の塊を、out に足して返す。
+// 両側に行がある塊のうち、両側の行の数の和が refineMin 以上で、a と b の全体より狭いものは、その範囲だけで計算し直す。
+// 範囲は呼ぶたびに狭くなるので、繰り返しは終わる。
+// lcs の結果の塊の間には同じ行が少なくとも 1 行あるので、計算し直した塊を並べても、Result の doc の性質を保つ。
+func refine(a, b []string, offA, offB int, out []Hunk) []Hunk {
+	for _, d := range lcs.DiffLines(a, b) {
+		la, lb := d.End-d.Start, d.ReplEnd-d.ReplStart
+		if la > 0 && lb > 0 && la+lb >= refineMin && la+lb < len(a)+len(b) {
+			out = refine(a[d.Start:d.End], b[d.ReplStart:d.ReplEnd], offA+d.Start, offB+d.ReplStart, out)
+			continue
+		}
+		out = append(out, Hunk{A: Span{offA + d.Start, offA + d.End}, B: Span{offB + d.ReplStart, offB + d.ReplEnd}})
 	}
-	hunks := make([]Hunk, len(ds))
-	for i, d := range ds {
-		hunks[i] = Hunk{A: Span{d.Start, d.End}, B: Span{d.ReplStart, d.ReplEnd}}
-	}
-	return &Result{Hunks: hunks, a: a, b: b}
+	return out
 }
 
 // Text は、side の側の、計算に使ったテキストを返す。
@@ -198,6 +215,13 @@ func (r *Result) anchor(i int, side Side) int {
 		return max(n-1, 0)
 	}
 	return s.Start
+}
+
+// Start は、i 番目の塊の、side の側で塊が始まる行（]c と [c でカーソルを置く行）を返す。
+// 範囲が空でなければその最初の行、空なら、もう片側にだけある行の位置の次の行（末尾なら最後の行）である。
+// i は 0 以上 len(r.Hunks) 未満でなければ panic する。
+func (r *Result) Start(i int, side Side) int {
+	return r.anchor(i, side)
 }
 
 // Next は、side の側の行 line より後ろで始まる、最初の塊の番号を返す（Vim の ]c）。

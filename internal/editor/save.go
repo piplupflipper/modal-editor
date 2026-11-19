@@ -140,6 +140,8 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 		return e.writeAll(a.Force, a.ClientOnly)
 	case ex.ActionTabMove:
 		return e.tabMove(bs, a)
+	case ex.ActionDiff:
+		return e.diffCommand(bs, a)
 	case ex.ActionBufferDelete:
 		return e.deleteBuffer(bs, a)
 	case ex.ActionEdit:
