@@ -63,8 +63,8 @@ client は次の 4 種類に分ける（要件定義 4.6）。
 | 種類 | 起動するもの | 端末 | タブの行 | 関係する要件 |
 |---|---|---|---|---|
 | 編集の client | 利用者がペインで起動した `modal-editor` | 持つ | 持つ | FR-58、FR-61、FR-62 |
-| ポップアップの部品の client | server が中央のポップアップの中で起動する `modal-editor --popup`（仮） | 持つ | 持たない | FR-67 |
-| ペインの部品の client | server が `pane/open`（5.3）で開いたペインの中で起動する `modal-editor --pane`（仮） | 持つ | 持たない | FR-115 |
+| ポップアップの部品の client | server が中央のポップアップの中で起動する `modal-editor -popup <部品の ID>`（仮。#244） | 持つ | 持たない | FR-67 |
+| ペインの部品の client | server が `pane/open`（5.3）で開いたペインの中で起動する `modal-editor -pane <部品の ID>`（仮。#244） | 持つ | 持たない | FR-115 |
 | 待つだけの client | `MODAL_EDITOR_SOCKET` のもとで起動した `modal-editor`（4.9） | 使わない | 持たない | FR-83 |
 
 部品の client は、自分を開いた元の編集の client（以後、元の client）を server に覚えてもらう。
@@ -107,7 +107,7 @@ server と client は、server のソケット（Unix ドメインソケット�
 
 | 向き | メソッド | 内容 |
 |---|---|---|
-| client → server | `client/hello` | 接続の最初のメッセージ。client の種類（`edit`、`popup`、`pane`、`wait`）と端末の大きさ。編集の client の起動の引数のファイルと `-R`（#201）、ペインの ID と作業ディレクトリと環境変数（#215）。待つだけの client が開くファイルと、タブを開く先の client の識別子 `parent`、client が扱える機能の列 `features`（#226）。元の client は、それを動かす issue で足す |
+| client → server | `client/hello` | 接続の最初のメッセージ。client の種類（`edit`、`popup`、`pane`、`wait`）と端末の大きさ。編集の client の起動の引数のファイルと `-R`（#201）、ペインの ID と作業ディレクトリと環境変数（#215）。待つだけの client が開くファイルと、タブを開く先の client の識別子 `parent`、client が扱える機能の列 `features`（#226）。部品の client が描く部品の ID `view`（#244。元の client は載せず、server が部品から引く） |
 | client → server | `client/event` | キー、貼り付け、端末の大きさの変化 |
 | server → client | `screen/draw` | 画面の格子の差分（変わった行）とカーソル |
 | server → client | `clipboard/set` | ホストのクリップボードへの書き込みの依頼（FR-56） |
@@ -204,7 +204,7 @@ server は、編集の client を何個でも同時に繋ぐ（FR-62）。
 server のソケットに届いた接続は、接続ごとの goroutine で `client/hello` を待ち（5 秒まで）、編集の client なら、最初のものはイベントループを動かす前に、後のものはイベントループへ渡して（`editor.Editor.Attach`）足す。
 後から足した client の引数のファイルは、イベントループの中で、その client の操作としてタブに開く。
 開けなければ、その client だけに理由付きの `server/exit` を送って閉じる。
-待つだけの client（`wait`）は、#226 で受け付けるようにした（4.9）。部品の client（`popup`、`pane`）は、まだ受け付けず、理由付きの `server/exit`（`server.UnsupportedReason`）を送って閉じる。
+待つだけの client（`wait`）は、#226 で受け付けるようにした（4.9）。部品の client（`popup`、`pane`）は、#244 で受け付けるようにした（下の「部品の client（#244）」）。知らない種類の client は、理由付きの `server/exit`（`server.UnsupportedReason`）を送って閉じる。
 1 つのプロセスの構成（FR-60）でも、ソケットで繋いだ編集の client を同じく足す。
 
 client は、`client/hello` に次の 3 つを載せる（PR #207 の未確認事項。server のプロセスが、server を起動した最初の client のペインと作業ディレクトリを持ち続けていた件）。
@@ -276,6 +276,25 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 
 編集の client が 1 つなので、diff（6.8）は使えない（仮）。
 
+#### 部品の client（#244）
+
+#244 で、部品の client を次のとおりに実装した（`internal/editor` の `component.go`、`internal/server` の `component.go`、`cmd/modal-editor` の `component.go`。どれも仮）。
+
+- 部品（1.4 の `floatState`）は、開いた元の client の画面の状態に置いたままにする。中央のポップアップは元の client のポップアップ、ペインは元の client のペインの部品の並び（`viewFields.panes`）である。部品の client は、描く場所だけを替える。元の client は「部品がどの client の画面の状態にあるか」で決まるので、`client/hello` に元の client を載せない。部品の client は `client/hello` の `view` に部品の ID を載せ、server はその ID の部品を探す（`editor.Editor.AttachComponent`）
+- 起動のオプションは `-popup <部品の ID>` と `-pane <部品の ID>` にし、server のソケットは `-connect <パス>` で渡す（#245 の `:diffsplit` と同じ。`MODAL_EDITOR_SOCKET` で渡すと、その環境変数のもとで起動したものが待つだけの client になるため）。部品の ID は、ポップアップの ID（`ext.ViewID`）と同じ番号である
+- 中央のポップアップを開いた元の client がペインを知っていれば（tmux と herdr の中）、端末多重化ソフトのポップアップを開くよう頼み（`editor.Config.OpenPopup`）、部品の client が繋ぐまでは元の client の画面の中央に描く。繋いだら元の client の画面には描かず、部品の client の画面に、枠線を描かずに表示領域の全体へ広げて描く（`ui.Float.Fill`。端末多重化ソフトが枠線を描くため）。ステータス行、コマンドライン、メッセージ、問いは、元の client の画面と同じものを部品の client にも出す（元の client のペインは、端末多重化ソフトのポップアップの下に隠れるため）
+- 端末多重化ソフトのポップアップを開けなければ（herdr のプラグインを登録していない、利用者の他のポップアップが開いている）、誤りを元の client のメッセージの行に出し、元の client の画面の中央に描いたままにする。前のポップアップの部品の client を終わらせた直後は、端末多重化ソフトのポップアップがまだ閉じていないことがあるので、`mux.ErrPopupBusy` なら 1.5 秒まで 50 ms ごとに開き直す
+- `pane/open` は、元の client のペインを分割し（`editor.Config.OpenPane`）、その中で部品の client を起動する。応答の ID は、ペインを開き終える前に返す。開けなければ、同じ ID のまま中央のポップアップへ移し、理由をメッセージの行に出す
+- 部品の client で受けたキーは、元の client が受けたキーとして列に積む。中央のポップアップは元の client のフォーカスのあるポップアップなので、そのまま処理する。ペインのキーは、処理する間だけペインの部品を元の client のフォーカスのあるポップアップにし（元の client のポップアップは退避する）、処理し終えたら元のタブへ戻す。マクロの記録とレジスターは、`:b` と同じく引き継ぐ。ペインの中の `<Esc>` はペインを閉じない。`:q` で閉じる
+- 部品を閉じたら、部品の client に理由の無い `server/exit` を送る。部品の client が終わると、端末多重化ソフトのポップアップとペインも閉じる（tmux の `display-popup -E` と `split-window`、herdr の `plugin.pane.open`）。部品の client の接続が先に切れたら（利用者が端末多重化ソフトで閉じた）、部品を閉じて `view/closed` を送る。外から閉じる `mux.Mux.ClosePopup` と `ClosePane` は使わない
+- 部品の操作の知らせ（`view/select`、`view/key`、`view/expand`、`input/change`、`view/closed`）を送るときは、その拡張機能が後から届けるもの（`editor/open`、`message/show` など）の届け先を、部品を開いた元の client にする（`editor` の `noteViewClient`。上の「問い合わせを始めた client に出す」と同じ考え方。PR #248 のレビューの必須）。ペインを開いた後に別の client がその拡張機能を使っても、ペインで選んだファイルはペインを開いた client のタブに開く
+- ペインの部品の client のキーで選んだ後に、その拡張機能の `focus` が true の `editor/open` を元の client のタブに開いたら、端末多重化ソフトのフォーカスをペインから元の client のペインへ移す（`Config.FocusPane`。FR-105 のファイラで、選んだファイルをすぐ編集するため。PR #248 のレビューの推奨 1。仮）。移すのは、ペインで選んだ後の最初の `editor/open` 1 回だけで、選んでから利用者がどれかの client でキーを打ったか、1 秒（`paneFocusWindow`）を過ぎて届いたときは移さない（PR #248 の再レビューの必須とオーケストレータの決定）。遅れて届いた `editor/open`（DAP の止まった位置など）が、別のペインや別の window へ移った利用者を引き戻さないためである。それ以外の `editor/open` は、端末多重化ソフトのフォーカスを動かさず、その client のタブを替えるだけである。印を立てるのは、一覧や木で項目を選んだとき（`view/select`）だけで、ペインの中だけのキー（`view/key`）、開閉（`view/expand`）、入力の行の中身（`input/change`）では立てない（オーケストレータの決定。DAP のペインでステップ実行のキーを打つたびにフォーカスがペインから出ないため）。移す前に、端末多重化ソフトのアクティブなペインがまだ部品のペイン（部品の client が `client/hello` の `pane` で知らせたもの）かを `mux.Mux.PaneFocused` で確かめ、違えば移さない（PR #248 の 3 回目の確認の推奨 1。キーを打たずに別の window へ移った利用者を、1 秒以内の応答でも引き戻さないため）。tmux では、そのペインが window のアクティブなペインで、その window をどれかの tmux の client が表示していること、herdr では `pane.get` の `focused` である
+- テキストの部品の `view/update` は、カーソルが最後の行にあれば、新しい中身の最後の行へカーソルを置く（末尾を追う。FR-108、FR-111 の出力のペイン。PR #248 のレビューの推奨 2。仮）。拡張機能 API の形は変えていない
+- ペインの部品にはペインの部品の client だけを、中央のポップアップにはポップアップの部品の client だけを繋ぐ（`client/hello` の種類と部品の種類を照らす。PR #248 のレビューの推奨 3）
+- 部品の client が繋ぐ前に部品が閉じていれば、server は理由の無い `server/exit` で断り、部品の client は黙って終わる
+- 部品の client と server の間には問いと応答の組が無い。上の `id` 付き通知の組の取り決めのうち、使うのは「`id` の範囲」（部品の ID は server の中で一意で使い回さない）と「応答しない相手」（接続が閉じたら、その部品を閉じたものとして片付ける）である
+- 外で `pane/open` を中央のポップアップに出すときは、上の「1 つの拡張機能が開いたものは 1 枚のポップアップにまとめる」形と「別の拡張機能のポップアップの上に重ねる」形をまだ作っていない。1 つの client のポップアップは 1 つ（1.4 の #236 の実装）なので、後の `pane/open` は前のポップアップを閉じて置き換える（10 章）
+
 ### 1.3 端末多重化ソフトを操作する層
 
 端末多重化ソフトを操作する層は server が持つ（FR-66）。
@@ -293,6 +312,7 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 | ポップアップを閉じる | 中の client が終わると閉じる（`-E`）。外から閉じるときは、層が開いたものがまだ開いているときだけ `display-popup -C -c <tmux の client>` | 中の client が終わると閉じる。外から閉じるときは `popup.close`（誰が開いたものかを問わず閉じる） |
 | フォーカスを移す | 元の client のペインの window を表示している tmux の client が、移る先のペインの window を表示していれば `select-pane`、そうでなければ `switch-client -c <tmux の client> -t <ペイン>` | `pane.focus`。ペインが別のタブにあれば、そのタブへ移る |
 | ペインを閉じる | `kill-pane` | `pane.close` |
+| ペインがアクティブか（#244） | `list-panes -a` の `pane_active` と、その window を表示している tmux の client があること | `pane.get` の `focused` |
 | 自分のペイン | `TMUX_PANE` | `HERDR_PANE_ID` を `pane.get` で引いた今の ID |
 | server の単位の識別子 | `display -p -t "$TMUX_PANE" '#{socket_path}:#{window_id}'` | `HERDR_SOCKET_PATH` と、`pane.get` で引いた自分のペインの `tab_id` |
 
@@ -341,11 +361,14 @@ socket API の `pane.split` は起動するコマンドを受け付けないの�
 同梱するプラグインの宣言ファイルの雛形は `internal/mux/herdr-plugin/herdr-plugin.toml` に置き、本体に埋め込む（仮）。
 宣言ファイルには entrypoint を 1 つだけ書き、その `command` は、server が環境変数 `MODAL_EDITOR_MUX_COMMAND` に入れたコマンドの文字列（引数をシェルの引用で囲んでつないだもの）を `sh -c` で `exec` する。
 宣言ファイルに本体の実行ファイルのパスを書かずに済ませるためである。
-宣言ファイルを置く場所と、herdr へ登録する（`herdr plugin link`）手順は、配布物の作り方と合わせて決める（10 章）。
+#244 で、`make dist` が宣言ファイルを配布物の `herdr-plugin/` に置き、利用者が `herdr plugin link <配布物>/herdr-plugin` で 1 回登録する形にした（仮。[使い方](usage.md)）。
+宣言ファイルに本体の実行ファイルのパスを書いていないので、配布物を入れ替えても登録し直さなくてよい。
+server が自動で登録する形は採らなかった。利用者の herdr の設定を、本体が黙って書き換えることになるためである。
+登録していないと、`plugin.pane.open` は `plugin_not_found` を返す（2026-11-19 に herdr 0.9.0 で確かめた）。server はこの誤りに登録の手順を書き足し、本体は中央のポップアップを元の client の画面に描き、ペインを中央のポップアップに出す（1.2 の「部品の client（#244）」）。
 
 拡張機能は、この層を直接触らず、本体へのリクエスト（5.3 で足す `pane/open` と `popup/open`。仮）で頼む（FR-115）。
 本体は、開いたペインかポップアップの中で、表示の部品を描く client（1.4）を起動する。
-ペインとポップアップの中のプロセスは、server のソケットのパスを環境変数 `MODAL_EDITOR_SOCKET`（仮）で受け取り、どの部品を描くかを起動の引数で受け取る（仮）。
+ペインとポップアップの中のプロセスは、server のソケットのパスとどの部品を描くかを、起動の引数（`-connect <パス>` と `-popup <部品の ID>` か `-pane <部品の ID>`）で受け取る（仮。#244）。
 
 ### 1.4 ポップアップとペインの表示の部品
 
@@ -398,8 +421,7 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 #### #236 の実装
 
 #236 で、編集の client の画面の中のポップアップを次のとおりに実装した（`internal/editor` の `popup.go`。どれも仮）。
-端末多重化ソフトのポップアップとペインに出す部品の client（FR-66、FR-67、FR-115、FR-123）は次の issue で作る。
-それまでは、中央のポップアップも編集の client の画面の中央に描く（端末多重化ソフトの外の規則）。
+端末多重化ソフトのポップアップとペインに出す部品の client（FR-66、FR-67、FR-115、FR-123）は、#244 で作った（1.2 の「部品の client（#244）」）。
 
 - 4 つの部品は、どれも本体のバッファにして出す。テキストは本文を、一覧と木は 1 項目を 1 行にした文字列を、入力の行は中身の 1 行を持つ。入力の行のほかは編集を禁止したファイルでないバッファ（4.6）である。このため、ポップアップの中でもノーマルモードのキー（移動、検索、ヤンク、`q` のマクロの記録）がそのまま効く（FR-71）。色を付ける範囲は、そのバッファの構文の色として持つ
 - 木は、子の項目を 2 列ずつ字下げし、子を持つ項目の前に開閉の印（`▸`、`▾`）を置く。開閉の状態は本体が項目の ID ごとに持ち、開閉したら `view/expand` で拡張機能へ知らせる。`view/update` で送り直しても、`expanded` を省いた項目は、前の木にあった ID なら開閉の状態を保ち、新しい ID なら閉じて出す。`expanded` を書いた項目は、前の木にあってもその状態にする（拡張機能から開けるように。PR #242 の再レビューの推奨 1）。子を後から読む項目は `hasChildren` で示し、拡張機能は `view/expand` を受けて子を読み、`view/update` で送る（ファイラ（FR-105）のディレクトリ、DAP の変数（FR-108）の `variablesReference`。PR #242 のレビューの必須 2）
@@ -1309,7 +1331,9 @@ Ex コマンドの確認の問い（逆順の範囲の E493）を出している
 `output/append` の出力の欄と `choice/ask` の扱いは 6.7 に書く。
 
 #236 で、`popup/open`、`view/update`、`view/close`、`view/closed`、`view/select`、`input/change` を実装し、次を足した（`ext/view.go`。拡張機能 API の版は 0.6.0）。
-`pane/open`、`editor/list`、`buffer/create`、`diff/start` は、それぞれを使う issue で足す。
+`editor/list`、`buffer/create`、`diff/start` は、それぞれを使う issue で足す。
+`pane/open` は #244 で足した（`ext.PaneOpenParams`。拡張機能 API の版は 0.8.0）。params は、部品（`component`）、分割の向き（`direction`。`right` か `down`）、大きさの百分率（`size`。herdr では使わない）、新しいペインへフォーカスを移すか（`focus`）である。
+応答の `view` は、ペインでも、外で代わりに出す中央のポップアップでも、同じく `view/update`、`view/close`、`view/closed` などで使う。
 
 | 向き | メソッド（仮） | 種類 | 内容 | 関係する要件 |
 |---|---|---|---|---|
@@ -2821,7 +2845,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-| 拡張機能 API のバージョンの付け方（いまは 0.7.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
+| 拡張機能 API のバージョンの付け方（いまは 0.8.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
 | 不正な UTF-8 を含むファイルのパスを拡張機能へ送るときの扱い（JSON の文字列では U+FFFD に置き換わる） | 4.1、5.3 |
 | 未保存のバッファを本体の panic から守る仕組み | 8 |
 | 補完の候補の表示と、インサートモードの入力ごとに言語サーバーへ問い合わせる契機 | 6.3 |
@@ -2834,7 +2858,9 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-| 同梱する herdr のプラグインの宣言ファイルを置く場所と、herdr へ登録する手順（登録していないと、herdr の中でポップアップとペインを開けない）。herdr の中のプロセスが自分のタブの ID を知る手段と、ペインの分割とフォーカスの移動の操作は、#184 で確かめて 1.3 に書いた | 1.3 |
+| 同梱する herdr のプラグインを、配布物の `herdr-plugin/` に置き、利用者が `herdr plugin link` で登録する形にしたこと（#244 の仮の扱い。server が自動で登録する形は採らなかった）。herdr の中のプロセスが自分のタブの ID を知る手段と、ペインの分割とフォーカスの移動の操作は、#184 で確かめて 1.3 に書いた | 1.3 |
+| 部品の client の起動のオプション（`-popup`、`-pane`）、部品の client に枠線を描かずに表示領域の全体へ広げること、ペインの中の `<Esc>` でペインを閉じないこと、端末多重化ソフトのポップアップが開いているときに 1.5 秒まで開き直すこと、中央のポップアップの大きさ（端末の 80%）（どれも #244 の仮の扱い） | 1.2、1.3 |
+| 端末多重化ソフトの外で、1 つの拡張機能の複数の `pane/open` を 1 枚のポップアップにまとめることと、別の拡張機能のポップアップの上に重ねること（1.2 に書いたが、#244 では作っていない。後の `pane/open` は前のポップアップを置き換える）。DAP の 3 つのペイン（FR-108）を外で出す issue で要る | 1.2 |
 | herdr で、分割したペインの大きさを指定する手段（herdr 0.9.0 の `plugin.pane.open` は `split` の大きさを受け付けない） | 1.3 |
 | server と MCP のソケットのディレクトリが異常終了で残ったときの掃除の規則 | 1.2、6.2 |
 | 位置に結びつかない一覧（参照の一覧、キーの一覧など）を中央のポップアップに出すこと（仮）。ホバーと「ポップアップで見る」をカーソルの近くに出すことは裁定済み | 1.4 |

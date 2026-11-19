@@ -20,13 +20,18 @@ const (
 	HerdrPluginEntrypoint = "run"
 )
 
+// HerdrPluginNotFound は、同梱のプラグインを herdr に登録していないときに、plugin.pane.open が返す誤りの種類（HerdrError.Code）である
+// （2026-11-19 に herdr 0.9.0 で、登録していない ID を渡して確かめた）。
+const HerdrPluginNotFound = "plugin_not_found"
+
 // HerdrCommandEnv は、herdr のプラグインのペインで起動するコマンドを渡す環境変数の名前である。
 // 値は、Command.Args をシェルの引用で囲んでつないだ 1 つの文字列で、プラグインの command が eval して exec する。
 const HerdrCommandEnv = "MODAL_EDITOR_MUX_COMMAND"
 
 // HerdrPluginManifest は、本体が同梱する herdr のプラグインの宣言ファイル（herdr-plugin.toml）の中身である（雛形）。
 // herdr でポップアップと分割したペインを開くには、この宣言ファイルを置いたディレクトリを herdr plugin link で登録しておく。
-// 登録する手順と置き場所は、配布物の作り方と合わせて決める（仮）。
+// make dist が配布物の herdr-plugin/ に置き、利用者が herdr plugin link <配布物>/herdr-plugin で 1 回登録する（基本設計 1.3。#244）。
+// 登録していなければ、plugin.pane.open は HerdrPluginNotFound の誤りを返す。
 //
 //go:embed herdr-plugin/herdr-plugin.toml
 var HerdrPluginManifest []byte
@@ -180,8 +185,18 @@ func (h *Herdr) ClosePane(ctx context.Context, pane string) error {
 
 // herdrPane は、socket API の PaneInfo のうち、この層が使う項目である。
 type herdrPane struct {
-	PaneID string `json:"pane_id"`
-	TabID  string `json:"tab_id"`
+	PaneID  string `json:"pane_id"`
+	TabID   string `json:"tab_id"`
+	Focused bool   `json:"focused"`
+}
+
+// PaneFocused は、pane.get の focused を返す（herdr 0.9.0 の pane.get と pane.split の応答の PaneInfo にある項目）。
+func (h *Herdr) PaneFocused(ctx context.Context, pane string) (bool, error) {
+	p, err := h.pane(ctx, pane)
+	if err != nil {
+		return false, err
+	}
+	return p.Focused, nil
 }
 
 // pane は、pane.get でペインを引く。

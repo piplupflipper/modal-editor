@@ -35,6 +35,8 @@ LDFLAGS := -X github.com/piplupflipper/modal-editor/internal/version.version=$(V
 # 宣言ファイルの無い実行ファイル（スクリプトの実行環境）は本体と同じ階層に置く。
 # 配布するのはビルド済みの実行ファイルだけなので、利用者は C コンパイラも Go も要しない。
 # 実行ファイルに静的にリンクするサードパーティのライセンスの文面は licenses/ に置く。
+# herdr の中でポップアップとペインを開くための同梱のプラグインの宣言ファイルは herdr-plugin/ に置く。
+# 利用者は herdr plugin link <配布物>/herdr-plugin で 1 回登録する（基本設計 1.3）。
 #
 # req: NFR-01, NFR-06
 DIST_ROOT := dist
@@ -122,8 +124,9 @@ footprint-check: build ## make build の本体の起動時間と RSS を検査�
 .PHONY: dist
 dist: build ## 配布物を dist/ に作る（実行ファイルと宣言ファイルのディレクトリと tar.gz。NFR-01）
 	rm -rf $(DIST_ROOT)
-	mkdir -p $(DIST_DIR)/extensions $(DIST_DIR)/licenses/go $(DIST_DIR)/licenses/musl
+	mkdir -p $(DIST_DIR)/extensions $(DIST_DIR)/licenses/go $(DIST_DIR)/licenses/musl $(DIST_DIR)/herdr-plugin
 	cp $(BINARY) $(MCP_BRIDGE) config.example.jsonc $(DIST_DIR)/
+	cp internal/mux/herdr-plugin/herdr-plugin.toml $(DIST_DIR)/herdr-plugin/
 	for e in $(EXTENSIONS) $(CGO_EXTENSIONS); do \
 		if [ -f cmd/$$e/manifest.json ]; then \
 			d=$(DIST_DIR)/extensions/$${e#modal-editor-ext-}; \

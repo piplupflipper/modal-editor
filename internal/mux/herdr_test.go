@@ -147,6 +147,23 @@ func TestHerdrCurrentPaneAndUnit(t *testing.T) {
 	}
 }
 
+// PaneFocused は、pane.get の focused を返す（#244）。
+func TestHerdrPaneFocused(t *testing.T) {
+	f := newFakeHerdr(t, func(req herdrRequest) map[string]any {
+		p := paneInfo(req.Params["pane_id"].(string), "wW:t4")
+		p["focused"] = req.Params["pane_id"] == "wW:p1"
+		return ok(map[string]any{"type": "pane_info", "pane": p})
+	})
+	h := &Herdr{Socket: f.socket, Pane: "wW:p1"}
+	ctx := testCtx(t)
+	if got, err := h.PaneFocused(ctx, "wW:p1"); err != nil || !got {
+		t.Errorf("PaneFocused(wW:p1) = %v, %v; want true", got, err)
+	}
+	if got, err := h.PaneFocused(ctx, "wW:p2"); err != nil || got {
+		t.Errorf("PaneFocused(wW:p2) = %v, %v; want false", got, err)
+	}
+}
+
 func TestHerdrSplitPane(t *testing.T) {
 	f := newFakeHerdr(t, func(herdrRequest) map[string]any {
 		return ok(map[string]any{"type": "plugin_pane_opened", "plugin_pane": map[string]any{

@@ -473,6 +473,38 @@ func (tt *testTmux) attachClient(t *testing.T, session string) string {
 	return ""
 }
 
+// TestTmuxPaneFocused は、PaneFocused が、tmux の client の表示している window のアクティブなペインだけを true にすることを確かめる（#244）。
+// tmux の client が無ければ、どのペインも false である。
+func TestTmuxPaneFocused(t *testing.T) {
+	tt := newTestTmux(t)
+	ctx := testCtx(t)
+	other, err := tt.run(ctx, "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", tt.Pane, "sleep 600")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other = strings.TrimSpace(other)
+	if got, err := tt.PaneFocused(ctx, tt.Pane); err != nil || got {
+		t.Errorf("PaneFocused without a client = %v, %v; want false", got, err)
+	}
+	tt.attachClient(t, tt.session)
+	if got, err := tt.PaneFocused(ctx, tt.Pane); err != nil || !got {
+		t.Errorf("PaneFocused(active pane) = %v, %v; want true", got, err)
+	}
+	if got, err := tt.PaneFocused(ctx, other); err != nil || got {
+		t.Errorf("PaneFocused(inactive pane) = %v, %v; want false", got, err)
+	}
+	// 別の window へ移ったら、元の window のアクティブなペインも false になる。
+	if _, err := tt.run(ctx, "new-window", "-t", tt.session, "sleep 600"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := tt.PaneFocused(ctx, tt.Pane); err != nil || got {
+		t.Errorf("PaneFocused after switching windows = %v, %v; want false", got, err)
+	}
+	if _, err := tt.PaneFocused(ctx, "%999"); !errors.Is(err, errNoPane) {
+		t.Errorf("PaneFocused(unknown) = %v, want errNoPane", err)
+	}
+}
+
 // TestTmuxPopupBusy は、ポップアップが開いている間の 2 つ目の OpenPopup が ErrPopupBusy を返し、
 // 中のコマンドを起動しないことを確かめる（PR #188 のレビュー）。
 func TestTmuxPopupBusy(t *testing.T) {

@@ -67,4 +67,6 @@ package ext
 // 古い本体は popup/open に method not found で応答し、peek を黙って捨てて本物のファイルを開く。
 // 0.7.0 で、ファイルでないバッファを作る buffer/create と、2 つのバッファの見比べを始める diff/start を足した（diffstart.go。#245）。
 // 古い本体はどちらにも method not found で応答する。
-const APIVersion = "0.7.0"
+// 0.8.0 で、端末多重化ソフトのペインに部品を開く pane/open を足した（PaneOpenParams。#244）。
+// 古い本体は pane/open に method not found で応答するので、拡張機能は popup/open の PopupCenter に代えられる。
+const APIVersion = "0.8.0"

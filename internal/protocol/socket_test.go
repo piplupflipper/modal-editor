@@ -179,6 +179,7 @@ func TestSocketRoundTrip(t *testing.T) {
 			Kind: KindEdit, Width: 80, Height: 24, Files: []string{"/a b.txt", "/c"}, ReadOnly: true,
 			Pane: "%3", WorkDir: "/home/u/src", Env: []string{"TMUX_PANE=%3"},
 		},
+		Hello{Kind: KindPopup, Width: 60, Height: 20, View: 7},
 		Event{Key: editcmd.Key{Code: editcmd.CodeRune, Rune: 'j'}},
 		Event{Key: editcmd.Key{Code: editcmd.CodeRune, Rune: 'w', Mod: editcmd.ModCtrl}},
 		Event{Key: editcmd.Key{Code: editcmd.CodeEsc}},

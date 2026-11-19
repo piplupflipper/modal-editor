@@ -99,6 +99,9 @@ type viewFields struct {
 	offscreenNote offscreenNote
 	// float は、出しているポップアップである（popup.go）。nil なら出していない。
 	float *floatState
+	// panes は、この client を元の client にして、拡張機能が pane/open で端末多重化ソフトのペインに開いた部品を、開いた順に並べたものである
+	// （component.go。FR-115）。
+	panes []*floatState
 	// popupMark は、最後に拡張機能の操作（command/execute と provider/invoke）を問い合わせた State と、
 	// その時点の command.State.KeysFed の値である（invokeResult）。showPopup が、問い合わせの後に次のキーを解釈したかを調べる。
 	popupMark popupMark
@@ -254,13 +257,22 @@ func (e *Editor) startClient(c *clientView) {
 	e.setSize(w, h)
 	term := e.term
 	e.switchView(prev)
-	go e.forwardInput(c, term)
+	go e.forwardInput(c, term, nil)
 }
 
 // forwardInput は、client c の端末 term の入力を読み、キーを列に積む。<C-c> を見たら中断の印を立てる。
 // 入力が閉じたら、c を goneCh でイベントループへ送る。
-func (e *Editor) forwardInput(c *clientView, term Terminal) {
+// comp が nil でなければ、term は c を元の client にした部品の client の端末である（component.go）。
+// キーは c が受けたものとして積み（基本設計 1.2）、大きさの変化は comp の画面の大きさにし、入力が閉じたら componentGone を呼ばせる。
+func (e *Editor) forwardInput(c *clientView, term Terminal, comp *component) {
 	defer func() {
+		if comp != nil {
+			select {
+			case e.inspect <- func() { e.componentGone(c, comp) }:
+			case <-e.stop:
+			}
+			return
+		}
 		select {
 		case e.goneCh <- c:
 		case <-e.stop:
@@ -268,6 +280,14 @@ func (e *Editor) forwardInput(c *clientView, term Terminal) {
 	}()
 	defer e.recoverPanic()
 	for ev := range term.Input() {
+		if comp != nil && ev.Resize {
+			comp.size.Store([2]int{ev.Width, ev.Height})
+			signal(e.resizeCh)
+			continue
+		}
+		if comp != nil && ev.Terminal != nil {
+			continue // 部品の client には端末の受け渡しを頼まない
+		}
 		if ev.Terminal != nil {
 			select {
 			case e.termCh <- termResult{c: c, r: *ev.Terminal}:
@@ -282,7 +302,7 @@ func (e *Editor) forwardInput(c *clientView, term Terminal) {
 			continue
 		}
 		if ev.Paste != "" {
-			e.keys.push(keyInput{c: c, paste: ev.Paste})
+			e.keys.push(keyInput{c: c, paste: ev.Paste, comp: comp})
 			e.forwarded.Add(1)
 			continue
 		}
@@ -290,12 +310,12 @@ func (e *Editor) forwardInput(c *clientView, term Terminal) {
 		if k == interruptKey {
 			// 印と <C-c> のキーは、列の錠の中で一緒に置く。印を先に見た afterKey の dropThrough が、
 			// まだ積んでいない <C-c> を捨て損ね、後でそれを <Esc> として処理して「中断しました」を消すのを防ぐ（#202）。
-			e.keys.pushInterrupt(keyInput{c: c, key: k}, &e.interrupt, &c.intr)
+			e.keys.pushInterrupt(keyInput{c: c, key: k, comp: comp}, &e.interrupt, &c.intr)
 			signal(e.intrCh)
 			e.forwarded.Add(1)
 			continue
 		}
-		e.keys.push(keyInput{c: c, key: k})
+		e.keys.push(keyInput{c: c, key: k, comp: comp})
 		e.forwarded.Add(1)
 	}
 }
@@ -304,12 +324,13 @@ func (e *Editor) setSize(w, h int) {
 	e.renderer.Width, e.renderer.Height = max(w, 0), max(h, 0)
 }
 
-// applySize は、各 client の端末から届いた最新の大きさを反映する。
+// applySize は、各 client の端末と、各 client の部品の client の端末から届いた最新の大きさを反映する。
 func (e *Editor) applySize() {
 	e.eachView(func(c *clientView) {
 		if v, ok := c.size.Load().([2]int); ok {
 			e.setSize(v[0], v[1])
 		}
+		e.applyComponentSizes()
 	})
 }
 
@@ -459,9 +480,15 @@ func (e *Editor) cancelQuestions() {
 
 // removeClient は、client c を一覧から外し、他の client を読み込む。c のタイマーを止める。
 func (e *Editor) removeClient(c *clientView) {
-	if e.viewOf(c).float != nil {
+	if v := e.viewOf(c); v.float != nil || len(v.panes) > 0 {
 		// ポップアップを出す画面が無くなるので閉じ、拡張機能のポップアップなら持ち主へ知らせる。
-		e.withView(c, func() { e.closeFloat(true) })
+		// この client を元の client にしたペインの部品も閉じる（部品の client を終わらせる。FR-61）。
+		e.withView(c, func() {
+			e.closeFloat(true)
+			for _, p := range slices.Clone(e.panes) {
+				e.closePane(p, true)
+			}
+		})
 	}
 	if c.keyTimer != nil {
 		c.keyTimer.Stop()

@@ -19,6 +19,18 @@ func (s *Server) OpenPopup(ctx context.Context, p ext.PopupOpenParams) (ext.Popu
 	return call[ext.PopupOpenResult](ctx, s, ext.MethodPopupOpen, p)
 }
 
+// OpenPane は、本体へ pane/open を送り、表示の部品を中身にしたペインを端末多重化ソフトで開かせる（FR-115）。応答はペインの ID である。
+// 端末多重化ソフトの外では、本体はペインに代えて中央のポップアップに出す（FR-123）。どちらでも、以後は同じ ID で
+// UpdateView と CloseView を送れ、利用者の操作は OnView で届く。
+// p が ext.PaneOpenParams.Validate を通らなければ、送らずにその誤りを返す。
+// Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す。
+func (s *Server) OpenPane(ctx context.Context, p ext.PaneOpenParams) (ext.PaneOpenResult, error) {
+	if err := p.Validate(); err != nil {
+		return ext.PaneOpenResult{}, err
+	}
+	return call[ext.PaneOpenResult](ctx, s, ext.MethodPaneOpen, p)
+}
+
 // UpdateView は、本体へ view/update を送り、開いたポップアップの部品の中身を置き換えさせる。応答は待たない。どこから呼んでもよい。
 // p.Component が ext.ViewComponent.Validate を通らなければ、送らずにその誤りを返す。
 func (s *Server) UpdateView(p ext.ViewUpdateParams) error {

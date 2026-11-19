@@ -187,6 +187,16 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.pane は、引数（list、tree、input、text）の部品を pane/open でペインに開く（#244）。
+		s.Command("fake.pane", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var a struct{ Text string }
+			_ = json.Unmarshal(p.Args, &a)
+			go func() {
+				r, err := s.OpenPane(hostCtx, ext.PaneOpenParams{Component: fakePopup(a.Text).Component, Direction: ext.PaneDown, Size: 30})
+				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("pane %d err=%v", r.View, err))
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.OnView(func(_ context.Context, e *server.ViewEvent) {
 			msg := fmt.Sprintf("view %d kind=%d item=%s key=%s", e.View, e.Kind, e.Item, e.Key)
 			if e.Kind == server.ViewExpanded {
@@ -212,6 +222,20 @@ func runFakeExt(mode string) int {
 				_ = s.UpdateView(ext.ViewUpdateParams{View: e.View, Component: ext.ViewComponent{
 					Kind: ext.ViewList, Items: []ext.ViewItem{{ID: "new", Label: "updated"}},
 				}})
+			case (e.Kind == server.ViewSelected || e.Kind == server.ViewKey) && (e.Item == "open" || e.Item == "slow" || e.Item == "late"):
+				// ファイラと同じく、選んだファイルを editor/open で開く（#244 の PR #248 のレビューの必須）。フックの中では応答を待てない。
+				// 開くのは fakeOpenedPath のファイルで、開いたら "picked <項目>" を出す。
+				// slow は 300 ms 後に、late は 1.5 秒後（フォーカスを戻す上限の後）に開く（PR #248 の再レビューの必須）。
+				// popupKeys のキー（view/key）でも同じく開く（view/key の後はフォーカスを戻さないことを確かめるため）。
+				delay := map[string]time.Duration{"slow": 300 * time.Millisecond, "late": 1500 * time.Millisecond}[e.Item]
+				go func() {
+					time.Sleep(delay)
+					if _, err := s.OpenEditor(hostCtx, ext.EditorOpenParams{Path: fakeOpenedPath(os.Getppid()), Focus: true}); err != nil {
+						_ = s.ShowMessage(ext.MessageError, "open: "+err.Error())
+						return
+					}
+					_ = s.ShowMessage(ext.MessageInfo, "picked "+e.Item)
+				}()
 			}
 		})
 		s.Command("fake.jump", func(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
@@ -454,6 +478,12 @@ func runFakeExt(mode string) int {
 	return 0
 }
 
+// fakeOpenedPath は、fake.pane files の項目を選んだときに偽の拡張機能が開くファイルのパスである。pid はテストのプロセスの ID である
+// （偽の拡張機能はテストのプロセスの子なので、os.Getppid で同じパスを作れる）。
+func fakeOpenedPath(pid int) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("modal-editor-fake-%d-opened.txt", pid))
+}
+
 // fakePopup は、fake.popup の引数 kind の部品のポップアップの params を返す。
 func fakePopup(kind string) ext.PopupOpenParams {
 	switch kind {
@@ -465,6 +495,10 @@ func fakePopup(kind string) ext.PopupOpenParams {
 		}}}
 	case "input":
 		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewInput, Title: "name", Text: "old"}}
+	case "files":
+		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewList, Title: "files", Items: []ext.ViewItem{
+			{ID: "open", Label: "opened.txt"}, {ID: "slow", Label: "slow"}, {ID: "late", Label: "late"},
+		}}}
 	case "text":
 		return ext.PopupOpenParams{Component: ext.ViewComponent{
 			Kind: ext.ViewText, Text: "alpha beta\ngamma",
@@ -496,6 +530,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				act(ext.ActivationCommand, "fake.echo"), act(ext.ActivationCommand, "fake.openlater"),
 				act(ext.ActivationCommand, "fake.write"), act(ext.ActivationCommand, "fake.touch"),
 				act(ext.ActivationCommand, "fake.popup"), act(ext.ActivationCommand, "fake.headdiff"),
+				act(ext.ActivationCommand, "fake.pane"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -507,7 +542,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
 					contrib("fake.write", ""), contrib("fake.touch", ""),
-					contrib("fake.popup", ""), contrib("fake.headdiff", ""),
+					contrib("fake.popup", ""), contrib("fake.headdiff", ""), contrib("fake.pane", ""),
 				},
 				// ポップアップの中だけで効くキー（FR-69）。x は本体では文字を消すキーで、ポップアップの中ではこちらが先に効く。
 				// gx は g で始まるので、gg はキーの列が当たらずに本体の gg として動く。

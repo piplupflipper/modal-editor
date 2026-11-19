@@ -17,13 +17,15 @@ type ClientMessage interface {
 // ClientKind は、client の種類である（基本設計 1.2 の 4 種類）。
 type ClientKind string
 
-// client の種類。今の server が受け付けるのは KindEdit と KindWait である。
+// client の種類。
 const (
 	// KindEdit は、編集の client（利用者がペインで起動した modal-editor）である。
 	KindEdit ClientKind = "edit"
-	// KindPopup は、ポップアップの部品の client である（FR-67。後の issue で動かす）。
+	// KindPopup は、ポップアップの部品の client である（FR-67）。server が端末多重化ソフトの中央のポップアップの中で
+	// modal-editor -popup <部品の ID> として起動する。Hello の View に、描く部品の ID を載せる。
 	KindPopup ClientKind = "popup"
-	// KindPane は、ペインの部品の client である（FR-115。後の issue で動かす）。
+	// KindPane は、ペインの部品の client である（FR-115）。server が端末多重化ソフトで分割したペインの中で
+	// modal-editor -pane <部品の ID> として起動する。Hello の View に、描く部品の ID を載せる。
 	KindPane ClientKind = "pane"
 	// KindWait は、待つだけの client である（FR-83）。端末を使わないので、大きさを持たない。
 	// Hello の Files を開かせ、それらのタブがすべて閉じられたら、server から理由の無い Exit を受けて終わる。
@@ -65,7 +67,6 @@ func ClampSize(width, height int) (int, int) {
 
 // Hello は、client が接続の最初に送るメッセージである。client の種類と端末の大きさを知らせる（基本設計 1.2）。
 // server は、最初のメッセージが Hello でなければ、その接続を受け付けない。
-// 部品の client の元の client（FR-67、FR-115）、待つだけの client の開くファイル（FR-83）は、それぞれを動かす issue でここに足す。
 type Hello struct {
 	Kind ClientKind
 	// Width と Height は、端末の列数と行数である。端末を持たない client（KindWait）では 0 である。
@@ -94,6 +95,11 @@ type Hello struct {
 	// 版の違う client は、知らないメソッドの通知を読み飛ばすので、応答の要るメッセージ（FeatureTerminal の terminal/run など）を
 	// 読み飛ばされると、server は応答を待ち続ける。server は、宣言した機能のメッセージだけを送る。
 	Features []string
+	// View は、部品の client（KindPopup、KindPane）が描く部品の ID である（server の中で一意で、使い回さない。基本設計 1.2 の
+	// id 付き通知の組の取り決めの ext.ViewID と同じ番号）。server は、起動の引数で渡した ID をそのまま返してもらい、
+	// その部品を開いた元の編集の client を引く（元の client を部品の client に知らせる必要が無い）。
+	// 知らない ID（部品が先に閉じた）なら、server は理由の無い Exit で断る。部品の client でなければ 0 である。
+	View uint64
 }
 
 // FeatureTerminal は、端末の受け渡し（terminal/run、terminal/reclaim、terminal/release に応えること）を扱えることを表す Hello.Features の名前である。

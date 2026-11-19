@@ -80,7 +80,10 @@ func (e *Editor) frame() *ui.Frame {
 	case e.regList != nil:
 		f.List = e.uiRegList()
 	case e.float != nil:
-		f.Float = e.floatFrame(e.float)
+		if e.float.remote == nil {
+			// 部品の client が描くポップアップ（端末多重化ソフトのポップアップの中。component.go）は、この画面には描かない。
+			f.Float = e.floatFrame(e.float)
+		}
 	case f.Message.Text == "" && st.Mode() == command.ModeNormal && !st.Pending():
 		// 他に出すものが無ければ、カーソルの行の診断の本文を出す。
 		if m, ok := bs.cursorDiagnostic(toExtPos(st.Cursor())); ok {
@@ -122,6 +125,7 @@ func (e *Editor) render() {
 	e.eachView(func(*clientView) {
 		e.expireFloat()
 		e.renderView()
+		e.renderComponents()
 	})
 	e.syncDiffScroll()
 }

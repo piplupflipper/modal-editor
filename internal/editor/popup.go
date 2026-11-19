@@ -34,8 +34,9 @@ import (
 //
 // ポップアップは client ごとに 1 つ（viewFields.float）で、新しいポップアップは前のものを閉じて置き換える。
 // 置き場所は、カーソルの近く（ホバー、「ポップアップで見る」）と、画面の中央（ヘルプ、キーの一覧、:popup で縮めたタブ、
-// 拡張機能の center のポップアップ）の 2 つである。中央のポップアップは、端末多重化ソフトのポップアップの部品の client（FR-66、FR-67）が
-// まだ無いので、今は編集の client の画面の中央に描く（端末多重化ソフトの外の規則。基本設計 1.4）。
+// 拡張機能の center のポップアップ）の 2 つである。中央のポップアップは、tmux と herdr の中では端末多重化ソフトのポップアップの中の
+// 部品の client が描き（FR-66、FR-67。component.go）、外と、開けなかったときは編集の client の画面の中央に描く（基本設計 1.4）。
+// 拡張機能の pane/open で開いたペインの部品（viewFields.panes）も floatState で表し、ペインの部品の client が描く（component.go）。
 //
 // # フォーカス
 //
@@ -108,6 +109,12 @@ type floatState struct {
 	pending []editcmd.Key
 	// input は、入力の行の、最後に input/change で知らせた（または開いたときの）中身である。
 	input string
+	// pane は、拡張機能の pane/open で、端末多重化ソフトのペインに開いた部品であることを表す（component.go）。
+	// viewFields.float ではなく viewFields.panes に置く。<Esc> では閉じない。
+	pane bool
+	// remote は、この部品を描いている部品の client（端末多重化ソフトのポップアップかペインの中）である。
+	// nil なら、まだ繋いでいないか、編集の client の画面の中に描く（component.go）。
+	remote *component
 }
 
 // popupDecorationOwner は、ポップアップの部品の色を付ける範囲を、バッファの構文の色に入れるときの持ち主の名前である。
@@ -124,24 +131,36 @@ func (e *Editor) tab() *bufferState {
 
 // floatViewport は、ポップアップのバッファのページ単位のスクロール（command.State.Viewport）を、窓の表示領域につなぐ口である。
 // 窓をまだ描いていなければ、1 行の表示領域として扱う。
-type floatViewport struct{ r *ui.Renderer }
+// 部品の client が描く部品（floatState.remote）では、その client の画面の窓を使う。
+type floatViewport struct {
+	f *floatState
+	r *ui.Renderer
+}
+
+// sub は、窓の中を描く子の Renderer を返す。まだ描いていなければ nil である。
+func (v floatViewport) sub() *ui.Renderer {
+	if c := v.f.remote; c != nil {
+		return c.r.FloatRenderer()
+	}
+	return v.r.FloatRenderer()
+}
 
 func (v floatViewport) Top() int {
-	if s := v.r.FloatRenderer(); s != nil {
+	if s := v.sub(); s != nil {
 		return s.Top()
 	}
 	return 0
 }
 
 func (v floatViewport) Rows() int {
-	if s := v.r.FloatRenderer(); s != nil {
+	if s := v.sub(); s != nil {
 		return max(s.TextRows(), 1)
 	}
 	return 1
 }
 
 func (v floatViewport) SetTop(top int) {
-	if s := v.r.FloatRenderer(); s != nil {
+	if s := v.sub(); s != nil {
 		s.SetScroll(top, s.Left())
 	}
 }
@@ -160,18 +179,30 @@ func (e *Editor) newPopupBuffer(title, text, fileType string, readOnly bool) *bu
 
 // openFloat は、読み込んでいる client に f を出す。前のポップアップは閉じる（持ち主の拡張機能へ view/closed を送る）。
 // f.focused なら、開いた時点でフォーカスを入れる。f.base と f.anchor は、ここで読み込んでいる client のカーソルのあるタブから決める。
+// f.id が 0 なら新しい番号を付ける（ペインを開けずに中央のポップアップへ移すときは、ペインの番号を保つ。component.go）。
+// 中央のポップアップなら、端末多重化ソフトのポップアップを開くよう頼む（requestPopup。FR-67）。
 func (e *Editor) openFloat(f *floatState) {
+	if e.paneActive != nil && e.float == e.paneActive {
+		// ペインの部品のキーの途中で開いた（ペインの中で <Leader>? を打ったなど）。ペインは閉じずに元のタブへ戻し、
+		// 退避していた元の client のポップアップを置き換える（component.go）。
+		e.leavePane()
+	}
 	e.closeFloat(true)
-	e.floatSeq++
-	f.id = e.floatSeq
+	if f.id == 0 {
+		e.floatSeq++
+		f.id = e.floatSeq
+	}
 	f.base = e.cur
 	f.anchor = e.cur.state.Cursor()
-	f.bs.state.Viewport = floatViewport{r: e.renderer}
+	f.bs.state.Viewport = floatViewport{f: f, r: e.renderer}
 	focus := f.focused
 	f.focused = false
 	e.float = f
 	if focus {
 		e.focusFloat()
+	}
+	if f.center {
+		e.requestPopup(f)
 	}
 }
 
@@ -226,16 +257,32 @@ func (e *Editor) unfocusFloat() {
 // closeFloat は、読み込んでいる client のポップアップを閉じる。フォーカスがあれば、開いたときのタブへ戻す。
 // :popup で縮めたタブはタブの並びへ戻し、ポップアップのために作ったバッファは閉じる。
 // notify なら、拡張機能のポップアップの持ち主へ view/closed を送る（拡張機能が view/close で閉じたときは送らない）。
+// 部品の client が描いていれば、その client を終わらせる（端末多重化ソフトのポップアップかペインが閉じる。component.go）。
+// ペインの部品のキーの途中（paneInput）でそのペインを閉じたら、退避していた元の client のポップアップを戻す。
+// ペインの部品を閉じるときは closePane を使う。
 func (e *Editor) closeFloat(notify bool) {
 	f := e.float
 	if f == nil {
 		return
 	}
 	e.float = nil
+	if f == e.paneActive {
+		e.float = e.paneSaved
+		e.paneActive, e.paneSaved = nil, nil
+	}
+	e.panes = slices.DeleteFunc(e.panes, func(o *floatState) bool { return o == f })
+	if c := f.remote; c != nil {
+		f.remote = nil
+		c.exit()
+	}
 	if f.focused {
 		f.focused = false
 		base := f.base
-		if !slices.Contains(e.view.tabs, base) {
+		switch g := e.float; {
+		case g != nil && g.focused:
+			// ペインを閉じて、フォーカスのあった元の client のポップアップへ戻る。
+			base = g.bs
+		case !slices.Contains(e.view.tabs, base):
 			base = e.firstTab()
 		}
 		if base != nil {
@@ -249,6 +296,7 @@ func (e *Editor) closeFloat(notify bool) {
 		e.closeBufferState(f.bs)
 	}
 	if notify && f.ext != "" {
+		e.noteViewClient(f, false)
 		if err := e.host.Notify(f.ext, ext.MethodViewClosed, ext.ViewClosedParams{View: ext.ViewID(f.id)}); err != nil {
 			e.log.Warn("view/closed を送れない", "extension", f.ext, "err", err)
 		}
@@ -285,6 +333,11 @@ func (e *Editor) closeFloatsOf(bs *bufferState) {
 		if f := e.viewOf(c).float; f != nil && (f.bs == bs || f.base == bs) {
 			e.withView(c, func() { e.closeFloat(true) })
 		}
+		for _, p := range slices.Clone(e.viewOf(c).panes) {
+			if p.bs == bs {
+				e.withView(c, func() { e.closePane(p, true) })
+			}
+		}
 	}
 }
 
@@ -296,6 +349,11 @@ func (e *Editor) closeExtensionFloats(extID string) {
 		}
 		if f := e.viewOf(c).float; f != nil && f.ext == extID {
 			e.withView(c, func() { e.closeFloat(false) })
+		}
+		for _, p := range slices.Clone(e.viewOf(c).panes) {
+			if p.ext == extID {
+				e.withView(c, func() { e.closePane(p, false) })
+			}
 		}
 	}
 }
@@ -371,7 +429,8 @@ func (e *Editor) floatKey(f *floatState, k editcmd.Key, insert bool) (bool, []ed
 		}
 	}
 	switch {
-	case k == editcmd.Esc:
+	case k == editcmd.Esc && !f.pane:
+		// ペインの部品は <Esc> で閉じない（端末多重化ソフトでペインを閉じるか、:q で閉じる。component.go）。
 		e.closeFloat(true)
 		return true, nil
 	case k == editcmd.Special(editcmd.CodeEnter) && f.kind != floatText:
@@ -479,6 +538,7 @@ func (e *Editor) notifyView(f *floatState, method string, params any) {
 	if f.ext == "" {
 		return
 	}
+	e.noteViewClient(f, method == ext.MethodViewSelect)
 	if err := e.host.Notify(f.ext, method, params); err != nil {
 		e.log.Warn("ポップアップの知らせを送れない", "extension", f.ext, "method", method, "err", err)
 	}
@@ -604,6 +664,7 @@ func initExpanded(items []ext.ViewItem, prev, m map[string]bool) {
 // setFloatContent は、ポップアップ f のバッファの中身を部品 c にする。
 // 一覧と木では、カーソルのあった項目の ID が c にもあればその行へカーソルを置き、無ければ行の番号を行数に収まる範囲で保つ。
 // 木の開閉の状態は、前の木にあった ID の項目はそのまま保ち、新しい ID の項目は c の Expanded にする（PR #242 のレビューの必須 2）。
+// テキストでは、カーソルが最後の行にあれば新しい中身の最後の行へ置く（末尾を追う）。
 // 中身を替えるのは、編集の禁止の判定を通らない読み直しの入り口で行う（基本設計 4.6 の「ファイルでないバッファの中身の更新」）。
 func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent) {
 	if c.Kind == ext.ViewTree {
@@ -617,10 +678,16 @@ func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent) {
 	if cursor.Line < len(f.rows) {
 		curID = f.rows[cursor.Line].id
 	}
+	// テキストで、カーソルが最後の行にあれば（末尾を見ていれば）、書き足した後も最後の行へ置き、表示が末尾を追うようにする
+	// （デバッグ対象の出力と ACP の返答のペイン。FR-108、FR-111。PR #248 のレビューの推奨 2）。
+	follow := f.kind == floatText && cursor.Line >= f.bs.buf.LineCount()-1
 	lines, rows, decs := floatLines(c, f.expanded)
 	f.rows = rows
 	e.reload(f.bs, buffer.New(strings.Join(lines, "\n")))
 	line := min(cursor.Line, f.bs.buf.LineCount()-1)
+	if follow {
+		line = f.bs.buf.LineCount() - 1
+	}
 	if i := slices.IndexFunc(rows, func(r floatRow) bool { return r.id == curID }); curID != "" && i >= 0 {
 		// 一覧と木では、カーソルのあった項目の行へカーソルを置く（行が増減しても同じ項目を指す）。
 		line = i
@@ -701,6 +768,11 @@ func (e *Editor) findViewFloat(extID string, id ext.ViewID) (*clientView, *float
 		if f := e.viewOf(c).float; f != nil && f.ext == extID && ext.ViewID(f.id) == id {
 			return c, f
 		}
+		for _, p := range e.viewOf(c).panes {
+			if p.ext == extID && ext.ViewID(p.id) == id {
+				return c, p
+			}
+		}
 	}
 	return nil, nil
 }
@@ -725,7 +797,7 @@ func (e *Editor) viewClose(ev *exthost.ViewClose) {
 	if f == nil {
 		return
 	}
-	e.withView(c, func() { e.closeFloat(false) })
+	e.withView(c, func() { e.closeAnyFloat(f, false) })
 }
 
 // componentKind は、部品の種類を floatKind にする。

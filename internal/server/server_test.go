@@ -554,21 +554,31 @@ func TestServeOverSocket(t *testing.T) {
 	}
 	_ = second.Close()
 
-	// まだ受け付けない種類の client（部品の client）の接続は、理由付きの終わりの知らせを送って閉じる。
-	popup, err := protocol.Dial(sock)
-	if err != nil {
-		t.Fatal(err)
+	// 知らない種類の client の接続は、理由付きの終わりの知らせを送って閉じる。
+	// 知らない部品を描くと名乗った部品の client（部品が先に閉じた）は、理由の無い終わりの知らせで断る。
+	for _, tc := range []struct {
+		hello protocol.Hello
+		want  protocol.Exit
+	}{
+		{protocol.Hello{Kind: "bogus"}, protocol.Exit{Reason: UnsupportedReason}},
+		{protocol.Hello{Kind: protocol.KindPopup, Width: 20, Height: 5, View: 99}, protocol.Exit{}},
+		{protocol.Hello{Kind: protocol.KindPane, Width: 20, Height: 5, View: 99}, protocol.Exit{}},
+	} {
+		other, derr := protocol.Dial(sock)
+		if derr != nil {
+			t.Fatal(derr)
+		}
+		if err = other.Send(tc.hello); err != nil {
+			t.Fatal(err)
+		}
+		if m, rerr := other.Recv(); rerr != nil || m != tc.want {
+			t.Fatalf("%s client Recv = %#v, %v; want %#v", tc.hello.Kind, m, rerr, tc.want)
+		}
+		if _, err = other.Recv(); !errors.Is(err, io.EOF) {
+			t.Fatalf("%s client Recv after Exit = %v, want io.EOF (closed by the server)", tc.hello.Kind, err)
+		}
+		_ = other.Close()
 	}
-	if err = popup.Send(protocol.Hello{Kind: protocol.KindPopup}); err != nil {
-		t.Fatal(err)
-	}
-	if m, rerr := popup.Recv(); rerr != nil || m != (protocol.Exit{Reason: UnsupportedReason}) {
-		t.Fatalf("popup client Recv = %#v, %v; want an Exit with UnsupportedReason", m, rerr)
-	}
-	if _, err = popup.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("popup client Recv after Exit = %v, want io.EOF (closed by the server)", err)
-	}
-	_ = popup.Close()
 
 	msgs := collect(c)
 	sendKeys(t, c, "isock<Esc>:wq<CR>")

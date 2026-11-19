@@ -89,6 +89,8 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.bufferDisposeRequest(ev)
 	case *exthost.DiffStartRequest:
 		e.diffStartRequest(ev)
+	case *exthost.PaneOpenRequest:
+		e.withView(e.extView(ev.Extension), func() { e.paneOpenRequest(ev) })
 	case *exthost.ViewUpdate:
 		e.viewUpdate(ev)
 	case *exthost.ViewClose:
@@ -313,6 +315,7 @@ func (e *Editor) editorOpenRequest(ev *exthost.EditorOpenRequest) {
 	if fresh && bs.owner == nil {
 		bs.offscreen = true
 	}
+	e.focusAfterPane(ev.Extension, p.Focus && bs.owner == e.view)
 	_ = ev.Reply(ext.EditorOpenResult{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Moved: moved})
 }
 

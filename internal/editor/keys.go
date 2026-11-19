@@ -20,6 +20,9 @@ type keyInput struct {
 	c     *clientView
 	key   editcmd.Key
 	paste string
+	// comp は、入力を受けた部品の client である（component.go）。nil なら c の端末で受けた。
+	// 部品の client で受けた入力は、元の client c の操作として扱う（基本設計 1.2）。
+	comp *component
 }
 
 // keyQueue は、端末から読んだキーと貼り付けの列である。読む goroutine が積み、イベントループが取り出す。
@@ -129,7 +132,14 @@ func (e *Editor) handleKeys() {
 	if !ok || in.c.detached {
 		return
 	}
+	// 利用者がどれかの client でキーを打ったら、ペインで選んだ後のフォーカスを戻す印を下ろす（focusAfterPane。PR #248 の再レビューの必須）。
+	// ペインの部品の client のキーで選んだときは、このキーの処理の中で立て直す。
+	clear(e.extFromPane)
 	e.useClient(in.c)
+	if in.comp != nil {
+		e.componentInput(in)
+		return
+	}
 	if in.paste != "" {
 		e.handlePaste(in.paste)
 	} else {

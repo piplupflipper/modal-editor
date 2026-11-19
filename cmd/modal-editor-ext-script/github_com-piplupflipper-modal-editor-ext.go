@@ -12,7 +12,7 @@ import (
 func init() {
 	Symbols["github.com/piplupflipper/modal-editor/ext/ext"] = map[string]reflect.Value{
 		// function, constant and variable definitions
-		"APIVersion":               reflect.ValueOf(constant.MakeFromLiteral("\"0.7.0\"", token.STRING, 0)),
+		"APIVersion":               reflect.ValueOf(constant.MakeFromLiteral("\"0.8.0\"", token.STRING, 0)),
 		"ActivationCommand":        reflect.ValueOf(ext.ActivationCommand),
 		"ActivationFileType":       reflect.ValueOf(ext.ActivationFileType),
 		"ActivationMotion":         reflect.ValueOf(ext.ActivationMotion),
@@ -52,6 +52,7 @@ func init() {
 		"MethodMotionResolve":      reflect.ValueOf(constant.MakeFromLiteral("\"motion/resolve\"", token.STRING, 0)),
 		"MethodOperatorApply":      reflect.ValueOf(constant.MakeFromLiteral("\"operator/apply\"", token.STRING, 0)),
 		"MethodOutputAppend":       reflect.ValueOf(constant.MakeFromLiteral("\"output/append\"", token.STRING, 0)),
+		"MethodPaneOpen":           reflect.ValueOf(constant.MakeFromLiteral("\"pane/open\"", token.STRING, 0)),
 		"MethodPing":               reflect.ValueOf(constant.MakeFromLiteral("\"ping\"", token.STRING, 0)),
 		"MethodPopupOpen":          reflect.ValueOf(constant.MakeFromLiteral("\"popup/open\"", token.STRING, 0)),
 		"MethodPopupShow":          reflect.ValueOf(constant.MakeFromLiteral("\"popup/show\"", token.STRING, 0)),
@@ -96,6 +97,8 @@ func init() {
 		"OpTypeDefinition":         reflect.ValueOf(ext.OpTypeDefinition),
 		"OpWorkspaceSymbols":       reflect.ValueOf(ext.OpWorkspaceSymbols),
 		"Operations":               reflect.ValueOf(&ext.Operations).Elem(),
+		"PaneDown":                 reflect.ValueOf(ext.PaneDown),
+		"PaneRight":                reflect.ValueOf(ext.PaneRight),
 		"PopupAtCursor":            reflect.ValueOf(ext.PopupAtCursor),
 		"PopupCenter":              reflect.ValueOf(ext.PopupCenter),
 		"PopupMarkdown":            reflect.ValueOf(ext.PopupMarkdown),
@@ -173,6 +176,9 @@ func init() {
 		"OperatorApplyParams":     reflect.ValueOf((*ext.OperatorApplyParams)(nil)),
 		"OperatorApplyResult":     reflect.ValueOf((*ext.OperatorApplyResult)(nil)),
 		"OutputAppendParams":      reflect.ValueOf((*ext.OutputAppendParams)(nil)),
+		"PaneDirection":           reflect.ValueOf((*ext.PaneDirection)(nil)),
+		"PaneOpenParams":          reflect.ValueOf((*ext.PaneOpenParams)(nil)),
+		"PaneOpenResult":          reflect.ValueOf((*ext.PaneOpenResult)(nil)),
 		"PingParams":              reflect.ValueOf((*ext.PingParams)(nil)),
 		"PingResult":              reflect.ValueOf((*ext.PingResult)(nil)),
 		"PopupFormat":             reflect.ValueOf((*ext.PopupFormat)(nil)),

@@ -108,6 +108,11 @@ func withFocus(cfg editor.Config, m mux.Mux) editor.Config {
 		defer cancel()
 		return m.FocusPane(ctx, from, pane)
 	}
+	cfg.PaneFocused = func(pane string) (bool, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), focusTimeout)
+		defer cancel()
+		return m.PaneFocused(ctx, pane)
+	}
 	return cfg
 }
 
