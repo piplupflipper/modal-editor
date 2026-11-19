@@ -88,6 +88,46 @@ func TestCheckAppearance(t *testing.T) {
 	}
 }
 
+// tabline の left と right は statusline と同じく部品の ID の列で、本体のタブ行の部品（TabLinePart）で確かめる。
+// "." を含む ID は拡張機能の部品の ID なので、statusline と tabline のどちらでも確かめずに残す（宣言ファイルを読んだ後に editor が確かめる）。
+//
+// req: FR-92
+func TestCheckTabLineParts(t *testing.T) {
+	src := `{
+  "statusline": { "left": ["mode", "mrreview.status", "tabs"] },
+  "tabline": { "show": "multiple", "right": ["memusage.rss", "tabs", "zzzz"] }
+}`
+	cfg, errs := Parse("config.jsonc", []byte(src))
+	if len(errs) != 0 {
+		t.Fatalf("Parse の誤り: %v", errs)
+	}
+	if cfg.TabLineShow != TabLineMultiple {
+		t.Errorf("TabLineShow = %q", cfg.TabLineShow)
+	}
+	errs = cfg.CheckAppearance(AppearanceCheck{
+		StatusPart:  func(id string) bool { return id == "mode" },
+		TabLinePart: func(id string) bool { return id == "tabs" || id == "mode" },
+	})
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{
+		{2, 55, "statusline の部品 tabs は未知"},
+		{3, 70, "tabline の部品 zzzz は未知"},
+	})
+	if want := (&StatusLine{Left: []string{"mode", "mrreview.status"}, Right: []string{}}); !reflect.DeepEqual(cfg.StatusLine, want) {
+		t.Errorf("StatusLine = %+v, want %+v", cfg.StatusLine, want)
+	}
+	if want := (&StatusLine{Left: []string{}, Right: []string{"memusage.rss", "tabs"}}); !reflect.DeepEqual(cfg.TabLineParts, want) {
+		t.Errorf("TabLineParts = %+v, want %+v", cfg.TabLineParts, want)
+	}
+
+	cfg, _ = Parse("config.jsonc", []byte(`{"tabline": {"show": "always"}}`))
+	if cfg.TabLineParts != nil {
+		t.Errorf("left と right を書かなければ nil: %+v", cfg.TabLineParts)
+	}
+}
+
 // Parse の誤りと CheckAppearance の誤りを SortErrors で合わせると、ファイルの位置の順になる
 // （起動後のメッセージに出す最初の 1 件を、位置の最も前の誤りにする。PR #206 のレビュー）。
 func TestSortErrors(t *testing.T) {

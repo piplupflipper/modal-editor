@@ -444,6 +444,12 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 					return
 				}
 				ev = &OutputAppend{Extension: id, Params: p}
+			case ext.MethodStatusLineSet:
+				var p ext.StatusLineSetParams
+				if !h.decode(id, n, &p) {
+					return
+				}
+				ev = &StatusLineSet{Extension: id, Params: p}
 			case ext.MethodBufferResync:
 				var p ext.BufferResyncParams
 				if !h.decode(id, n, &p) {

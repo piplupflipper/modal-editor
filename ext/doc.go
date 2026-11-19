@@ -59,4 +59,7 @@ package ext
 // #227 で宣言ファイルの contributes の各項目に description（Contribution.Description）を足したが、バージョンは上げていない。
 // 省いてよい項目で、メッセージの形は変えておらず、古い本体は contributes の中の未知の項目を黙って捨てる（encoding/json）ので、
 // 説明文の無い一覧になるだけで動きは変わらないためである。
-const APIVersion = "0.4.0"
+// 0.5.0 で、宣言ファイルの contributes.statusline と、部品の中身を送る statusline/set を足した（StatusLineSetParams。#238）。
+// 古い本体は statusline/set を知らない通知として捨て（ログに残すだけ）、contributes.statusline を未知の項目として捨てるので、部品は出ない。
+// また、activation と provides の無い、部品だけを足す宣言ファイルを誤りとして拒む。
+const APIVersion = "0.5.0"

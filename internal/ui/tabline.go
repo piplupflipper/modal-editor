@@ -1,5 +1,7 @@
 package ui
 
+import "slices"
+
 // Tab は、タブの行に出すタブ 1 つである（FR-62。基本設計 4.4 の段階 3 のタブとバッファ）。
 type Tab struct {
 	// Name は、タブに出すバッファの名前である。空なら "[No Name]" と出す。
@@ -57,16 +59,119 @@ func (r *Renderer) tabLabel(t Tab) string {
 	return s + " "
 }
 
+// TabLinePartTabs は、タブの行の部品のうち、タブの見出しの並び（Frame.Tabs）である（設定の tabline の left と right に書ける ID。FR-62、FR-92）。
+// ステータス行には並べられない。
+const TabLinePartTabs = "tabs"
+
+// DefaultTabLineParts は、タブの行の既定の並びを返す。左にタブの見出しの並びだけを置く（#215 のタブの行と同じ見た目）。
+func DefaultTabLineParts() StatusLine {
+	return StatusLine{Left: []string{TabLinePartTabs}}
+}
+
+// IsTabLinePart は、id が、タブの行に並べられる本体の部品の ID かを返す。
+// タブの見出しの並び（TabLinePartTabs）と、ステータス行の本体の部品（IsStatusPart）である。
+func IsTabLinePart(id string) bool {
+	return id == TabLinePartTabs || IsStatusPart(id)
+}
+
+// tabLineSegs は、タブの行の部品 ids を、描く順の文字列と属性の列にする（statusSegs）。
+// タブの見出しの並び（TabLinePartTabs）は、文字列の無い印の要素（id だけ）にし、幅は drawTabLine が決める。
+func (r *Renderer) tabLineSegs(ids []string, theme Theme, base Attr, text Text, f *Frame, cur cursorPlace) []statusSeg {
+	var segs []statusSeg
+	from := 0
+	for i, id := range ids {
+		if id != TabLinePartTabs {
+			continue
+		}
+		segs = append(segs, r.statusSegs(ids[from:i], theme, base, text, f, cur)...)
+		segs = append(segs, statusSeg{id: TabLinePartTabs})
+		from = i + 1
+	}
+	return append(segs, r.statusSegs(ids[from:], theme, base, text, f, cur)...)
+}
+
 // drawTabLine は、画面の一番上の行にタブの行を描く（FR-62）。
-// タブの見出しを左から並べ、カーソルのあるタブを StyleTabLineSelected、他を StyleTabLine、残りの列を StyleTabLineFill で描く。
+//
+// 部品の並びは Renderer.TabLineParts（nil なら DefaultTabLineParts）で決める（FR-92）。
+// 左の部品を左の端から、右の部品を右の端に寄せて描き、残りの列を StyleTabLineFill で描く。
+// タブの見出しの並び（TabLinePartTabs）は、他の部品を描いた残りの幅を使う。2 つ以上並べたら、左、右の順で最初のものだけを出す。
+// 幅が足りなければ、ステータス行と同じく右の部品を優先し、左の部品を右の端で切る。
+// ステータス行の部品の色は、StyleTabLineFill の色の上に重ねる。
+//
+// タブの見出しは drawTabs が描く。
+//
+// req: FR-62, FR-87, FR-92
+func (r *Renderer) drawTabLine(g *Grid, theme Theme, f *Frame) {
+	fill := theme.attr(StyleTabLineFill)
+	for c := range r.Width {
+		g.set(0, c, blank(fill))
+	}
+	layout := DefaultTabLineParts()
+	if r.TabLineParts != nil {
+		layout = *r.TabLineParts
+	}
+	text := f.Text
+	if text == nil {
+		text = emptyText{}
+	}
+	cur := r.placeCursor(text, f)
+	// タブの見出しの並びは、左、右の順で最初のものだけを残す。
+	seen := false
+	keepFirstTabs := func(segs []statusSeg) []statusSeg {
+		return slices.DeleteFunc(segs, func(s statusSeg) bool {
+			if s.id != TabLinePartTabs {
+				return false
+			}
+			drop := seen
+			seen = true
+			return drop
+		})
+	}
+	left := keepFirstTabs(r.tabLineSegs(layout.Left, theme, fill, text, f, cur))
+	right := keepFirstTabs(r.tabLineSegs(layout.Right, theme, fill, text, f, cur))
+	fixed := 0
+	for _, s := range slices.Concat(left, right) {
+		fixed += StringWidth(s.text, r.TabStop)
+	}
+	tabsWidth := max(r.Width-fixed, 0)
+	segWidth := func(s statusSeg) int {
+		if s.id == TabLinePartTabs {
+			return tabsWidth
+		}
+		return StringWidth(s.text, r.TabStop)
+	}
+	draw := func(col, limit int, segs []statusSeg) {
+		for _, s := range segs {
+			if col >= limit {
+				return
+			}
+			if s.id == TabLinePartTabs {
+				r.drawTabs(g, theme, f.Tabs, col, min(col+tabsWidth, limit))
+			} else {
+				r.drawSegs(g, 0, col, limit, []statusSeg{s})
+			}
+			col += segWidth(s)
+		}
+	}
+	rw := 0
+	for _, s := range right {
+		rw += segWidth(s)
+	}
+	start := max(r.Width-rw, 0)
+	draw(start, r.Width, right)
+	draw(0, start, left)
+}
+
+// drawTabs は、タブの見出しを、1 行目の列 col から列 limit の手前まで左から並べる（FR-62）。
+// カーソルのあるタブを StyleTabLineSelected、他を StyleTabLine で描く。
 // 見出しが幅に収まらなければ、カーソルのあるタブが収まるまで左のタブを省き、省いたことを左の端の "<" で示す。
 // 右に収まらないタブの見出しは、収まる列で切る。
 //
 // req: FR-62, FR-87
-func (r *Renderer) drawTabLine(g *Grid, theme Theme, tabs []Tab) {
-	fill := theme.attr(StyleTabLineFill)
-	for c := range r.Width {
-		g.set(0, c, blank(fill))
+func (r *Renderer) drawTabs(g *Grid, theme Theme, tabs []Tab, col0, limit int) {
+	avail := limit - col0
+	if avail <= 0 {
+		return
 	}
 	labels := make([]string, len(tabs))
 	widths := make([]int, len(tabs))
@@ -85,24 +190,24 @@ func (r *Renderer) drawTabLine(g *Grid, theme Theme, tabs []Tab) {
 		if first > 0 {
 			lead = 1
 		}
-		if sumTo(widths, first, cur)+lead <= r.Width {
+		if sumTo(widths, first, cur)+lead <= avail {
 			break
 		}
 		first++
 	}
-	col := 0
+	col := col0
 	if first > 0 {
-		g.set(0, 0, Cell{Text: "<", Width: 1, Attr: theme.attr(StyleTabLine)})
-		col = 1
+		g.set(0, col0, Cell{Text: "<", Width: 1, Attr: theme.attr(StyleTabLine)})
+		col++
 	}
 	want := col
-	for i := first; i < len(tabs) && col < r.Width; i++ {
+	for i := first; i < len(tabs) && col < limit; i++ {
 		a := theme.attr(StyleTabLine)
 		if tabs[i].Current {
 			a = theme.attr(StyleTabLineSelected)
 		}
 		want += widths[i]
-		if col = r.drawText(g, 0, col, r.Width, labels[i], a); col < want {
+		if col = r.drawText(g, 0, col, limit, labels[i], a); col < want {
 			break // 収まらずに切れた
 		}
 	}
@@ -133,7 +238,7 @@ func (r *Renderer) renderWithTabLine(f *Frame) Screen {
 	for i := range body.Grid.Height() {
 		g.SetRow(i+1, body.Grid.Row(i))
 	}
-	r.drawTabLine(g, theme, f.Tabs)
+	r.drawTabLine(g, theme, f)
 	cur := body.Cursor
 	cur.Row++
 	return Screen{Grid: g, Cursor: cur}

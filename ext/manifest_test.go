@@ -80,10 +80,39 @@ func TestManifestValidate(t *testing.T) {
 		{name: "id が空", modify: func(m *Manifest) { m.ID = "" }, want: []string{"id が空"}},
 		{name: "id が空白を含む", modify: func(m *Manifest) { m.ID = "sur round" }, want: []string{`id "sur round" が空白を含む`}},
 		{name: "command が空", modify: func(m *Manifest) { m.Command = "" }, want: []string{"command が空"}},
-		{name: "activation が空", modify: func(m *Manifest) { m.Activation = nil }, want: []string{"activation と provides がどちらも空"}},
+		{name: "activation が空", modify: func(m *Manifest) { m.Activation = nil }, want: []string{"activation と provides と contributes.statusline がどれも空"}},
 		{
 			name:   "provides があれば activation は空でよい",
 			modify: func(m *Manifest) { m.Activation = nil; m.Provides = []Operation{OpHover, OpDebugContinue} },
+		},
+		{
+			name: "contributes.statusline があれば activation は空でよい",
+			modify: func(m *Manifest) {
+				m.Activation = nil
+				m.Contributes.StatusLine = []StatusLinePart{{ID: "surround.count", Description: "囲んだ数"}}
+			},
+		},
+		{
+			name: "contributes.statusline の ID の誤り",
+			modify: func(m *Manifest) {
+				m.Contributes.StatusLine = []StatusLinePart{
+					{ID: ""},
+					{ID: "count"},
+					{ID: "surround."},
+					{ID: "other.count"},
+					{ID: "surround.a b"},
+					{ID: "surround.count"},
+					{ID: "surround.count"},
+				}
+			},
+			want: []string{
+				"contributes.statusline[0].id が空",
+				`contributes.statusline[1].id "count" が拡張機能の ID "surround" と "." で始まらない`,
+				`contributes.statusline[2].id "surround." が拡張機能の ID`,
+				`contributes.statusline[3].id "other.count" が拡張機能の ID`,
+				`contributes.statusline[4].id "surround.a b" が空白を含む`,
+				`contributes.statusline[6].id "surround.count" が contributes.statusline[5] と重複する`,
+			},
 		},
 		{
 			name:   "provides の未知の操作は警告にする",

@@ -12,7 +12,7 @@ import (
 func init() {
 	Symbols["github.com/piplupflipper/modal-editor/ext/ext"] = map[string]reflect.Value{
 		// function, constant and variable definitions
-		"APIVersion":               reflect.ValueOf(constant.MakeFromLiteral("\"0.4.0\"", token.STRING, 0)),
+		"APIVersion":               reflect.ValueOf(constant.MakeFromLiteral("\"0.5.0\"", token.STRING, 0)),
 		"ActivationCommand":        reflect.ValueOf(ext.ActivationCommand),
 		"ActivationFileType":       reflect.ValueOf(ext.ActivationFileType),
 		"ActivationMotion":         reflect.ValueOf(ext.ActivationMotion),
@@ -52,6 +52,7 @@ func init() {
 		"MethodProviderInvoke":     reflect.ValueOf(constant.MakeFromLiteral("\"provider/invoke\"", token.STRING, 0)),
 		"MethodShutdown":           reflect.ValueOf(constant.MakeFromLiteral("\"shutdown\"", token.STRING, 0)),
 		"MethodSignSet":            reflect.ValueOf(constant.MakeFromLiteral("\"sign/set\"", token.STRING, 0)),
+		"MethodStatusLineSet":      reflect.ValueOf(constant.MakeFromLiteral("\"statusline/set\"", token.STRING, 0)),
 		"MethodTextObjectResolve":  reflect.ValueOf(constant.MakeFromLiteral("\"textObject/resolve\"", token.STRING, 0)),
 		"ModeCommandLine":          reflect.ValueOf(ext.ModeCommandLine),
 		"ModeInsert":               reflect.ValueOf(ext.ModeInsert),
@@ -93,6 +94,7 @@ func init() {
 		"SignBreakpointUnverified": reflect.ValueOf(ext.SignBreakpointUnverified),
 		"SignExecutionPoint":       reflect.ValueOf(ext.SignExecutionPoint),
 		"SocketFDStart":            reflect.ValueOf(constant.MakeFromLiteral("3", token.INT, 0)),
+		"StatusLineText":           reflect.ValueOf(ext.StatusLineText),
 		"ValidateManifests":        reflect.ValueOf(ext.ValidateManifests),
 
 		// type definitions
@@ -157,6 +159,8 @@ func init() {
 		"Sign":                    reflect.ValueOf((*ext.Sign)(nil)),
 		"SignKind":                reflect.ValueOf((*ext.SignKind)(nil)),
 		"SignSetParams":           reflect.ValueOf((*ext.SignSetParams)(nil)),
+		"StatusLinePart":          reflect.ValueOf((*ext.StatusLinePart)(nil)),
+		"StatusLineSetParams":     reflect.ValueOf((*ext.StatusLineSetParams)(nil)),
 		"TextObjectResolveParams": reflect.ValueOf((*ext.TextObjectResolveParams)(nil)),
 		"TextObjectResolveResult": reflect.ValueOf((*ext.TextObjectResolveResult)(nil)),
 		"Transaction":             reflect.ValueOf((*ext.Transaction)(nil)),

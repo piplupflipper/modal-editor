@@ -153,6 +153,8 @@ type Config struct {
 	StatusLine *ui.StatusLine
 	// TabLine は、タブの行を出す場合（設定の tabline.show。FR-62）である。ゼロ値は、タブが 1 つでも出す（ui.TabLineAlways。#215 のオーナーの裁定）。
 	TabLine ui.TabLineMode
+	// TabLineParts は、タブの行に並べる部品の列（設定の tabline の left と right。FR-92）である。nil なら ui.DefaultTabLineParts を使う。
+	TabLineParts *ui.StatusLine
 	// SplitPane は、:diffsplit（基本設計 6.8。FR-99）で、from のペインを分割し、新しいペインで file を開く編集の client を、
 	// このエディタの server に繋ぐ形で起動する関数である（internal/mux の Mux.SplitPane を包んだもの）。dir は起動するディレクトリである。
 	// イベントループを止めないよう、別の goroutine で呼ぶ。nil なら :diffsplit は端末多重化ソフトの外として誤りにする。
@@ -325,6 +327,10 @@ type Editor struct {
 	// prompt は、表示中の本体の問い（外で変わったファイルへの :w の確認、W11〜W13）である。
 	prompt  *prompt
 	outputs map[outputKey][]string
+	// statusOwners は、拡張機能が足したステータス行の部品の ID から、足した拡張機能の ID への表である（buildStatusOwners。FR-92）。
+	statusOwners map[string]string
+	// extParts は、拡張機能が statusline/set で送った部品の中身である（setStatusPart。FR-92）。
+	extParts map[string]ui.ExtPart
 	// outputOrder は、出力の欄を、最初に書き足された順に並べたものである（<C-w>P で切り替える順）。
 	outputOrder []outputKey
 	// outputLast は、最後に書き足された欄である。
@@ -439,7 +445,9 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		diff:       newDiffState(),
 		outputs:    map[outputKey][]string{},
 		nextID:     1,
+		extParts:   map[string]ui.ExtPart{},
 	}
+	e.statusOwners = buildStatusOwners(cfg.Extensions)
 	e.fileType = defaultFileTypes()
 	for k, v := range cfg.FileTypes {
 		e.fileType[k] = v
@@ -463,6 +471,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	warnings = append(warnings, addHelpCommands(e.exCommands)...)
 	warnings = append(warnings, addMessagesCommand(e.exCommands)...)
 	warnings = append(warnings, removedCommandWarnings(cfg.Keymap, e.exCommands)...)
+	warnings = append(warnings, e.startStatusExtensions()...)
 	var w2 []error
 	var remap *remapper
 	remap, w2 = newRemapper(cfg.Keymap, leader)
@@ -493,10 +502,11 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 // newRenderer は、設定の見た目（色、記号、ステータス行の並び、タブの行）を持った描画の部品を作る。client ごとに 1 つ持つ。
 func (e *Editor) newRenderer() *ui.Renderer {
 	return &ui.Renderer{
-		Theme:      ui.DefaultTheme().WithColors(e.cfg.Colors),
-		Symbols:    e.cfg.Symbols,
-		StatusLine: e.cfg.StatusLine,
-		TabLine:    e.cfg.TabLine,
+		Theme:        ui.DefaultTheme().WithColors(e.cfg.Colors),
+		Symbols:      e.cfg.Symbols,
+		StatusLine:   e.cfg.StatusLine,
+		TabLine:      e.cfg.TabLine,
+		TabLineParts: e.cfg.TabLineParts,
 	}
 }
 

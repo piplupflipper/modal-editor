@@ -43,12 +43,19 @@ type Style struct {
 	Bold, Italic, Underline, Undercurl, Reverse bool
 }
 
-// StatusLine は、statusline の値で、ステータス行の左と右に並べる部品の ID の列である（基本設計 7.1。FR-92）。
+// StatusLine は、statusline の値か tabline の left と right で、ステータス行かタブ行の左と右に並べる部品の ID の列である（基本設計 7.1。FR-92）。
+// "." を含む ID は拡張機能の部品の ID（宣言ファイルの contributes.statusline）で、CheckAppearance では確かめない。
+// 拡張機能が足したかどうかは、宣言ファイルを読んだ後に editor が確かめる。
 type StatusLine struct {
 	Left, Right []string
 }
 
-// AppearanceCheck は、見た目の設定（colors、symbols、statusline）の名前と値を確かめる関数の組である（Config.CheckAppearance）。
+// IsExtPartID は、部品の ID が拡張機能の部品の ID（"." を含む。ext.StatusLinePart の ID の規則）かを返す。
+func IsExtPartID(id string) bool {
+	return strings.Contains(id, ".")
+}
+
+// AppearanceCheck は、見た目の設定（colors、symbols、statusline、tabline の部品）の名前と値を確かめる関数の組である（Config.CheckAppearance）。
 // 名前の一覧と記号の値の規則は描画（internal/ui）が持つが、このパッケージは同じ層の internal/ui を import しないので、呼び出し側が渡す。
 // nil の関数の項目は確かめない。
 type AppearanceCheck struct {
@@ -58,6 +65,8 @@ type AppearanceCheck struct {
 	Symbol func(name, value string) error
 	// StatusPart は、id が本体のステータス行の部品の ID かを返す。
 	StatusPart func(id string) bool
+	// TabLinePart は、id が本体のタブ行の部品の ID かを返す。
+	TabLinePart func(id string) bool
 }
 
 // appearancePos は、見た目の設定の項目を書いた位置である。CheckAppearance が誤りの位置に使う。
@@ -66,14 +75,17 @@ type appearancePos struct {
 	parts           []partPos
 }
 
-// partPos は、statusline の 1 つの部品の ID と、それを書いた位置の誤りの雛形である。
+// partPos は、statusline か tabline の 1 つの部品の ID と、それを書いた位置の誤りの雛形である。
 type partPos struct {
-	id  string
-	err *Error
+	// line は、"statusline" か "tabline" である。
+	line string
+	id   string
+	err  *Error
 }
 
-// CheckAppearance は、Colors、Symbols、StatusLine の名前と値を check で確かめ、使えない項目を除いて、位置と内容を誤りとして返す。
+// CheckAppearance は、Colors、Symbols、StatusLine、TabLineParts の名前と値を check で確かめ、使えない項目を除いて、位置と内容を誤りとして返す。
 // Parse は名前の一覧を知らないので、呼び出し側が Parse の後に 1 回呼ぶ。
+// 拡張機能の部品の ID（IsExtPartID）は確かめずに残す。
 //
 // req: FR-91, FR-92, FR-93
 func (c *Config) CheckAppearance(check AppearanceCheck) []error {
@@ -94,26 +106,37 @@ func (c *Config) CheckAppearance(check AppearanceCheck) []error {
 			}
 		}
 	}
-	if check.StatusPart != nil && c.StatusLine != nil {
-		bad := map[string]bool{}
-		for _, p := range c.pos.parts {
-			if !check.StatusPart(p.id) && !bad[p.id] {
-				bad[p.id] = true
-				errs = append(errs, p.err.with("statusline の部品 %s は未知なので無視する", p.id))
-			}
-		}
-		keep := func(ids []string) []string {
-			out := ids[:0:0]
-			for _, id := range ids {
-				if !bad[id] {
-					out = append(out, id)
-				}
-			}
-			return out
-		}
-		c.StatusLine.Left, c.StatusLine.Right = keep(c.StatusLine.Left), keep(c.StatusLine.Right)
-	}
+	errs = append(errs, c.checkParts("statusline", c.StatusLine, check.StatusPart)...)
+	errs = append(errs, c.checkParts("tabline", c.TabLineParts, check.TabLinePart)...)
 	SortErrors(errs)
+	return errs
+}
+
+// checkParts は、line（"statusline" か "tabline"）の並び parts の部品の ID を known で確かめ、本体の知らない ID を除いて誤りを返す。
+// 拡張機能の部品の ID（IsExtPartID）は確かめない。
+func (c *Config) checkParts(line string, parts *StatusLine, known func(string) bool) []error {
+	if known == nil || parts == nil {
+		return nil
+	}
+	var errs []error
+	bad := map[string]bool{}
+	for _, p := range c.pos.parts {
+		if p.line != line || IsExtPartID(p.id) || known(p.id) || bad[p.id] {
+			continue
+		}
+		bad[p.id] = true
+		errs = append(errs, p.err.with("%s の部品 %s は未知なので無視する", line, p.id))
+	}
+	keep := func(ids []string) []string {
+		out := ids[:0:0]
+		for _, id := range ids {
+			if !bad[id] {
+				out = append(out, id)
+			}
+		}
+		return out
+	}
+	parts.Left, parts.Right = keep(parts.Left), keep(parts.Right)
 	return errs
 }
 
@@ -261,32 +284,40 @@ func (s *source) statusLine(v *hujson.Value, cfg *Config) *StatusLine {
 	}
 	out := &StatusLine{Left: []string{}, Right: []string{}}
 	for _, m := range s.members(obj, "statusline") {
-		path := join("statusline", m.name)
-		var dst *[]string
-		switch m.name {
-		case "left":
-			dst = &out.Left
-		case "right":
-			dst = &out.Right
-		default:
-			s.report(m.nameOff, "未知の項目 %s を無視する", path)
-			continue
-		}
-		arr, ok := s.array(m.value, path)
-		if !ok {
-			continue
-		}
-		for i := range arr.Elements {
-			el := &arr.Elements[i]
-			id, ok := s.str(el, path+" の項目")
-			if !ok {
-				continue
-			}
-			*dst = append(*dst, id)
-			cfg.pos.parts = append(cfg.pos.parts, partPos{id: id, err: s.at(el.StartOffset, "")})
+		if !s.partList(m.value, "statusline", m.name, out, cfg) {
+			s.report(m.nameOff, "未知の項目 %s を無視する", join("statusline", m.name))
 		}
 	}
 	return out
+}
+
+// partList は、line（"statusline" か "tabline"）の項目 name が left か right なら、部品の ID の文字列の配列 v を読んで out に入れ、
+// true を返す。left と right でなければ何もせずに false を返す。
+func (s *source) partList(v *hujson.Value, line, name string, out *StatusLine, cfg *Config) bool {
+	var dst *[]string
+	switch name {
+	case "left":
+		dst = &out.Left
+	case "right":
+		dst = &out.Right
+	default:
+		return false
+	}
+	path := join(line, name)
+	arr, ok := s.array(v, path)
+	if !ok {
+		return true
+	}
+	for i := range arr.Elements {
+		el := &arr.Elements[i]
+		id, ok := s.str(el, path+" の項目")
+		if !ok {
+			continue
+		}
+		*dst = append(*dst, id)
+		cfg.pos.parts = append(cfg.pos.parts, partPos{line: line, id: id, err: s.at(el.StartOffset, "")})
+	}
+	return true
 }
 
 // tabline.show の値である（基本設計 7.1。FR-62。名前は仮）。
@@ -297,17 +328,25 @@ const (
 	TabLineMultiple = "multiple"
 )
 
-// tabLine は、tabline の値を読み、show の値を返す（基本設計 7.1。FR-62）。
-// 値は show の項目を持つオブジェクトで、show は "always" か "multiple" である。それ以外の値は誤りとして既定値（空）を返す。
-// タブの行の部品の並び（statusline の left と right に当たるもの）は、まだ無い。
-func (s *source) tabLine(v *hujson.Value) string {
+// tabLine は、tabline の値を読み、show の値と部品の並びを返す（基本設計 7.1。FR-62、FR-92）。
+// 値は show、left、right の項目を持つオブジェクトである。
+// show は "always" か "multiple" で、それ以外の値は誤りとして既定値（空）を返す。
+// left と right は statusline と同じく部品の ID の文字列の配列で、どちらかを書けば、書かなかった側は空の列（部品を出さない）にする。
+// どちらも書かなければ parts は nil（本体の既定の並び）である。
+func (s *source) tabLine(v *hujson.Value, cfg *Config) (show string, parts *StatusLine) {
 	obj, ok := s.object(v, "tabline")
 	if !ok {
-		return ""
+		return "", nil
 	}
-	show := ""
 	for _, m := range s.members(obj, "tabline") {
 		path := join("tabline", m.name)
+		if m.name == "left" || m.name == "right" {
+			if parts == nil {
+				parts = &StatusLine{Left: []string{}, Right: []string{}}
+			}
+			s.partList(m.value, "tabline", m.name, parts, cfg)
+			continue
+		}
 		if m.name != "show" {
 			s.report(m.nameOff, "未知の項目 %s を無視する", path)
 			continue
@@ -323,7 +362,7 @@ func (s *source) tabLine(v *hujson.Value) string {
 			s.report(m.value.StartOffset, "%s は %q か %q にする", path, TabLineAlways, TabLineMultiple)
 		}
 	}
-	return show
+	return show, parts
 }
 
 // with は、e の位置で、内容を書き換えた誤りを返す。e が nil（位置を記録していない）なら位置の無い誤りを返す。

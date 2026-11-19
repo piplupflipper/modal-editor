@@ -44,9 +44,9 @@ func IsStatusPart(id string) bool {
 	return slices.Contains(statusParts, id)
 }
 
-// StatusLine は、ステータス行に並べる部品の ID の列である（設定の statusline。FR-92）。
+// StatusLine は、ステータス行かタブ行に並べる部品の ID の列である（設定の statusline と tabline の left と right。FR-92）。
 // Left は左の端から右へ、Right は右の端に寄せて左から右へ並べる。並べなかった部品は出さない。
-// 知らない ID は描かない。
+// 本体の部品でない ID は、拡張機能が足した部品として Frame.ExtParts で引き、無ければ描かない。
 type StatusLine struct {
 	Left, Right []string
 }
@@ -104,6 +104,11 @@ func (r *Renderer) statusPart(id string, text Text, f *Frame, cur cursorPlace) (
 		return ruler, []string{StyleStatusLineRuler}
 	case StatusPartPosition:
 		return r.position(text.LineCount()), []string{StyleStatusLinePosition}
+	default:
+		// 本体の部品でなければ、拡張機能が足した部品として引く（FR-92）。
+		if p, ok := f.ExtParts[id]; ok && p.Text != "" {
+			return p.Text, []string{StyleStatusLineExt, p.Style}
+		}
 	}
 	return "", nil
 }

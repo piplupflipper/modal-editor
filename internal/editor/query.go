@@ -214,7 +214,7 @@ func (e *Editor) hold(ev exthost.Event) {
 	for i, h := range e.held {
 		switch h.(type) {
 		case *exthost.DecorationSet, *exthost.MessageShow, *exthost.DiagnosticSet, *exthost.SignSet,
-			*exthost.PopupShow, *exthost.OutputAppend:
+			*exthost.PopupShow, *exthost.OutputAppend, *exthost.StatusLineSet:
 			drop = i
 		}
 		if drop >= 0 {

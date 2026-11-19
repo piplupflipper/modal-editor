@@ -116,6 +116,9 @@ type Contributes struct {
 	Motions     []Contribution `json:"motions,omitempty"`
 	TextObjects []Contribution `json:"textObjects,omitempty"`
 	Commands    []Contribution `json:"commands,omitempty"`
+	// StatusLine は、ステータス行とタブ行に足す部品の一覧である（基本設計 5.1、7.1。FR-92）。
+	// 部品の中身は statusline/set で送る（MethodStatusLineSet）。足したのは API 0.5.0 である。
+	StatusLine []StatusLinePart `json:"statusline,omitempty"`
 }
 
 // Contribution は、拡張機能が追加する 1 つの操作である。
@@ -179,11 +182,13 @@ func (m *Manifest) HandlesFileType(ft string) bool {
 // 検査するのは次の項目である。
 //
 //   - ID と Command が空でないこと。ID が空白を含まないこと
-//   - Activation か Provides のどちらかが 1 つ以上あること
+//   - Activation、Provides、Contributes.StatusLine のどれかが 1 つ以上あること。
+//     部品を足す拡張機能は、利用者が部品を並べていれば本体の起動時に起動する（基本設計 7.1）ので、Activation を空にしてよい
 //   - Provides に同じ操作が 2 回現れないこと
 //   - 操作の契機は、同じ種類の操作として Contributes にある ID を指すこと
 //   - ファイルの種類の契機は、Pattern が空でないこと
 //   - Contributes の各操作の ID が空でなく、種類をまたいで重複しないこと
+//   - Contributes.StatusLine の各部品の ID が、拡張機能の ID と "." で始まり、その後が空でなく、空白を含まず、重複しないこと
 //
 // 未知の種類の契機と、未知の操作の名前の provides は、誤りにせず、warnings に 1 件ずつ返す。
 // API の後の版で契機の種類を足しても、古い本体が新しい拡張機能の宣言ファイルを丸ごと拒まないようにするためである。
@@ -233,8 +238,10 @@ func (m *Manifest) Validate() (warnings []error, err error) {
 		}
 	}
 
-	if len(m.Activation) == 0 && len(m.Provides) == 0 {
-		errs = append(errs, errors.New("activation と provides がどちらも空である"))
+	errs = append(errs, m.validateStatusLine()...)
+
+	if len(m.Activation) == 0 && len(m.Provides) == 0 && len(m.Contributes.StatusLine) == 0 {
+		errs = append(errs, errors.New("activation と provides と contributes.statusline がどれも空である"))
 	}
 	seenOps := map[Operation]bool{}
 	for i, op := range m.Provides {
@@ -266,6 +273,33 @@ func (m *Manifest) Validate() (warnings []error, err error) {
 		}
 	}
 	return warnings, errors.Join(errs...)
+}
+
+// validateStatusLine は、contributes.statusline の部品の ID を検査する（StatusLinePart.ID の doc の規則）。
+func (m *Manifest) validateStatusLine() []error {
+	var errs []error
+	seen := map[string]int{}
+	for i, p := range m.Contributes.StatusLine {
+		path := fmt.Sprintf("contributes.statusline[%d]", i)
+		local, ok := strings.CutPrefix(p.ID, m.ID+".")
+		switch {
+		case p.ID == "":
+			errs = append(errs, fmt.Errorf("%s.id が空である", path))
+			continue
+		case m.ID == "" || !ok || local == "":
+			errs = append(errs, fmt.Errorf("%s.id %q が拡張機能の ID %q と \".\" で始まらないか、その後が空である", path, p.ID, m.ID))
+			continue
+		case strings.ContainsFunc(p.ID, isSpace):
+			errs = append(errs, fmt.Errorf("%s.id %q が空白を含む", path, p.ID))
+			continue
+		}
+		if prev, dup := seen[p.ID]; dup {
+			errs = append(errs, fmt.Errorf("%s.id %q が contributes.statusline[%d] と重複する", path, p.ID, prev))
+			continue
+		}
+		seen[p.ID] = i
+	}
+	return errs
 }
 
 // ValidateManifests は、複数の宣言ファイルを検査する。

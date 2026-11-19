@@ -74,6 +74,8 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.showPopup(ev.Params)
 	case *exthost.OutputAppend:
 		e.appendOutput(ev.Extension, ev.Params)
+	case *exthost.StatusLineSet:
+		e.setStatusPart(ev.Extension, ev.Params)
 	case *exthost.EditorStateRequest:
 		_ = ev.Reply(e.editorState())
 	case *exthost.EditorOpenRequest:

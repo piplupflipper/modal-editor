@@ -152,6 +152,7 @@ iceberg に近い配色の例を、リポジトリの直下と配布物に `conf
 | `statuslinenc` | 出力の欄の下の行 | 反転 |
 | `statusline.<部品の ID>` | ステータス行の部品（`statusline.mode`、`statusline.name`、`statusline.modified`、`statusline.readonly`、`statusline.filetype`、`statusline.recording`、`statusline.ruler`、`statusline.position`）。`statusline` の上に重ねる | なし |
 | `statusline.mode.normal`、`statusline.mode.insert`、`statusline.mode.visual`、`statusline.mode.commandline` | モードごとのモードの部品。`statusline.mode` の上に重ねる。`visual` は文字単位と行単位の両方 | なし |
+| `statusline.ext` | 拡張機能が足した部品。`statusline`（タブの行では `tabline.fill`）の上に重ね、その上に拡張機能が部品ごとに選んだ色を重ねる | なし |
 | `nontext` | バッファの最終行より後の `~` | 端末の 16 色の 12 |
 | `specialkey` | `^A` や `<80>` の形で出した文字 | 端末の 16 色の 12 |
 | `message.info`、`message.warning`、`message.error` | コマンドラインの行のメッセージ | 順に色なし、黄色、赤の背景 |
@@ -220,7 +221,28 @@ iceberg に近い配色の例を、リポジトリの直下と配布物に `conf
 幅が足りなければ、右の部品を優先する。
 左の部品が収まらなければ、Vim と同じく名前の先頭を `<` で切り、名前の後の `[+]` と `[RO]` を残す（`<4030-b80ff77dac4f/find.go [RO]`）。
 名前を `<` だけにしても収まらなければ、名前を出さずに印を残し、それでも収まらなければ左の部品を右の端で切る。
-拡張機能が部品を足す口（基本設計 7.1 の `contributes.statusline`。#208）と、タブの行の部品の並びは、まだ無い。
+
+### 拡張機能の部品
+
+拡張機能は、宣言ファイルの `contributes.statusline` で部品を足せる（基本設計 7.1）。
+部品の ID は拡張機能の ID と `.` で始まる（`mrreview.status`）。
+本体の部品と同じく、`statusline` と `tabline` の `left` と `right` に ID を書いて並べる。
+
+```jsonc
+{
+  "statusline": {
+    "left": ["mode", "mrreview.status", "name", "modified", "readonly"],
+    "right": ["memusage.rss", "ruler", "position"],
+  },
+}
+```
+
+並べた部品の拡張機能は、起動の契機を待たずに本体の起動時に起動する。
+部品の中身は拡張機能が送る。
+中身が届くまでと、拡張機能が中身を空にした間は、その部品を出さない。
+拡張機能が異常で終わるか止まると、その拡張機能の部品は消え、再起動した拡張機能が送り直すまで出ない。
+中身はバッファに依らず、どのバッファのステータス行にも同じものを出す。
+`.` を含む ID を、どの拡張機能も足していなければ、起動時に設定の誤りとして知らせて出さない。
 
 ### タブの行
 
@@ -229,6 +251,20 @@ iceberg に近い配色の例を、リポジトリの直下と配布物に `conf
 ```jsonc
 { "tabline": { "show": "multiple" } }
 ```
+
+タブの行も、`statusline` と同じく `left` と `right` で部品を並べられる。
+タブの見出しの並びは部品 `tabs` で、他の部品を描いた残りの幅を使う。
+`left` も `right` も書かなければ、`tabs` だけを左に置く（`{ "left": ["tabs"], "right": [] }`）。
+どちらかを書くと、省いた側には何も出さない。`tabs` を並べなければタブの見出しは出ない。
+`tabs` の他に、ステータス行の本体の部品（`mode`、`name` など。いまのバッファのもの）と拡張機能の部品を並べられる。
+部品の色は `tabline.fill` の上に重ねる。
+
+```jsonc
+{ "tabline": { "show": "always", "left": ["tabs"], "right": ["memusage.rss"] } }
+```
+
+`tabs` は 2 回並べても、左、右の順で最初の 1 つだけを出す。
+`tabs` をステータス行に並べると、未知の部品として設定の誤りにする。
 
 ## Ex コマンドの一覧
 
