@@ -6,7 +6,7 @@
   ],
   "contributes": {
     "commands": [
-      { "id": "mcp.start" }
+      { "id": "mcp.start", "description": "MCP のサーバーが接続を待つソケットのパスを出す" }
     ]
   }
 }

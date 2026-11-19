@@ -204,7 +204,7 @@ func (e *Editor) tabMove(bs *bufferState, a ex.Action) error {
 func (e *Editor) uiTabs() []ui.Tab {
 	tabs := make([]ui.Tab, len(e.view.tabs))
 	for i, bs := range e.view.tabs {
-		name := ""
+		name := bs.title
 		if bs.path != "" {
 			name = filepath.Base(bs.path)
 		}

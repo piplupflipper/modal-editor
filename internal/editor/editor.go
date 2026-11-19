@@ -315,6 +315,9 @@ type bufferState struct {
 	state    *command.State
 	path     string
 	fileType string
+	// title は、ファイルでないバッファ（:help のヘルプ、キーの一覧。help.go）の名前である。タブの行、ステータス行、:ls に
+	// path の代わりに出す。ファイルのバッファと、名前の無いバッファ（[No Name]）では空である。
+	title string
 	// sent は、exthost へ知らせたバージョン番号である（FR-16）。
 	sent uint64
 	// replacedInReplay は、マクロの再生の途中の :e で、この bufferState の buf と state を作り直した（replaceBuffer）ことを表す。
@@ -428,11 +431,13 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	if err := addExtManagerCommand(e.exCommands); err != nil {
 		warnings = append(warnings, err)
 	}
+	warnings = append(warnings, addHelpCommands(e.exCommands)...)
 	warnings = append(warnings, removedCommandWarnings(cfg.Keymap, e.exCommands)...)
 	var w2 []error
 	var remap *remapper
 	remap, w2 = newRemapper(cfg.Keymap, leader)
 	warnings = append(warnings, w2...)
+	addKeyListBindings(e.keymap, remap)
 	// 最初の編集の client は term である（server では、最初に繋いだ client。後の client は Attach で足す）。
 	first := e.newClientView(term, remap)
 	e.clients = []*clientView{first}
@@ -486,7 +491,7 @@ func buildKeymap(specs []exthost.Spec, leader []editcmd.Key) (*input.Keymap, []e
 				}
 				keys, err := editcmd.ParseKeysLeader(c.Keys, leader)
 				if err == nil {
-					err = km.Bind(input.Binding{Kind: g.kind, Keys: keys, Ref: editcmd.Ref{ID: c.ID, Extension: m.ID}})
+					err = km.Bind(input.Binding{Kind: g.kind, Keys: keys, Ref: editcmd.Ref{ID: c.ID, Extension: m.ID}, Description: c.Description})
 				}
 				if err != nil {
 					errs = append(errs, fmt.Errorf("拡張機能 %s の %s（%s）を登録できない: %w", m.ID, c.ID, c.Keys, err))
@@ -856,7 +861,7 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 // reusable は、bs が、別のファイルを開くときにそのファイルのバッファとして使い直せる、名前の無い空のバッファかを返す。
 // 名前が無く、変更が無く、テキストが空のバッファである（Vim が起動したときのバッファを :e で使い直すのと同じ）。
 func reusable(bs *bufferState) bool {
-	return bs != nil && bs.path == "" && !bs.buf.Modified() && bs.buf.LineCount() == 1 && bs.buf.Line(0) == ""
+	return bs != nil && bs.path == "" && bs.title == "" && !bs.buf.Modified() && bs.buf.LineCount() == 1 && bs.buf.Line(0) == ""
 }
 
 // replaceBuffer は、バッファ bs の内容を b に置き換える。番号は変えず、拡張機能へは同じ番号で buffer/close と buffer/open を送り直す。
