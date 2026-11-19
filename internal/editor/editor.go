@@ -145,7 +145,11 @@ type Config struct {
 	// ReadOnlyPaths は、開いた時点で編集を禁止にするファイルの置き場所である（設定の readonlyPaths。FR-120）。
 	// 各項目はディレクトリの絶対パスか、"/" を含まないディレクトリの名前（"node_modules"）で、照合の規則は underReadOnlyPath にある。
 	ReadOnlyPaths []string
-	// Colors は、色の名前から属性への対応（設定の colors。FR-91）である。ui.DefaultTheme を名前ごとに置き換える（ui.Theme.WithColors）。
+	// ColorScheme は、設定の colorscheme で選んだ配色の、色の名前から属性への対応（FR-125）である。
+	// ui.DefaultTheme を名前ごとに置き換える（ui.Theme.WithColors）。nil なら配色を選んでいない。
+	ColorScheme map[string]ui.Attr
+	// Colors は、色の名前から属性への対応（設定の colors。FR-91）である。
+	// ui.DefaultTheme に ColorScheme を重ねたものを、さらに名前ごとに置き換える（ui.Theme.WithColors）。
 	Colors map[string]ui.Attr
 	// Symbols は、記号の名前から描く文字列への対応（設定の symbols。FR-93）である。値は ui.CheckSymbol を通したものにする。
 	Symbols ui.Symbols
@@ -546,9 +550,12 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 }
 
 // newRenderer は、設定の見た目（色、記号、ステータス行の並び、タブの行）を持った描画の部品を作る。client ごとに 1 つ持つ。
+// 色は、本体の既定の対応、選んだ配色（Config.ColorScheme）、設定の colors（Config.Colors）の順に、名前ごとに置き換えて重ねる。
+//
+// req: FR-125
 func (e *Editor) newRenderer() *ui.Renderer {
 	return &ui.Renderer{
-		Theme:        ui.DefaultTheme().WithColors(e.cfg.Colors),
+		Theme:        ui.DefaultTheme().WithColors(e.cfg.ColorScheme).WithColors(e.cfg.Colors),
 		Symbols:      e.cfg.Symbols,
 		StatusLine:   e.cfg.StatusLine,
 		TabLine:      e.cfg.TabLine,

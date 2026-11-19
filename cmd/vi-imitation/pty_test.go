@@ -335,6 +335,43 @@ func TestConfigInPTY(t *testing.T) {
 	p.checkRestored(t, before)
 }
 
+// TestColorSchemeInPTY は、設定の colorscheme で同梱の iceberg を選ぶと iceberg の色で描き、
+// 設定の colors に書いた名前だけがその上で置き換わることを確かめる。設定ファイルが無ければ 24 ビットの色を送らない（既定の 16 色のまま）。
+//
+// req: FR-125
+func TestColorSchemeInPTY(t *testing.T) {
+	p := startEditorWithConfig(t, `{
+  "colorscheme": "iceberg",
+  "colors": { "nontext": { "fg": "#444b71" } },
+}`)
+	before := ptytest.Termios(t, p.tty)
+	p.out.WaitFor(t, "iceberg の色", func(out string) bool {
+		return strings.Contains(out, "[No Name]") &&
+			// iceberg の statusline.mode.normal（#17171b の文字、#818596 の背景）と diff 以外の名前の例として statusline.name の背景（#2e313f）
+			strings.Contains(out, "38;2;23;23;27") && strings.Contains(out, "48;2;129;133;150") && strings.Contains(out, "48;2;46;49;63") &&
+			// colors で置き換えた nontext（#444b71）
+			strings.Contains(out, "38;2;68;75;113")
+	})
+	if out := p.out.String(); strings.Contains(out, "38;2;36;41;64") {
+		t.Errorf("colors で置き換えた iceberg の nontext（#242940）を描いた: %q", out)
+	}
+	p.write(t, ":q\r")
+	if err := p.wait(t); err != nil {
+		t.Fatalf("エディタの終了 = %v。出力: %q", err, p.out.String())
+	}
+	p.checkRestored(t, before)
+
+	p = startEditor(t)
+	p.out.WaitForString(t, "[No Name]")
+	p.write(t, ":q\r")
+	if err := p.wait(t); err != nil {
+		t.Fatalf("エディタの終了 = %v", err)
+	}
+	if out := p.out.String(); strings.Contains(out, "8;2;") {
+		t.Errorf("設定ファイルが無いのに 24 ビットの色を送った: %q", out)
+	}
+}
+
 // TestEditResizeInPTY は、端末の大きさを変えると、新しい大きさで画面を描き直すことを確かめる。
 func TestEditResizeInPTY(t *testing.T) {
 	p := startEditor(t)

@@ -482,7 +482,7 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 | `internal/ui` | 端末への描画（バッファの表示領域、印の列、ステータス行、コマンドラインの行、出力の欄、浮かべた窓。6.7 の表示のデータの描き方） | バッファの変更、表示のデータの保持と位置のずらし（`internal/editor`） |
 | `internal/term` | 端末の制御（raw モード、代替画面、端末のバイト列からキーへの解読、`internal/ui` の格子の差分の出力）。`internal/ui` を import するので `internal/editor` と同じ層に置き、`internal/editor` を import しない。使うのは編集の client（`internal/client`）である | 画面の内容の組み立て、編集の状態 |
 | `internal/exthost` | 拡張機能のプロセスの起動、監視、期限、再起動、差分の送信 | 個々の拡張機能の機能 |
-| `internal/config` | 設定ファイルと、拡張機能の宣言ファイルの読み込み | 設定の適用 |
+| `internal/config` | 設定ファイルと、拡張機能の宣言ファイルと、配色のファイル（同梱の配色を含む。7.1）の読み込み | 設定の適用 |
 | `internal/editor` | イベントループ。上の部品をつなぎ、キー入力と拡張機能からのメッセージを 1 件ずつ処理する | 個々の部品の中身 |
 
 段階 3 では、次のパッケージを足す（名前と層は仮。実装のときに図 2 の層のどこに置くかを決める）。
@@ -2632,7 +2632,7 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 
 配色は、色を付ける対象の名前と色の対応である（FR-91）。
 名前は、段階 2 までの印の色の名前（`sign.breakpoint` など。6.7）と構文の色の名前（`keyword` など。6.1）を含め、`diagnostic.error`、`statusline`、`tabline`、`tabline.selected`、`popup.border`、`diff.add` のように点で区切って付ける（仮）。
-既定の対応は本体が持ち、設定の `colors` で名前ごとに上書きする。
+既定の対応は本体が持ち、設定の `colorscheme` で選んだ配色（後述。FR-125）と設定の `colors` で、この順に名前ごとに上書きする。
 色は 24 ビットの `#rrggbb` と、前景と背景と属性（太字、下線）の組で書く（仮）。
 #204 で、色は `#rrggbb` に加えて 0〜255 の 256 色の番号でも書けるようにし（本体の既定の色が端末の 16 色の番号のため）、属性は `bold`、`italic`、`underline`、`undercurl`、`reverse` と下線の色 `sp` にした。
 上書きは名前ごとの置き換えで、既定の属性と混ぜない（`internal/ui` の `Theme.WithColors`）。
@@ -2652,6 +2652,18 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
   }
 }
 ```
+
+#253 で、配色のまとまりに名前を付けて、設定の `colorscheme` で選べるようにした（FR-125）。
+色は、本体の既定の対応（`ui.DefaultTheme`）、選んだ配色、設定の `colors` の順に重ね、どの段も名前ごとの置き換えにする（`internal/editor` の `newRenderer`）。
+`colorscheme` を書かなければ、今までどおり既定の対応に `colors` を重ねるだけである。
+`:colorscheme` に当たるコマンドと、設定の読み直しは作らない。
+
+- 配色のファイルは、設定の `colors` の値と同じ形（色の名前から属性のオブジェクトへの対応）を最上位に書いた JSONC である。読み方と誤りの扱いは `colors` と同じで、`internal/config` の `LoadColorScheme` が読む
+- 配色は、設定ファイルと同じディレクトリの `colors/<名前>.jsonc`、本体に同梱した配色の順に探す。同じ名前なら利用者のファイルを使う。ディレクトリは `config.DefaultPath` のディレクトリ（`$XDG_CONFIG_HOME/vi-imitation/`）で、設定ファイルが symlink でも symlink を辿らず、symlink を置いた側を探す
+- 同梱の配色は `internal/config/colors/<名前>.jsonc` に置き、`go:embed` で本体に埋め込む。配色を足すときは、ファイルを 1 つ置くだけでよい。同梱するのは iceberg（iceberg.vim の暗い背景の色を写したもの。写した元のコミットはファイルの先頭にある）だけである
+- 名前に使える文字は英数字と `_` と `-` だけにする（仮）。`/` と `.` を許さないので、名前から設定ディレクトリの外のファイルを指せない
+- 誤り（使えない名前、見つからない名前、ファイルの中の読めない色と知らない色の名前）は、設定の誤りと同じく起動後に位置と内容を知らせ、その項目だけを使わない。見つからない名前は設定ファイルの `colorscheme` の位置の誤り（`E185`）にして、配色を使わない。色の名前の検査は `colors` と同じく、`cmd/vi-imitation` が `internal/ui` の `IsStyleName` を `config.AppearanceCheck` で渡す（`internal/config` は同じ層の `internal/ui` を import しない）
+- 配色の誤りは、設定ファイルの誤りの後に並べる（最初に出す 1 件は設定ファイルの誤りにする）
 
 `decoration/set` の `style`（6.1）も、この名前で指定する。
 段階 2 の 10 個の名前（`comment` など）は、そのまま配色の名前として使う。

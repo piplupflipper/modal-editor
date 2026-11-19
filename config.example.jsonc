@@ -2,66 +2,36 @@
 // $XDG_CONFIG_HOME/vi-imitation/config.jsonc（未設定なら ~/.config/vi-imitation/config.jsonc）に写して使う。
 // 項目の説明は docs/usage.md の「見た目の設定」にある。
 //
-// 配色は iceberg（https://github.com/cocopon/iceberg.vim）の暗い背景の色に近づけたもので、
-// 値は iceberg.vim の colors/iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の dark の側の guifg と guibg と、
-// lualine.nvim の lua/lualine/themes/iceberg_dark.lua（コミット 221ce6b2d999187044529f49da6554a92f740a96）から写した。
-// 端末の背景を見せる（背景を透過させる）前提で、本文と浮かべる窓には背景の色を付けない。
+// 配色は、本体に同梱した iceberg（https://github.com/cocopon/iceberg.vim の暗い背景の色）を選び、その上に colors を重ねる。
+// colors に書いたのは、端末の背景を見せる（背景を透過させる）前提の調整と、iceberg.vim に元の色が無い名前である。
+// iceberg.vim から写した値と写した元は、internal/config/colors/iceberg.jsonc にある。
 // 24 ビットの色を出せる端末で使う。
 {
+  "colorscheme": "iceberg",
+
   "colors": {
-    // 構文の色（拡張機能の decoration/set の style と同じ名前）
-    "comment": { "fg": "#6b7089" },
-    "keyword": { "fg": "#84a0c6" },
-    "string": { "fg": "#89b8c2" },
-    "number": { "fg": "#a093c7" },
-    "constant": { "fg": "#a093c7" },
-    "function": { "fg": "#84a0c6" },
-    "type": { "fg": "#84a0c6" },
-    "variable": { "fg": "#c6c8d1" },
-    "operator": { "fg": "#84a0c6" },
-    "punctuation": { "fg": "#c6c8d1" },
-
-    // 画面の部品
-    "visual": { "bg": "#272c42" },
-    // iceberg の NonText（#242940）は透過した背景では見えないので、LineNr の文字の色を使う
+    // 端末の背景を透過させる前提の調整
+    // iceberg の NonText（#242940）は透過した背景では見えないので、LineNr の文字の色（#444b71）を使う
     "nontext": { "fg": "#444b71" },
-    "specialkey": { "fg": "#515e97" },
-    "message.warning": { "fg": "#e2a478" },
-    "message.error": { "fg": "#e27878", "bold": true },
-
-    // ステータス行（lualine の iceberg_dark の c の区画と、モードごとの a の区画）
-    "statusline": { "fg": "#c6c8d1", "bg": "#0f1117" },
-    "statuslinenc": { "fg": "#3e445e", "bg": "#0f1117" },
-    "statusline.mode": { "bold": true },
-    "statusline.mode.normal": { "fg": "#17171b", "bg": "#818596" },
-    "statusline.mode.insert": { "fg": "#161821", "bg": "#84a0c6" },
-    "statusline.mode.visual": { "fg": "#161821", "bg": "#b4be82" },
-    "statusline.mode.commandline": { "fg": "#17171b", "bg": "#818596" },
-    "statusline.name": { "fg": "#c6c8d1", "bg": "#2e313f" },
-    "statusline.readonly": { "fg": "#e27878" },
-    "statusline.filetype": { "fg": "#818596" },
-    "statusline.ruler": { "fg": "#c6c8d1", "bg": "#2e313f" },
-    "statusline.position": { "fg": "#17171b", "bg": "#818596" },
-
-    // 診断（iceberg の DiagnosticUnderline...）
-    "diagnostic.error": { "sp": "#e27878", "underline": true },
-    "diagnostic.warning": { "sp": "#e2a478", "underline": true },
-    "diagnostic.info": { "sp": "#89b8c2", "underline": true },
-    "diagnostic.hint": { "sp": "#6b7089", "underline": true },
-
-    // 浮かべる窓（ホバーの説明、:registers の一覧）
+    // 浮かべる窓、メッセージ、印の列、タブの行のいまのタブには背景の色を付けない
+    // （iceberg の背景の色が、透過した背景の上で帯に見えるため）。文字の色は iceberg と同じにする
     "popup": { "fg": "#c6c8d1" },
-    "popup.selected": { "fg": "#eff0f4", "bg": "#5b6389" },
-    "popup.border": { "fg": "#6b7089" },
-
-    // 印の列
-    "sign.executionPoint": { "fg": "#e2a478", "bold": true },
-    "sign.breakpoint": { "fg": "#e27878" },
-    "sign.breakpointUnverified": { "fg": "#6b7089" },
+    "message.warning": { "fg": "#e27878" },
+    "message.error": { "fg": "#e27878" },
+    "tabline.selected": { "fg": "#9a9ca5" },
     "sign.diagnostic.error": { "fg": "#e27878" },
     "sign.diagnostic.warning": { "fg": "#e2a478" },
     "sign.diagnostic.info": { "fg": "#89b8c2" },
     "sign.diagnostic.hint": { "fg": "#6b7089" },
+
+    // iceberg.vim に元の色が無い名前
+    "statusline.mode": { "bold": true },
+    // lightline の iceberg にコマンドラインのモードの色は無いので、ノーマルモードと同じ色にする
+    "statusline.mode.commandline": { "fg": "#17171b", "bg": "#818596" },
+    "popup.border": { "fg": "#6b7089" },
+    "sign.executionPoint": { "fg": "#e2a478", "bold": true },
+    "sign.breakpoint": { "fg": "#e27878" },
+    "sign.breakpointUnverified": { "fg": "#6b7089" },
   },
 
   // 記号。端末の文字幅の設定（曖昧な幅の文字を 2 列にする設定）によっては、罫線と ● の列がずれる

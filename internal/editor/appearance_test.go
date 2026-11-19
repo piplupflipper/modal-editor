@@ -23,6 +23,34 @@ func TestColorsReachRenderer(t *testing.T) {
 	})
 }
 
+// 選んだ配色（Config.ColorScheme）は既定の属性を名前ごとに置き換え、設定の色（Config.Colors）はその上にさらに名前ごとに置き換える。
+//
+// req: FR-125
+func TestColorSchemeUnderColors(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
+	nontext := ui.Attr{Fg: ui.RGB(0x24, 0x29, 0x40)}
+	status := ui.Attr{Fg: ui.RGB(0xc6, 0xc8, 0xd1), Bg: ui.RGB(0x0f, 0x11, 0x17)}
+	h := start(t, Config{
+		WorkDir:     dir,
+		ColorScheme: map[string]ui.Attr{ui.StyleNonText: nontext, ui.StyleStatusLine: {Fg: ui.Indexed(1), Reverse: true}},
+		Colors:      map[string]ui.Attr{ui.StyleStatusLine: status},
+	}, "a.txt")
+	h.eventually("配色の nontext と、colors の statusline", func() bool {
+		h.term.mu.Lock()
+		defer h.term.mu.Unlock()
+		g := h.term.last.Grid
+		if g == nil || g.RowText(4) == "" || g.At(4, 1).Text != "N" || g.At(4, 1).Attr != status {
+			return false
+		}
+		for r := range 4 {
+			if g.At(r, 0).Text == "~" && g.At(r, 0).Attr == nontext {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 // 編集を禁止したバッファは、ステータス行に禁止の印を出し、:readonly で解くと消える。
 // 印の文字（Config.Symbols）とステータス行の並び（Config.StatusLine）は設定で変えられる。
 //
