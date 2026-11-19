@@ -589,8 +589,8 @@ client の接続ごとの読み取りは別の goroutine で行い、キーを�
 1 文字の入力の経路に表を引く処理を入れないのは、1 文字の入力の速さ（要件定義 8.1 の計測の対象）に触れないためである。
 このため、インサートモードの操作の表の登録の左辺は 1 つのキーに限り、1 文字の入力の経路のキーは左辺に書けない（`input.Keymap.Bind`）。
 `jk` のようなキーの列は、設定の `keymap` の右辺をキーの列で書く（7 章。キーの列の展開の層）。
-インサートモードの入力の記録（ドットリピートの値の `editcmd.Command.Inserted`）は、文字と削除の操作（`insert.delete-prev-char`、`insert.delete-char`、`insert.delete-to-line-end`）を別の種類（`editcmd.InsertInput` の `Op`）として持つ列である。
-このため、アンドゥの単位、ドットリピート、回数による繰り返し（`3i`）、マクロの再生で、3 つの削除は同じ扱いになり、
+インサートモードの入力の記録（ドットリピートの値の `editcmd.Command.Inserted`）は、文字と削除の操作（`insert.delete-prev-char`、`insert.delete-char`、`insert.delete-to-line-end`、`insert.delete-prev-word`、`insert.delete-to-line-start`）を別の種類（`editcmd.InsertInput` の `Op`）として持つ列である（後の 2 つは #260。FR-128）。
+このため、アンドゥの単位、ドットリピート、回数による繰り返し（`3i`）、マクロの再生で、5 つの削除は同じ扱いになり、
 キーの列の展開などから入った制御文字（`\b`、`\x0b`、`\x7f`）は削除と取り違えずに文字として入る（PR #258 のレビュー。それまでは記録が文字列で、`<BS>` を `\b` として持っていた）。
 
 段階 3 では、キーの列の解釈の途中の状態（`d2` まで受け取った状態など）とモードは編集の client ごとに持つ（仮）。

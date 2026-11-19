@@ -135,6 +135,10 @@ const (
 	InsertDeleteChar
 	// InsertDeleteToLineEnd は、カーソルから行末まで消す（insert.delete-to-line-end）。
 	InsertDeleteToLineEnd
+	// InsertDeletePrevWord は、カーソルの前の単語を消す（insert.delete-prev-word）。
+	InsertDeletePrevWord
+	// InsertDeleteToLineStart は、カーソルから行の先頭まで消す（insert.delete-to-line-start）。
+	InsertDeleteToLineStart
 )
 
 // InsertInput は、インサートモードの入力の記録の 1 件である。Op が InsertRune のときだけ Rune を使う。

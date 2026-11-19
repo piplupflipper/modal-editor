@@ -218,8 +218,9 @@ var (
 	// ID には接頭辞 insert. を付け、ノーマルモードのモーションの ID と分ける（$ と <End> は止まる位置が違うため。#257 の決定）。
 	// keys が空の行は、既定のキーを持たない操作で、設定の keymap で割り当てたときだけ使える。
 	// 文字の入力、<CR>、<Tab>、<Esc> は、1 文字の入力の速さに触れないために表を通さない（要件定義 8.1。checkInsertKeys）。
+	// 前の単語と行の先頭までを消す 2 つの操作（insert.delete-prev-word、insert.delete-to-line-start）は #260 で足した（FR-128）。
 	//
-	// req: FR-127
+	// req: FR-127, FR-128
 	builtinInsert = []spec{
 		{keys: "<Left>", id: "insert.left", modes: MapInsert, desc: "左へ"},
 		{keys: "<Right>", id: "insert.right", modes: MapInsert, desc: "右へ"},
@@ -232,6 +233,8 @@ var (
 		{keys: "<BS>", id: "insert.delete-prev-char", modes: MapInsert, desc: "前の文字を消す"},
 		{keys: "<Del>", id: "insert.delete-char", modes: MapInsert, desc: "カーソルの文字を消す"},
 		{keys: "", id: "insert.delete-to-line-end", modes: MapInsert, desc: "カーソルから行末まで消す（行末では次の行をつなげる）"},
+		{keys: "", id: "insert.delete-prev-word", modes: MapInsert, desc: "前の単語を消す（行の先頭では前の行とつなげる）"},
+		{keys: "", id: "insert.delete-to-line-start", modes: MapInsert, desc: "カーソルから行の先頭まで消す"},
 	}
 )
 
