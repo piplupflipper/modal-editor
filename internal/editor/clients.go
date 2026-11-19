@@ -191,6 +191,7 @@ func (e *Editor) Attach(term Terminal, info ClientInfo) error {
 func (e *Editor) attach(req attachRequest) {
 	c := e.newClientView(req.term, nil)
 	c.info = req.info
+	token := takeSplitToken(&c.info)
 	e.clients = append(e.clients, c)
 	prev := e.op
 	e.useClient(c)
@@ -206,8 +207,9 @@ func (e *Editor) attach(req attachRequest) {
 		req.done <- err
 		return
 	}
+	e.diffAdopt(token)
 	e.startClient(c)
-	e.diffAttached(c)
+	e.diffAttached(c, token)
 	req.done <- nil
 }
 

@@ -1,0 +1,262 @@
+package editor
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/buffer"
+)
+
+// createdBuffer は、タイトルが title のバッファの、編集の禁止、タブの持ち主の client の ID（タブでなければ 0）、その数を返す。
+// 複数あれば最後のものを返す。
+func (h *harness) createdBuffer(title string) (readOnly bool, owner ClientID, n int) {
+	h.e.do(func() {
+		for _, bs := range h.e.bufs {
+			if bs.title == title {
+				readOnly, n = bs.buf.ReadOnly(), n+1
+				owner = 0
+				if bs.owner != nil {
+					owner = bs.owner.info.ID
+				}
+			}
+		}
+	})
+	return readOnly, owner, n
+}
+
+// waitSplit は、SplitPane の呼び出しを待って返す。
+func waitSplit(t *testing.T, calls <-chan diffCall) diffCall {
+	t.Helper()
+	select {
+	case c := <-calls:
+		return c
+	case <-time.After(5 * time.Second):
+		t.Fatal("ペインを開かない")
+	}
+	return diffCall{}
+}
+
+// 拡張機能は、buffer/create で編集を禁止したファイルでないバッファを作り（FR-88）、diff/start でファイルのタブと見比べさせられる（FR-99）。
+// 作ったバッファはタブでないので、本体はファイルのタブの client のペインを分割し、ファイルを渡さずに起動した新しい client のタブにしてから
+// 見比べを始める。新しい client は、分割のときに渡した印（EnvSplit）で見分け、印の無い client には渡さない。
+// 待っている間の次の diff/start は断り、そのとき作ったバッファは閉じる（FR-64）。
+// git 連携の拡張機能（FR-104）が HEAD の版と見比べるのに使う。
+//
+// req: FR-64, FR-88, FR-99
+func TestDiffStartFromExtension(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "one\ntwo\n"})
+	calls := make(chan diffCall, 2)
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), SplitPane: recordSplit(calls)}, "a.txt")
+	h.e.do(func() { h.e.clients[0].info = ClientInfo{ID: 1, Pane: "%1"} })
+	var canSplit bool
+	h.e.do(func() { canSplit = h.e.editorState().CanSplit })
+	if !canSplit {
+		t.Error("editor/state の canSplit が false")
+	}
+
+	h.keys(":fake.headdiff<CR>")
+	h.waitMessage("headdiff buf=")
+	if msg := h.message(); !strings.Contains(msg, "split=true err=<nil>") {
+		t.Fatalf("message = %q", msg)
+	}
+	call := waitSplit(t, calls)
+	// ファイルを渡さずに、ファイルのタブの client のペインを分割する。
+	if want := (diffCall{"%1", "", dir, "1"}); call != want {
+		t.Errorf("SplitPane = %+v, want %+v", call, want)
+	}
+	readOnly, owner, n := h.createdBuffer("HEAD:x")
+	if n != 1 || !readOnly || owner != 0 {
+		t.Fatalf("作ったバッファ: n=%d readOnly=%v owner=%d", n, readOnly, owner)
+	}
+
+	// 待っている間の次の diff/start は断り、そのとき作ったバッファを閉じる。
+	h.keys(":fake.headdiff<CR>")
+	h.waitMessage("待っています")
+	if _, _, n := h.createdBuffer("HEAD:x"); n != 1 {
+		t.Errorf("断った diff/start のバッファが残った: HEAD:x が %d 個", n)
+	}
+
+	// 印の無い client（同じ window で別に起動したもの）には渡さない。
+	other := h.attach(ClientInfo{ID: 3, Pane: "%3", WorkDir: dir})
+	h.settle()
+	if _, owner, _ := h.createdBuffer("HEAD:x"); owner != 0 {
+		t.Fatalf("印の無い client 3 が作ったバッファを取った")
+	}
+	other.keys(":q<CR>")
+	h.settle()
+
+	// 印の同じ client は、名前の無い空のタブの代わりに、作ったバッファをタブにする。
+	b := h.attach(ClientInfo{ID: 2, Pane: "%2", WorkDir: dir, Env: call.env()})
+	h.settle()
+	if _, owner, _ := h.createdBuffer("HEAD:x"); owner != 2 {
+		t.Fatalf("作ったバッファの持ち主 = %d, want 2", owner)
+	}
+	h.e.do(func() {
+		c := h.e.clients[len(h.e.clients)-1]
+		if len(c.tabs) != 1 {
+			t.Errorf("client 2 のタブ = %d, want 1", len(c.tabs))
+		}
+		for _, kv := range c.info.Env {
+			if strings.HasPrefix(kv, EnvSplit+"=") {
+				t.Errorf("印が client の環境に残った: %q", c.info.Env)
+			}
+		}
+	})
+	if n := h.diffSessions(); n != 1 {
+		t.Fatalf("見比べの組 = %d, want 1", n)
+	}
+	h.e.do(func() {
+		s := h.e.diff.sessions[0]
+		if s.bs[0].path == "" || s.bs[1].title != "HEAD:x" {
+			t.Errorf("組 = %q と %q, want a.txt と HEAD:x", s.bs[0].path, s.bs[1].title)
+		}
+		if got := s.view[0].Lines[1].Style; got != "diff.change" {
+			t.Errorf("a.txt の 2 行目 = %q, want diff.change", got)
+		}
+	})
+
+	// 編集を禁止した HEAD の版へは dp で送れず（E21）、do で取り込める（基本設計 6.8）。
+	h.keys("jdp")
+	h.settle()
+	if msg := h.message(); !strings.HasPrefix(msg, "E21") {
+		t.Errorf("HEAD の版への dp = %q", msg)
+	}
+	h.keys("do")
+	h.settle()
+	if got := h.bufferText("a.txt"); got != "one\nTWO" {
+		t.Errorf("do の後の a.txt = %q", got)
+	}
+	// HEAD の版の側でも編集は断る。
+	b.keys("x")
+	h.settle()
+	var head string
+	h.e.do(func() { head = h.e.diff.sessions[0].bs[1].buf.Text() })
+	if head != "one\nTWO" {
+		t.Errorf("HEAD の版 = %q", head)
+	}
+
+	// 同じ client の 2 つのタブは見比べられない。
+	h.keys(fmt.Sprintf(":e %s/b.txt<CR>:fake.headdiff %d<CR>", dir, 1))
+	h.waitMessage("同じ client のタブです")
+	// どちらもタブでなければ断り、作った 2 つのバッファを閉じる。
+	h.keys(":fake.headdiff notab<CR>")
+	h.waitMessage("どちらもタブではありません")
+	if _, _, n := h.createdBuffer("other"); n != 0 {
+		t.Errorf("断った diff/start のバッファ other が %d 個残った", n)
+	}
+	if _, _, n := h.createdBuffer("HEAD:x"); n != 1 {
+		t.Errorf("HEAD:x が %d 個", n)
+	}
+}
+
+// buffer/create で作った拡張機能は、buffer/update で、編集を禁止したバッファの中身を置き換え、buffer/dispose で閉じられる。
+// 他のバッファ（利用者が開いたファイル）には送れない。
+func TestCreatedBufferUpdateDispose(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "one\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	// 端末多重化ソフトの外なので diff/start は断られ、作ったバッファは閉じる。update の相手にはファイルでないバッファを別に作る。
+	h.keys(":fake.headdiff<CR>")
+	h.waitMessage("headdiff buf=")
+	if _, _, n := h.createdBuffer("HEAD:x"); n != 0 {
+		t.Fatalf("見比べの始まらなかったバッファが %d 個残った", n)
+	}
+	var id uint64
+	h.e.do(func() {
+		bs := h.e.newBuffer(buffer.New("x"), "", "")
+		bs.title, bs.creator = "made", "fake"
+		bs.buf.SetReadOnly(true)
+		id = uint64(bs.id)
+	})
+	h.keys(fmt.Sprintf(`:fake.headdiff update %d alpha\nbeta<CR>`, id))
+	h.waitMessage("headdiff update")
+	if msg := h.message(); !strings.Contains(msg, "err=<nil>") {
+		t.Fatalf("update: %q", msg)
+	}
+	var text string
+	var ro bool
+	h.e.do(func() {
+		bs := h.e.findBuffer(ext.BufferID(id))
+		text, ro = bs.buf.Text(), bs.buf.ReadOnly()
+	})
+	if text != "alpha\nbeta" || !ro {
+		t.Errorf("置き換えた後 = %q readOnly=%v", text, ro)
+	}
+	h.keys(":fake.headdiff update 1 x<CR>")
+	h.waitMessage("not created by this extension")
+	if got := h.bufferText("a.txt"); got != "one" {
+		t.Errorf("a.txt = %q", got)
+	}
+	h.keys(fmt.Sprintf(":fake.headdiff dispose %d<CR>", id))
+	h.waitMessage("headdiff dispose err=<nil>")
+	if _, _, n := h.createdBuffer("made"); n != 0 {
+		t.Errorf("dispose の後に %d 個残った", n)
+	}
+	h.keys(":fake.headdiff dispose 1<CR>")
+	h.waitMessage("not created by this extension")
+}
+
+// 端末多重化ソフトの外では、diff/start で分割できないので断り（基本設計 6.8）、作ったバッファを閉じる（FR-64）。
+// editor/state の canSplit は false になる。
+//
+// req: FR-64, FR-99
+func TestDiffStartOutsideMux(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "one\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	var canSplit bool
+	h.e.do(func() { canSplit = h.e.editorState().CanSplit })
+	if canSplit {
+		t.Error("端末多重化ソフトの外で canSplit が true")
+	}
+	for range 2 {
+		h.keys(":fake.headdiff<CR>")
+		h.waitMessage("headdiff buf=")
+		if msg := h.message(); !strings.Contains(msg, "端末多重化ソフト") || !strings.Contains(msg, "split=false") {
+			t.Errorf("message = %q", msg)
+		}
+		h.e.do(func() { h.e.message = infoMessage("") })
+	}
+	if _, _, n := h.createdBuffer("HEAD:x"); n != 0 {
+		t.Errorf("隠れたバッファが %d 個残った", n)
+	}
+	if n := h.diffSessions(); n != 0 {
+		t.Errorf("組 = %d", n)
+	}
+
+	// 他の拡張機能が作ったバッファを diff/start に渡して断られても、そのバッファは閉じない（PR #247 の再レビューの推奨 1）。
+	var id uint64
+	h.e.do(func() {
+		bs := h.e.newBuffer(buffer.New("x"), "", "")
+		bs.title, bs.creator = "others", "another"
+		id = uint64(bs.id)
+	})
+	h.keys(fmt.Sprintf(":fake.headdiff %d<CR>", id))
+	h.waitMessage("端末多重化ソフト")
+	if _, _, n := h.createdBuffer("others"); n != 1 {
+		t.Errorf("他の拡張機能が作ったバッファを閉じた（残りは %d 個）", n)
+	}
+}
+
+// ペインを分割できなかったら、待ちを捨て、作ったバッファを閉じる（FR-64）。
+//
+// req: FR-64
+func TestDiffStartSplitFails(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "one\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), SplitPane: func(string, string, string, string) error {
+		return errors.New("split failed")
+	}}, "a.txt")
+	h.e.do(func() { h.e.clients[0].info = ClientInfo{ID: 1, Pane: "%1"} })
+	h.keys(":fake.headdiff<CR>")
+	h.waitMessage("見比べのペインを開けません")
+	h.eventually("作ったバッファを閉じる", func() bool {
+		for _, bs := range h.e.bufs {
+			if bs.title == "HEAD:x" {
+				return false
+			}
+		}
+		return h.e.diff.pending == nil
+	})
+}

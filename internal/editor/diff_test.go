@@ -11,7 +11,18 @@ import (
 )
 
 // diffCall は、Config.SplitPane に渡された引数である。
-type diffCall struct{ from, file, dir string }
+type diffCall struct{ from, file, dir, token string }
+
+// env は、分割したペインの client が Hello で知らせる環境変数（待ちの印）である。
+func (c diffCall) env() []string { return []string{EnvSplit + "=" + c.token} }
+
+// recordSplit は、呼ばれた引数を calls へ送るだけの Config.SplitPane の偽物を返す。
+func recordSplit(calls chan<- diffCall) func(from, file, dir, token string) error {
+	return func(from, file, dir, token string) error {
+		calls <- diffCall{from, file, dir, token}
+		return nil
+	}
+}
 
 // startDiffPair は、a.txt を開いた client 1（ペイン %1）と、:diffsplit b.txt で開いたペインの client 2（ペイン %2）を用意し、
 // 2 つのタブの見比べを始めた harness と client 2 を返す。SplitPane の偽物は、呼ばれた引数を記録するだけで、client 2 はテストが繋ぐ。
@@ -19,10 +30,7 @@ func startDiffPair(t *testing.T, files map[string]string) (*harness, *peer, stri
 	t.Helper()
 	dir := writeFiles(t, files)
 	calls := make(chan diffCall, 1)
-	h := start(t, Config{WorkDir: dir, SplitPane: func(from, file, d string) error {
-		calls <- diffCall{from, file, d}
-		return nil
-	}}, "a.txt")
+	h := start(t, Config{WorkDir: dir, SplitPane: recordSplit(calls)}, "a.txt")
 	h.e.do(func() { h.e.clients[0].info = ClientInfo{ID: 1, Pane: "%1"} })
 	h.keys(":diffsplit b.txt<CR>")
 	h.settle()
@@ -32,7 +40,7 @@ func startDiffPair(t *testing.T, files map[string]string) (*harness, *peer, stri
 	case <-time.After(5 * time.Second):
 		t.Fatal(":diffsplit がペインを開かない")
 	}
-	b := h.attach(ClientInfo{ID: 2, Pane: "%2", WorkDir: dir, Files: []string{call.file}})
+	b := h.attach(ClientInfo{ID: 2, Pane: "%2", WorkDir: dir, Files: []string{call.file}, Env: call.env()})
 	h.settle()
 	return h, b, dir, call
 }
@@ -73,7 +81,7 @@ func TestDiffSplit(t *testing.T) {
 		"a.txt": "one\ntwo\nthree\nfour\n",
 		"b.txt": "one\nTWO\nthree\n",
 	})
-	if want := (diffCall{"%1", filepath.Join(dir, "b.txt"), dir}); call != want {
+	if want := (diffCall{"%1", filepath.Join(dir, "b.txt"), dir, "1"}); call != want {
 		t.Errorf("SplitPane = %+v, want %+v", call, want)
 	}
 	if n := h.diffSessions(); n != 1 {
@@ -236,7 +244,7 @@ func TestDiffErrors(t *testing.T) {
 		t.Errorf("組 = %d", n)
 	}
 	// 同じ client のタブのファイルへの :diffsplit も断る。
-	h.e.do(func() { h.e.cfg.SplitPane = func(string, string, string) error { return nil } })
+	h.e.do(func() { h.e.cfg.SplitPane = func(string, string, string, string) error { return nil } })
 	h.keys(":diffsplit a.txt<CR>")
 	h.settle()
 	if msg := h.message(); !strings.Contains(msg, "この client のタブ") {
@@ -312,15 +320,12 @@ func TestDiffThirdClient(t *testing.T) {
 func TestDiffObtainAfterPause(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "a\nb\nc\n", "b.txt": "a\nB\nc\n"})
 	calls := make(chan diffCall, 1)
-	h := start(t, Config{WorkDir: dir, KeyTimeout: 20 * time.Millisecond, SplitPane: func(from, file, d string) error {
-		calls <- diffCall{from, file, d}
-		return nil
-	}}, "a.txt")
+	h := start(t, Config{WorkDir: dir, KeyTimeout: 20 * time.Millisecond, SplitPane: recordSplit(calls)}, "a.txt")
 	h.e.do(func() { h.e.clients[0].info = ClientInfo{ID: 1, Pane: "%1"} })
 	h.keys(":diffsplit b.txt<CR>")
 	h.settle()
 	call := <-calls
-	p := h.attach(ClientInfo{ID: 2, Pane: "%2", WorkDir: dir, Files: []string{call.file}})
+	p := h.attach(ClientInfo{ID: 2, Pane: "%2", WorkDir: dir, Files: []string{call.file}, Env: call.env()})
 
 	// 時間切れ（20 ms）より長く置いてから o を打つ。
 	h.keys("jd")

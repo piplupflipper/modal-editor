@@ -560,6 +560,36 @@ func requestEvent(ctx context.Context, id string, req *rpc.Request, reply rpc.Re
 			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
 		}
 		return &PopupOpenRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodBufferCreate:
+		var p ext.BufferCreateParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		if err := p.Validate(); err != nil {
+			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
+		}
+		return &BufferCreateRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodBufferUpdate:
+		var p ext.BufferUpdateParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		return &BufferUpdateRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodBufferDispose:
+		var p ext.BufferDisposeParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		return &BufferDisposeRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodDiffStart:
+		var p ext.DiffStartParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		if err := p.Validate(); err != nil {
+			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
+		}
+		return &DiffStartRequest{Extension: id, Params: p, replyOnce: ro}, nil
 	}
 	return nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: "method not found: " + req.Method}
 }

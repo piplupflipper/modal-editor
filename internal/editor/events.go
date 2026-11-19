@@ -81,6 +81,14 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.setStatusPart(ev.Extension, ev.Params)
 	case *exthost.PopupOpenRequest:
 		e.withView(e.extView(ev.Extension), func() { e.popupOpenRequest(ev) })
+	case *exthost.BufferCreateRequest:
+		e.bufferCreateRequest(ev)
+	case *exthost.BufferUpdateRequest:
+		e.bufferUpdateRequest(ev)
+	case *exthost.BufferDisposeRequest:
+		e.bufferDisposeRequest(ev)
+	case *exthost.DiffStartRequest:
+		e.diffStartRequest(ev)
 	case *exthost.ViewUpdate:
 		e.viewUpdate(ev)
 	case *exthost.ViewClose:
@@ -281,6 +289,12 @@ func (e *Editor) editorState() ext.EditorStateResult {
 			ReadOnly: bs.buf.ReadOnly(), ChangedOnDisk: bs.path != "" && writeConflict(bs) != nil,
 		})
 	}
+	// diff/start で分割できるか（ext.EditorStateResult.CanSplit。#245）。カーソルのあるタブの client のペインで決める。
+	c := e.view
+	if o := e.tab().owner; o != nil {
+		c = o
+	}
+	res.CanSplit = e.canSplit(c)
 	return res
 }
 

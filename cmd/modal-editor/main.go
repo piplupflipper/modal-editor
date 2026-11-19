@@ -73,7 +73,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	// req: FR-119
 	readOnly := flags.Bool("R", false, "引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）")
 	listen := flags.String("listen", "", "計測用（利用者向けではない）。端末を使わずに server だけを起動し、このパスのソケットで編集の client を待つ")
-	connect := flags.String("connect", "", "計測用（利用者向けではない）。このパスのソケットの server に編集の client として繋ぐ。ファイルの引数は取らない")
+	connect := flags.String("connect", "", "内部用と計測用（利用者向けではない）。このパスのソケットの server に編集の client として繋ぎ、引数のファイルをこの client のタブに開かせる（server が見比べのために分割したペインの client もこれで繋ぐ）")
 	serverPath := flags.String("server", "", "内部用（利用者は指定しない）。tmux と herdr の中で起動した編集の client が、このパスのソケットの server として自分の子に起動する")
 	// req: FR-84
 	newServer := flags.Bool("new", false, "環境変数 "+envSocket+" があっても親の server に繋がず、新しい server と client を起動する（エディタの中で起動したエディタを、別のエディタとして使う）")
@@ -96,8 +96,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch {
 	case countSet(*listen, *connect, *serverPath) > 1:
 		return errors.New("-listen、-connect、-server は同時に指定できない")
-	case *connect != "" && flags.NArg() > 0:
-		return errors.New("-connect ではファイルを指定できない（開くのは server の側）")
 	case *listen != "":
 		return serve(*listen, flags.Args(), *readOnly, *logPath)
 	case *serverPath != "":
@@ -146,7 +144,7 @@ func countSet(values ...string) int {
 // exthost の context.AfterFunc が取り消しの関数を呼ぶもの）の panic と、
 // SIGKILL で終わったときは戻せない。
 // readOnly は起動のオプション -R で、files を編集を禁止した状態で開く（editor.Config.ReadOnlyArgs）。
-// connect が空でなければ、server を動かさずに、そのパスの server に編集の client として繋ぐ（runClient）。
+// connect が空でなければ、server を動かさずに、そのパスの server に編集の client として繋ぎ、files をその client のタブに開かせる。
 // newServer（--new。FR-84）なら、端末多重化ソフトの中でも同じ window の server に繋がず、1 つのプロセスの構成で新しい server と client を動かす
 // （server のソケットは、プロセス ID と乱数の名前のディレクトリに置く。基本設計 4.9）。
 //
@@ -179,7 +177,14 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 			if err != nil {
 				return fmt.Errorf("server に繋げない: %w", err)
 			}
-			return runClient(ctx, conn, tm, logger)
+			// ファイルとペインと作業ディレクトリを載せた Hello で繋ぐ（server が分割したペインの client は、
+			// 見比べの印の環境変数とペインを知らせる要がある。#245）。
+			first, problem := startClient(conn, tm, files, readOnly)
+			if problem != nil {
+				_ = conn.Close() // 使わない接続。閉じる誤りは扱えない
+				return problem
+			}
+			return continueClient(ctx, conn, first, tm, logger)
 		}
 		if newServer {
 			// req: FR-84
@@ -347,14 +352,9 @@ func serve(path string, files []string, readOnly bool, logPath string) error {
 	return err
 }
 
-// runClient は、server のソケットの接続 conn で、編集の client として動く（基本設計 1.2）。
-// tmux と herdr の中で server に繋いだときと、-connect（計測のためのオプション。利用者向けではない）のときに使う。
+// continueClient は、startClient で最初のメッセージ first を受けた conn で、編集の client として動く（基本設計 1.2）。
+// tmux と herdr の中で server に繋いだときと、-connect のときに使う。
 // server が接続を閉じるか、端末の入力が終わるまで動かす。ctx が終わったら接続を閉じ、端末を戻して終わる。
-func runClient(ctx context.Context, conn protocol.ClientConn, tm *term.Terminal, logger *slog.Logger) error {
-	return clientUntil(ctx, conn, func() error { return client.Run(tm, conn, logger) })
-}
-
-// continueClient は、startClient で最初のメッセージ first を受けた conn で、runClient と同じく編集の client として動く。
 func continueClient(ctx context.Context, conn protocol.ClientConn, first protocol.ServerMessage, tm *term.Terminal, logger *slog.Logger) error {
 	return clientUntil(ctx, conn, func() error { return client.Continue(tm, conn, first, logger) })
 }
@@ -376,6 +376,8 @@ func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, re
 	}
 	w, h := tm.Size()
 	hello := clientHello(os.Getenv, abs, readOnly, w, h)
+	// 見比べの待ちの印は Hello で知らせたら要らない。この client が端末を渡して起動する子プロセス（:! のシェル）に残さない（PR #247 の再レビューの推奨 2）。
+	_ = os.Unsetenv(editor.EnvSplit) // 外せなくても、印は server が照らし合わせ済みの値なので害は無い
 	hello.Features = client.Features(tm)
 	first, err := client.Start(conn, hello)
 	if err != nil {
