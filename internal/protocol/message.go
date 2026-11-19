@@ -9,7 +9,7 @@ import (
 // ErrClosed は、相手か自分が接続を閉じた後に Send を呼んだことを表す。
 var ErrClosed = errors.New("protocol: connection closed")
 
-// ClientMessage は、client から server へ送るメッセージである。Hello と Event のどちらかである。
+// ClientMessage は、client から server へ送るメッセージである。Hello、Event、TerminalDone、TerminalReleased のどれかである。
 type ClientMessage interface {
 	clientMessage()
 }
@@ -17,7 +17,7 @@ type ClientMessage interface {
 // ClientKind は、client の種類である（基本設計 1.2 の 4 種類）。
 type ClientKind string
 
-// client の種類。今の server が受け付けるのは KindEdit だけである。
+// client の種類。今の server が受け付けるのは KindEdit と KindWait である。
 const (
 	// KindEdit は、編集の client（利用者がペインで起動した modal-editor）である。
 	KindEdit ClientKind = "edit"
@@ -25,7 +25,8 @@ const (
 	KindPopup ClientKind = "popup"
 	// KindPane は、ペインの部品の client である（FR-115。後の issue で動かす）。
 	KindPane ClientKind = "pane"
-	// KindWait は、待つだけの client である（FR-83。後の issue で動かす）。端末を使わないので、大きさを持たない。
+	// KindWait は、待つだけの client である（FR-83）。端末を使わないので、大きさを持たない。
+	// Hello の Files を開かせ、それらのタブがすべて閉じられたら、server から理由の無い Exit を受けて終わる。
 	KindWait ClientKind = "wait"
 )
 
@@ -85,9 +86,35 @@ type Hello struct {
 	// Env は、client の環境変数のうち、server が外部のコマンドへ client ごとに渡すもの（"名前=値" の列。TMUX_PANE、
 	// HERDR_PANE_ID、HERDR_TAB_ID）である。server のプロセスの環境は、server を起動した client のものなので、client ごとに上書きする。
 	Env []string
+	// Parent は、待つだけの client（KindWait）を起動したプロセスの祖先にある編集の client の識別子である（FR-83、FR-117）。
+	// :! を実行した client が子プロセスの環境変数 MODAL_EDITOR_CLIENT に入れた値で、server は Files をこの client のタブに開く。
+	// 0 なら知らない（:! の外で起動した）ので、server は操作中の client に開く。
+	Parent uint64
 }
 
 func (Hello) clientMessage() {}
+
+// TerminalDone は、TerminalRun の子プロセスがすべて終わったことを、client から server へ知らせる（FR-79、FR-80）。
+// client は、端末を取り戻して代替画面に入り直してから送る。
+type TerminalDone struct {
+	// ID は、TerminalRun の ID である。
+	ID uint64
+	// Status は、最後に動かしたコマンドの終了コードである。0 でないコマンドがあれば、そこで止めてその値を入れる。
+	Status int
+	// Err は、コマンドを起動できなかったか、シグナルで終わったときの理由である。空なら Status が結果である。
+	Err string
+}
+
+func (TerminalDone) clientMessage() {}
+
+// TerminalReleased は、TerminalRelease を受けて端末を子プロセスへ渡し直したことを、client から server へ知らせる（FR-117）。
+// server はこれを受けてから、待つだけの client を終わらせる（子プロセスが端末を使い始める前に、こちらが端末を手放すため）。
+// 子プロセスが既に終わっていて渡し直さなかったときも送る。
+type TerminalReleased struct {
+	ID uint64
+}
+
+func (TerminalReleased) clientMessage() {}
 
 // Event は、client が端末から受けたイベント 1 件で、client から server へ送る。
 // internal/term の Event と同じ形で、型の変換で作れる。
@@ -103,7 +130,7 @@ type Event struct {
 
 func (Event) clientMessage() {}
 
-// ServerMessage は、server から client へ送るメッセージである。Draw、SetClipboard、Exit のどれかである。
+// ServerMessage は、server から client へ送るメッセージである。Draw、SetClipboard、Exit、TerminalRun、TerminalReclaim、TerminalRelease のどれかである。
 type ServerMessage interface {
 	serverMessage()
 }
@@ -124,6 +151,54 @@ type Exit struct {
 }
 
 func (Exit) serverMessage() {}
+
+// TerminalRun は、端末を子プロセスへ渡して Commands を順に動かすよう、server から編集の client へ頼む（基本設計 4.7、4.9。FR-79、FR-80）。
+// 端末を持つのは client なので、子プロセスを起動するのも client である。
+// client は端末を通常の状態へ戻し、コマンドを 1 つずつ動かし、0 でない終了コードで終わったらそこで止める。
+// 終わったら（Prompt なら「続けるには ENTER を押してください」を出してキーを待ってから）端末を取り戻し、TerminalDone を返す。
+type TerminalRun struct {
+	// ID は、この実行を指す番号である。server が決め、TerminalDone、TerminalReclaim、TerminalRelease で同じ値を使う。
+	ID uint64
+	// Commands は、順に動かすコマンドである。
+	Commands []TerminalCommand
+	// Env は、子プロセスの環境変数に、client の環境の後に足す "名前=値" の列である（FR-82 の MODAL_EDITOR_SOCKET、EDITOR、GIT_EDITOR と、
+	// :! を実行した client の識別子 MODAL_EDITOR_CLIENT）。
+	Env []string
+	// Prompt は、終わった後に「続けるには ENTER を押してください」を出し、キーを 1 つ待ってから代替画面に戻ることを表す（:! の Vim の動作）。
+	// 待つ間に打ったキーが <CR>、<Space>、<Esc> でなければ、そのキーを TerminalDone の後に server へ送る（Vim の hit-enter と同じ）。
+	Prompt bool
+}
+
+func (TerminalRun) serverMessage() {}
+
+// TerminalCommand は、TerminalRun で動かすコマンド 1 つである。
+type TerminalCommand struct {
+	// Shell が空でなければ、client のシェル（環境変数 SHELL、無ければ /bin/sh）に -c で渡すコマンドである（:!）。Argv は読まない。
+	Shell string
+	// Argv は、シェルを通さずに起動するコマンドと引数である（sudo tee <パス>。FR-79）。
+	Argv []string
+	// Input は、標準入力へ渡すテキストである（tee へ渡すバッファの中身）。PipeInput が false なら読まず、標準入力は端末である。
+	Input     []byte
+	PipeInput bool
+	// DiscardOutput は、標準出力を捨てることを表す（tee の標準出力）。false なら標準出力は端末である。標準エラー出力はいつも端末である。
+	DiscardOutput bool
+}
+
+// TerminalReclaim は、TerminalRun の子プロセスが動いている間に、client が端末を取り戻して画面を描くよう頼む（FR-117）。
+// 子プロセスの子孫が起動した待つだけの client のファイルを、:! を実行した client のタブで編集させるためである。
+// 子プロセスが既に終わっていれば、client は何もしない。
+type TerminalReclaim struct {
+	ID uint64
+}
+
+func (TerminalReclaim) serverMessage() {}
+
+// TerminalRelease は、TerminalReclaim で取り戻した端末を、子プロセスへ渡し直すよう頼む（FR-117）。client は TerminalReleased を返す。
+type TerminalRelease struct {
+	ID uint64
+}
+
+func (TerminalRelease) serverMessage() {}
 
 // ClientConn は、client の側から見た接続である。どの goroutine から呼んでもよい。
 type ClientConn interface {

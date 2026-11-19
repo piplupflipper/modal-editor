@@ -243,6 +243,48 @@ func TestSocketRoundTrip(t *testing.T) {
 	}
 }
 
+// 端末の受け渡しのメッセージ（FR-79、FR-80、FR-117）と、待つだけの client の Hello がソケットを往復する。
+func TestSocketTerminalMessages(t *testing.T) {
+	c, s := socketPair(t)
+	sent := []ClientMessage{
+		Hello{Kind: KindWait, Files: []string{"/r/.git/COMMIT_EDITMSG"}, WorkDir: "/r", Parent: 3},
+		TerminalDone{ID: 7, Status: 1},
+		TerminalDone{ID: 8, Err: "signal: killed"},
+		TerminalReleased{ID: 7},
+	}
+	for _, m := range sent {
+		if err := c.Send(m); err != nil {
+			t.Fatalf("client Send %#v: %v", m, err)
+		}
+	}
+	for _, want := range sent {
+		got, err := s.Recv()
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("server Recv = %#v, %v; want %#v", got, err, want)
+		}
+	}
+	back := []ServerMessage{
+		TerminalRun{ID: 7, Commands: []TerminalCommand{{Shell: "git commit"}}, Env: []string{"EDITOR=/bin/me"}, Prompt: true},
+		TerminalRun{ID: 8, Commands: []TerminalCommand{
+			{Argv: []string{"sudo", "mkdir", "-p", "/etc/x"}},
+			{Argv: []string{"sudo", "tee", "/etc/x/a"}, Input: []byte("a\x00\n"), PipeInput: true, DiscardOutput: true},
+		}},
+		TerminalReclaim{ID: 7},
+		TerminalRelease{ID: 7},
+	}
+	for _, m := range back {
+		if err := s.Send(m); err != nil {
+			t.Fatalf("server Send %#v: %v", m, err)
+		}
+	}
+	for _, want := range back {
+		got, err := c.Recv()
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("client Recv = %#v, %v; want %#v", got, err, want)
+		}
+	}
+}
+
 // 2 回目からは、前回送った格子から変わった行だけを載せる。
 func TestScreenEncoderSendsChangedRows(t *testing.T) {
 	var enc screenEncoder

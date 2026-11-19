@@ -23,6 +23,13 @@ const (
 	methodDraw      = "screen/draw"   // server → client。Draw（格子の差分。screen.go）
 	methodClipboard = "clipboard/set" // server → client。SetClipboard
 	methodExit      = "server/exit"   // server → client。Exit（接続を閉じる前の、終わりの知らせ）
+
+	// 端末の受け渡し（FR-79、FR-80、FR-117）。問いと応答の組は、JSON-RPC の要求と応答ではなく、id を引数に持つ通知の組にした（仮）。
+	methodTerminalRun      = "terminal/run"      // server → client。TerminalRun
+	methodTerminalReclaim  = "terminal/reclaim"  // server → client。TerminalReclaim
+	methodTerminalRelease  = "terminal/release"  // server → client。TerminalRelease
+	methodTerminalDone     = "terminal/done"     // client → server。TerminalDone
+	methodTerminalReleased = "terminal/released" // client → server。TerminalReleased
 )
 
 // maxSocketMessageSize は、ソケットから受ける 1 件のメッセージの本文の上限である（拡張機能との接続と同じ）。
@@ -162,6 +169,12 @@ func (ss *serverSocket) Send(m ServerMessage) error {
 		return ss.s.send(methodClipboard, wireClipboard(m))
 	case Exit:
 		return ss.s.send(methodExit, wireExit(m))
+	case TerminalRun:
+		return ss.s.send(methodTerminalRun, toWireRun(m))
+	case TerminalReclaim:
+		return ss.s.send(methodTerminalReclaim, wireID{ID: m.ID})
+	case TerminalRelease:
+		return ss.s.send(methodTerminalRelease, wireID{ID: m.ID})
 	}
 	return fmt.Errorf("protocol: unknown server message %T", m)
 }
@@ -187,6 +200,18 @@ func (ss *serverSocket) Recv() (ClientMessage, error) {
 				return nil, err
 			}
 			return ev.event(), nil
+		case methodTerminalDone:
+			var d wireDone
+			if err := decodeParams(m, &d); err != nil {
+				return nil, err
+			}
+			return TerminalDone(d), nil
+		case methodTerminalReleased:
+			var d wireID
+			if err := decodeParams(m, &d); err != nil {
+				return nil, err
+			}
+			return TerminalReleased{ID: d.ID}, nil
 		}
 		// 知らないメソッドの通知は読み飛ばす（JSON-RPC 2.0 の通知と同じく応答しない）。
 		// 新しい client が古い server に繋いでも、接続を切らずに編集を続けられるようにする。
@@ -208,6 +233,10 @@ func (cs *clientSocket) Send(m ClientMessage) error {
 		return cs.s.send(methodHello, wireHello(m))
 	case Event:
 		return cs.s.send(methodEvent, toWireEvent(m))
+	case TerminalDone:
+		return cs.s.send(methodTerminalDone, wireDone(m))
+	case TerminalReleased:
+		return cs.s.send(methodTerminalReleased, wireID{ID: m.ID})
 	}
 	return fmt.Errorf("protocol: unknown client message %T", m)
 }
@@ -243,6 +272,24 @@ func (cs *clientSocket) Recv() (ServerMessage, error) {
 				return nil, err
 			}
 			return Exit(e), nil
+		case methodTerminalRun:
+			var r wireTerminalRun
+			if err := decodeParams(m, &r); err != nil {
+				return nil, err
+			}
+			return r.run(), nil
+		case methodTerminalReclaim:
+			var d wireID
+			if err := decodeParams(m, &d); err != nil {
+				return nil, err
+			}
+			return TerminalReclaim{ID: d.ID}, nil
+		case methodTerminalRelease:
+			var d wireID
+			if err := decodeParams(m, &d); err != nil {
+				return nil, err
+			}
+			return TerminalRelease{ID: d.ID}, nil
 		}
 		// 知らないメソッドの通知は読み飛ばす（serverSocket.Recv と同じ）。
 	}
@@ -259,6 +306,49 @@ type wireHello struct {
 	Pane     string     `json:"pane,omitempty"`
 	WorkDir  string     `json:"workDir,omitempty"`
 	Env      []string   `json:"env,omitempty"`
+	Parent   uint64     `json:"parent,omitempty"`
+}
+
+type wireID struct {
+	ID uint64 `json:"id"`
+}
+
+type wireDone struct {
+	ID     uint64 `json:"id"`
+	Status int    `json:"status,omitempty"`
+	Err    string `json:"err,omitempty"`
+}
+
+type wireTerminalRun struct {
+	ID       uint64        `json:"id"`
+	Commands []wireCommand `json:"commands"`
+	Env      []string      `json:"env,omitempty"`
+	Prompt   bool          `json:"prompt,omitempty"`
+}
+
+// wireCommand は、ソケットの上の TerminalCommand である。Input は JSON の []byte と同じく base64 の文字列にする。
+type wireCommand struct {
+	Shell         string   `json:"shell,omitempty"`
+	Argv          []string `json:"argv,omitempty"`
+	Input         []byte   `json:"input,omitempty"`
+	PipeInput     bool     `json:"pipeInput,omitempty"`
+	DiscardOutput bool     `json:"discardOutput,omitempty"`
+}
+
+func toWireRun(r TerminalRun) wireTerminalRun {
+	w := wireTerminalRun{ID: r.ID, Env: r.Env, Prompt: r.Prompt, Commands: make([]wireCommand, len(r.Commands))}
+	for i, c := range r.Commands {
+		w.Commands[i] = wireCommand(c)
+	}
+	return w
+}
+
+func (w wireTerminalRun) run() TerminalRun {
+	r := TerminalRun{ID: w.ID, Env: w.Env, Prompt: w.Prompt, Commands: make([]TerminalCommand, len(w.Commands))}
+	for i, c := range w.Commands {
+		r.Commands[i] = TerminalCommand(c)
+	}
+	return r
 }
 
 type wireClipboard struct {

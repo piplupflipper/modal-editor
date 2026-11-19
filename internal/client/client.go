@@ -86,8 +86,9 @@ func run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger, sent bool, 
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	h := newHandover(tm, conn, logger)
 	if sent {
-		go forward(tm, conn)
+		go forward(tm, conn, h)
 	}
 	// endErr は、server の終わり方による Run の戻り値である（端末を戻した後に返す）。
 	var endErr error
@@ -126,10 +127,19 @@ recv:
 			if err := tm.SetClipboard(m.Text); err != nil {
 				logger.Error("クリップボードへ送れない", "err", err)
 			}
+		case protocol.TerminalRun:
+			h.start(m)
+		case protocol.TerminalReclaim:
+			h.reclaim(m.ID)
+		case protocol.TerminalRelease:
+			h.release(m.ID)
 		default:
 			logger.Error("知らないメッセージ", "type", fmt.Sprintf("%T", m))
 		}
 	}
+	// 端末を渡したまま server との接続が切れたら、子プロセス（:!sh など）が終わるのを待ってから端末を戻す。
+	// 待たずに戻ると、子プロセスが端末を使っている間に本体が終わり、端末の設定が混ざる。
+	h.finish()
 	rerr := tm.Restore()
 	_ = conn.Close() // 閉じる誤りは、端末を戻した後には扱えない
 	if rerr != nil {
@@ -151,7 +161,8 @@ func (e *ServerExitError) Error() string { return e.Reason }
 
 // forward は、端末のイベントを server へ送る。端末の入力が終わったら接続を閉じる。
 // server が接続を閉じた後も、端末の入力が閉じるまで読み捨てる（端末の読み取りを止めないため）。
-func forward(tm Terminal, conn protocol.ClientConn) {
+// 「続けるには ENTER」の問いの間に打ったキーは、問いの答えにする（handover.answer）。
+func forward(tm Terminal, conn protocol.ClientConn, h *handover) {
 	defer func() { _ = conn.Close() }() // 閉じる誤りは、server の側の Recv で分かる
 	defer func() {
 		if p := recover(); p != nil {
@@ -160,6 +171,9 @@ func forward(tm Terminal, conn protocol.ClientConn) {
 		}
 	}()
 	for ev := range tm.Input() {
+		if h.answer(ev) {
+			continue
+		}
 		_ = conn.Send(protocol.Event(ev)) // 閉じた後の誤りは捨てる。Run が端末を戻して終わる
 	}
 }
