@@ -2660,7 +2660,7 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 
 - 配色のファイルは、設定の `colors` の値と同じ形（色の名前から属性のオブジェクトへの対応）を最上位に書いた JSONC である。読み方と誤りの扱いは `colors` と同じで、`internal/config` の `LoadColorScheme` が読む
 - 配色は、設定ファイルと同じディレクトリの `colors/<名前>.jsonc`、本体に同梱した配色の順に探す。同じ名前なら利用者のファイルを使う。ディレクトリは `config.DefaultPath` のディレクトリ（`$XDG_CONFIG_HOME/vi-imitation/`）で、設定ファイルが symlink でも symlink を辿らず、symlink を置いた側を探す
-- 同梱の配色は `internal/config/colors/<名前>.jsonc` に置き、`go:embed` で本体に埋め込む。配色を足すときは、ファイルを 1 つ置くだけでよい。同梱するのは iceberg（iceberg.vim の暗い背景の色を写したもの。写した元のコミットはファイルの先頭にある）だけである
+- 同梱の配色は `internal/config/colors/<名前>.jsonc` に置き、`go:embed` で本体に埋め込む。配色を足すときは、ファイルを 1 つ置くだけでよい。同梱するのは iceberg（iceberg.vim の `colors/iceberg.vim` の暗い背景の色を写したもの。写した元のコミットはファイルの先頭にある）だけである。同梱の配色は配色そのもののファイル（Vim の `colors/<名前>.vim`）だけを出どころにし、同じリポジトリの lightline などのテーマの色は入れない（#255。#253 のオーナーの決定「iceberg.vim の元の色を入れる」による）。lightline に近いステータス行の色は `config.example.jsonc` の `colors` に置く
 - 名前に使える文字は英数字と `_` と `-` だけにする（仮）。`/` と `.` を許さないので、名前から設定ディレクトリの外のファイルを指せない
 - 誤り（使えない名前、見つからない名前、ファイルの中の読めない色と知らない色の名前）は、設定の誤りと同じく起動後に位置と内容を知らせ、その項目だけを使わない。見つからない名前は設定ファイルの `colorscheme` の位置の誤り（`E185`）にして、配色を使わない。色の名前の検査は `colors` と同じく、`cmd/vi-imitation` が `internal/ui` の `IsStyleName` を `config.AppearanceCheck` で渡す（`internal/config` は同じ層の `internal/ui` を import しない）
 - 配色の誤りは、設定ファイルの誤りの後に並べる（最初に出す 1 件は設定ファイルの誤りにする）

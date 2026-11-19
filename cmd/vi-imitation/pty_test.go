@@ -347,8 +347,10 @@ func TestColorSchemeInPTY(t *testing.T) {
 	before := ptytest.Termios(t, p.tty)
 	p.out.WaitFor(t, "iceberg の色", func(out string) bool {
 		return strings.Contains(out, "[No Name]") &&
-			// iceberg の statusline.mode.normal（#17171b の文字、#818596 の背景）と diff 以外の名前の例として statusline.name の背景（#2e313f）
-			strings.Contains(out, "38;2;23;23;27") && strings.Contains(out, "48;2;129;133;150") && strings.Contains(out, "48;2;46;49;63") &&
+			// iceberg の statusline（StatusLine。反転、#818596 の文字の色、#17171b の背景の色）
+			strings.Contains(out, "7;38;2;129;133;150;48;2;23;23;27m") &&
+			// iceberg の tabline.selected（TabLineSel。#9a9ca5 の文字、#161821 の背景）
+			strings.Contains(out, "38;2;154;156;165;48;2;22;24;33m") &&
 			// colors で置き換えた nontext（#444b71）
 			strings.Contains(out, "38;2;68;75;113")
 	})
