@@ -12,7 +12,7 @@ import (
 func init() {
 	Symbols["github.com/piplupflipper/modal-editor/ext/ext"] = map[string]reflect.Value{
 		// function, constant and variable definitions
-		"APIVersion":               reflect.ValueOf(constant.MakeFromLiteral("\"0.5.0\"", token.STRING, 0)),
+		"APIVersion":               reflect.ValueOf(constant.MakeFromLiteral("\"0.6.0\"", token.STRING, 0)),
 		"ActivationCommand":        reflect.ValueOf(ext.ActivationCommand),
 		"ActivationFileType":       reflect.ValueOf(ext.ActivationFileType),
 		"ActivationMotion":         reflect.ValueOf(ext.ActivationMotion),

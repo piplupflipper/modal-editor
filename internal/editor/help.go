@@ -594,12 +594,10 @@ func keyListLines(group string, prefix []editcmd.Key, rows []keyRow) (head strin
 	lines = make([]string, len(rows))
 	for i, r := range rows {
 		desc := r.Description
-		switch {
-		case r.Overridden == 0:
-		case r.Overridden == r.Modes:
+		if r.Overridden == r.Modes && r.Modes != 0 {
 			desc += "（設定の keymap が優先）"
-		default:
-			// 一部のモードだけを上書きしたとき（{"normal": {"gq": …}} の gq の v など）は、上書きしたモードを書く（#233）。
+		} else if r.Overridden != 0 {
+			// 一部のモードだけを上書きしたとき（{"normal": {"gq": …}} の gq の n）は、上書きしたモードを書く（#233）。
 			desc += fmt.Sprintf("（%s では設定の keymap が優先）", modeLetters(r.Overridden))
 		}
 		lines[i] = strings.TrimRight(pad(cells[i][0], width[0])+pad(cells[i][1], width[1])+pad(cells[i][2], width[2])+desc, " ")

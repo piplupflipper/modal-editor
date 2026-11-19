@@ -101,8 +101,6 @@ type floatState struct {
 	rows     []floatRow
 	tree     []ext.ViewItem
 	expanded map[string]bool
-	// highlights は、拡張機能が渡した色を付ける範囲（テキストの部品）である。
-	highlights []ext.Decoration
 	// onSelect は、本体が出した一覧（キーの一覧）で、行 row を選んだときに呼ぶ関数である。nil なら拡張機能へ view/select を送る。
 	onSelect func(row int)
 	// pending は、contributes.popupKeys のキーの列の途中まで打ったキーである。
@@ -416,8 +414,11 @@ func loadPopupKeys(specs []exthost.Spec, leader []editcmd.Key) (map[string][]pop
 		m := s.Manifest
 		for _, c := range m.Contributes.PopupKeys {
 			ks, err := editcmd.ParseKeysLeader(c.Keys, leader)
-			if err != nil || len(ks) == 0 {
-				errs = append(errs, fmt.Errorf("拡張機能 %s の popupKeys の %s のキー %q を読めない: %v", m.ID, c.ID, c.Keys, err))
+			if err == nil && len(ks) == 0 {
+				err = errors.New("empty key sequence")
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("拡張機能 %s の popupKeys の %s のキー %q を読めない: %w", m.ID, c.ID, c.Keys, err))
 				continue
 			}
 			out[m.ID] = append(out[m.ID], popupKeyBinding{keys: ks, id: c.ID})

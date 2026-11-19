@@ -224,15 +224,16 @@ func (r *Renderer) render(f *Frame) Screen {
 	}
 	curRow := r.screenRow(f, cur.line)
 	var listCursor *Cursor
-	if f.List != nil && rows > 0 {
+	switch {
+	case f.List != nil && rows > 0:
 		if c, ok := r.drawList(g, theme, f.List); ok {
 			listCursor = &c
 		}
-	} else if f.Float != nil && rows > 0 {
+	case f.Float != nil && rows > 0:
 		if c, ok := r.drawFloat(g, theme, f.Float, curRow, r.textLeft()+cur.col-r.left); ok {
 			listCursor = &c
 		}
-	} else {
+	default:
 		r.float = nil
 	}
 	screen := Screen{Grid: g, Cursor: Cursor{
