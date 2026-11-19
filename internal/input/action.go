@@ -27,8 +27,8 @@ type Action struct {
 }
 
 // Actions は、設定の keymap の右辺に書ける本体の操作を、ID の一覧の順（本体の操作の表の順、提供者へ振り分ける操作の表の順）に返す。
-// 同じ ID と種類の行（0 と <Home> の line-start など）は 1 件にまとめる。同じ ID が別の種類の行にもあれば
-// （オペレーターの g~ と操作の ~ の toggle-case）、種類ごとに 1 件ずつ返す。
+// 同じ ID の行（0 と <Home> の line-start、d とビジュアルモードの x の delete など。同じ操作を複数のキーに載せたもの）は 1 件にまとめる。
+// ID は種類をまたいで一意である（TestActionIDUnique。#257 のレビューの必須 1 で、操作の ~ を toggle-case-char に分けた）。
 // キーの一覧の操作（KeyListPrefix で始まる ID）は、接頭辞ごとに作るので含めない。
 //
 // req: FR-126
@@ -66,7 +66,7 @@ func Actions() []Action {
 // UserBinding は、設定の keymap のモード mode（MapNormal、MapVisual、MapInsert のどれか 1 つ）の、左辺が keys で右辺が
 // { "action": id } の割り当てを、操作の表への登録（Keymap.Override に渡す値）にする（FR-126）。
 //
-// id は Actions の ID である。同じ ID が複数の種類にあれば、mode で使える最初の種類（Actions の順）を選ぶ。
+// id は Actions の ID である。
 // 次の場合はエラーを返す。
 //   - id が本体の操作の ID でない（拡張機能が宣言したコマンドの ID は書けない。キーマップは拡張機能の起動を待たずに効くため。FR-41）
 //   - id の操作が mode で使えない（ノーマルモードのモーションをインサートモードに、インサートモードの操作をノーマルモードに割り当てたなど）

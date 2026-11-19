@@ -94,7 +94,9 @@ type ClientID uint64
 type Config struct {
 	// Keymap は、利用者のキーマップ（基本設計 7 章の keymap）である。
 	// モードの名前（"normal"、"visual"、"insert"、"commandLine"）から、キーの列の表記から展開するキーの列の表記への対応である。
-	// 展開した列は、もう一度キーマップで展開しない（Vim の noremap と同じ）。
+	// 展開した列は、もう一度キーマップで展開しない（この点は Vim の noremap と同じ）。
+	// ただし、展開した列は、KeymapActions を登録した後の操作の表で解釈するので、利用者が操作を割り当てたキーはその操作になる
+	// （Vim の noremap は本体の既定の働きを使う。PR #258 のレビューの推奨 7）。
 	// 拡張機能の起動を待たずに反映する（FR-41）。
 	Keymap map[string]map[string]string
 	// KeymapActions は、利用者のキーマップのうち、右辺に本体の操作の ID を書いた割り当て（{ "action": "<ID>" }。FR-126）である。

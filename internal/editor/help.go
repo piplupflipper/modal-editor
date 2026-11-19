@@ -264,6 +264,9 @@ func helpKeyLines(km *input.Keymap) []string {
 //  3. 設定の例の JSON のキー（"語"）を含む行。点で区切った名前は、最後の部分（"historySize"）でも探す
 //  4. 定義の行のうち、語で始まる `…` を含む行（:help reg で `:registers`）
 //  5. 語が 2 文字以上なら、語を含む見出し
+//  6. 操作の ID の一覧（docs/usage.md の action-ids の印の間）の行のうち、最初の列の `語` が完全に一致する行。
+//     一覧の行は 1〜5 の候補にしない。rename や hover のように説明の節がある語は、その節に当てる（#257 のレビューの推奨 2）。
+//     ただし、点で区切った名前（insert.left）は、3 の最後の部分（"left"）で探す前に、この段で探す
 //
 // 語の一部だけを含む見出し（:help w が「同じ window の…」）には当てない（PR #230 のレビュー）。
 func helpLine(lines []string, word string) (int, bool) {
@@ -277,13 +280,30 @@ func helpLine(lines []string, word string) (int, bool) {
 		heading bool
 	}
 	parsed := make([]mdLine, len(lines))
-	inCode := false
+	// idRows は、操作の ID の一覧（docs/usage.md の action-ids の印の間）の行の、最初の列の `…` である。
+	// 一覧の行は、他の段で当たる所が無い語のときだけ当てる（下の 6。#257 のレビューの推奨 2）。
+	idRows := map[int][]string{}
+	inCode, inIDs := false, false
 	for i, l := range lines {
 		if strings.HasPrefix(l, "```") {
 			inCode = !inCode
 			continue
 		}
 		if inCode {
+			continue
+		}
+		switch l {
+		case actionIDsBegin:
+			inIDs = true
+			continue
+		case actionIDsEnd:
+			inIDs = false
+			continue
+		}
+		if inIDs {
+			if cell, _, ok := strings.Cut(strings.TrimPrefix(l, "|"), " |"); ok {
+				idRows[i] = codeSpans(cell)
+			}
 			continue
 		}
 		p := mdLine{spans: codeSpans(l), heading: strings.HasPrefix(l, "#")}
@@ -324,7 +344,21 @@ func helpLine(lines []string, word string) (int, bool) {
 	if j := strings.LastIndexByte(word, '.'); j >= 0 && j+1 < len(word) {
 		keys = append(keys, `"`+word[j+1:]+`"`)
 	}
-	for _, k := range keys {
+	idRow := func() (int, bool) {
+		for i := range lines {
+			if slices.Contains(idRows[i], word) {
+				return i, true
+			}
+		}
+		return 0, false
+	}
+	for n, k := range keys {
+		if n == 1 {
+			// 点で区切った名前の最後の部分（"left"）より、操作の ID の一覧の行（insert.left）を先に当てる。
+			if i, ok := idRow(); ok {
+				return i, true
+			}
+		}
 		for i, l := range lines {
 			if strings.Contains(l, k) {
 				return i, true
@@ -341,8 +375,14 @@ func helpLine(lines []string, word string) (int, bool) {
 			}
 		}
 	}
-	return 0, false
+	return idRow()
 }
+
+// 操作の ID の一覧の印（docs/usage.md。internal/input の TestActionIDDoc が同じ印で表を照合する）。
+const (
+	actionIDsBegin = "<!-- action-ids:begin -->"
+	actionIDsEnd   = "<!-- action-ids:end -->"
+)
 
 // namesOnly は、表の列 cell が `…` の名前を並べただけ（`:w`、`:write`（`:w`）、`<C-]>` か `<leader>lD`）かを返す。
 // 名前の外に文が書かれた列（`dw`、`x` など、名前を省略した削除）は、その名前の定義の行として扱わない。

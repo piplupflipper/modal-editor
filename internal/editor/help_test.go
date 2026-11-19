@@ -95,6 +95,14 @@ func TestHelp(t *testing.T) {
 		{"sa", "- `sa`: "},
 		{":!", "`:!`"},
 		{":wqall", "`:wqall`"},
+		// 操作の ID と同じ語は、説明の節があればそこに当たり、操作の ID の一覧の行には他に当たる所が無いときだけ当たる（#257 のレビューの推奨 2）。
+		{"rename", "| `:rename 新しい名前` |"},
+		{"references", "| `<leader>lr` | `references` |"},
+		{"definition", "| `definition` |"},
+		{"hover", "`hover` を打って"},
+		{"undo", "| `undo` | 操作 |"},
+		// 点で区切った ID は、最後の部分の JSON のキー（statusline の "right"）より一覧の行を先に当てる。
+		{"insert.right", "| `insert.right` | 操作 |"},
 	} {
 		h.keys(":h " + tt.word + "<CR>")
 		h.settle()

@@ -139,7 +139,8 @@ var (
 	}
 
 	builtinActions = []spec{
-		{keys: "~", id: "toggle-case", desc: "カーソルの文字の大文字と小文字を入れ替える"},
+		// ID は、オペレーターの g~（toggle-case）と分ける（#257 のレビューの必須 1。操作の ID は一意にする）。
+		{keys: "~", id: "toggle-case-char", desc: "カーソルの文字の大文字と小文字を入れ替える"},
 		{keys: "p", id: "put-after", desc: "カーソルの後に貼る"},
 		{keys: "P", id: "put-before", desc: "カーソルの前に貼る"},
 		{keys: "x", id: "delete-char", desc: "カーソルの文字を消す"},

@@ -12,12 +12,14 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/input"
 )
 
-// emacsInsertKeys は、config.example.jsonc の keymap.insert と同じ、インサートモードの Emacs 風の 9 個のキーである（#257）。
+// emacsInsertKeys は、config.example.jsonc の keymap.insert と同じ、インサートモードの Emacs 風のキーである（#257）。
+// Ctrl-H は端末から <BS> として届くので、例には書かない（<BS> の既定の insert.delete-prev-char で前の文字を消す）。
+// テストでは、Ctrl-H を打ったときに届く <BS> を打つ。
 var emacsInsertKeys = map[string]string{
 	"<C-a>": "insert.line-start", "<C-e>": "insert.line-end",
 	"<C-f>": "insert.right", "<C-b>": "insert.left",
 	"<C-n>": "insert.down", "<C-p>": "insert.up",
-	"<C-h>": "insert.delete-prev-char", "<C-d>": "insert.delete-char", "<C-k>": "insert.delete-to-line-end",
+	"<C-d>": "insert.delete-char", "<C-k>": "insert.delete-to-line-end",
 }
 
 // insertCase は、text（"|" がカーソル）で keys を打った後のテキストとカーソル（行:バイト）である。
@@ -126,7 +128,7 @@ func TestInsertDeleteToLineEnd(t *testing.T) {
 	})
 }
 
-// config.example.jsonc の Emacs 風の 9 個のキーは、表のとおりに働く。行頭、行末、最初と最後の行、空のバッファ、全角文字の上では、
+// config.example.jsonc の Emacs 風の 8 個のキーと、<BS> として届く Ctrl-H は、#257 の表のとおりに働く。行頭、行末、最初と最後の行、空のバッファ、全角文字の上では、
 // 動けない移動と消すものの無い削除は何もしない。
 //
 // req: FR-126, FR-127
@@ -138,7 +140,7 @@ func TestEmacsInsertKeys(t *testing.T) {
 		{"ab|c", "i<C-b>X<Esc>", "aXbc", "0:1"},
 		{"abc\nd|ef", "i<C-p>X<Esc>", "aXbc\ndef", "0:1"},
 		{"a|bc\ndef", "i<C-n>X<Esc>", "abc\ndXef", "1:1"},
-		{"ab|c", "i<C-h><Esc>", "ac", "0:0"},
+		{"ab|c", "i<BS><Esc>", "ac", "0:0"},
 		{"ab|c", "i<C-d><Esc>", "ab", "0:1"},
 		{"a|bc", "i<C-k><Esc>", "a", "0:0"},
 		// 行頭、行末、最初と最後の行。
@@ -148,18 +150,63 @@ func TestEmacsInsertKeys(t *testing.T) {
 		{"ab|c", "A<C-e>X<Esc>", "abcX", "0:3"},
 		{"a|bc", "i<C-n>X<Esc>", "aXbc", "0:1"},
 		{"a|bc", "i<C-p>X<Esc>", "aXbc", "0:1"},
-		{"abc\n|de", "i<C-h><Esc>", "abcde", "0:2"},
-		{"|abc", "i<C-h>X<Esc>", "Xabc", "0:0"},
+		{"abc\n|de", "i<BS><Esc>", "abcde", "0:2"},
+		{"|abc", "i<BS>X<Esc>", "Xabc", "0:0"},
 		// 空のバッファ。
-		{"|", "i<C-a><C-e><C-f><C-b><C-n><C-p><C-h><C-d><C-k>X<Esc>", "X", "0:0"},
+		{"|", "i<C-a><C-e><C-f><C-b><C-n><C-p><BS><C-d><C-k>X<Esc>", "X", "0:0"},
 		// 全角文字の上。
 		{"あ|いう", "i<C-f>X<Esc>", "あいXう", "0:6"},
 		{"あ|いう", "i<C-b>X<Esc>", "Xあいう", "0:0"},
-		{"あ|いう", "i<C-h><Esc>", "いう", "0:0"},
+		{"あ|いう", "i<BS><Esc>", "いう", "0:0"},
 		{"あ|いう", "i<C-d><Esc>", "あう", "0:0"},
 		{"あいう\nか|きく", "i<C-p>X<Esc>", "あXいう\nかきく", "0:3"},
 		{"あ|いう\nかきく", "i<C-n>X<Esc>", "あいう\nかXきく", "1:3"},
 	})
+}
+
+// インサートモードで入力した制御文字（キーの列の展開、マクロの再生、レジスターと端末からの貼り付け）は、削除の操作と取り違えず、
+// 文字として入る（PR #258 のレビューの推奨 1）。ドットリピートと回数による繰り返しでも文字のまま入る。
+// 削除の操作のキー（<C-k>、<Del>、<BS>）を割り当てていても変わらない。
+//
+// req: FR-127
+func TestInsertControlChars(t *testing.T) {
+	cfg := Config{
+		Keymap: map[string]map[string]string{
+			"insert": {"<F2>": "[\u000b]", "<F3>": "[\u007f]", "<F4>": "[\b]"},
+		},
+		KeymapActions: map[string]map[string]string{"insert": emacsInsertKeys},
+	}
+	dir := writeFiles(t, map[string]string{"a.txt": "hello world\nxy\n"})
+	cfg.WorkDir = dir
+	h := start(t, cfg, "a.txt")
+	ctrl := "[\v][\x7f][\b]"
+	h.keys("lli<F2><F3><F4><Esc>")
+	h.settle()
+	if got, want := h.text(), "he"+ctrl+"llo world\nxy"; got != want {
+		t.Fatalf("キーの列の展開: text %q, want %q", got, want)
+	}
+	h.keys("0.")
+	h.settle()
+	if got, want := h.text(), ctrl+"he"+ctrl+"llo world\nxy"; got != want {
+		t.Errorf("ドットリピート: text %q, want %q", got, want)
+	}
+	// マクロの記録と再生、回数による繰り返し。
+	h.keys("jqa0i<F2><Esc>qu@a2i<F3><Esc>")
+	h.settle()
+	if got, want := h.text(), ctrl+"he"+ctrl+"llo world\n[\v[\x7f][\x7f]]xy"; got != want {
+		t.Errorf("マクロと回数: text %q, want %q", got, want)
+	}
+	// レジスターからの貼り付け（p）と、インサートモードでの端末からの貼り付け。端末からの貼り付けは、main と同じく制御文字を捨てる。
+	h.e.do(func() { h.e.cur.state.Registers().Set('a', command.Register{Text: "<\v\x7f\b>"}) })
+	h.keys(`0"aP`)
+	h.settle()
+	h.keys("A")
+	h.paste("{\v\x7f\b}")
+	h.keys("<Esc>")
+	h.settle()
+	if got, want := h.text(), ctrl+"he"+ctrl+"llo world\n<\v\x7f\b>[\v[\x7f][\x7f]]xy{}"; got != want {
+		t.Errorf("貼り付け: text %q, want %q", got, want)
+	}
 }
 
 // 設定を書かない状態では、インサートモードの修飾キーの付いたキーは何もしない（今までどおり）。
@@ -195,7 +242,8 @@ func TestInsertActionIDs(t *testing.T) {
 //
 // req: FR-126, FR-127
 func TestKeymapActionConfig(t *testing.T) {
-	insert := map[string]string{"<BS>": "insert.delete-char"}
+	// <C-h> は、Ctrl-H を区別して送る端末（偽の端末）での割り当てとして足す。
+	insert := map[string]string{"<BS>": "insert.delete-char", "<C-h>": "insert.delete-prev-char"}
 	for k, v := range emacsInsertKeys {
 		insert[k] = v
 	}

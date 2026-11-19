@@ -10,17 +10,17 @@
 {
   // インサートモードの Emacs 風のキー。右辺の { "action": "<ID>" } は本体の操作で、ID の一覧は docs/usage.md の「操作の ID の一覧」にある。
   // 本体の既定のキー（<Left>、<BS>、<Del> など）はそのまま使える
+  // Ctrl-H（前の文字を消す）は書かない。端末も tmux も Ctrl-H を ^H（0x08）で送り、本体は <BS> と読むので、
+  // <C-h> の割り当ては効かない。Ctrl-H は <BS> の既定（insert.delete-prev-char）で前の文字を消す
   "keymap": {
     "insert": {
       "<C-a>": { "action": "insert.line-start" }, // 行の先頭へ
       "<C-e>": { "action": "insert.line-end" }, // 行末の位置へ
       "<C-f>": { "action": "insert.right" }, // 右へ
-      "<C-b>": { "action": "insert.left" }, // 左へ
+      // 左へ。tmux の prefix が既定の C-b のままなら、Ctrl-B は tmux が受け取り、本体に届かない
+      "<C-b>": { "action": "insert.left" },
       "<C-n>": { "action": "insert.down" }, // 下の行へ
       "<C-p>": { "action": "insert.up" }, // 上の行へ
-      // 前の文字を消す。多くの端末は Ctrl-H を <BS> と同じバイト（0x08）で送り、本体は <BS> と読む（既定で同じ操作）。
-      // この行は、Ctrl-H を区別して送る端末（CSI u）のためのものである
-      "<C-h>": { "action": "insert.delete-prev-char" },
       "<C-d>": { "action": "insert.delete-char" }, // カーソルの文字を消す
       "<C-k>": { "action": "insert.delete-to-line-end" }, // カーソルから行末まで消す（行末では次の行をつなげる）
     },

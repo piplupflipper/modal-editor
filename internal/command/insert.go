@@ -1,6 +1,9 @@
 package command
 
 import (
+	"slices"
+	"unicode/utf8"
+
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command/target"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
@@ -8,11 +11,12 @@ import (
 
 // insertState は、インサートモードの 1 回分の入力の状態である。
 type insertState struct {
-	// cmd は、インサートモードへ移った編集コマンドの値である。抜けるときに Text を埋めてドットリピートに記録する。
+	// cmd は、インサートモードへ移った編集コマンドの値である。抜けるときに Inserted を埋めてドットリピートに記録する。
 	cmd editcmd.Command
-	// text は、入力した文字の列である。<CR> は '\n'、<BS>（insert.delete-prev-char）は '\b'、
-	// insert.delete-char は runeDeleteChar、insert.delete-to-line-end は runeDeleteToLineEnd として記録する。
-	text []rune
+	// text は、入力した文字と削除の操作の列である。<CR> は文字 '\n' として記録する。
+	// 削除（<BS> などの insert.delete-*）は文字と別の種類（editcmd.InsertInput.Op）で記録するので、
+	// 入力した制御文字（キーの列の展開から届く '\b'、'\x0b'、'\x7f' など）は文字のまま入る（#257 のレビュー）。
+	text []editcmd.InsertInput
 	// repeat は、入力したテキストを入れる回数である（3ix<Esc> なら 3）。c では 1 である。
 	repeat int
 	// extraGroups は、抜けるときに追加で閉じるアンドゥのグループの数である（インサートモードで終わったマクロの再生の分）。
@@ -28,8 +32,8 @@ func (s *State) startInsert(cmd editcmd.Command, repeat int) {
 	s.mode = ModeInsert
 	s.insert = insertState{cmd: cmd, repeat: repeat}
 	if s.replaying {
-		for _, r := range cmd.Text {
-			s.insertRune(r)
+		for _, in := range cmd.Inserted {
+			s.insertInput(in)
 		}
 		s.finishInsert()
 	}
@@ -77,9 +81,9 @@ func (s *State) insertKey(k editcmd.Key) {
 }
 
 // insertActions は、インサートモードの操作の ID（internal/input の builtinInsert の表）から実装への対応である（FR-127）。
-// 移動は insertMove、削除は insertRune に、削除を表す文字（'\b'、runeDeleteChar、runeDeleteToLineEnd）を渡す。
-// 削除を文字として入力の記録（insertState.text）に入れるので、アンドゥの単位、ドットリピート、回数による繰り返し（3i）、
-// カーソルキーで区切った後の入力の始め直し（resumeInsert）は、<BS> と同じ扱いになる。
+// 移動は insertMove、削除は insertInput に削除の種類（editcmd.InsertDeletePrev など）を渡す。
+// 削除は文字と同じ入力の記録（insertState.text）に、文字と別の種類として入れるので、アンドゥの単位、ドットリピート、
+// 回数による繰り返し（3i）、カーソルキーで区切った後の入力の始め直し（resumeInsert）は、3 つの削除で同じ扱いになる。
 //
 // req: FR-127
 var insertActions = map[string]func(*State){
@@ -91,9 +95,9 @@ var insertActions = map[string]func(*State){
 	"insert.line-end":           func(s *State) { s.insertMove(editcmd.CodeEnd) },
 	"insert.page-up":            func(s *State) { s.insertMove(editcmd.CodePageUp) },
 	"insert.page-down":          func(s *State) { s.insertMove(editcmd.CodePageDown) },
-	"insert.delete-prev-char":   func(s *State) { s.insertRune('\b') },
-	"insert.delete-char":        func(s *State) { s.insertRune(runeDeleteChar) },
-	"insert.delete-to-line-end": func(s *State) { s.insertRune(runeDeleteToLineEnd) },
+	"insert.delete-prev-char":   func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeletePrev}) },
+	"insert.delete-char":        func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeleteChar}) },
+	"insert.delete-to-line-end": func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeleteToLineEnd}) },
 }
 
 // InsertActionIDs は、実装のあるインサートモードの操作の ID を返す（順は決まらない）。
@@ -105,15 +109,6 @@ func InsertActionIDs() []string {
 	}
 	return ids
 }
-
-// 入力の記録（insertState.text）の中で、削除の操作を表す文字。'\b'（<BS>、insert.delete-prev-char）と同じく、
-// 入力した文字としては現れない制御文字を使う（端末からの貼り付けは制御文字を捨てる。pasteable）。
-const (
-	// runeDeleteChar は、カーソルの文字を消す操作（<Del>、insert.delete-char）である。DEL の文字にした。
-	runeDeleteChar = '\x7f'
-	// runeDeleteToLineEnd は、カーソルから行末まで消す操作（insert.delete-to-line-end）である。Emacs の C-k に合わせ、^K の文字にした。
-	runeDeleteToLineEnd = '\x0b'
-)
 
 // insertMove は、インサートモードのカーソルキーでカーソルを動かす（Vim 9.1 の ins_left() などに当たる）。
 // c は既定のキー（<Left> など）で、操作の ID（insert.left など）から insertActions が渡す。設定で別のキーに割り当てても同じく動く。
@@ -200,9 +195,8 @@ func (s *State) breakInsert() {
 	}
 	s.insert.moved = true
 	s.buf.EndUndoGroup()
-	text := string(s.insert.text)
 	cmd := s.insert.cmd
-	cmd.Text = text
+	cmd.Inserted = slices.Clone(s.insert.text)
 	s.dot = &cmd
 }
 
@@ -219,33 +213,44 @@ func (s *State) resumeInsert() {
 	s.insert.cmd = editcmd.Command{Kind: editcmd.KindAction, Action: editcmd.Ref{ID: "insert"}, Count: 1, Mode: editcmd.ModeInsert}
 }
 
-// insertRune は、入力した文字を記録して、バッファに入れる。
+// insertRune は、入力した文字を記録して、バッファに入れる。制御文字も文字として入れる。
 func (s *State) insertRune(r rune) {
+	s.insertInput(editcmd.InsertInput{Op: editcmd.InsertRune, Rune: r})
+}
+
+// insertInput は、入力（文字か削除の操作）を記録して、バッファに行う。
+func (s *State) insertInput(in editcmd.InsertInput) {
 	s.resumeInsert()
-	s.insert.text = append(s.insert.text, r)
-	if err := s.typeRune(r); err != nil {
+	s.insert.text = append(s.insert.text, in)
+	if err := s.typeInput(in); err != nil {
 		s.fail(err)
 	}
 }
 
-// typeRune は、文字 1 つをカーソルの位置に入れる。'\n' は行を分け、'\b' はカーソルの前の文字を消す。
-// '\b' は行の先頭では前の行とつなぎ、バッファの先頭では何もしない（'backspace' が "indent,eol,start" の動き）。
+// typeInput は、入力の記録の 1 件をカーソルの位置に行う。
 //
-// runeDeleteChar はカーソルの文字を消し、runeDeleteToLineEnd はカーソルから行末までを消す。どちらもカーソルは動かない。
-// 行末の位置では、どちらも次の行をつなげる（次の行の先頭の空白は残す）。最後の行の行末と空のバッファでは何もしない。
-// runeDeleteChar は Vim 9.1 のインサートモードの <Del>（'backspace' が "indent,eol,start"）と同じ動きである。
-// runeDeleteToLineEnd は Vim に対応するキーが無く、行末の位置で次の行をつなげるのは Emacs の C-k に合わせた（#257 の決定）。
-// 消したテキストは、<BS> と同じくレジスターにも履歴にも入れない。
+//   - 文字（editcmd.InsertRune）は入れる。'\n' は行を分ける。他の制御文字は文字のまま入れる（typeRune）
+//   - editcmd.InsertDeletePrev はカーソルの前の文字を消す。行の先頭では前の行とつなぎ、バッファの先頭では何もしない
+//     （'backspace' が "indent,eol,start" の動き）
+//   - editcmd.InsertDeleteChar はカーソルの文字を消し、editcmd.InsertDeleteToLineEnd はカーソルから行末までを消す。
+//     どちらもカーソルは動かない。行末の位置では、どちらも次の行をつなげる（次の行の先頭の空白は残す）。
+//     最後の行の行末と空のバッファでは何もしない。InsertDeleteChar は Vim 9.1 のインサートモードの <Del>
+//     （'backspace' が "indent,eol,start"）と同じ動きである。InsertDeleteToLineEnd は Vim に対応するキーが無く、
+//     行末の位置で次の行をつなげるのは Emacs の C-k に合わせた（#257 の決定）
+//
+// 消したテキストは、レジスターにも履歴にも入れない。
 //
 // req: FR-127
-func (s *State) typeRune(r rune) error {
+func (s *State) typeInput(in editcmd.InsertInput) error {
 	c := s.cursor
-	switch r {
-	case runeDeleteChar, runeDeleteToLineEnd:
+	switch in.Op {
+	case editcmd.InsertRune:
+		return s.typeRune(in.Rune)
+	case editcmd.InsertDeleteChar, editcmd.InsertDeleteToLineEnd:
 		line := s.line(c.Line)
 		var to buffer.Position
 		switch {
-		case c.Byte < len(line) && r == runeDeleteChar:
+		case c.Byte < len(line) && in.Op == editcmd.InsertDeleteChar:
 			to = pos(c.Line, nextChar(line, c.Byte))
 		case c.Byte < len(line):
 			to = pos(c.Line, len(line))
@@ -258,7 +263,7 @@ func (s *State) typeRune(r rune) error {
 			return err
 		}
 		s.cursor = c
-	case '\b':
+	case editcmd.InsertDeletePrev:
 		var from buffer.Position
 		switch {
 		case c.Byte > 0:
@@ -272,12 +277,20 @@ func (s *State) typeRune(r rune) error {
 			return err
 		}
 		s.cursor = from
-	case '\n':
+	}
+	s.updateWant()
+	return nil
+}
+
+// typeRune は、文字 1 つをカーソルの位置に入れる。'\n' は行を分け、他の文字（制御文字を含む）はそのまま入れる。
+func (s *State) typeRune(r rune) error {
+	c := s.cursor
+	if r == '\n' {
 		if err := s.apply(buffer.Edit{Range: emptyRange(c), Text: "\n"}); err != nil {
 			return err
 		}
 		s.cursor = pos(c.Line+1, 0)
-	default:
+	} else {
 		str := string(r)
 		if err := s.apply(buffer.Edit{Range: emptyRange(c), Text: str}); err != nil {
 			return err
@@ -291,15 +304,18 @@ func (s *State) typeRune(r rune) error {
 // finishInsert は、インサートモードを抜ける（<Esc>）。
 //
 // 回数つきで入った場合（3ix、3o）は、入力したテキストを残りの回数だけ続けて入れる。o と O は、そのたびに行を開く。
-// カーソルを 1 文字左へ戻し、アンドゥのグループを閉じ、入力したテキストを値の Text に埋めてドットリピートに記録する（FR-06）。
+// カーソルを 1 文字左へ戻し、アンドゥのグループを閉じ、入力の記録を値の Inserted に埋めてドットリピートに記録する（FR-06）。
 // カーソルキーで区切った後、まだ文字を入力していなければ（moved）、区切ったときに閉じて記録してあるので、カーソルを戻すだけにする。
 //
 // req: FR-06, FR-07
 func (s *State) finishInsert() {
 	in := s.insert
-	text := string(in.text)
 	if n := in.repeat - 1; n > 0 && !in.moved {
-		if len(text)*n > maxPutBytes {
+		size := 0
+		for _, x := range in.text {
+			size += max(utf8.RuneLen(x.Rune), 1)
+		}
+		if size*n > maxPutBytes {
 			s.fail(failf("text too large"))
 			n = 0
 		}
@@ -312,8 +328,8 @@ func (s *State) finishInsert() {
 					break
 				}
 			}
-			for _, r := range in.text {
-				if err := s.typeRune(r); err != nil {
+			for _, x := range in.text {
+				if err := s.typeInput(x); err != nil {
 					s.fail(err)
 					break
 				}
@@ -331,7 +347,7 @@ func (s *State) finishInsert() {
 	if !in.moved {
 		s.buf.EndUndoGroup()
 		cmd := in.cmd
-		cmd.Text = text
+		cmd.Inserted = slices.Clone(in.text)
 		s.dot = &cmd
 	}
 	s.insert = insertState{}

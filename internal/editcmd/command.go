@@ -116,9 +116,31 @@ type Command struct {
 	// Mode は、実行の後に移るモード。
 	Mode Mode
 
-	// Text は、c や i のように挿入を伴うコマンドで入力された文字列である。
+	// Inserted は、c や i のように挿入を伴うコマンドで、インサートモードで入力したもの（文字と削除の操作）の列である。
 	// Parser は埋めない。インサートモードを抜けた時点で internal/command が埋め、ドットリピートに使う。
-	Text string
+	// 文字と削除の操作を別の種類（InsertInput.Op）で持つので、入力した制御文字（'\b' など）を削除と取り違えない（#257 のレビュー）。
+	Inserted []InsertInput
+}
+
+// InsertOp は、インサートモードの入力の記録（InsertInput）の 1 件の種類である。
+type InsertOp uint8
+
+// 入力の記録の種類。
+const (
+	// InsertRune は、文字 Rune を入れる（<CR> は '\n'、<Tab> は '\t'）。制御文字も文字として入れる。
+	InsertRune InsertOp = iota
+	// InsertDeletePrev は、カーソルの前の文字を消す（insert.delete-prev-char。<BS>）。
+	InsertDeletePrev
+	// InsertDeleteChar は、カーソルの文字を消す（insert.delete-char。<Del>）。
+	InsertDeleteChar
+	// InsertDeleteToLineEnd は、カーソルから行末まで消す（insert.delete-to-line-end）。
+	InsertDeleteToLineEnd
+)
+
+// InsertInput は、インサートモードの入力の記録の 1 件である。Op が InsertRune のときだけ Rune を使う。
+type InsertInput struct {
+	Op   InsertOp
+	Rune rune
 }
 
 // Status は、キーの列の解釈（internal/input の Parser）が返す結果の種類を表す。

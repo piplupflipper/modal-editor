@@ -26,8 +26,10 @@ func TestUserBinding(t *testing.T) {
 		{MapNormal, "Q", "delete", BindOperator, ""},
 		{MapVisual, "Q", "inner-word", BindTextObject, ""},
 		{MapNormal, "Q", "put-after", BindAction, ""},
-		// 同じ ID が複数の種類にあれば、そのモードで使える最初の種類（オペレーターの g~）を選ぶ。
+		// オペレーターの g~ と操作の ~ は別の ID である（#257 のレビューの必須 1）。
 		{MapNormal, "Q", "toggle-case", BindOperator, ""},
+		{MapVisual, "Q", "toggle-case", BindOperator, ""},
+		{MapNormal, "Q", "toggle-case-char", BindAction, ""},
 		{MapNormal, "Q", "hover", BindAction, ProviderExtension},
 		{MapVisual, "Q", "format", BindOperator, ProviderExtension},
 		{MapInsert, "<C-a>", "insert.line-start", BindAction, ""},
@@ -160,6 +162,41 @@ func TestInsertAction(t *testing.T) {
 	}
 	if !found {
 		t.Error("Actions に insert.delete-to-line-end が無い")
+	}
+}
+
+// 操作の ID は一意である。同じ ID の行は、同じ操作を複数のキーに載せたもの（0 と <Home> の line-start、d とビジュアルモードの x の delete）
+// だけで、種類、文字の引数、実行の後のモード、提供者へ振り分けるかが一致する。本体の操作と提供者へ振り分ける操作の ID も重ならない。
+//
+// req: FR-126
+func TestActionIDUnique(t *testing.T) {
+	type attr struct {
+		kind                  BindingKind
+		takesChar, takesChar2 bool
+		next                  editcmd.Mode
+		provider              bool
+	}
+	seen := map[string]attr{}
+	check := func(id string, a attr) {
+		if old, ok := seen[id]; ok && old != a {
+			t.Errorf("ID %s の行が別の操作を指している: %+v と %+v", id, old, a)
+		}
+		seen[id] = a
+	}
+	for _, tb := range builtinTables {
+		for _, s := range tb.specs {
+			check(s.id, attr{kind: tb.kind, takesChar: s.takesChar, takesChar2: s.takesChar2, next: s.next})
+		}
+	}
+	for _, s := range providerKeys {
+		check(s.id, attr{kind: s.kind, provider: true})
+	}
+	ids := map[string]bool{}
+	for _, a := range Actions() {
+		if ids[a.ID] {
+			t.Errorf("Actions に ID %s が 2 件ある", a.ID)
+		}
+		ids[a.ID] = true
 	}
 }
 

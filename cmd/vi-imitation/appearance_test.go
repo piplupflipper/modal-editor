@@ -14,7 +14,7 @@ import (
 )
 
 // 同梱する設定の例（config.example.jsonc）は、誤り無く読め、見た目の項目がすべて描画に渡る。
-// keymap.insert の Emacs 風の 9 個のキーは、本体の操作の ID として使える。
+// keymap.insert の Emacs 風のキーは、本体の操作の ID として使える。
 //
 // req: FR-91, FR-92, FR-93, FR-126
 func TestConfigExample(t *testing.T) {
@@ -29,11 +29,11 @@ func TestConfigExample(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("設定の例の誤り: %v", errs)
 	}
-	// インサートモードの Emacs 風の 9 個のキー（#257）。
+	// インサートモードの Emacs 風のキー（#257）。Ctrl-H は <BS> として届くので、<C-h> は書かない（PR #258 のレビューの推奨 4）。
 	wantInsert := map[string]string{
 		"<C-a>": "insert.line-start", "<C-e>": "insert.line-end", "<C-f>": "insert.right", "<C-b>": "insert.left",
 		"<C-n>": "insert.down", "<C-p>": "insert.up",
-		"<C-h>": "insert.delete-prev-char", "<C-d>": "insert.delete-char", "<C-k>": "insert.delete-to-line-end",
+		"<C-d>": "insert.delete-char", "<C-k>": "insert.delete-to-line-end",
 	}
 	if !reflect.DeepEqual(cfg.KeymapActions, map[string]map[string]string{"insert": wantInsert}) {
 		t.Errorf("keymap の操作 = %v", cfg.KeymapActions)
