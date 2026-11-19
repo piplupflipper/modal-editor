@@ -216,9 +216,18 @@ func TestElevatedSaveInPTY(t *testing.T) {
 	mark := len(p.out.String())
 	p.write(t, "secret\r")
 	// 書き込んだら、未保存の印（[+]）の無い画面に描き直す。
+	// 端末を取り戻した client の大きさの読み直し（Resize）と、書き込みの結果（TerminalDone）は別の goroutine から server へ届く。
+	// Resize が先に届くと、server は保存済みにする前の画面（[+] あり）を全体で描き、その後に [+] を消す差分を描く（#241）。
+	// どちらの順でも最後の画面に [+] が無ければよいので、代替画面に入った後の出力を画面に当ててから調べる。
 	p.out.WaitFor(t, "書き込んだ後の描き直し", func(out string) bool {
 		b, _ := os.ReadFile(f)
-		return string(b) == "new\n" && strings.Contains(out[mark:], "\x1b[?1049h") && !strings.Contains(out[strings.LastIndex(out, "\x1b[?1049h"):], "[+]")
+		i := strings.LastIndex(out, "\x1b[?1049h")
+		if string(b) != "new\n" || i < mark {
+			return false
+		}
+		v := newVScreen(80, 24)
+		v.feed([]byte(out[i:]))
+		return strings.Contains(v.row(1), "new") && !strings.Contains(v.String(), "[+]")
 	})
 	if b, err := os.ReadFile(log); err != nil || string(b) != "secret" {
 		t.Errorf("偽の sudo が端末から読んだパスワード = %q, %v", b, err)
