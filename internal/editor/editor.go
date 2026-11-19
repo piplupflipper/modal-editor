@@ -826,7 +826,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Interrupted = e.interrupt.Load
-	bs.state.KeyHook = func(k editcmd.Key, insert bool) (bool, error) { return e.popupStateKey(bs, k, insert) }
+	bs.state.KeyHook = func(k editcmd.Key, insert bool) (bool, []editcmd.Key, error) { return e.popupStateKey(bs, k, insert) }
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
 		ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text(),
 		NoFinalNewline: !finalNewline(b),

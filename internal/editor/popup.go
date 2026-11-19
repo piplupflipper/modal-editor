@@ -331,21 +331,23 @@ var ctrlW = editcmd.MustParseKeys("<C-w>")[0]
 // bs が読み込んでいる client のフォーカスのあるポップアップのバッファなら、キー k をポップアップの操作として扱えれば扱い（floatKey）、
 // true を返す。State がキーを解釈する前に呼ぶので、扱ったキーもマクロに記録され、再生でも同じく扱う（PR #242 のレビューの必須 1）。
 // ポップアップを閉じてキーを受けるバッファが替わったら command.ErrBufferSwitched を返し、再生の残りを移った先で続けさせる。
-func (e *Editor) popupStateKey(bs *bufferState, k editcmd.Key, insert bool) (bool, error) {
+func (e *Editor) popupStateKey(bs *bufferState, k editcmd.Key, insert bool) (bool, []editcmd.Key, error) {
 	f := e.float
 	if f == nil || !f.focused || f.bs != bs {
-		return false, nil
+		return false, nil, nil
 	}
-	if !e.floatKey(f, k, insert) {
-		return false, nil
+	done, held := e.floatKey(f, k, insert)
+	if !done {
+		return false, held, nil
 	}
 	if e.cur != bs {
-		return true, command.ErrBufferSwitched
+		return true, nil, command.ErrBufferSwitched
 	}
-	return true, nil
+	return true, nil, nil
 }
 
 // floatKey は、フォーカスのあるポップアップ f で、キー k をポップアップの操作として扱えれば扱い、true を返す。
+// popupKeys の列の途中で当たらなかったら、預かっていたキーを 2 つ目の戻り値で返す（popupKey）。
 // State がノーマルモードでキーの列の途中でないときか、インサートモードのときに呼ばれる（popupStateKey）。
 //
 //   - contributes.popupKeys のキー（拡張機能のポップアップの、ノーマルモード）: 持ち主へ view/key を送る（FR-69）
@@ -354,37 +356,41 @@ func (e *Editor) popupStateKey(bs *bufferState, k editcmd.Key, insert bool) (boo
 //   - 入力の行のノーマルモードかインサートモードの <CR>: 中身を選んだものとして知らせる
 //
 // req: FR-68
-func (e *Editor) floatKey(f *floatState, k editcmd.Key, insert bool) bool {
+func (e *Editor) floatKey(f *floatState, k editcmd.Key, insert bool) (bool, []editcmd.Key) {
 	if insert {
 		if f.kind == floatInput && k == editcmd.Special(editcmd.CodeEnter) {
 			e.selectFloat(f)
-			return true
+			return true, nil
 		}
-		return false
+		return false, nil
 	}
-	if f.ext != "" && e.popupKey(f, k) {
-		return true
+	if f.ext != "" {
+		done, held := e.popupKey(f, k)
+		if done || len(held) > 0 {
+			return done, held
+		}
 	}
 	switch {
 	case k == editcmd.Esc:
 		e.closeFloat(true)
-		return true
+		return true, nil
 	case k == editcmd.Special(editcmd.CodeEnter) && f.kind != floatText:
 		e.selectFloat(f)
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // popupKey は、拡張機能のポップアップ f で、k までのキーの列が持ち主の contributes.popupKeys のキーに当たれば view/key を送る（FR-69）。
-// キーの列の途中なら覚えて true を返す。当たらなければ、覚えていたキーを捨てて false を返す（k は State が解釈する）。
-// 覚えていたキーを State へ渡し直さないのは、State がキーを解釈する途中（KeyHook）から同じ State へ入れ直せないためである（仮）。
+// キーの列の途中なら覚えて true を返す。当たらなければ、覚えていたキーを held で返す。State は held を通常のキーとして解釈してから
+// k を解釈する（command.State.KeyHook。Vim のマッピングの途中で当たらなかったキーと同じ扱い。PR #242 の再レビューの必須）。
+// このため、g で始まる popupKeys（gx）を宣言しても、gg は先頭へ移る。
 //
 // req: FR-69
-func (e *Editor) popupKey(f *floatState, k editcmd.Key) bool {
+func (e *Editor) popupKey(f *floatState, k editcmd.Key) (bool, []editcmd.Key) {
 	keys := e.popupKeys[f.ext]
 	if len(keys) == 0 {
-		return false
+		return false, nil
 	}
 	seq := append(slices.Clone(f.pending), k)
 	prefix := false
@@ -399,17 +405,18 @@ func (e *Editor) popupKey(f *floatState, k editcmd.Key) bool {
 				item = f.rows[row].id
 			}
 			e.notifyView(f, ext.MethodViewKey, ext.ViewKeyParams{View: ext.ViewID(f.id), ID: pk.id, Item: item})
-			return true
+			return true, nil
 		case hasKeyPrefix(pk.keys, seq):
 			prefix = true
 		}
 	}
 	if prefix {
 		f.pending = seq
-		return true
+		return true, nil
 	}
+	held := f.pending
 	f.pending = nil
-	return false
+	return false, held
 }
 
 // popupKeyBinding は、contributes.popupKeys の 1 項目を、キーの列にしたものである。
@@ -579,14 +586,16 @@ func markdownLines(text string, decs []ext.Decoration) ([]string, []ext.Decorati
 	return lines, out
 }
 
-// initExpanded は、木の項目の開閉の状態を m に入れる。前の状態 prev に同じ ID があればその状態を、無ければ ext.ViewItem.Expanded を使う
-// （view/update で送り直しても、利用者が開閉した項目を保つ。PR #242 のレビューの必須 2）。
+// initExpanded は、木の項目の開閉の状態を m に入れる。ext.ViewItem.Expanded を書いた項目はそれに従い、
+// 省いた項目は、前の状態 prev に同じ ID があればその状態を保ち、無ければ閉じる
+// （view/update で送り直しても利用者が開閉した項目を保ち、拡張機能からも開ける。PR #242 のレビューの必須 2 と再レビューの推奨 1）。
 func initExpanded(items []ext.ViewItem, prev, m map[string]bool) {
 	for _, it := range items {
-		if v, ok := prev[it.ID]; ok {
-			m[it.ID] = v
-		} else {
-			m[it.ID] = it.Expanded
+		switch {
+		case it.Expanded != nil:
+			m[it.ID] = *it.Expanded
+		default:
+			m[it.ID] = prev[it.ID]
 		}
 		initExpanded(it.Children, prev, m)
 	}
@@ -978,5 +987,6 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 	return &ui.Float{
 		ID: f.id, View: view, Title: f.title, Center: f.center, Focused: f.focused,
 		CursorLine: f.kind == floatList || f.kind == floatTree,
+		Wide:       f.kind == floatInput,
 	}
 }

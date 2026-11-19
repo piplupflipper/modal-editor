@@ -114,6 +114,9 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	for i := range min(n, floatScanLines) {
 		width = max(width, StringWidth(text.Line(i), tabStop))
 	}
+	if fl.Wide {
+		width = maxW
+	}
 	head := 0
 	if fl.Title != "" && !bordered {
 		head = 1

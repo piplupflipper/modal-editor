@@ -308,6 +308,16 @@ func TestExtensionPopup(t *testing.T) {
 	h.waitMessage("kind=3 item=one key=fake.pick")
 	h.keys("jzq")
 	h.waitMessage("kind=3 item=close key=fake.two")
+	// popupKeys の gx の途中の g は、当たらなければ通常のキーとして渡すので、gg は先頭へ移る（PR #242 の再レビューの必須）。
+	h.keys("Ggg")
+	h.settle()
+	var row int
+	h.e.do(func() { row = h.e.float.bs.state.Cursor().Line })
+	if row != 0 {
+		t.Errorf("Ggg in the list: cursor line %d, want 0", row)
+	}
+	h.keys("jgx")
+	h.waitMessage("kind=3 item=close key=fake.gx")
 	// 選んだ項目（close）に、拡張機能は view/close で応える。
 	h.keys("<CR>")
 	h.waitMessage("kind=1 item=close")
@@ -344,6 +354,9 @@ func TestExtensionPopup(t *testing.T) {
 	}
 	h.keys("k<CR>")
 	h.waitMessage("kind=1 item=dir/b")
+	// 拡張機能が expanded を書いた項目は、前の木にあっても従う（PR #242 の再レビューの推奨 1）。
+	h.keys("G<CR>")
+	h.eventually("拡張機能が閉じた木", func() bool { return popupText(h.e) == "▸ dir\n▾ lazy\n    lazy/x\n  top" })
 
 	// 入力の行は編集でき、中身が変わるたびに input/change で、<CR> で view/select で知らせる。2 行目は作れない（推奨 3）。
 	open("input")
@@ -355,6 +368,10 @@ func TestExtensionPopup(t *testing.T) {
 	h.settle()
 	if fi, _ := h.float(); fi.text != "old!xyz" {
 		t.Errorf("input after o: %q", fi.text)
+	}
+	// 入力の行の窓は上限の幅を取り、中身の先頭が横に隠れない（推奨 2）。
+	if scr := h.term.screen(); !strings.Contains(scr, " old!xyz ") {
+		t.Errorf("input window:\n%s", scr)
 	}
 	h.keys("<Esc>")
 	h.settle()

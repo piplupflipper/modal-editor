@@ -135,6 +135,13 @@ func runFakeExt(mode string) int {
 			}
 			_ = s.ShowMessage(ext.MessageInfo, msg)
 			switch {
+			case e.Kind == server.ViewSelected && e.Item == "top":
+				// 拡張機能から開閉を指定し直す（dir を閉じ、lazy を開いたまま子を付ける）。
+				c := fakePopup("tree").Component
+				closed := false
+				c.Items[0].Expanded = &closed
+				c.Items[1].Children = []ext.ViewItem{{ID: "lazy/x", Label: "lazy/x"}}
+				_ = s.UpdateView(ext.ViewUpdateParams{View: e.View, Component: c})
 			case e.Kind == server.ViewExpanded && e.Item == "lazy" && e.Expanded:
 				// 子を後から読む項目の子を足して送り直す。dir の Expanded は false のままで、本体は利用者が開いた状態を保つ。
 				c := fakePopup("tree").Component
@@ -444,7 +451,8 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.popup", ""),
 				},
 				// ポップアップの中だけで効くキー（FR-69）。x は本体では文字を消すキーで、ポップアップの中ではこちらが先に効く。
-				PopupKeys: []ext.Contribution{contrib("fake.pick", "x"), contrib("fake.two", "zq")},
+				// gx は g で始まるので、gg はキーの列が当たらずに本体の gg として動く。
+				PopupKeys: []ext.Contribution{contrib("fake.pick", "x"), contrib("fake.two", "zq"), contrib("fake.gx", "gx")},
 			},
 		},
 		{

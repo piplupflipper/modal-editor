@@ -104,9 +104,10 @@ type ViewItem struct {
 	// 本体は開閉の印を付け、<CR> で開くと view/expand で知らせる。拡張機能は子を読んで view/update で送る
 	// （ファイラのディレクトリ、DAP の変数の variablesReference。FR-105、FR-108）。ViewList では使わない。
 	HasChildren bool `json:"hasChildren,omitempty"`
-	// Expanded は、ViewTree で子を開いて出すかの最初の状態である。開閉は本体が項目の ID ごとに持ち、view/update で送り直しても、
-	// 前の木にあった ID の項目は利用者が開閉した状態を保つ。Expanded は、新しく現れた ID の項目にだけ使う。
-	Expanded bool `json:"expanded,omitempty"`
+	// Expanded は、ViewTree で子を開いて出すかの指定である。開閉は本体が項目の ID ごとに持つ。
+	// 省くと、前の木にあった ID の項目は利用者が開閉した状態を保ち、新しく現れた ID の項目は閉じて出す。
+	// 書くと、前の木にあった項目もその状態にする（ファイラの「今のファイルの場所まで開く」、DAP の止まった位置のスコープを開く）。
+	Expanded *bool `json:"expanded,omitempty"`
 }
 
 // ViewExpandParams は、view/expand の params である。

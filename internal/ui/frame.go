@@ -139,6 +139,9 @@ type Float struct {
 	Focused bool
 	// CursorLine は、カーソルの行を StylePopupSelected で描くことを表す（一覧と木）。
 	CursorLine bool
+	// Wide は、窓の幅を中身に依らず上限の幅にすることを表す（入力の行。打つたびに窓が広がったり、
+	// 行末のカーソルの 1 列が足りずに先頭が横に隠れたりしないため。PR #242 の再レビューの推奨 2）。
+	Wide bool
 }
 
 // SignKind は、行の印の種類である。値は sign/set の kind と同じ文字列である（基本設計 6.7）。
