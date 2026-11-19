@@ -450,6 +450,22 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 					return
 				}
 				ev = &StatusLineSet{Extension: id, Params: p}
+			case ext.MethodViewUpdate:
+				var p ext.ViewUpdateParams
+				if !h.decode(id, n, &p) {
+					return
+				}
+				if err := p.Component.Validate(); err != nil {
+					h.log.Warn("invalid view/update from extension", "extension", id, "error", err)
+					return
+				}
+				ev = &ViewUpdate{Extension: id, Params: p}
+			case ext.MethodViewClose:
+				var p ext.ViewCloseParams
+				if !h.decode(id, n, &p) {
+					return
+				}
+				ev = &ViewClose{Extension: id, Params: p}
 			case ext.MethodBufferResync:
 				var p ext.BufferResyncParams
 				if !h.decode(id, n, &p) {
@@ -535,6 +551,15 @@ func requestEvent(ctx context.Context, id string, req *rpc.Request, reply rpc.Re
 			return nil, err
 		}
 		return &ChoiceAskRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodPopupOpen:
+		var p ext.PopupOpenParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		if err := p.Validate(); err != nil {
+			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
+		}
+		return &PopupOpenRequest{Extension: id, Params: p, replyOnce: ro}, nil
 	}
 	return nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: "method not found: " + req.Method}
 }

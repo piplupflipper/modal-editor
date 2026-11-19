@@ -97,11 +97,28 @@ func init() {
 		{name: "xall", min: 2, bang: true, rng: rangeNone, run: runAll(true, true)},
 		{name: "bdelete", min: 2, bang: true, rng: rangeNone, run: runBufferDelete},
 		{name: "tabmove", min: 4, rng: rangeNone, run: runTabMove},
+		// ポップアップとタブの間でバッファを移す（基本設計 1.4。FR-70。名前は仮）。
+		{name: "popup", min: 4, rng: rangeNone, run: runPopup(PopupShrink)},
+		{name: "tabopen", min: 5, rng: rangeNone, run: runPopup(PopupExpand)},
 		// 見比べ（基本設計 6.8）。省略形は Vim 9.1 と同じ。
 		{name: "diffsplit", min: 5, rng: rangeNone, run: runDiffSplit},
 		{name: "diffthis", min: 5, rng: rangeNone, run: runDiff(DiffThis)},
 		{name: "diffoff", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffOff)},
 		{name: "diffupdate", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffUpdate)},
+	}
+}
+
+// runPopup は、引数を取らないポップアップのコマンド（:popup、:tabopen）を実行する関数を返す。
+// 縮めるタブと広げるポップアップを持つのは、Action を受け取る呼び出し側（internal/editor）である。
+//
+// req: FR-70
+func runPopup(op PopupOp) func(c *execCtx, inv *invocation) error {
+	return func(c *execCtx, inv *invocation) error {
+		if err := noArg(inv); err != nil {
+			return err
+		}
+		c.actions = append(c.actions, Action{Kind: ActionPopup, Popup: op})
+		return nil
 	}
 }
 

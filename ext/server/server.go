@@ -110,6 +110,8 @@ type Server struct {
 	onClose    func(ctx context.Context, e *BufferCloseEvent)
 	onDidSave  func(ctx context.Context, e *BufferDidSaveEvent)
 	onShutdown func(ctx context.Context, e *ShutdownEvent)
+	// onView は、ポップアップの利用者の操作の知らせ（view.go）のフックである。
+	onView func(ctx context.Context, e *ViewEvent)
 	// willSave は、buffer/willSave のハンドラーである。登録は 1 つだけで、キーは空文字列である。
 	willSave map[string]entry[ext.BufferWillSaveParams, ext.BufferWillSaveResult]
 
@@ -446,6 +448,7 @@ func (s *Server) handleNotification(ctx context.Context, n *rpc.Notification) {
 		}
 	default:
 		// 知らない通知は捨てる（JSON-RPC 2.0 では通知に応答しない）。
+		s.viewNotification(ctx, n)
 	}
 }
 

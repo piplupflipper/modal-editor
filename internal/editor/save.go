@@ -129,7 +129,34 @@ func displayName(bs *bufferState) string {
 
 // doAction は、Ex コマンドが求めるエディタの動作を 1 つ行う（:w、:q、:e）。
 func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
+	if f := e.float; f != nil && f.focused && bs == f.bs {
+		// フォーカスのあるポップアップの中で打った、タブに関わるコマンド（popup.go）。
+		switch a.Kind {
+		case ex.ActionQuit:
+			// Vim で浮かべた窓を :q で閉じるのと同じく、ポップアップを閉じる。:popup で縮めたタブは、閉じずにタブの並びへ戻す。
+			e.closeFloat(true)
+			return nil
+		case ex.ActionBufferDelete:
+			if a.Count == 0 && a.Text == "" {
+				e.closeFloat(true)
+				return nil
+			}
+		case ex.ActionQuitAll, ex.ActionTabMove, ex.ActionDiff:
+			// タブを対象にするコマンドは、ポップアップを閉じてから、開いたときのタブで行う。
+			e.closeFloat(true)
+			bs = e.cur
+		case ex.ActionEdit:
+			if a.File != "" {
+				e.closeFloat(true)
+				bs = e.cur
+			}
+		case ex.ActionWrite, ex.ActionWriteAll, ex.ActionOutput, ex.ActionCheckTime, ex.ActionBuffer,
+			ex.ActionJump, ex.ActionJumpList, ex.ActionRegisterList, ex.ActionExtCommand, ex.ActionPopup:
+		}
+	}
 	switch a.Kind {
+	case ex.ActionPopup:
+		return e.floatAction(bs, a)
 	case ex.ActionWrite:
 		return e.write(bs, a)
 	case ex.ActionQuit:

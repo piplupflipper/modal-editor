@@ -225,7 +225,7 @@ func (e *Editor) hold(ev exthost.Event) {
 	for i, h := range e.held {
 		switch h.(type) {
 		case *exthost.DecorationSet, *exthost.MessageShow, *exthost.DiagnosticSet, *exthost.SignSet,
-			*exthost.PopupShow, *exthost.OutputAppend:
+			*exthost.PopupShow, *exthost.OutputAppend, *exthost.ViewUpdate:
 			drop = i
 		}
 		if drop >= 0 {
@@ -556,6 +556,12 @@ func (x *extQuery) invokeResult(ref editcmd.Ref, method string, params any, b *b
 // （Vim と同じく、マクロの残りのキーはカーソルのあるバッファへ入る。基本設計 6 章の冒頭の「transaction を適用した後に移動する」）。
 // 再生中でなければ、Feed が戻ってから移る。
 func (e *Editor) openFromCommand(extID string, bs *bufferState, p ext.EditorOpenParams, replaying bool) error {
+	if p.Peek {
+		// 「ポップアップで見る」（FR-110）は移らないので、再生の途中でもカーソルのあるバッファは替わらない。
+		// 写しのポップアップは、Feed が戻ってから出す（再生の途中の写しは、再生の後に出る。仮）。
+		e.pendingOpen = append(e.pendingOpen, openRequest{ext: extID, p: p})
+		return nil
+	}
 	same := (p.Buffer != nil && *p.Buffer == bs.id) || (p.Path != "" && p.Path == bs.path)
 	if same && (!p.Focus || e.cur == bs) {
 		e.moveCursor(bs, p, e.cur == bs)

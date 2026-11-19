@@ -88,6 +88,23 @@ func (h *Host) willSaveCheck(buf ext.BufferID) func(*extension) error {
 	}
 }
 
+// Notify は、拡張機能 id が稼働中なら、通知 method を送る。稼働中でなければ何も送らずに nil を返す。
+// ポップアップの利用者の操作の知らせ（view/closed、view/select、input/change、view/key。基本設計 5.3）に使う。
+// 稼働中でない拡張機能は、そのポップアップを開いたプロセスではないので、知らせる相手がいないためである。
+// 知らない拡張機能なら誤りを返す。
+func (h *Host) Notify(id, method string, params any) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	e, err := h.lookupLocked(id)
+	if err != nil {
+		return err
+	}
+	if e.state == StateRunning && e.run != nil {
+		h.notifyLocked(id, e.run, method, params)
+	}
+	return nil
+}
+
 // DidSave は、バッファをファイルへ書き出したことを知らせ、稼働中の拡張機能すべてへ buffer/didSave を送る。
 // p.Version は、Host の知っている現在のバージョン番号と一致しなければならない（書き出す前の編集は [Host.ChangeBuffer] で知らせておく）。
 // 別名で保存した場合は、先に [Host.UpdateBuffer] でパスを知らせる。

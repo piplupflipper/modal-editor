@@ -1,0 +1,237 @@
+package ext
+
+import (
+	"errors"
+	"fmt"
+)
+
+// ポップアップと表示の部品（基本設計 1.4、5.3 の段階 3 の表。FR-68〜FR-72）。
+//
+// 拡張機能は、ポップアップに出す中身を表示の部品（テキスト、一覧、木、入力の行）のデータで渡す（FR-72）。
+// 描き方は本体（internal/ui）が決め、拡張機能が端末のセルを直接描く手段は持たない（#177 の裁定）。
+// 本体は、開いたポップアップに ID（ViewID）を付けて応答し、以後の更新、閉じる、利用者の操作の知らせは、この ID で指す。
+//
+// メソッドと向き（名前は仮）:
+//
+//   - popup/open（拡張機能 → 本体、リクエスト）: PopupOpenParams で部品を渡して開く。応答は PopupOpenResult
+//   - view/update（拡張機能 → 本体、通知）: 開いたポップアップの部品の中身を置き換える（ViewUpdateParams）
+//   - view/close（拡張機能 → 本体、通知）: 開いたポップアップを閉じる（ViewCloseParams）。本体は view/closed を返さない
+//   - view/closed（本体 → 拡張機能、通知）: 利用者が閉じたか、本体が閉じた（別のポップアップで置き換えた、client が終わった）ことを
+//     知らせる（ViewClosedParams）。その ID はもう使えない
+//   - view/select（本体 → 拡張機能、通知）: 一覧か木の項目を利用者が選んだ（<CR>）こと、入力の行で <CR> を打ったことを知らせる（ViewSelectParams）
+//   - input/change（本体 → 拡張機能、通知）: 入力の行の中身が変わったことを知らせる（InputChangeParams）
+//   - view/key（本体 → 拡張機能、通知）: 宣言ファイルの contributes.popupKeys のキーを、その拡張機能のポップアップの中で打ったことを
+//     知らせる（ViewKeyParams。FR-69）
+//
+// 本体は、閉じた後や知らない ID の view/update と view/close を黙って捨てる（閉じた知らせと行き違いうるため）。
+const (
+	// MethodPopupOpen は、拡張機能から本体へのリクエストである。params は PopupOpenParams、result は PopupOpenResult。
+	MethodPopupOpen = "popup/open"
+	// MethodViewUpdate は、拡張機能から本体への通知である。params は ViewUpdateParams。
+	MethodViewUpdate = "view/update"
+	// MethodViewClose は、拡張機能から本体への通知である。params は ViewCloseParams。
+	MethodViewClose = "view/close"
+	// MethodViewClosed は、本体から拡張機能への通知である。params は ViewClosedParams。
+	MethodViewClosed = "view/closed"
+	// MethodViewSelect は、本体から拡張機能への通知である。params は ViewSelectParams。
+	MethodViewSelect = "view/select"
+	// MethodInputChange は、本体から拡張機能への通知である。params は InputChangeParams。
+	MethodInputChange = "input/change"
+	// MethodViewKey は、本体から拡張機能への通知である。params は ViewKeyParams。
+	MethodViewKey = "view/key"
+)
+
+// ViewID は、本体が開いたポップアップに付けた番号である。本体の中で一意で、使い回さない。0 は使わない。
+type ViewID uint64
+
+// ViewKind は、表示の部品の種類である（基本設計 1.4）。
+type ViewKind string
+
+// 表示の部品の種類。
+const (
+	// ViewText は、テキストのバッファである。本体は、編集を禁止したファイルでないバッファとして出し、通常のノーマルモードのキー
+	// （移動、検索、ヤンク）が効く（FR-71）。
+	ViewText ViewKind = "text"
+	// ViewList は、項目の一覧である。1 項目を 1 行に出し、<CR> で選ぶと view/select で項目の ID を知らせる。
+	ViewList ViewKind = "list"
+	// ViewTree は、項目の木である。子のある項目の <CR> は開閉で、子の無い項目の <CR> は view/select で ID を知らせる。
+	ViewTree ViewKind = "tree"
+	// ViewInput は、1 行の入力である。中身が変わるたびに input/change で知らせ、<CR> で view/select（Item は中身）を送る。
+	ViewInput ViewKind = "input"
+)
+
+// Known は、k がこの版の API の知っている部品の種類かを返す。
+func (k ViewKind) Known() bool {
+	switch k {
+	case ViewText, ViewList, ViewTree, ViewInput:
+		return true
+	}
+	return false
+}
+
+// ViewComponent は、ポップアップに出す表示の部品 1 つである。Kind によって使う項目が違う。
+type ViewComponent struct {
+	Kind ViewKind `json:"kind"`
+	// Title は、ポップアップの枠の上に出す見出しである。空なら出さない。
+	Title string `json:"title,omitempty"`
+	// Text は、ViewText の本文と、ViewInput の最初の中身である。ViewInput では改行を含めない。
+	Text string `json:"text,omitempty"`
+	// Format は、ViewText の本文の形式である。PopupMarkdown なら、本体はコードの囲みの行を除いて出す（popup/show と同じ）。
+	Format PopupFormat `json:"format,omitempty"`
+	// Highlights は、ViewText の本文に色を付ける範囲である。位置は Format の整形の前の Text を指す（4.1 の位置）。
+	// Style は 7.1 の色の名前（"keyword"、"diagnostic.error" など）で、知らない名前には色を付けない。
+	Highlights []Decoration `json:"highlights,omitempty"`
+	// Items は、ViewList と ViewTree の項目である。ViewTree では Children で木にする。
+	Items []ViewItem `json:"items,omitempty"`
+}
+
+// ViewItem は、一覧か木の項目 1 つである。
+type ViewItem struct {
+	// ID は、選んだときに view/select で返す値である。部品の中で一意にする。
+	ID string `json:"id"`
+	// Label は、表示の文字列である。改行を含めない。
+	Label string `json:"label"`
+	// Highlights は、Label の中の色を付ける範囲である。
+	Highlights []ViewSpan `json:"highlights,omitempty"`
+	// Children は、ViewTree の子の項目である。ViewList では使わない。
+	Children []ViewItem `json:"children,omitempty"`
+	// Expanded は、ViewTree で子を開いて出すかの最初の状態である。開閉は本体が持ち、view/update で置き換えると、この値に戻る。
+	Expanded bool `json:"expanded,omitempty"`
+}
+
+// ViewSpan は、項目の表示の文字列の中の、色を付けるバイトの範囲 [Start, End) である。
+type ViewSpan struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+	// Style は、7.1 の色の名前である。
+	Style string `json:"style"`
+}
+
+// Validate は、部品の種類が既知であることと、項目の ID が空でなく部品の中で重複しないこと、
+// 表示の文字列と入力の行の中身が改行を含まないこと、範囲が表示の文字列の中にあることを検査する。
+// 本体は、誤りのある popup/open に JSON-RPC のエラーで応答し、誤りのある view/update は捨てる。
+func (c *ViewComponent) Validate() error {
+	if !c.Kind.Known() {
+		return fmt.Errorf("kind %q は知らない部品の種類である", c.Kind)
+	}
+	if c.Kind == ViewInput && containsNewline(c.Text) {
+		return errors.New("input の text が改行を含む")
+	}
+	seen := map[string]bool{}
+	var check func(items []ViewItem, path string) error
+	check = func(items []ViewItem, path string) error {
+		for i, it := range items {
+			p := fmt.Sprintf("%s[%d]", path, i)
+			switch {
+			case it.ID == "":
+				return fmt.Errorf("%s.id が空である", p)
+			case seen[it.ID]:
+				return fmt.Errorf("%s.id %q が重複する", p, it.ID)
+			case containsNewline(it.Label):
+				return fmt.Errorf("%s.label が改行を含む", p)
+			case c.Kind != ViewTree && len(it.Children) > 0:
+				return fmt.Errorf("%s.children は tree でだけ使える", p)
+			}
+			seen[it.ID] = true
+			for j, s := range it.Highlights {
+				if s.Start < 0 || s.End < s.Start || s.End > len(it.Label) {
+					return fmt.Errorf("%s.highlights[%d] が label の外を指す", p, j)
+				}
+			}
+			if err := check(it.Children, p+".children"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return check(c.Items, "items")
+}
+
+func containsNewline(s string) bool {
+	for i := range len(s) {
+		if s[i] == '\n' || s[i] == '\r' {
+			return true
+		}
+	}
+	return false
+}
+
+// PopupPlacement は、ポップアップの置き場所である（基本設計 1.4）。
+type PopupPlacement string
+
+// ポップアップの置き場所。
+const (
+	// PopupAtCursor は、編集の client の画面の中の、カーソルの近くに浮かべる窓である（既定）。
+	// Focus が false なら、ホバーと同じく次のキーかカーソルの移動で閉じ、<C-w>w でフォーカスを入れられる。
+	PopupAtCursor PopupPlacement = "cursor"
+	// PopupCenter は、中央のポップアップである。開いている間はそれだけを操作する（FR-68）。
+	// 端末多重化ソフトのポップアップに出す部品の client（FR-66、FR-67）はまだ無いので、今は編集の client の画面の中央に描く（仮）。
+	PopupCenter PopupPlacement = "center"
+)
+
+// PopupOpenParams は、popup/open の params である。
+// 本体は、その拡張機能へ最後に問い合わせを始めた client（基本設計 1.2）の画面に出す。
+// 1 つの client に出すポップアップは 1 つで、新しいポップアップは前のものを置き換える（前のものの持ち主へ view/closed を送る）。
+type PopupOpenParams struct {
+	Component ViewComponent `json:"component"`
+	// Placement は、置き場所である。省くと PopupAtCursor である。
+	Placement PopupPlacement `json:"placement,omitempty"`
+	// Focus は、PopupAtCursor のポップアップに、開いた時点でフォーカスを入れるかである。PopupCenter では常に入れる。
+	Focus bool `json:"focus,omitempty"`
+}
+
+// Validate は、Component と Placement を検査する。
+func (p *PopupOpenParams) Validate() error {
+	switch p.Placement {
+	case "", PopupAtCursor, PopupCenter:
+	default:
+		return fmt.Errorf("placement %q は知らない置き場所である", p.Placement)
+	}
+	return p.Component.Validate()
+}
+
+// PopupOpenResult は、popup/open の result である。
+type PopupOpenResult struct {
+	// View は、開いたポップアップの ID である。
+	View ViewID `json:"view"`
+}
+
+// ViewUpdateParams は、view/update の params である。
+// 本体は、部品の種類が開いたときと同じ場合だけ置き換える。カーソルの行は、項目の数に収まる範囲で保つ。
+type ViewUpdateParams struct {
+	View      ViewID        `json:"view"`
+	Component ViewComponent `json:"component"`
+}
+
+// ViewCloseParams は、view/close の params である。
+type ViewCloseParams struct {
+	View ViewID `json:"view"`
+}
+
+// ViewClosedParams は、view/closed の params である。
+type ViewClosedParams struct {
+	View ViewID `json:"view"`
+}
+
+// ViewSelectParams は、view/select の params である。
+type ViewSelectParams struct {
+	View ViewID `json:"view"`
+	// Item は、選んだ項目の ID（ViewList、ViewTree）か、入力の行の中身（ViewInput）である。
+	Item string `json:"item"`
+}
+
+// InputChangeParams は、input/change の params である。
+type InputChangeParams struct {
+	View ViewID `json:"view"`
+	// Text は、変わった後の入力の行の中身である。
+	Text string `json:"text"`
+}
+
+// ViewKeyParams は、view/key の params である（FR-69）。
+type ViewKeyParams struct {
+	View ViewID `json:"view"`
+	// ID は、打ったキーの contributes.popupKeys の項目の ID である。
+	ID string `json:"id"`
+	// Item は、一覧と木ではカーソルの行の項目の ID、入力の行では中身、テキストでは空である。
+	Item string `json:"item,omitempty"`
+}

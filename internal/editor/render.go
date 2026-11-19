@@ -26,19 +26,23 @@ func uiMode(m command.Mode) ui.Mode {
 
 // frame は、カーソルのあるバッファの状態と表示のデータから、描画の入力を作る。
 // コマンドラインの行には、確認の問い、選択肢の問い、メッセージの順に、最初にあるものを出す。
-// 問いが無ければ、ポップアップをカーソルの近くに浮かべる。問いもポップアップもメッセージも無く、ノーマルモードで
+// 問いが無ければ、ポップアップを浮かべる。問いもポップアップもメッセージも無く、ノーマルモードで
 // キーの列の途中でなければ、カーソルの行の診断の本文をメッセージの行に出す（cursorDiagnostic）。
+//
+// フォーカスのあるポップアップがあれば、バッファの表示領域には開いたときのタブ（tab）を描き、
+// ステータス行、モード、コマンドラインは、キーを受けるポップアップのバッファ（cur）のものを出す。
 func (e *Editor) frame() *ui.Frame {
-	bs := e.cur
-	st := bs.state
+	bs := e.tab()
+	cur := e.cur
+	st := cur.state
 	f := &ui.Frame{
 		Text:            bs.buf,
-		Name:            bufferTitle(bs),
-		Modified:        bs.buf.Modified(),
-		ReadOnly:        bs.buf.ReadOnly(),
-		FileType:        bs.fileType,
+		Name:            bufferTitle(cur),
+		Modified:        cur.buf.Modified(),
+		ReadOnly:        cur.buf.ReadOnly(),
+		FileType:        cur.fileType,
 		Mode:            uiMode(st.Mode()),
-		Cursor:          st.Cursor(),
+		Cursor:          bs.state.Cursor(),
 		CommandLine:     st.CommandLine(),
 		CommandLineType: st.CommandLineType(),
 		Recording:       st.Recording(),
@@ -53,11 +57,8 @@ func (e *Editor) frame() *ui.Frame {
 	}
 	f.HitEnter = e.hitEnter()
 	f.OperatorPending = st.Mode() == command.ModeNormal && st.Pending()
-	if start, end, linewise, ok := st.Selection(); ok {
+	if start, end, linewise, ok := st.Selection(); ok && cur == bs {
 		f.Selection = ui.Selection{Active: true, Start: start, End: end, Linewise: linewise}
-	}
-	if p := e.popup; p != nil && (p.bs != bs || p.cursor != st.Cursor() || (p.trackKeys && p.keys != st.KeysFed())) {
-		e.popup = nil
 	}
 	// 問いは、問いを出した client の画面にだけ出す（clients.go の doc）。
 	question := e.showsQuestion()
@@ -78,10 +79,8 @@ func (e *Editor) frame() *ui.Frame {
 		f.Message = ui.Message{Text: fmt.Sprintf("client %d の問いの答えを待っています（答えるまで、このペインのキーは処理しません）", q.info.ID), Level: ui.MessageWarning}
 	case e.regList != nil:
 		f.List = e.uiRegList()
-	case e.popup != nil:
-		f.Popup = e.popup.text
-		f.PopupMarkdown = e.popup.markdown
-		f.PopupCenter = e.popup.center
+	case e.float != nil:
+		f.Float = e.floatFrame(e.float)
 	case f.Message.Text == "" && st.Mode() == command.ModeNormal && !st.Pending():
 		// 他に出すものが無ければ、カーソルの行の診断の本文を出す。
 		if m, ok := bs.cursorDiagnostic(toExtPos(st.Cursor())); ok {
@@ -120,7 +119,10 @@ func (v viewport) SetTop(top int) { v.r.SetScroll(top, v.r.Left()) }
 func (e *Editor) render() {
 	e.syncAsker()
 	e.refreshDiffs()
-	e.eachView(func(*clientView) { e.renderView() })
+	e.eachView(func(*clientView) {
+		e.expireFloat()
+		e.renderView()
+	})
 	e.syncDiffScroll()
 }
 

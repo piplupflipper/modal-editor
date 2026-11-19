@@ -18,8 +18,21 @@ func (h *harness) cursorLine() string {
 	return s
 }
 
-// :help は docs/usage.md を、編集を禁止したファイルでないバッファのタブに出し、語の説明の行へカーソルを置く。
-// 同じ client の 2 回目の :help は、新しいタブを作らずに同じタブへ移る。見つからない語は E149 にする。
+// wrappedLine は、カーソルの行から、窓の幅で折り返した続きの行をつないだ元の行を返す（ヘルプのポップアップは長い行を折り返す）。
+// 折り返しは空白を行末に残すので、続きの行を区切りなしでつなぐと元の行に戻る。最大で n 行をつなぐ。
+func (h *harness) wrappedLine(n int) string {
+	var s string
+	h.e.do(func() {
+		b, l := h.e.cur.buf, h.e.cur.state.Cursor().Line
+		for i := l; i < min(l+n, b.LineCount()); i++ {
+			s += b.Line(i)
+		}
+	})
+	return s
+}
+
+// :help は docs/usage.md を、編集を禁止したファイルでないバッファの部品で、画面の中央のポップアップにフォーカスを入れて出し、
+// 語の説明の行へカーソルを置く。タブは増やさない。見つからない語は E149 にする。
 //
 // req: FR-88, FR-89
 func TestHelp(t *testing.T) {
@@ -28,20 +41,26 @@ func TestHelp(t *testing.T) {
 	h.keys(":help<CR>")
 	h.settle()
 	var title string
-	var readOnly bool
+	var readOnly, focused, center bool
 	var tabs int
-	h.e.do(func() { title, readOnly, tabs = h.e.cur.title, h.e.cur.buf.ReadOnly(), len(h.e.view.tabs) })
-	if title != helpTitle || !readOnly || tabs != 2 {
-		t.Fatalf(":help: title %q, read-only %v, tabs %d, message %q", title, readOnly, tabs, h.message())
+	h.e.do(func() {
+		title, readOnly, tabs = h.e.cur.title, h.e.cur.buf.ReadOnly(), len(h.e.view.tabs)
+		if f := h.e.float; f != nil {
+			focused, center = f.focused && f.bs == h.e.cur, f.center
+		}
+	})
+	if title != helpTitle || !readOnly || tabs != 1 || !focused || !center {
+		t.Fatalf(":help: title %q, read-only %v, tabs %d, focused %v, center %v, message %q", title, readOnly, tabs, focused, center, h.message())
 	}
-	if got := h.text(); !strings.HasPrefix(got, strings.TrimRight(docs.Usage, "\n")) {
+	first, _, _ := strings.Cut(docs.Usage, "\n")
+	if got := h.text(); !strings.HasPrefix(got, first+"\n") {
 		t.Errorf(":help text does not start with docs/usage.md: %.80q", got)
 	}
 	if got := h.cursorLine(); got != "# 設定と標準の拡張機能の使い方" {
 		t.Errorf(":help cursor line = %q", got)
 	}
-	if !strings.Contains(h.term.screen(), helpTitle) {
-		t.Errorf("tab line does not show %s:\n%s", helpTitle, h.term.screen())
+	if !strings.Contains(h.term.screen(), "# 設定と標準の拡張機能の使い方") {
+		t.Errorf("screen does not show the help:\n%s", h.term.screen())
 	}
 
 	// ファイルでないバッファは編集の禁止の状態で始まる（FR-88）。
@@ -69,6 +88,13 @@ func TestHelp(t *testing.T) {
 		{"leader", "`leader`"},
 		{"<lt>C-o>", "`<C-o>`"},
 		{"K", "`K`"},
+		// Parser が先に読むキーと、注記の箇条書きに当たっていた語（#233）。
+		{"q", "- `q`: マクロの記録を始める"},
+		{".", "- `.`: 直前の変更を繰り返す"},
+		{"@", "- `@`: マクロを再生する"},
+		{"sa", "- `sa`: "},
+		{":!", "`:!`"},
+		{":wqall", "`:wqall`"},
 	} {
 		h.keys(":h " + tt.word + "<CR>")
 		h.settle()
@@ -77,7 +103,7 @@ func TestHelp(t *testing.T) {
 		}
 	}
 	h.e.do(func() { tabs = len(h.e.view.tabs) })
-	if tabs != 2 {
+	if tabs != 1 {
 		t.Errorf("repeated :help made %d tabs", tabs)
 	}
 
@@ -87,18 +113,32 @@ func TestHelp(t *testing.T) {
 		t.Errorf(":help unknown: message %q", msg)
 	}
 
-	// ファイルのタブから :help で、ヘルプのタブへ移る。
 	h.keys(":he<CR>")
 	h.settle()
 	if msg := h.message(); !strings.HasPrefix(msg, "E492") {
 		t.Errorf(":he: message %q", msg)
 	}
 
-	h.keys(":b 1<CR>:help :readonly<CR>")
+	// <Esc> で閉じてファイルのタブへ戻り、ファイルのタブから :help で、またポップアップに出す。
+	h.keys("<Esc>")
+	h.settle()
+	var closed bool
+	h.e.do(func() { closed = h.e.float == nil && h.e.cur.path != "" })
+	if !closed {
+		t.Errorf("<Esc> did not close the help popup")
+	}
+	h.keys(":help :readonly<CR>")
 	h.settle()
 	h.e.do(func() { title = h.e.cur.title })
 	if title != helpTitle || !strings.Contains(h.cursorLine(), "`:readonly`") {
 		t.Errorf(":help from a file tab: title %q, line %q", title, h.cursorLine())
+	}
+	// :tabopen でタブへ広げる（FR-70）。
+	h.keys(":tabopen<CR>")
+	h.settle()
+	h.e.do(func() { title, tabs, closed = h.e.cur.title, len(h.e.view.tabs), h.e.float == nil })
+	if title != helpTitle || tabs != 2 || !closed {
+		t.Errorf(":tabopen: title %q, tabs %d, popup closed %v, message %q", title, tabs, closed, h.message())
 	}
 }
 
@@ -113,18 +153,29 @@ func TestHelpExtensions(t *testing.T) {
 	h := start(t, Config{Extensions: specs, Leader: ","})
 	h.keys(":help fake.line<CR>")
 	h.settle()
-	if got := h.cursorLine(); got != "- `fake.line`（拡張機能 fake のテキストオブジェクト。キーは `il`）: 行のテスト用の説明" {
+	if got, want := h.wrappedLine(2), "- `fake.line`（拡張機能 fake のテキストオブジェクト。キーは `il`）: 行のテスト用の説明"; !strings.HasPrefix(got, want) {
 		t.Errorf(":help fake.line: cursor line %q (message %q)", got, h.message())
 	}
 	// 宣言の <Leader> は、キーの一覧と同じく設定の leader に置き換えて出す。
 	h.keys(":help fake.leader<CR>")
 	h.settle()
-	if got := h.cursorLine(); got != "- `fake.leader`（拡張機能 fake のコマンド。キーは `,z`）" {
+	if got, want := h.wrappedLine(2), "- `fake.leader`（拡張機能 fake のコマンド。キーは `,z`）"; !strings.HasPrefix(got, want) {
 		t.Errorf(":help fake.leader: cursor line %q (message %q)", got, h.message())
 	}
 }
 
-// 接頭辞の後の ? で、その接頭辞で始まるキーの一覧を、編集を禁止したファイルでないバッファのタブに出す。
+// listText は、フォーカスのあるポップアップの見出しと、バッファの中身の前に改行を足したものを返す。
+func (h *harness) listText() (head, text string) {
+	h.e.do(func() {
+		if f := h.e.float; f != nil {
+			head = f.title
+		}
+		text = "\n" + h.e.cur.buf.Text()
+	})
+	return head, text
+}
+
+// 接頭辞の後の ? で、その接頭辞で始まるキーの一覧を、一覧の部品（編集を禁止したファイルでないバッファ）で画面の中央のポップアップに出す。
 // 一覧は、本体の既定のキー、LSP と DAP の既定のキー、利用者のキーマップ、拡張機能の contributes から作る。
 // :keys は、引数の接頭辞（無ければすべて）で絞った一覧を出す。
 //
@@ -134,24 +185,30 @@ func TestKeyList(t *testing.T) {
 	specs[0].Manifest.Contributes.TextObjects[0].Description = "行のテスト用の説明"
 	cfg := Config{
 		Extensions: specs,
-		Keymap:     map[string]map[string]string{"normal": {"<Leader>lx": ":w<CR>", ",gs": ":w<CR>", "<Leader>la": "dd"}},
+		Keymap:     map[string]map[string]string{"normal": {"<Leader>lx": ":w<CR>", ",gs": ":w<CR>", "<Leader>la": "dd", "s": "cl"}},
 	}
 	h := start(t, cfg)
 
 	h.keys("<Space>l?")
 	h.settle()
 	var title string
-	var readOnly bool
-	h.e.do(func() { title, readOnly = h.e.cur.title, h.e.cur.buf.ReadOnly() })
-	if title != keyListTitle || !readOnly {
-		t.Fatalf("<Space>l?: title %q, read-only %v, message %q", title, readOnly, h.message())
+	var readOnly, list bool
+	h.e.do(func() {
+		title, readOnly = h.e.cur.title, h.e.cur.buf.ReadOnly()
+		list = h.e.float != nil && h.e.float.kind == floatList && h.e.float.focused && h.e.float.center
+	})
+	if title != keyListTitle || !readOnly || !list {
+		t.Fatalf("<Space>l?: title %q, read-only %v, list popup %v, message %q", title, readOnly, list, h.message())
 	}
-	text := h.text()
+	head, text := h.listText()
+	if !strings.HasPrefix(head, "LSP のキーの一覧（<Space>l で始まるものと LSP の操作。") {
+		t.Errorf("<Space>l? head = %q", head)
+	}
 	for _, want := range []string{
-		"LSP のキーの一覧（<Space>l で始まるものと LSP の操作。",
 		"コードアクション（LSP）（設定の keymap が優先）", "→ dd",
 		"<Space>lx", "設定", "→ :w<CR>",
 		"<Space>l?", "LSP のキーの一覧",
+		"\n<C-]> ",
 		// <leader>l で始まらない LSP の操作のキー（#227 のオーケストレータの決定）。
 		"\nK ", "\ngq ", "\n<C-]> ", "整形する（LSP）",
 	} {
@@ -181,46 +238,53 @@ func TestKeyList(t *testing.T) {
 			user = &rows[i]
 		}
 	}
-	if builtin == nil || builtin.Ref.ID != "codeAction" || !builtin.Ref.Provider() || builtin.Kind != input.BindAction || !builtin.Overridden {
+	if builtin == nil || builtin.Ref.ID != "codeAction" || !builtin.Ref.Provider() || builtin.Kind != input.BindAction || builtin.Overridden != input.MapNormal {
 		t.Errorf("builtin <Space>la row = %+v", builtin)
 	}
-	if user == nil || editcmd.KeysString(user.RHS) != "dd" || user.Modes != input.MapNormal || user.Overridden {
+	if user == nil || editcmd.KeysString(user.RHS) != "dd" || user.Modes != input.MapNormal || user.Overridden != 0 {
 		t.Errorf("user <Space>la row = %+v", user)
 	}
 
-	// 同じ client の 2 回目は、同じタブの中身を替える。
+	// 一覧の中で打った ? も、前の一覧を閉じて新しい一覧に替える。タブは増やさない。
 	h.keys("<Space>d?")
 	h.settle()
 	var tabs int
 	h.e.do(func() { tabs = len(h.e.view.tabs) })
-	if text = h.text(); !strings.Contains(text, "<Space>dc") || strings.Contains(text, "<Space>la") || tabs != 2 {
+	if _, text = h.listText(); !strings.Contains(text, "<Space>dc") || strings.Contains(text, "<Space>la") || tabs != 1 {
 		t.Errorf("<Space>d?: tabs %d, text:\n%s", tabs, text)
 	}
 
 	// 既定のキーに無い接頭辞の ? も、登録の接頭辞から作る（g?、利用者のキーマップの ,g?）。
 	h.keys("g?")
 	h.settle()
-	if text = h.text(); !strings.Contains(text, "gg") || !strings.Contains(text, "gq") || strings.Contains(text, "<Space>") {
+	if _, text = h.listText(); !strings.Contains(text, "gg") || !strings.Contains(text, "gq") || strings.Contains(text, "<Space>") {
 		t.Errorf("g?: text:\n%s", text)
 	}
 	h.keys(",g?")
 	h.settle()
-	if text = h.text(); !strings.Contains(text, ",gs") {
+	if _, text = h.listText(); !strings.Contains(text, ",gs") {
 		t.Errorf(",g?: text %q, message %q", text, h.message())
 	}
 
 	h.keys(":keys<CR>")
 	h.settle()
-	text = h.text()
-	for _, want := range []string{"キーの一覧（すべて。", "q{レジスター}", "il", "拡張機能 fake", "行のテスト用の説明", "fake.slow", "sr", "囲みを替える"} {
+	head, text = h.listText()
+	for _, want := range []string{"q{レジスター}", "il", "拡張機能 fake", "行のテスト用の説明", "fake.slow", "sr", "囲みを替える"} {
 		if !strings.Contains(text, want) {
 			t.Errorf(":keys lacks %q:\n%s", want, text)
 		}
 	}
+	if !strings.HasPrefix(head, "キーの一覧（すべて。") {
+		t.Errorf(":keys head = %q", head)
+	}
+	// 利用者のキーマップの s は、sa、sd、sr の手前の部分なので、それらの行にも上書きの印を付ける（#233）。
+	if !strings.Contains(text, "囲みを替える（sr{前の文字}{後の文字}）（設定の keymap が優先）") {
+		t.Errorf(":keys: sr is not marked as overridden by s:\n%s", text)
+	}
 	h.keys(":keys <lt>Leader>d<CR>")
 	h.settle()
-	if text = h.text(); !strings.Contains(text, "キーの一覧（<Space>d で始まるもの。") {
-		t.Errorf(":keys <Leader>d: %q", text)
+	if head, _ = h.listText(); !strings.HasPrefix(head, "キーの一覧（<Space>d で始まるもの。") {
+		t.Errorf(":keys <Leader>d: %q", head)
 	}
 	h.keys(":keys zz<CR>")
 	h.settle()
@@ -247,7 +311,35 @@ func TestKeyListKeepsSearch(t *testing.T) {
 	}
 }
 
-// マクロの再生の途中でキーの一覧のタブへ移ったら、再生の残りのキーは移った先のタブで動く（Vim のマクロのキーがカーソルのあるバッファへ入るのと同じ）。
+// キーの一覧の <CR> は、ポップアップを閉じてから、カーソルの行のキーを打ったのと同じく実行する（#236）。
+// 回数のように引数を続けるキーと、ノーマルモードでないキーは実行せずに知らせる。
+//
+// req: FR-90
+func TestKeyListSelect(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "one\ntwo\nthree\n"})
+	cfg := Config{WorkDir: dir, Keymap: map[string]map[string]string{"normal": {"<Leader>zz": "dd"}}}
+	h := start(t, cfg, "a.txt")
+	h.keys("<Space>z?")
+	h.settle()
+	if _, text := h.listText(); !strings.HasPrefix(text, "\n<Space>zz  n  設定  → dd\n") {
+		t.Fatalf("<Space>z?: %q (message %q)", text, h.message())
+	}
+	h.keys("<CR>")
+	h.settle()
+	var closed bool
+	h.e.do(func() { closed = h.e.float == nil })
+	if got := h.text(); got != "two\nthree" || !closed {
+		t.Errorf("<CR> on <Space>zz: text %q, popup closed %v, message %q", got, closed, h.message())
+	}
+
+	h.keys(":keys<CR>G<CR>")
+	h.settle()
+	if msg := h.message(); !strings.Contains(msg, "一覧からは実行できません") {
+		t.Errorf("<CR> on the last row (a parser key): message %q", msg)
+	}
+}
+
+// マクロの再生の途中でキーの一覧のポップアップを出したら、再生の残りのキーはポップアップの中で動く（Vim のマクロのキーがカーソルのあるバッファへ入るのと同じ）。
 //
 // req: FR-90
 func TestKeyListInMacro(t *testing.T) {

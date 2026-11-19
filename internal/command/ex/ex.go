@@ -16,6 +16,8 @@
 //	:e[dit][!] [file]    Action の ActionEdit を返す。file が無く（読み直し）、! が無く、未保存の変更があれば E37 で失敗する。
 //	                     file を開くのは新しいタブなので（FR-113）、file があれば未保存の変更を確かめない
 //	:tabm[ove] [N|+N|-N|$]  カーソルのあるタブを動かす ActionTabMove を返す（FR-65）
+//	:popu[p]             カーソルのあるタブをポップアップへ縮める ActionPopup（PopupShrink）を返す（FR-70。名前は仮）
+//	:tabop[en]           ポップアップをタブへ広げる ActionPopup（PopupExpand）を返す（FR-70。名前は仮。:tabo は Vim の :tabonly なので 5 文字）
 //	:diffs[plit] {file}  file を別のペインの client で開いて見比べる ActionDiff（DiffSplit）を返す（FR-99。名前は仮）
 //	:difft[his]          ActionDiff（DiffThis）を返す
 //	:diffo[ff][!]        ActionDiff（DiffOff）を返す
@@ -163,6 +165,23 @@ const (
 	// Diff に操作を、File に :diffsplit のファイルを、Count に ]c と [c の回数を入れる。
 	// 見比べの相手のバッファと差分を持つのは呼び出し側である。
 	ActionDiff
+	// ActionPopup は、ポップアップ（基本設計 1.4。FR-68、FR-70）の操作である。Popup に操作を入れる。
+	// ポップアップを持つのは呼び出し側である。
+	ActionPopup
+)
+
+// PopupOp は、ActionPopup の操作である。
+type PopupOp int
+
+// ポップアップの操作。
+const (
+	// PopupShrink は、カーソルのあるタブをポップアップへ縮める（:popup。名前は仮。FR-70）。
+	PopupShrink PopupOp = iota
+	// PopupExpand は、フォーカスのあるポップアップのバッファをタブへ広げる（:tabopen。名前は仮。FR-70、FR-110）。
+	PopupExpand
+	// PopupFocus は、カーソルの近くのポップアップへフォーカスを入れる。入っていれば元のタブへ戻す（<C-w>w。FR-68）。
+	// キーの操作だけが使う。
+	PopupFocus
 )
 
 // DiffOp は、ActionDiff の操作である。
@@ -249,6 +268,8 @@ type Action struct {
 	ClientOnly bool
 	// Diff は、ActionDiff の操作である。
 	Diff DiffOp
+	// Popup は、ActionPopup の操作である。
+	Popup PopupOp
 }
 
 // Deletion は、:d が消した行の記録である。

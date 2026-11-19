@@ -86,12 +86,11 @@ func registerFakeProvider(s *server.Server) {
 	})
 	s.Provider(ext.OpDefinition, func(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
 		show(p)
-		if strings.Contains(string(p.Args), `"peek":true`) {
-			return ext.ProviderInvokeResult{OK: true}, nil
-		}
 		id := b.ID()
 		to := ext.Position{Line: min(p.Cursor.Line+1, b.LineCount()-1)}
-		return ext.ProviderInvokeResult{OK: true, Open: &ext.EditorOpenParams{Buffer: &id, Position: &to}}, nil
+		// peek なら、移らずに移動先の写しをポップアップで見る（editor/open の peek。FR-110）。
+		peek := strings.Contains(string(p.Args), `"peek":true`)
+		return ext.ProviderInvokeResult{OK: true, Open: &ext.EditorOpenParams{Buffer: &id, Position: &to, Peek: peek}}, nil
 	})
 }
 
@@ -223,10 +222,8 @@ func TestReplayProviderWaits(t *testing.T) {
 	// lineOf と popupOf はイベントループの goroutine で呼ぶ（eventually の cond の中か do の中）。
 	lineOf := func() int { return h.e.cur.state.Cursor().Line }
 	popupOf := func() string {
-		if h.e.popup == nil {
-			return ""
-		}
-		return h.e.popup.text
+		h.e.expireFloat() // 描く前と同じく、閉じる条件を確かめる
+		return popupText(h.e)
 	}
 	line := func() int {
 		var l int
@@ -352,11 +349,7 @@ func TestDiagnosticKeys(t *testing.T) {
 	h.keys("<Space>le")
 	h.settle()
 	var popup string
-	h.e.do(func() {
-		if h.e.popup != nil {
-			popup = h.e.popup.text
-		}
-	})
+	h.e.do(func() { popup = popupText(h.e) })
 	path := h.e.cur.path
 	want := fmt.Sprintf("%s:2:1: warning two\n%s:3:2: error src: bad three", path, path)
 	if popup != want {

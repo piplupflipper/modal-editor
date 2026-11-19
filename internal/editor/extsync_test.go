@@ -173,8 +173,8 @@ func TestExtSync(t *testing.T) {
 	runs("v3")
 	lockHas(true)
 	h.e.do(func() {
-		if h.e.popup == nil || !strings.Contains(h.e.popup.text, "削除しなかった") || !h.e.popup.center {
-			t.Errorf("ポップアップ = %+v; want 削除しなかったことを画面の中央に知らせる", h.e.popup)
+		if f := h.e.float; f == nil || !strings.Contains(popupText(h.e), "削除しなかった") || !f.center {
+			t.Errorf("ポップアップ = %q; want 削除しなかったことを画面の中央に知らせる", popupText(h.e))
 		}
 	})
 

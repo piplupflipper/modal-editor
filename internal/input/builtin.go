@@ -187,6 +187,9 @@ var (
 		{keys: "<C-w>z", id: "output-close", modes: MapNormal, desc: "出力の欄を閉じる"},
 		{keys: "<C-w><PageUp>", id: "output-scroll-up", modes: MapNormal, desc: "出力の欄を上へスクロールする"},
 		{keys: "<C-w><PageDown>", id: "output-scroll-down", modes: MapNormal, desc: "出力の欄を下へスクロールする"},
+		// カーソルの近くのポップアップ（ホバーなど）へフォーカスを入れ、入っていれば元のタブへ戻す（FR-68。基本設計 1.4。キーは仮）。
+		// Vim で次のウィンドウへ移るキーである。
+		{keys: "<C-w>w", id: "popup-focus", modes: MapNormal, desc: "ポップアップへフォーカスを入れる、元のタブへ戻る"},
 		// ジャンプリスト（Vim の CTRL-O と CTRL-I）と、裏のバッファへの切り替え（CTRL-^）。
 		// 端末は CTRL-I を Tab と同じ 0x09 で送り、internal/term は <Tab> に読む。<Tab> はタブの移動に使うので（FR-98）、
 		// 既定では端末から CTRL-I でジャンプリストを進められない（要件定義 1.1）。

@@ -13,8 +13,9 @@ import (
 // 値は次の型のポインターのいずれかである。
 //
 //   - 拡張機能からのリクエスト: [EditRequest]、[EditorStateRequest]、[EditorOpenRequest]、[BufferSaveRequest]、
-//     [DiagnosticListRequest]、[ChoiceAskRequest]
-//   - 拡張機能からの通知: [DecorationSet]、[MessageShow]、[DiagnosticSet]、[SignSet]、[PopupShow]、[OutputAppend]
+//     [DiagnosticListRequest]、[ChoiceAskRequest]、[PopupOpenRequest]
+//   - 拡張機能からの通知: [DecorationSet]、[MessageShow]、[DiagnosticSet]、[SignSet]、[PopupShow]、[OutputAppend]、
+//     [ViewUpdate]、[ViewClose]
 //   - Host が作るもの: [StateChange]、[QueryResult]
 //
 // # 拡張機能からのリクエストの扱い
@@ -205,6 +206,32 @@ type StatusLineSet struct {
 	Params    ext.StatusLineSetParams
 }
 
+// PopupOpenRequest は、拡張機能からの popup/open のリクエストである（基本設計 1.4、5.3。FR-68、FR-72）。
+// Params は ext.PopupOpenParams.Validate を通したものである。
+// イベントループは、ポップアップを開いて ID を [PopupOpenRequest.Reply] で返す。
+type PopupOpenRequest struct {
+	Extension string
+	Params    ext.PopupOpenParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ popup/open の結果を返す。
+func (r *PopupOpenRequest) Reply(result ext.PopupOpenResult) error {
+	return r.reply(result, nil)
+}
+
+// ViewUpdate は、拡張機能からの view/update の通知である。読めない部品（ext.ViewComponent.Validate の誤り）は Host が捨てる。
+type ViewUpdate struct {
+	Extension string
+	Params    ext.ViewUpdateParams
+}
+
+// ViewClose は、拡張機能からの view/close の通知である。
+type ViewClose struct {
+	Extension string
+	Params    ext.ViewCloseParams
+}
+
 // StateChange は、拡張機能の状態が変わったことを知らせる。
 // 異常による遷移（再起動待ちと無効）では、Err に異常の内容が入る。利用者への 1 行のメッセージに使う（基本設計 8 章）。
 type StateChange struct {
@@ -252,6 +279,9 @@ func (*SignSet) isEvent()               {}
 func (*PopupShow) isEvent()             {}
 func (*OutputAppend) isEvent()          {}
 func (*StatusLineSet) isEvent()         {}
+func (*PopupOpenRequest) isEvent()      {}
+func (*ViewUpdate) isEvent()            {}
+func (*ViewClose) isEvent()             {}
 func (*StateChange) isEvent()           {}
 func (*QueryResult) isEvent()           {}
 

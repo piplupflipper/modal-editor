@@ -79,6 +79,12 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.appendOutput(ev.Extension, ev.Params)
 	case *exthost.StatusLineSet:
 		e.setStatusPart(ev.Extension, ev.Params)
+	case *exthost.PopupOpenRequest:
+		e.withView(e.extView(ev.Extension), func() { e.popupOpenRequest(ev) })
+	case *exthost.ViewUpdate:
+		e.viewUpdate(ev)
+	case *exthost.ViewClose:
+		e.viewClose(ev)
 	case *exthost.EditorStateRequest:
 		_ = ev.Reply(e.editorState())
 	case *exthost.EditorOpenRequest:
@@ -124,6 +130,7 @@ func (e *Editor) stateChange(ev *exthost.StateChange) {
 	switch ev.State {
 	case exthost.StateRestartWait, exthost.StateDisabled:
 		e.clearExtension(ev.Extension)
+		e.closeExtensionFloats(ev.Extension)
 		if ev.State == exthost.StateDisabled && ev.Err == nil && e.extStopped[ev.Extension] {
 			// :ext sync が削除の後に止めた（exthost.Host.Disable）。
 			// 異常ではないので知らせず、:ext sync の結果のメッセージを残す。
@@ -144,6 +151,7 @@ func (e *Editor) stateChange(ev *exthost.StateChange) {
 		// 並びに部品を置いた拡張機能は、起動の契機を待たずに起動し直し、部品を送り直させる（PR #239 のレビューの必須 1）。
 		// activation の無い、部品だけを足す拡張機能は、Reload が契機で起動し直さないので、ここで起動しないと部品が消えたままになる。
 		e.restartStatusExtension(ev.Extension)
+		e.closeExtensionFloats(ev.Extension)
 	case exthost.StateStarting, exthost.StateRunning, exthost.StateStopping:
 	}
 }
@@ -219,37 +227,6 @@ func (e *Editor) applyExternal(bs *bufferState, tx buffer.Transaction) (buffer.C
 type popupMark struct {
 	state *command.State
 	keys  uint64
-}
-
-// showPopup は、popup/show を、カーソルのあるバッファで、バージョン番号が現在と一致し、
-// カーソルが表示の基準の位置（Position）にあり、最後の拡張機能の操作の問い合わせの後に次のキーを解釈していない場合だけ表示する。
-// 本文は、ui がカーソルの近くに浮かべて描く（ui.Frame.Popup）。
-//
-// 表示は次のキー入力かカーソルの移動で消す（基本設計 6.7）ので、届いた時点でそのどちらかが起きていれば、既に消えたものとして出さない。
-// 出した後も、State が次のキーを解釈したら消す（popupState.keys。render）。
-// マクロの再生の途中のホバー（FR-19。#210）は、再生を止めて結果を待つ間に届いて出る（replayWait）。
-// 再生の残りのキーも command.State.KeysFed が数えるので、記録したときと同じく次のキー（j、zz、jk、<Space>db など）で消え、
-// 再生の後に残らない（#217 のレビュー、#224）。最後の操作のホバーは、続くキーが無いので残る。
-// 段階 3 では、バッファをカーソルのあるタブに持つ client の画面に出す（応答が届くまでに、別の client がキーを打っていてもよい。#215）。
-//
-// req: FR-30, FR-19
-func (e *Editor) showPopup(p ext.PopupShowParams) {
-	bs := e.findBuffer(p.Buffer)
-	if bs == nil || bs.owner == nil || uint64(p.Version) != bs.buf.Version() || bs.state.Cursor() != fromExtPos(p.Position) {
-		return
-	}
-	e.withView(bs.owner, func() {
-		if e.cur != bs {
-			return
-		}
-		if m := e.popupMark; m.state == bs.state && m.keys != bs.state.KeysFed() {
-			return
-		}
-		e.popup = &popupState{
-			bs: bs, cursor: bs.state.Cursor(), text: p.Text, markdown: p.Format == ext.PopupMarkdown,
-			keys: bs.state.KeysFed(), trackKeys: true,
-		}
-	})
 }
 
 // modeName は、command のモードを ext のモードの名前にする。
@@ -331,6 +308,10 @@ func (e *Editor) editorOpenRequest(ev *exthost.EditorOpenRequest) {
 func (e *Editor) editorOpen(p ext.EditorOpenParams) (*bufferState, bool, error) {
 	if err := p.Validate(); err != nil {
 		return nil, false, invalidParams("%v", err)
+	}
+	if p.Peek {
+		bs, err := e.peekOpen(p)
+		return bs, false, err
 	}
 	var bs *bufferState
 	prev, reused := e.cur, false

@@ -8,11 +8,35 @@ import (
 
 // 浮かべる表示の大きさの上限（仮）。
 const (
-	// popupMaxWidth は、popup/show の窓の列数の上限である（枠の余白を含む）。
+	// popupMaxWidth は、ポップアップ（Frame.Float）の窓の列数の上限である（枠の余白と枠線を含む）。
 	popupMaxWidth = 80
-	// popupMaxRows は、popup/show の窓の行数の上限である。
+	// popupMaxRows は、カーソルの近くに置くポップアップの窓の行数の上限である（見出しの行と枠線を含む）。
 	popupMaxRows = 12
+	// floatScanLines は、窓の幅を決めるために表示の幅を測る行数の上限である。大きなバッファをタブから縮めたときに、
+	// 描くたびに全行を測らないためである。この行より後の長い行は、横にスクロールして見る。
+	floatScanLines = 1000
 )
+
+// PopupTextWidth は、ポップアップのテキストの列数の上限（枠線と余白を除く）を、画面の幅 width から返す。
+// ホバーの説明のように、本体が前もって折り返してからテキストのバッファにする本文（internal/editor）に使う。
+// 画面の大きさがまだ届いていない（width が 0 以下）なら、上限の幅を返す。
+func PopupTextWidth(width int) int {
+	if width <= 0 {
+		width = popupMaxWidth
+	}
+	return max(min(width, popupMaxWidth)-4, 1)
+}
+
+// WrapText は、s の各行を、幅 width の行に空白の位置で折り返した行の列を返す（wrapWords。#155）。末尾の空の行は除く。
+func WrapText(s string, width, tabStop int) []string {
+	var out []string
+	for i, l := range textLines(s) {
+		for _, or := range wrapWords(i, l, max(width, 1), tabStopOr(tabStop)) {
+			out = append(out, l[or.start:or.end])
+		}
+	}
+	return out
+}
 
 // textLines は、s を行に分け、末尾の空の行を除いて返す。
 func textLines(s string) []string {
@@ -34,11 +58,12 @@ func clearSplit(g *Grid, row, x0, x1 int) {
 	}
 }
 
-// stripCodeFences は、Markdown の本文から、コードの囲みの行（行頭の 3 つまでの空白の後に ``` か ~~~ が続く行。
+// StripCodeFences は、Markdown の本文から、コードの囲みの行（行頭の 3 つまでの空白の後に ``` か ~~~ が続く行。
 // CommonMark の fenced code block の開きと閉じ）を除き、囲みの中身の行は残す（#151）。
 // gopls のホバーは、宣言を ```go の囲みに入れて返すので、囲みの行がそのまま窓に出ていた。
 // 囲みの開きと閉じの対応は追わない。4 つ以上の ` で開いた囲みの中の ``` の行も除くが、ホバーの本文の宣言の囲みでは使われないと見て、簡単な方を選んだ。
-func stripCodeFences(s string) string {
+// ホバーの本文をテキストのバッファにする前に、internal/editor が呼ぶ。
+func StripCodeFences(s string) string {
 	lines := strings.Split(s, "\n")
 	out := lines[:0:0]
 	for _, l := range lines {
@@ -51,88 +76,139 @@ func stripCodeFences(s string) string {
 	return strings.Join(out, "\n")
 }
 
-// drawPopup は、popup/show の本文を、カーソルの近くに浮かべて描く（基本設計 6.7）。
+// drawFloat は、ポップアップ（Frame.Float）を、バッファの表示領域の上に浮かべて描く（基本設計 1.4。FR-68、FR-72）。
+// 窓の中のテキストは、窓の大きさの子の Renderer（Renderer.float）で描くので、バッファの表示領域と同じく、構文の色、選択、
+// 横と縦のスクロールが効く。子の Renderer は窓（Float.ID）ごとに作り直し、同じ窓の間はスクロールの位置を保つ。
+// 窓の中のカーソルを置いた端末のカーソルを、Float.Focused なら ok を true にして返す。
 //
-// 窓は、カーソルの文字の列から始まり、カーソルの下の行に置く。下に収まらず、上の方が広ければ上の行に置く。
-// バッファの表示領域の中だけに描き、ステータス行と出力の欄には重ねない。
-// 幅は popupMaxWidth 列と画面の幅の小さい方を上限に、本文の最も長い行に合わせ、左右に 1 列の余白を置く。
-// 長い行は空白の位置で折り返す（wrapWords）。行が popupMaxRows 行と置ける行数に収まらなければ、最後の行に残りの行数を書く。
-// Markdown は、呼び出し側（Render）がコードの囲みの行だけを除き（stripCodeFences）、他の記法は整形せずに出す
-// （6.7 の format は、整形するかを ui が決めてよいとしている）。
+// 置き場所は 2 つある。
 //
-// 枠線の記号（SymbolPopupBorder）があれば、窓の周りに 1 列と 1 行ずつ枠線を描く。幅と行数の上限は枠線を含めて数える。
-// curRow が負なら、カーソルの位置に依らず、窓をバッファの表示領域の縦と横の中央に置く（Frame.PopupCenter）。
-func (r *Renderer) drawPopup(g *Grid, theme Theme, text string, curRow, curCol int) {
-	lines := textLines(text)
+//   - カーソルの近く（Center が false）: カーソルの文字の列から始まり、カーソルの下の行に置く。下に収まらず、上の方が広ければ上の行に置く。
+//     行数は popupMaxRows 行（見出しと枠線を含む）と置ける行数の小さい方を上限にする
+//   - 中央（Center が true）: バッファの表示領域の縦と横の中央に置く。行数は表示領域に収まるまで使う
+//
+// 幅は popupMaxWidth 列と画面の幅の小さい方を上限に、テキストの最も長い行（先頭の floatScanLines 行で測る）と見出しに合わせ、
+// 左右に 1 列の余白を置く。長い行は折り返さずに、バッファの表示領域と同じく横にスクロールする
+// （折り返したいテキスト（ホバーの説明）は、本体が前もって折り返してバッファにする。PopupTextWidth）。
+// 枠線の記号（SymbolPopupBorder）があれば、窓の周りに 1 列と 1 行ずつ枠線を描き、見出しを上の枠線に重ねる。
+// 枠線が無ければ、見出しを窓の最初の行に描く。幅と行数の上限は枠線と見出しを含めて数える。
+// 窓の色は StylePopup で、テキストの色はその上に重ねる。CursorLine なら、カーソルの行を StylePopupSelected で描く。
+// フォーカスの無い窓に収まらない行があれば、最後の行に残りの行数を書く（フォーカスを入れればスクロールして読める）。
+func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int) (Cursor, bool) {
+	if fl.View == nil || fl.View.Text == nil {
+		return Cursor{}, false
+	}
 	chars, bordered := r.border()
 	b := 0
 	if bordered {
 		b = 1
 	}
-	maxW := min(r.Width, popupMaxWidth) - 2*b
-	if len(lines) == 0 || maxW < 3 {
-		return
-	}
 	tabStop := tabStopOr(r.TabStop)
-	var rows []outputRow
-	width := 0
-	for i, l := range lines {
-		for _, or := range wrapWords(i, l, maxW-2, tabStop) {
-			rows = append(rows, or)
-			width = max(width, StringWidth(l[or.start:or.end], tabStop))
-		}
+	maxW := min(r.Width, popupMaxWidth) - 2*b
+	if maxW < 3 {
+		return Cursor{}, false
+	}
+	text := fl.View.Text
+	n := text.LineCount()
+	width := StringWidth(fl.Title, tabStop)
+	for i := range min(n, floatScanLines) {
+		width = max(width, StringWidth(text.Line(i), tabStop))
+	}
+	head := 0
+	if fl.Title != "" && !bordered {
+		head = 1
 	}
 	textRows := r.textRows()
-	center := curRow < 0
-	// 上と下に本文を置ける行数は、枠線の 2 行を除いて数える（枠線を数えずに決めると、下に枠線しか入らない行で何も出なかった。PR #206 のレビュー）。
-	below, above := textRows-curRow-1-2*b, curRow-2*b
-	useAbove := len(rows) > below && above > below
+	// 上と下に本文を置ける行数は、枠線の 2 行と見出しの行を除いて数える（PR #206 のレビュー）。
+	below, above := textRows-curRow-1-2*b-head, curRow-2*b-head
+	useAbove := !fl.Center && n > below && above > below
 	space := below
-	if useAbove {
+	switch {
+	case fl.Center:
+		space = textRows - 2*b - head
+	case useAbove:
 		space = above
 	}
-	if center {
-		space = textRows - 2*b
+	h := min(n, space)
+	if !fl.Center {
+		h = min(h, popupMaxRows-2*b-head)
 	}
-	h := min(len(rows), popupMaxRows-2*b, space)
 	if h <= 0 {
-		return
+		return Cursor{}, false
 	}
-	top := curRow + 1 + b
-	switch {
-	case center:
-		top = (textRows-h-2*b)/2 + b
-	case useAbove:
-		top = curRow - h - b
-	}
+	boxH := h + head
 	note := ""
-	if h < len(rows) {
-		note = fmt.Sprintf("（残り %d 行）", len(rows)-h+1)
+	if !fl.Focused && h < n {
+		note = fmt.Sprintf("（残り %d 行）", n-h+1)
 		width = max(width, StringWidth(note, tabStop))
 	}
 	boxW := min(width+2, maxW)
+	top := curRow + 1 + b
 	x0 := max(min(curCol, r.Width-boxW-2*b), 0) + b
-	if center {
+	switch {
+	case fl.Center:
+		top = (textRows-boxH-2*b)/2 + b
 		x0 = max((r.Width-boxW-2*b)/2, 0) + b
+	case useAbove:
+		top = curRow - boxH - b
 	}
+	if r.float == nil || r.floatID != fl.ID {
+		r.float = &Renderer{}
+		r.floatID = fl.ID
+	}
+	sub := r.float
+	sub.Width, sub.Height = max(boxW-2, 1), h+2
+	sub.TabStop, sub.Theme, sub.Symbols = r.TabStop, theme, r.Symbols
+	view := *fl.View
+	view.Tabs, view.Output, view.List, view.Choice, view.Float, view.Diff = nil, nil, nil, nil, nil, nil
+	view.Message, view.HitEnter = Message{}, false
+	if view.Mode == ModeCommandLine {
+		// コマンドラインは画面の最後の行に描く（Render）。窓の中は、コマンドラインに入る前のノーマルモードとして描く。
+		view.Mode = ModeNormal
+	}
+	inner := sub.render(&view)
 	a := theme.attr(StylePopup)
-	special := theme.attr(StyleSpecialKey)
+	sel := theme.attr(StylePopupSelected)
 	if bordered {
-		r.drawBorder(g, theme, chars, top, x0, h, boxW)
+		r.drawBorder(g, theme, chars, top, x0, boxH, boxW)
+		if fl.Title != "" {
+			ba, ok := theme[StylePopupBorder]
+			if !ok {
+				ba = a
+			}
+			r.drawText(g, top-1, x0+1, x0+boxW-1, fl.Title, ba.Over(Attr{Bold: true}))
+		}
 	}
-	for i := range h {
+	for i := range boxH {
 		row := top + i
 		clearSplit(g, row, x0, x0+boxW)
+		base := a
+		if i >= head && fl.CursorLine && inner.Cursor.Row == i-head {
+			base = sel
+		}
 		for c := range boxW {
-			g.set(row, x0+c, blank(a))
+			g.set(row, x0+c, blank(base))
 		}
-		if i == h-1 && note != "" {
+		switch {
+		case i < head:
+			r.drawText(g, row, x0+1, x0+boxW-1, fl.Title, a.Over(Attr{Bold: true}))
+		case i == boxH-1 && note != "":
 			r.drawText(g, row, x0+1, x0+boxW-1, note, a)
-			continue
+		default:
+			for c := range sub.Width {
+				cell := inner.Grid.At(i-head, c)
+				cell.Attr = base.Over(cell.Attr)
+				g.set(row, x0+1+c, cell)
+			}
 		}
-		or := rows[i]
-		r.drawSegmentAt(g, row, x0+1, boxW-2, lines[or.line], or, a, special)
 	}
+	if !fl.Focused || !inner.Cursor.Visible {
+		return Cursor{}, false
+	}
+	cur := inner.Cursor
+	cur.Row += top + head
+	cur.Col += x0 + 1
+	return cur, true
 }
 
 // drawBorder は、row top から h 行、列 x0 から w 列の窓の周りに、枠線の 8 文字 chars（SymbolPopupBorder の並び）を描く。

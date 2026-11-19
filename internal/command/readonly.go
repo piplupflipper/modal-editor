@@ -26,6 +26,7 @@ var keepsTextActions = map[string]bool{
 	"alternate-buffer":   true,
 	"tab-next":           true,
 	"tab-prev":           true,
+	"popup-focus":        true,
 	// dp はこのバッファでなく相手のバッファを変える。相手が編集を禁止していれば、呼び出し側が断る（基本設計 6.8）。
 	"diff-next": true,
 	"diff-prev": true,

@@ -117,6 +117,28 @@ func runFakeExt(mode string) int {
 			tx := ext.Transaction{Edits: []ext.Edit{{Range: lineRange(b, l), Text: strings.ToUpper(b.Line(l))}}}
 			return ext.CommandExecuteResult{OK: true, Transaction: &tx}, nil
 		})
+		// fake.popup は、引数（list、tree、input、text）の部品のポップアップを popup/open で開く（#236）。
+		// 利用者の操作の知らせは message/show で出し、select の項目が close なら view/close で、update なら view/update で応える。
+		s.Command("fake.popup", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var a struct{ Text string }
+			_ = json.Unmarshal(p.Args, &a)
+			go func() {
+				r, err := s.OpenPopup(hostCtx, fakePopup(a.Text))
+				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("opened %d err=%v", r.View, err))
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
+		s.OnView(func(_ context.Context, e *server.ViewEvent) {
+			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("view %d kind=%d item=%s key=%s", e.View, e.Kind, e.Item, e.Key))
+			switch {
+			case e.Kind == server.ViewSelected && e.Item == "close":
+				_ = s.CloseView(e.View)
+			case e.Kind == server.ViewSelected && e.Item == "update":
+				_ = s.UpdateView(ext.ViewUpdateParams{View: e.View, Component: ext.ViewComponent{
+					Kind: ext.ViewList, Items: []ext.ViewItem{{ID: "new", Label: "updated"}},
+				}})
+			}
+		})
 		s.Command("fake.jump", func(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			id := b.ID()
 			to := ext.Position{Line: min(p.Cursor.Line+1, b.LineCount()-1)}
@@ -357,6 +379,29 @@ func runFakeExt(mode string) int {
 	return 0
 }
 
+// fakePopup は、fake.popup の引数 kind の部品のポップアップの params を返す。
+func fakePopup(kind string) ext.PopupOpenParams {
+	switch kind {
+	case "tree":
+		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewTree, Title: "tree", Items: []ext.ViewItem{
+			{ID: "dir", Label: "dir", Children: []ext.ViewItem{{ID: "dir/a", Label: "a"}, {ID: "dir/b", Label: "b"}}},
+			{ID: "top", Label: "top"},
+		}}}
+	case "input":
+		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewInput, Title: "name", Text: "old"}}
+	case "text":
+		return ext.PopupOpenParams{Component: ext.ViewComponent{
+			Kind: ext.ViewText, Text: "alpha beta\ngamma",
+			Highlights: []ext.Decoration{{Range: ext.Range{End: ext.Position{Byte: 5}}, Style: "keyword"}},
+		}}
+	}
+	return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewList, Title: "list", Items: []ext.ViewItem{
+		{ID: "one", Label: "first", Highlights: []ext.ViewSpan{{Start: 0, End: 5, Style: "keyword"}}},
+		{ID: "close", Label: "close me"},
+		{ID: "update", Label: "update me"},
+	}}}
+}
+
 // fakeSpecs は、テスト用の拡張機能の定義を返す。
 func fakeSpecs(t *testing.T) []exthost.Spec {
 	t.Helper()
@@ -374,6 +419,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				act(ext.ActivationTextObject, "fake.hang"), act(ext.ActivationCommand, "fake.upper"),
 				act(ext.ActivationCommand, "fake.echo"), act(ext.ActivationCommand, "fake.openlater"),
 				act(ext.ActivationCommand, "fake.write"), act(ext.ActivationCommand, "fake.touch"),
+				act(ext.ActivationCommand, "fake.popup"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -385,7 +431,10 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
 					contrib("fake.write", ""), contrib("fake.touch", ""),
+					contrib("fake.popup", ""),
 				},
+				// ポップアップの中だけで効くキー（FR-69）。x は本体では文字を消すキーで、ポップアップの中ではこちらが先に効く。
+				PopupKeys: []ext.Contribution{contrib("fake.pick", "x"), contrib("fake.two", "zq")},
 			},
 		},
 		{

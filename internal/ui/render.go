@@ -83,6 +83,11 @@ type Renderer struct {
 	rows     int  // 直前の Render の表示領域の行数
 	fraction int  // カーソルの行の、表示領域の中の相対位置（Vim の w_fraction。fractionMult 分の 1 の単位）
 	fracRow  int  // fraction を最後に使ったときのカーソルの画面の行に 1 を足したもの。0 なら未設定（Vim の w_prev_fraction_row）
+
+	// float は、ポップアップ（Frame.Float）の窓の中を描く子の Renderer で、floatID はその窓の Float.ID である（drawFloat）。
+	// 窓が替わるか無くなったら作り直す。
+	float   *Renderer
+	floatID uint64
 }
 
 // fractionMult は、fraction の単位である（Vim の FRACTION_MULT と同じ値）。
@@ -223,16 +228,12 @@ func (r *Renderer) render(f *Frame) Screen {
 		if c, ok := r.drawList(g, theme, f.List); ok {
 			listCursor = &c
 		}
-	} else if f.Popup != "" && rows > 0 {
-		text := f.Popup
-		if f.PopupMarkdown {
-			text = stripCodeFences(text)
+	} else if f.Float != nil && rows > 0 {
+		if c, ok := r.drawFloat(g, theme, f.Float, curRow, r.textLeft()+cur.col-r.left); ok {
+			listCursor = &c
 		}
-		if f.PopupCenter {
-			r.drawPopup(g, theme, text, -1, -1)
-		} else {
-			r.drawPopup(g, theme, text, curRow, r.textLeft()+cur.col-r.left)
-		}
+	} else {
+		r.float = nil
 	}
 	screen := Screen{Grid: g, Cursor: Cursor{
 		Row: curRow, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,

@@ -119,6 +119,11 @@ type Contributes struct {
 	// StatusLine は、ステータス行とタブ行に足す部品の一覧である（基本設計 5.1、7.1。FR-92）。
 	// 部品の中身は statusline/set で送る（MethodStatusLineSet）。足したのは API 0.5.0 である。
 	StatusLine []StatusLinePart `json:"statusline,omitempty"`
+	// PopupKeys は、この拡張機能が popup/open で開いたポップアップの中だけで効くキーである（FR-69。基本設計 5.1）。
+	// 各項目の Keys は空にできない。フォーカスを入れたポップアップのノーマルモードで打つと、本体は view/key で ID を知らせる
+	// （ViewKeyParams）。本体の既定のキーより先に引く。ID は popupKeys の中で一意にし、他の操作の ID とは別に数える。
+	// 操作ではないので、起動の契機（Activation）の対象にはならない。
+	PopupKeys []Contribution `json:"popupKeys,omitempty"`
 }
 
 // Contribution は、拡張機能が追加する 1 つの操作である。
@@ -189,6 +194,7 @@ func (m *Manifest) HandlesFileType(ft string) bool {
 //   - ファイルの種類の契機は、Pattern が空でないこと
 //   - Contributes の各操作の ID が空でなく、種類をまたいで重複しないこと
 //   - Contributes.StatusLine の各部品の ID が、拡張機能の ID と "." で始まり、その後が空でなく "." を含まず、空白を含まず、重複しないこと
+//   - Contributes.PopupKeys の各項目の ID とキーが空でなく、ID が PopupKeys の中で重複しないこと
 //
 // 未知の種類の契機と、未知の操作の名前の provides は、誤りにせず、warnings に 1 件ずつ返す。
 // API の後の版で契機の種類を足しても、古い本体が新しい拡張機能の宣言ファイルを丸ごと拒まないようにするためである。
@@ -239,6 +245,20 @@ func (m *Manifest) Validate() (warnings []error, err error) {
 	}
 
 	errs = append(errs, m.validateStatusLine()...)
+
+	popupIDs := map[string]bool{}
+	for i, c := range m.Contributes.PopupKeys {
+		path := fmt.Sprintf("contributes.popupKeys[%d]", i)
+		switch {
+		case c.ID == "":
+			errs = append(errs, fmt.Errorf("%s.id が空である", path))
+		case popupIDs[c.ID]:
+			errs = append(errs, fmt.Errorf("%s.id %q が重複する", path, c.ID))
+		case c.Keys == "":
+			errs = append(errs, fmt.Errorf("%s.keys が空である", path))
+		}
+		popupIDs[c.ID] = true
+	}
 
 	if len(m.Activation) == 0 && len(m.Provides) == 0 && len(m.Contributes.StatusLine) == 0 {
 		errs = append(errs, errors.New("activation と provides と contributes.statusline がどれも空である"))
