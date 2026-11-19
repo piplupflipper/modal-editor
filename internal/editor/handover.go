@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command"
@@ -51,6 +53,9 @@ var DefaultElevateCommand = []string{"sudo"}
 // イベントループの goroutine から呼び、送り終えるのを待たない。結果は Terminal.Input の TermEvent.Terminal で届く。
 // 実装しない端末では、:! と権限を上げた保存は使えない。
 type TerminalHandover interface {
+	// HandsOverTerminal は、この client が端末の受け渡しを扱えるか（client が Hello で宣言したか）を返す。
+	// false なら、:! と権限を上げた保存を E319 で断る（版の違う client が頼みを読み飛ばし、そのキーを待ち続けないため。PR #234 のレビューの必須 1）。
+	HandsOverTerminal() bool
 	// RunInTerminal は、端末を子プロセスへ渡して job を動かすよう頼む。終わったら TerminalResult（Released が false）が届く。
 	RunInTerminal(job TerminalJob)
 	// ReclaimTerminal は、実行中の id の間に、端末を取り戻して画面を描くよう頼む（FR-117）。
@@ -107,10 +112,13 @@ func (e *Editor) terminalEnv(c *clientView) []string {
 	return env
 }
 
-// handover は、読み込んでいる client の端末が TerminalHandover を実装していれば返す。
+// handover は、読み込んでいる client の端末が TerminalHandover を実装し、端末の受け渡しを扱えると宣言していれば返す。
 func (e *Editor) handover() (TerminalHandover, bool) {
 	h, ok := e.term.(TerminalHandover)
-	return h, ok
+	if !ok || !h.HandsOverTerminal() {
+		return nil, false
+	}
+	return h, true
 }
 
 // startTerminalShell は、:!{cmd} を、操作中の client の端末を子プロセスへ渡して動かし始める（FR-80。基本設計 4.9）。
@@ -440,15 +448,45 @@ func (p *permissionError) Unwrap() error { return p.err }
 
 // asPermissionError は、path への書き出しかディレクトリの作成の誤り err が権限の不足なら、permissionError にして返す。そうでなければ nil を返す。
 // path の親のディレクトリが無いか分からなければ、権限を上げて作るよう dir に入れる。
+// path がシンボリックリンクなら、たどった先のパスにする（通常の書き出しの buffer.Buffer.WriteFile と同じく、書くのは先のファイルである。
+// 問いに先のパスを出し、tee にも先のパスを渡して、利用者が権限を上げる対象を見誤らないようにする。PR #234 のレビューの推奨 2）。
 func asPermissionError(path string, err error) *permissionError {
 	if !errors.Is(err, syscall.EACCES) {
 		return nil
+	}
+	if target, rerr := filepath.EvalSymlinks(path); rerr == nil {
+		path = target
 	}
 	pe := &permissionError{path: path, err: err}
 	if _, serr := os.Stat(filepath.Dir(path)); serr != nil {
 		pe.dir = filepath.Dir(path)
 	}
 	return pe
+}
+
+// writeBuffer は、b を path へ書き出す（buffer.Buffer.WriteFile）。
+// WriteFile は同じディレクトリに一時ファイルを作って置き換えるので、ファイルには書けてもディレクトリに書けないと EACCES になる。
+// そのときは、ファイルが書き込める（access(2) の W_OK）普通のファイルなら、その場で切り詰めて書く
+// （Vim 9.1 の既定の 'backupcopy' の auto と同じく、権限を上げずに保存する。PR #234 のレビューの推奨 3）。
+// その場で書くと、途中で失敗したときに元の内容は残らない。
+func writeBuffer(b *buffer.Buffer, path string) error {
+	err := b.WriteFile(path)
+	if err == nil || !errors.Is(err, syscall.EACCES) {
+		return err
+	}
+	fi, serr := os.Stat(path)
+	if serr != nil || !fi.Mode().IsRegular() || unix.Access(path, unix.W_OK) != nil {
+		return err
+	}
+	f, oerr := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if oerr != nil {
+		return err
+	}
+	_, werr := b.WriteTo(f)
+	if cerr := f.Close(); werr == nil && cerr != nil {
+		werr = fmt.Errorf("buffer: %w", cerr)
+	}
+	return werr
 }
 
 // elevateCommand は、権限を上げるコマンド（Config.ElevateCommand、無ければ DefaultElevateCommand）を返す。
@@ -469,9 +507,9 @@ func (e *Editor) askElevate(bs *bufferState, a ex.Action, rest []ex.Action, pe *
 	if pe.dir != "" {
 		what = fmt.Sprintf("ディレクトリ \"%s\" を作れません", pe.dir)
 	}
-	// パスが長くても問いの部分が画面の幅で切れないよう、問いを先に置く。
+	// パスとコマンドが長くても問いの部分が画面の幅で切れないよう、問いを先に置く（PR #234 のレビューの推奨 4）。
 	e.prompt = &prompt{
-		text: fmt.Sprintf("%s で書き込みますか (y/n)? 権限が足りないので%s", strings.Join(e.elevateCommand(), " "), what),
+		text: fmt.Sprintf("権限を上げて書き込みますか (y/n)? 権限が足りないので%s（%s で書きます）", what, strings.Join(e.elevateCommand(), " ")),
 		answer: func(k editcmd.Key) bool {
 			switch k {
 			case editcmd.Rune('y'):

@@ -193,7 +193,7 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 			if err != nil {
 				return forBuffer(err, bs, false)
 			}
-			if err := bs.buf.WriteFile(path); err != nil {
+			if err := writeBuffer(bs.buf, path); err != nil {
 				if pe := asPermissionError(path, err); pe != nil {
 					return forBuffer(pe, bs, false)
 				}
@@ -253,7 +253,7 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 	if err != nil {
 		return forBuffer(err, bs, true)
 	}
-	if err := bs.buf.WriteFile(path); err != nil {
+	if err := writeBuffer(bs.buf, path); err != nil {
 		// 権限の不足なら、呼び出し側（runActions）が権限を上げて書くかを問う（FR-79）。
 		if pe := asPermissionError(path, err); pe != nil {
 			return forBuffer(pe, bs, true)

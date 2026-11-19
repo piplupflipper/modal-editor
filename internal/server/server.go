@@ -494,6 +494,8 @@ type clientTerm struct {
 	conn protocol.ServerConn
 	// width と height は、client が Hello で知らせた端末の大きさである。
 	width, height int
+	// terminal は、client が Hello で端末の受け渡し（protocol.FeatureTerminal）を宣言したことを表す。attach の後は変えない。
+	terminal bool
 
 	out outbox
 	// ended は、end を 1 回だけ行うためのものである。
@@ -555,6 +557,7 @@ type outbox struct {
 func (t *clientTerm) attach(id editor.ClientID, conn protocol.ServerConn, hello protocol.Hello) {
 	t.id, t.conn = id, conn
 	t.width, t.height = defaultSize(hello.Width, hello.Height)
+	t.terminal = hello.HasFeature(protocol.FeatureTerminal)
 	t.out.wake = make(chan struct{}, 1)
 	t.out.stop = make(chan struct{})
 	t.out.done = make(chan struct{})
@@ -718,6 +721,10 @@ func (t *clientTerm) Draw(s ui.Screen) error {
 	t.wakeSender()
 	return nil
 }
+
+// HandsOverTerminal は、editor.TerminalHandover である。client が Hello で端末の受け渡しを宣言したかを返す。
+// 宣言の無い client（版の違う client）は terminal/run を読み飛ばすので、頼まない。
+func (t *clientTerm) HandsOverTerminal() bool { return t.terminal }
 
 // RunInTerminal は、editor.TerminalHandover である。端末を子プロセスへ渡して job を動かすよう client に頼む（FR-79、FR-80）。
 func (t *clientTerm) RunInTerminal(job editor.TerminalJob) {

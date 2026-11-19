@@ -90,6 +90,23 @@ type Hello struct {
 	// :! を実行した client が子プロセスの環境変数 MODAL_EDITOR_CLIENT に入れた値で、server は Files をこの client のタブに開く。
 	// 0 なら知らない（:! の外で起動した）ので、server は操作中の client に開く。
 	Parent uint64
+	// Features は、client が扱える機能の名前の列である（#226。PR #234 のレビューの必須 1）。
+	// 版の違う client は、知らないメソッドの通知を読み飛ばすので、応答の要るメッセージ（FeatureTerminal の terminal/run など）を
+	// 読み飛ばされると、server は応答を待ち続ける。server は、宣言した機能のメッセージだけを送る。
+	Features []string
+}
+
+// FeatureTerminal は、端末の受け渡し（terminal/run、terminal/reclaim、terminal/release に応えること）を扱えることを表す Hello.Features の名前である。
+const FeatureTerminal = "terminal"
+
+// HasFeature は、h が機能 name を宣言しているかを返す。
+func (h Hello) HasFeature(name string) bool {
+	for _, f := range h.Features {
+		if f == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (Hello) clientMessage() {}

@@ -53,7 +53,7 @@ type Terminal interface {
 // 送る goroutine が panic したら、端末を戻してから panic を続ける（基本設計 8 章）。
 func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 	w, h := tm.Size()
-	sent := conn.Send(protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h}) == nil
+	sent := conn.Send(protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h, Features: Features(tm)}) == nil
 	return run(tm, conn, logger, sent, nil)
 }
 

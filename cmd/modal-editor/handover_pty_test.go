@@ -183,7 +183,8 @@ func TestElevatedSaveInPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := filepath.Join(ro, "f.txt")
-	if err := os.WriteFile(f, []byte("old\n"), 0o600); err != nil {
+	// ファイルも書けなくする（ファイルが書けてディレクトリだけが書けないなら、権限を上げずにその場で書くため）。
+	if err := os.WriteFile(f, []byte("old\n"), 0o400); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(ro, 0o500); err != nil { //nolint:gosec // テストの一時ディレクトリの書き込みを外して、権限の不足を起こす
@@ -192,7 +193,7 @@ func TestElevatedSaveInPTY(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) }) //nolint:gosec // 一時ディレクトリを消せるように書き込みを戻すだけである
 	fake := filepath.Join(dir, "fake-sudo")
 	script := "#!/bin/sh\nprintf 'fake password: ' >/dev/tty\nIFS= read -r pw </dev/tty\nprintf '%s' \"$pw\" >\"$FAKE_LOG\"\n" +
-		"chmod u+w \"$FAKE_DIR\"\n\"$@\"\nrc=$?\nchmod u-w \"$FAKE_DIR\"\nexit $rc\n"
+		"chmod u+w \"$FAKE_DIR\" \"$FAKE_DIR\"/*\n\"$@\"\nrc=$?\nchmod u-w \"$FAKE_DIR\" \"$FAKE_DIR\"/*\nexit $rc\n"
 	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil { //nolint:gosec // テストが起動する偽の sudo である
 		t.Fatal(err)
 	}
@@ -209,7 +210,7 @@ func TestElevatedSaveInPTY(t *testing.T) {
 	before := ptytest.Termios(t, p.tty)
 	p.out.WaitForString(t, "f.txt")
 	p.write(t, "ccnew\x1b:w\r")
-	p.out.WaitForString(t, "で書き込みますか (y/n)?")
+	p.out.WaitForString(t, "権限を上げて書き込みますか (y/n)?")
 	p.write(t, "y")
 	p.out.WaitForString(t, "fake password: ")
 	mark := len(p.out.String())

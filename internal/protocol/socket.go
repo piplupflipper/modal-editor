@@ -307,6 +307,7 @@ type wireHello struct {
 	WorkDir  string     `json:"workDir,omitempty"`
 	Env      []string   `json:"env,omitempty"`
 	Parent   uint64     `json:"parent,omitempty"`
+	Features []string   `json:"features,omitempty"`
 }
 
 type wireID struct {

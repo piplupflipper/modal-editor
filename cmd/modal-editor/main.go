@@ -377,7 +377,9 @@ func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, re
 		abs[i] = a
 	}
 	w, h := tm.Size()
-	first, err := client.Start(conn, clientHello(os.Getenv, abs, readOnly, w, h))
+	hello := clientHello(os.Getenv, abs, readOnly, w, h)
+	hello.Features = client.Features(tm)
+	first, err := client.Start(conn, hello)
 	if err != nil {
 		return nil, fmt.Errorf("server に繋げないので 1 つのプロセスで動かす: %w", err)
 	}

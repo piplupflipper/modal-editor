@@ -78,10 +78,30 @@ func TestServeWaitClientAndTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = c.Close() }()
-	if err = c.Send(protocol.Hello{Kind: protocol.KindEdit, Width: 60, Height: 10, Files: []string{a}}); err != nil {
+	hello := protocol.Hello{Kind: protocol.KindEdit, Width: 60, Height: 10, Files: []string{a}, Features: []string{protocol.FeatureTerminal}}
+	if err = c.Send(hello); err != nil {
 		t.Fatal(err)
 	}
 	recvType[protocol.Draw](t, c)
+
+	// 端末の受け渡しを宣言しない client（版の違う client）の :! は、頼みを送らずに E319 にし、その client のキーを処理し続ける（PR #234 のレビューの必須 1）。
+	old, err := protocol.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = old.Send(protocol.Hello{Kind: protocol.KindEdit, Width: 60, Height: 10}); err != nil {
+		t.Fatal(err)
+	}
+	waitScreen(t, old, "[No Name]")
+	sendKeys(t, old, ":!ls<CR>")
+	waitScreen(t, old, "E319")
+	sendKeys(t, old, "iok<Esc>")
+	waitScreen(t, old, "ok")
+	sendKeys(t, old, ":q!<CR>")
+	if ex, _ := recvType[protocol.Exit](t, old); ex.Reason != "" {
+		t.Errorf("宣言しない client の終わり = %+v", ex)
+	}
+	_ = old.Close()
 
 	// :! の外の待つだけの client: 操作中の client のタブに開き、:q で閉じると、理由なしで終わる。
 	w1, err := protocol.Dial(sock)

@@ -42,6 +42,18 @@ type Handover interface {
 	TTY() (in, out *os.File)
 }
 
+// Features は、端末 tm の client が Hello で宣言する機能（protocol.Hello.Features）を返す。
+// tm が Handover を満たせば、端末の受け渡し（protocol.FeatureTerminal）を宣言する。
+func Features(tm Terminal) []string {
+	if _, ok := tm.(Handover); ok {
+		return []string{protocol.FeatureTerminal}
+	}
+	return nil
+}
+
+// terminatedText は、コマンドがシグナルで終わったときの文である（Vim の "Command terminated"）。
+const terminatedText = "コマンドが中断されました"
+
 // promptText は、:! の後に出す問いである（Vim の "Press ENTER or type command to continue"）。
 const promptText = "続けるには ENTER を押してください"
 
@@ -282,7 +294,8 @@ func runCommands(req protocol.TerminalRun, in, out *os.File) (status int, errTex
 		case errors.As(err, &ee) && ee.ExitCode() >= 0:
 			return ee.ExitCode(), ""
 		case errors.As(err, &ee):
-			return 0, fmt.Sprintf("%s が終わりました（%v）", cmd.Args[0], ee)
+			// シグナルで終わった。Vim 9.1 の :! が出す "Command terminated" に合わせる（PR #234 のレビューの推奨 5）。
+			return 0, terminatedText
 		default:
 			return 0, fmt.Sprintf("%s を実行できない: %v", cmd.Args[0], err)
 		}

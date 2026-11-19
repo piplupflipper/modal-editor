@@ -227,6 +227,13 @@ func TestTerminalRunArgvInput(t *testing.T) {
 	if done, _ = recvUntil[protocol.TerminalDone](t, s); done.Err == "" {
 		t.Errorf("起動できないコマンドの TerminalDone = %+v, want Err", done)
 	}
+	// シグナルで終わったら、Vim の "Command terminated" に当たる文にする。
+	if err := s.Send(protocol.TerminalRun{ID: 6, Commands: []protocol.TerminalCommand{{Argv: []string{"sh", "-c", "kill -TERM $$"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if done, _ = recvUntil[protocol.TerminalDone](t, s); done.Err != terminatedText {
+		t.Errorf("シグナルで終わったコマンドの TerminalDone = %+v", done)
+	}
 }
 
 // 実行中に TerminalReclaim を受けたら端末を取り戻し、TerminalRelease で渡し直して TerminalReleased を返す（FR-117）。
