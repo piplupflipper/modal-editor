@@ -459,6 +459,9 @@ func (x *extQuery) Operator(ref editcmd.Ref, b *buffer.Buffer, q command.Operato
 // Action は、command/execute を問い合わせる。
 // 再生中（FR-19）は params の Sync を true にし、結果の Open（カーソルの移動）も、次の操作の前に行う。
 func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQuery, info command.QueryInfo) (buffer.Transaction, error) {
+	if done, err := x.e.helpAction(x.bs, ref, q.Text); done {
+		return buffer.Transaction{BaseVersion: b.Version()}, err
+	}
 	if ref.Extension == input.ProviderExtension {
 		return x.providerAction(ref, b, q, info)
 	}

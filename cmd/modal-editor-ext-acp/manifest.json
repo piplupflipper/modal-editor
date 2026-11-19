@@ -7,8 +7,8 @@
   ],
   "contributes": {
     "commands": [
-      { "id": "acp.prompt" },
-      { "id": "acp.cancel" }
+      { "id": "acp.prompt", "description": "エージェントにプロンプトを送る（:acp.prompt <プロンプト>）" },
+      { "id": "acp.cancel", "description": "処理中のプロンプトを取り消す" }
     ]
   }
 }

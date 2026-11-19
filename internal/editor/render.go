@@ -33,7 +33,7 @@ func (e *Editor) frame() *ui.Frame {
 	st := bs.state
 	f := &ui.Frame{
 		Text:            bs.buf,
-		Name:            bs.path,
+		Name:            bufferTitle(bs),
 		Modified:        bs.buf.Modified(),
 		ReadOnly:        bs.buf.ReadOnly(),
 		FileType:        bs.fileType,

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -236,6 +237,30 @@ func TestExtensionFields(t *testing.T) {
 		f := typ.Field(i)
 		if f.Name != w.name || f.Type != w.typ {
 			t.Errorf("項目 %d = %s %v, want %s %v", i, f.Name, f.Type, w.name, w.typ)
+		}
+	}
+}
+
+// 標準の拡張機能の宣言ファイルは、警告なく読め、contributes の各項目に説明文（description）を持つ（基本設計 5.1）。
+// 説明文はキーの一覧とヘルプに出る。
+//
+// req: FR-90
+func TestStandardManifestDescriptions(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "..", "cmd", "modal-editor-ext-*", ManifestFileName))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("Glob = %v, %v", paths, err)
+	}
+	for _, p := range paths {
+		m, warns, err := LoadManifest(p)
+		if err != nil || len(warns) > 0 {
+			t.Errorf("%s: %v %v", p, warns, err)
+			continue
+		}
+		c := m.Contributes
+		for _, x := range slices.Concat(c.Operators, c.Motions, c.TextObjects, c.Commands) {
+			if x.Description == "" {
+				t.Errorf("%s: %s has no description", p, x.ID)
+			}
 		}
 	}
 }

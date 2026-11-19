@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -461,7 +462,7 @@ func (e *Editor) bufferByName(name string) (*bufferState, error) {
 // それ以外は絶対パス、名前の無いバッファは "[No Name]" である（Vim と同じく、ホームディレクトリを ~ にはしない点だけが違う）。
 func (e *Editor) bufferName(bs *bufferState) string {
 	if bs.path == "" {
-		return "[No Name]"
+		return cmp.Or(bs.title, "[No Name]")
 	}
 	if rel, err := filepath.Rel(e.workDir(), bs.path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return rel

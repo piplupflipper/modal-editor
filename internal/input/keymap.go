@@ -90,6 +90,10 @@ type Binding struct {
 	TakesSecondChar bool
 	// NextMode は、実行の後に移るモードである（i や c ならインサートモード）。
 	NextMode editcmd.Mode
+	// Description は、キーの一覧（FR-90。基本設計 7.2）に出す説明文である。
+	// 本体の操作は表の説明文、拡張機能の操作は宣言ファイルの contributes の description（基本設計 5.1）を入れる。空でもよい。
+	// キーの解釈には使わない。
+	Description string
 }
 
 // Keymap は、キーの列から操作を引く対応表である。
@@ -190,6 +194,17 @@ func (m *Keymap) Lookup(mode MapMode, keys []editcmd.Key) (Binding, bool) {
 		}
 	}
 	return Binding{}, false
+}
+
+// Bindings は、登録をすべて、登録した順に返す。キーの一覧（FR-90）を作るのに使う。
+// 返す値は写しで、変えても Keymap に影響しない。
+func (m *Keymap) Bindings() []Binding {
+	out := make([]Binding, len(m.bindings))
+	for i, b := range m.bindings {
+		b.Keys = slices.Clone(b.Keys)
+		out[i] = b
+	}
+	return out
 }
 
 // match は、mode で有効な登録のうち、キーの列が seq と一致するものと、

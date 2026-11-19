@@ -56,4 +56,7 @@ package ext
 // 0.4.0 で、宣言ファイルの provides と、本体の操作を提供者へ問い合わせる provider/invoke を足した（ProviderInvokeParams。#203）。
 // 古い本体は activation の空の宣言ファイルを誤りとして拒むので、provides だけで操作を引き受ける拡張機能（activation の無いもの）を読まない。
 // activation を持つ拡張機能は読むが、provides の項目は未知の項目として無視し、その操作を呼ばない。
+// #227 で宣言ファイルの contributes の各項目に description（Contribution.Description）を足したが、バージョンは上げていない。
+// 省いてよい項目で、メッセージの形は変えておらず、古い本体は contributes の中の未知の項目を黙って捨てる（encoding/json）ので、
+// 説明文の無い一覧になるだけで動きは変わらないためである。
 const APIVersion = "0.4.0"

@@ -126,6 +126,9 @@ type Contribution struct {
 	// Keys は、既定のキーの列（"ys" など）である。利用者の設定で上書きできる。
 	// 既定のキーを持たない操作では空。
 	Keys string `json:"keys,omitempty"`
+	// Description は、操作の説明文である（基本設計 5.1）。本体はキーの一覧（FR-90）とヘルプ（:help）に出す。無ければ省く。
+	// 足したのは API 0.4.0 の後だが、版は上げていない（APIVersion の doc）。
+	Description string `json:"description,omitempty"`
 }
 
 // KnownActivation は、Activation のうち種類が既知の契機だけを返す。

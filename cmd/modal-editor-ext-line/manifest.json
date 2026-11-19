@@ -7,8 +7,8 @@
   ],
   "contributes": {
     "textObjects": [
-      { "id": "line.inner", "keys": "il" },
-      { "id": "line.around", "keys": "al" }
+      { "id": "line.inner", "keys": "il", "description": "行の中身（行頭と行末の空白を除く）" },
+      { "id": "line.around", "keys": "al", "description": "行の全体（行末の改行を含めない）" }
     ]
   }
 }
