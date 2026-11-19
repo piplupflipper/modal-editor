@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // / と ? の入力は、"\" の付かない区切り文字でパターンとオフセットに分ける。

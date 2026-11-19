@@ -13,7 +13,7 @@ import (
 
 // envPanicChild は、TestPanicHook が自分自身を子プロセスとして起動し、ハンドラーを panic させるための環境変数である。
 // panic は他の goroutine の recover で捕まえられずにプロセスを終わらせるので、子プロセスで起こす。
-const envPanicChild = "MODAL_EDITOR_RPC_PANIC_CHILD"
+const envPanicChild = "VI_IMITATION_RPC_PANIC_CHILD"
 
 // TestPanicHook は、ハンドラー（読み取りの goroutine）の panic で、WithPanicHook の関数を呼んでから panic を続けることを確かめる（#114）。
 func TestPanicHook(t *testing.T) {

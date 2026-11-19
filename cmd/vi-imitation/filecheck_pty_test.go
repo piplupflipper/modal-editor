@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // writeExternal は、エディタの外から path を text に書き換え、更新時刻を 2 秒進める（更新時刻の刻みによらず変更として見えるように）。

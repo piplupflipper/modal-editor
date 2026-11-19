@@ -11,8 +11,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 // 段階 3 で足した本体の操作（基本設計 5.5）のうち、参照の一覧、シンボルの一覧、名前の変更を処理する。

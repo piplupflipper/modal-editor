@@ -8,8 +8,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // TestReleaseReacquire は、Release で端末を子プロセスへ渡すと、raw モードと代替画面を抜け、打ったキーを読まずに残し

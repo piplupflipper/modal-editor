@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // 画面に出さないバッファ（FR-109。基本設計 4.4 の「画面に出さないバッファ」）。

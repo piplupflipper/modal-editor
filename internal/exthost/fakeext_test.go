@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // テスト用の拡張機能は、テストの実行ファイル自身を子プロセスとして起動したものである。

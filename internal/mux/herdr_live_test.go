@@ -13,13 +13,13 @@ import (
 
 // TestHerdrLive は、実物の herdr で、この層の操作を 1 回ずつ動かす。
 // 利用者の herdr のセッションに一時的なペインとポップアップが出て、フォーカスが一瞬移るので、
-// 環境変数 MODAL_EDITOR_TEST_HERDR=1 を付けて herdr の中で打ったときだけ動かす（CI では動かない）。
+// 環境変数 VI_IMITATION_TEST_HERDR=1 を付けて herdr の中で打ったときだけ動かす（CI では動かない）。
 //
 // 同梱するプラグインの宣言ファイルを一時ディレクトリに書いて herdr に登録し、終わったら登録を消す。
 // 作ったペインとポップアップは閉じ、フォーカスは元のペインへ戻す。
 func TestHerdrLive(t *testing.T) {
-	if os.Getenv("MODAL_EDITOR_TEST_HERDR") != "1" {
-		t.Skip("MODAL_EDITOR_TEST_HERDR=1 のときだけ動かす")
+	if os.Getenv("VI_IMITATION_TEST_HERDR") != "1" {
+		t.Skip("VI_IMITATION_TEST_HERDR=1 のときだけ動かす")
 	}
 	m := Detect(os.Getenv)
 	h, ok := m.(*Herdr)

@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/mux"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/mux"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
 )
 
 // 部品の client（基本設計 1.2、1.3。FR-66、FR-67、FR-115）。
@@ -20,7 +20,7 @@ import (
 // server のソケットは -connect <パス> で渡す（:diffsplit の splitPane と同じ）。
 // 部品の client が Hello（protocol.KindPopup、KindPane）を送ったら、editor.Editor.AttachComponent で、その部品を開いた元の client に繋ぐ。
 
-// ComponentFlagPopup と ComponentFlagPane は、部品の client を起動するときに本体の実行ファイルに渡すオプションの名前である（cmd/modal-editor）。
+// ComponentFlagPopup と ComponentFlagPane は、部品の client を起動するときに本体の実行ファイルに渡すオプションの名前である（cmd/vi-imitation）。
 const (
 	ComponentFlagPopup = "-popup"
 	ComponentFlagPane  = "-pane"
@@ -52,7 +52,7 @@ func (s *Server) componentCommand(flag string, view uint64, dir string) (mux.Mux
 	if err != nil {
 		return nil, mux.Command{}, fmt.Errorf("本体の実行ファイルのパスを得られない: %w", err)
 	}
-	// server のソケットは -connect で渡す（diffsplit.go の splitPane と同じ。環境変数 MODAL_EDITOR_SOCKET で渡すと、
+	// server のソケットは -connect で渡す（diffsplit.go の splitPane と同じ。環境変数 VI_IMITATION_SOCKET で渡すと、
 	// 部品の client の中で起動したものが待つだけの client になりうるため）。
 	return m, mux.Command{
 		Args: []string{exe, flag, strconv.FormatUint(view, 10), "-connect", sock},

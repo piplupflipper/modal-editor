@@ -1,4 +1,4 @@
-// Command modal-editor-ext-git は、git 連携の標準の拡張機能である（要件定義 4.14。FR-104。基本設計 6.9）。
+// Command vi-imitation-ext-git は、git 連携の標準の拡張機能である（要件定義 4.14。FR-104。基本設計 6.9）。
 //
 // 本体（internal/exthost）が子プロセスとして起動し、標準入出力で JSON-RPC のメッセージをやり取りする。
 // 標準出力はメッセージに使うので、ログは標準エラー出力へ書く。宣言ファイルは同じディレクトリの manifest.json である。
@@ -22,7 +22,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("modal-editor-ext-git: %v", err)
+		log.Fatalf("vi-imitation-ext-git: %v", err)
 	}
 }
 

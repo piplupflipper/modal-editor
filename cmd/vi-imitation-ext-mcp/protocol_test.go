@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // fakeEditor は、テストで本体の役をする editorAPI である。バッファは行の列で持ち、buffer/edit を逐次の数え方で適用する。

@@ -1,6 +1,6 @@
 {
   "id": "mcp",
-  "command": "./modal-editor-ext-mcp",
+  "command": "./vi-imitation-ext-mcp",
   "activation": [
     { "on": "socket" }
   ],

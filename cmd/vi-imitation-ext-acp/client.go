@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 // コマンドの ID。宣言ファイル manifest.json の contributes.commands と揃える（基本設計 6.5。名前は仮）。
@@ -27,24 +27,24 @@ const (
 const outputChannel = "acp"
 
 // envMCPSocket は、本体が拡張機能へ MCP のソケットのパスを渡す環境変数の名前である（基本設計 6.2。仮）。
-// MCP の中継コマンド（cmd/modal-editor-mcp-bridge）が読む名前と同じにする。
+// MCP の中継コマンド（cmd/vi-imitation-mcp-bridge）が読む名前と同じにする。
 // 本体（internal/editor）が起動ごとにパスを決め、MCP の拡張機能はそのパスで待ち受ける。
 const envMCPSocket = ext.EnvMCPSocket
 
 // mcpBridgeName は、MCP の中継コマンドの実行ファイルの名前である。
-const mcpBridgeName = "modal-editor-mcp-bridge"
+const mcpBridgeName = "vi-imitation-mcp-bridge"
 
 // mcpServerName は、session/new で渡す MCP サーバーの名前である（仮）。
-const mcpServerName = "modal-editor"
+const mcpServerName = "vi-imitation"
 
 // clientName は、initialize の clientInfo の name である。
-const clientName = "modal-editor"
+const clientName = "vi-imitation"
 
 // settings は、利用者の設定のうち、この拡張機能に向けた部分（initialize の settings）である。項目の名前は仮である。
 //
 //	{
 //	  "agent": { "command": "my-acp-agent", "args": ["--acp"], "env": { "KEY": "value" } },
-//	  "mcpBridge": "/opt/modal-editor/modal-editor-mcp-bridge"
+//	  "mcpBridge": "/opt/vi-imitation/vi-imitation-mcp-bridge"
 //	}
 //
 // agent.command には既定の値が無い。省くと acp.prompt は失敗し、設定を求めるメッセージを出す。
@@ -116,7 +116,7 @@ type client struct {
 func newClient() *client {
 	c := &client{
 		timeouts:    defaultTimeouts(),
-		logger:      log.New(os.Stderr, "modal-editor-ext-acp: ", log.LstdFlags),
+		logger:      log.New(os.Stderr, "vi-imitation-ext-acp: ", log.LstdFlags),
 		getenv:      os.Getenv,
 		executable:  os.Executable,
 		paths:       make(map[string]ext.BufferID),
@@ -428,7 +428,7 @@ func (c *client) newSession(ctx context.Context, ag *agentProcess) (string, erro
 }
 
 // mcpServers は、session/new でエージェントへ渡す MCP サーバーの一覧を返す（基本設計 6.2、6.5）。
-// 本体が環境変数 MODAL_EDITOR_MCP_SOCKET でソケットのパスを渡していて、中継コマンドが見つかれば、
+// 本体が環境変数 VI_IMITATION_MCP_SOCKET でソケットのパスを渡していて、中継コマンドが見つかれば、
 // 中継コマンドを `--socket <パス>` の引数で起動する標準入出力の MCP サーバーとして渡す。そうでなければ空の一覧を返す。
 //
 // req: FR-34

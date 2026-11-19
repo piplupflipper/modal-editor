@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/diff"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/diff"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // diffCall は、Config.SplitPane に渡された引数である。

@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/piplupflipper/modal-editor/internal/buffer"
+import "github.com/piplupflipper/vi-imitation/internal/buffer"
 
 // Text は、描画するバッファの内容を読むためのインターフェースである。*buffer.Buffer がこれを満たす。
 // 描画は読むだけで、バッファを変更しない。

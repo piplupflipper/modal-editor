@@ -1,4 +1,4 @@
-// Command fakels は、modal-editor-ext-lsp のテストで言語サーバーの代わりに使う、LSP を話すプログラムである。
+// Command fakels は、vi-imitation-ext-lsp のテストで言語サーバーの代わりに使う、LSP を話すプログラムである。
 //
 // 受け取った文書を、自分の位置の数え方（-encoding）で contentChanges を適用して持ち、次のとおりに答える。
 // 位置の変換は、拡張機能の実装とは別に、unicode/utf16 で数えて書く。
@@ -28,7 +28,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 var (

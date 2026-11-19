@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // handleRequest は、エージェントからのリクエストに答える。lineConn が 1 件ごとに別の goroutine で呼ぶので、

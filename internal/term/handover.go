@@ -23,7 +23,7 @@ import (
 //
 // :! の子プロセスは、Vim と同じく本体と同じプロセスグループで動かす（端末の <C-c> は子プロセスにも本体にも届き、本体は無視する。TerminalSignals）。
 // 子プロセスが対話のシェル（:!sh）なら、シェルはジョブ制御のために自分のプロセスグループを作り、端末の前面をそれへ移す。
-// その中で起動した modal-editor（待つだけの client。FR-83）のために端末を取り戻すとき（FR-117）、本体は背面のプロセスグループにいて、
+// その中で起動した vi-imitation（待つだけの client。FR-83）のために端末を取り戻すとき（FR-117）、本体は背面のプロセスグループにいて、
 // 端末の設定を変えると SIGTTOU で止まり、読むと SIGTTIN で止まる。
 // そのため Reacquire は、前面が自分のプロセスグループでなければ、SIGTTOU を無視して前面を自分へ移し、元の前面を覚える。
 // 次の Release で、覚えた前面へ返す（待つだけの client の終わりを待つ git などのプロセスグループ）。
@@ -137,7 +137,7 @@ func (t *Terminal) setISIG(on bool) error {
 	return nil
 }
 
-// SetInterruptRestore は、RestoreInterrupts で SIGINT と SIGQUIT の扱いを元に戻す関数を決める（cmd/modal-editor が、受け取りを登録し直す関数を渡す）。
+// SetInterruptRestore は、RestoreInterrupts で SIGINT と SIGQUIT の扱いを元に戻す関数を決める（cmd/vi-imitation が、受け取りを登録し直す関数を渡す）。
 // nil なら、既定の扱い（終わる）に戻す。
 func (t *Terminal) SetInterruptRestore(f func()) {
 	t.mu.Lock()

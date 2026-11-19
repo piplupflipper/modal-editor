@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // IsReadOnly は、code が ext.ErrorCodeReadOnly の誤りの応答（包んだものを含む）だけを見分ける。

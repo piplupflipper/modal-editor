@@ -1,13 +1,13 @@
 // line.go は、スクリプトの拡張機能の例である。
-// modal-editor-ext-line の line.inner（il）と同じテキストオブジェクトを、script.inner の ID で提供する。
+// vi-imitation-ext-line の line.inner（il）と同じテキストオブジェクトを、script.inner の ID で提供する。
 package main
 
 import (
 	"context"
 	"log"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 func main() {

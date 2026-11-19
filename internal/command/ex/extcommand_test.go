@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // 拡張機能のコマンドは、ID と完全に一致する名前で呼べ、ID の後の行末までを引数の文字列にする。

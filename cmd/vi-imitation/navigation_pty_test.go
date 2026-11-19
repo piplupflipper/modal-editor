@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // TestNavigationKeysInPTY は、偽の端末の上で、矢印キー、<Home>、<End>、<PageDown> がカーソルを動かし、

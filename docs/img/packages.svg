@@ -49,11 +49,11 @@ svg .tick{stroke:var(--muted);stroke-width:1}
 <rect x="140" y="20" width="840" height="80" rx="8" class="zone"/>
 <text x="152" y="40" class="tx-m">入口</text>
 <rect x="160" y="48" width="240" height="40" rx="6" class="bx"/>
-<text x="280" y="73" text-anchor="middle" class="tx-b">cmd/modal-editor</text>
+<text x="280" y="73" text-anchor="middle" class="tx-b">cmd/vi-imitation</text>
 <rect x="420" y="48" width="260" height="40" rx="6" class="bx"/>
-<text x="550" y="73" text-anchor="middle" class="tx-b">cmd/modal-editor-ext-*</text>
+<text x="550" y="73" text-anchor="middle" class="tx-b">cmd/vi-imitation-ext-*</text>
 <rect x="700" y="48" width="260" height="40" rx="6" class="bx"/>
-<text x="830" y="73" text-anchor="middle" class="tx-b">cmd/modal-editor-mcp-bridge</text>
+<text x="830" y="73" text-anchor="middle" class="tx-b">cmd/vi-imitation-mcp-bridge</text>
 
 <rect x="140" y="116" width="840" height="80" rx="8" class="zone"/>
 <text x="152" y="136" class="tx-m">組み立て</text>

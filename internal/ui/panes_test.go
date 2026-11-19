@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // 印の列は、印か診断があるときだけ 2 列で出し、1 つの行に複数の印があれば優先順位の最も高いものを出す。

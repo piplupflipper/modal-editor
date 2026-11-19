@@ -1,4 +1,4 @@
-// Command modal-editor-ext-lsp は、言語サーバーを子プロセスとして起動し、LSP で話す拡張機能である（基本設計 6.3）。
+// Command vi-imitation-ext-lsp は、言語サーバーを子プロセスとして起動し、LSP で話す拡張機能である（基本設計 6.3）。
 //
 // 本体（internal/exthost）が、言語サーバーのあるファイルの種類のファイルを開いたときに起動する（宣言ファイル manifest.json の filetype の契機）。
 // 標準入出力で本体と JSON-RPC のメッセージをやり取りするので、ログは標準エラー出力へ書く。
@@ -55,7 +55,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("modal-editor-ext-lsp: %v", err)
+		log.Fatalf("vi-imitation-ext-lsp: %v", err)
 	}
 }
 

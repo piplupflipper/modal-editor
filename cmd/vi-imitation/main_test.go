@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/config"
+	"github.com/piplupflipper/vi-imitation/internal/config"
 )
 
 func TestRun(t *testing.T) {
@@ -76,7 +76,7 @@ func TestLoadConfig(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(xdg, "config"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(xdg, "data"))
-	dir := filepath.Join(xdg, "config", "modal-editor")
+	dir := filepath.Join(xdg, "config", "vi-imitation")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

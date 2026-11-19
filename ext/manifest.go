@@ -51,13 +51,13 @@ type Manifest struct {
 // 値は、宣言ファイルのあるディレクトリの絶対パスである。
 // 子プロセスの作業ディレクトリは本体のものを引き継ぐので、宣言ファイルの隣のファイルを探すときはこの値を使う。
 // スクリプトの拡張機能の実行ファイルは、args の相対パスのスクリプトをここから解決する（基本設計 6.6）。
-const EnvExtensionDir = "MODAL_EDITOR_EXTENSION_DIR"
+const EnvExtensionDir = "VI_IMITATION_EXTENSION_DIR"
 
 // EnvMCPSocket は、本体がすべての拡張機能の子プロセスに渡す環境変数の名前である（名前は仮。基本設計 6.2）。
 // 値は、MCP の中継コマンドが接続する Unix ドメインソケットの絶対パスで、本体が起動ごとに一意に決める。
 // 本体は、起動の契機 ActivationSocket を宣言した拡張機能のために、このパスで起動時から待ち受ける（基本設計 6.2）。
 // ACP の拡張機能はこのパスを中継コマンドの引数にしてエージェントへ渡す（基本設計 6.5）。
-const EnvMCPSocket = "MODAL_EDITOR_MCP_SOCKET"
+const EnvMCPSocket = "VI_IMITATION_MCP_SOCKET"
 
 // EnvSocketFDs は、本体が ActivationSocket の拡張機能へ引き継いだファイル記述子の数を渡す環境変数の名前である（名前は仮。基本設計 6.2）。
 // 値が n（1 以上）なら、ファイル記述子 SocketFDStart が待ち受けているソケットで、
@@ -65,7 +65,7 @@ const EnvMCPSocket = "MODAL_EDITOR_MCP_SOCKET"
 // 値が空か変数が無ければ、何も引き継いでいない。
 // 本体は、すべての拡張機能の子プロセスでこの変数を上書きするので、本体の環境の古い値は引き継がない。
 // 拡張機能は ext/server の InheritedSocket で受け取る。
-const EnvSocketFDs = "MODAL_EDITOR_SOCKET_FDS"
+const EnvSocketFDs = "VI_IMITATION_SOCKET_FDS"
 
 // SocketFDStart は、EnvSocketFDs で引き継ぐ最初のファイル記述子の番号である。
 // 0〜2 は標準入出力で、本体との通信に使う。

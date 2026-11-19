@@ -3,7 +3,7 @@ package ex
 import (
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // runSubstitute は :[range]s/pat/rep/[flags] [count] を実行する。

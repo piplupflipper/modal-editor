@@ -56,7 +56,7 @@ func (ts *testTmux) panes() []string {
 	return strings.Fields(ts.run("list-panes", "-a", "-F", "#{pane_id}"))
 }
 
-// buildDist は、本体と git の拡張機能を、配布物と同じ並び（<bin>/modal-editor と <bin>/extensions/git/）でビルドし、本体のパスを返す。
+// buildDist は、本体と git の拡張機能を、配布物と同じ並び（<bin>/vi-imitation と <bin>/extensions/git/）でビルドし、本体のパスを返す。
 func buildDist(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
@@ -65,8 +65,8 @@ func buildDist(t *testing.T) string {
 	bin := filepath.Join(t.TempDir(), "bin")
 	ext := filepath.Join(bin, "extensions", "git")
 	for _, b := range []struct{ out, pkg string }{
-		{filepath.Join(bin, "modal-editor"), "../modal-editor"},
-		{filepath.Join(ext, "modal-editor-ext-git"), "."},
+		{filepath.Join(bin, "vi-imitation"), "../vi-imitation"},
+		{filepath.Join(ext, "vi-imitation-ext-git"), "."},
 	} {
 		out, err := exec.Command("go", "build", "-o", b.out, b.pkg).CombinedOutput() //nolint:gosec // テストで使う実行ファイルを一時ディレクトリへビルドする
 		if err != nil {
@@ -80,7 +80,7 @@ func buildDist(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(ext, "manifest.json"), manifest, 0o600); err != nil { //nolint:gosec // テストの一時ディレクトリへ、リポジトリの宣言ファイルを写す
 		t.Fatal(err)
 	}
-	return filepath.Join(bin, "modal-editor")
+	return filepath.Join(bin, "vi-imitation")
 }
 
 // testEnv は、tmux のサーバーとエディタに渡す環境である。
@@ -95,7 +95,7 @@ func testEnv(t *testing.T) []string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(runtime) })
 	home := t.TempDir()
-	drop := []string{"TMUX", "TMUX_PANE", "HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_SOCKET_PATH", "MODAL_EDITOR_SOCKET", "HOME", "TERM"}
+	drop := []string{"TMUX", "TMUX_PANE", "HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_SOCKET_PATH", "VI_IMITATION_SOCKET", "HOME", "TERM"}
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
 		return strings.HasPrefix(name, "GIT_") || strings.HasPrefix(name, "XDG_") || slices.Contains(drop, name)
@@ -123,7 +123,7 @@ func TestDiffHeadInTmux(t *testing.T) {
 	repo := newRepo(t, map[string]string{"a.txt": "one\ntwo\nthree\n"})
 	writeTestFiles(t, repo, map[string]string{"a.txt": "one\nTWO\nthree\nfour\n"})
 
-	ts := &testTmux{t: t, bin: tmuxBin, name: fmt.Sprintf("modal-editor-git-test-%d-%d", os.Getpid(), time.Now().UnixNano()), env: testEnv(t)}
+	ts := &testTmux{t: t, bin: tmuxBin, name: fmt.Sprintf("vi-imitation-git-test-%d-%d", os.Getpid(), time.Now().UnixNano()), env: testEnv(t)}
 	t.Cleanup(func() {
 		q := exec.Command(tmuxBin, "-L", ts.name, "display-message", "-p", "#{socket_path}") //nolint:gosec // テスト用の tmux
 		q.Env = ts.env
@@ -215,7 +215,7 @@ func TestDiffHeadOutsideMuxInTmux(t *testing.T) {
 	editor := buildDist(t)
 	repo := newRepo(t, map[string]string{"a.txt": "one\n"})
 	writeTestFiles(t, repo, map[string]string{"a.txt": "ONE\n"})
-	ts := &testTmux{t: t, bin: tmuxBin, name: fmt.Sprintf("modal-editor-git-test-%d-%d", os.Getpid(), time.Now().UnixNano()), env: testEnv(t)}
+	ts := &testTmux{t: t, bin: tmuxBin, name: fmt.Sprintf("vi-imitation-git-test-%d-%d", os.Getpid(), time.Now().UnixNano()), env: testEnv(t)}
 	t.Cleanup(func() {
 		k := exec.Command(tmuxBin, "-L", ts.name, "kill-server") //nolint:gosec // テスト用の tmux
 		k.Env = ts.env

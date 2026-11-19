@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // 設定の色（Config.Colors）は、描画に渡り、名前ごとに既定の属性を置き換える。

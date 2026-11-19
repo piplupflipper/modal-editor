@@ -3,10 +3,10 @@ package command
 import (
 	"errors"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/command/target"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/command/target"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // ErrStale は、保留した操作（Deferred）を適用しようとしたが、問い合わせたときからバッファかカーソルかモードが変わっていたので、

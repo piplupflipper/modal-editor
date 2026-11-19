@@ -32,7 +32,7 @@ import (
 
 	"github.com/aymanbagabas/go-udiff/lcs"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // Side は、見比べる 2 つのテキストのどちらの側かを表す。

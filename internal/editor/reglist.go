@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // regListState は、:registers で出したレジスターの一覧の窓である（FR-54。基本設計 4.5）。

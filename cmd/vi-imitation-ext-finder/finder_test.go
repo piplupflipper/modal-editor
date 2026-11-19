@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // 絞り込みは、空白で区切ったすべての語に、語の文字が順に現れる候補を残し、点数の高い順に並べる。
@@ -22,7 +22,7 @@ func TestFilter(t *testing.T) {
 	labels := []string{
 		"internal/editor/popup.go",
 		"internal/ui/float.go",
-		"cmd/modal-editor-ext-finder/finder.go",
+		"cmd/vi-imitation-ext-finder/finder.go",
 		"docs/basic-design.md",
 		"Makefile",
 	}
@@ -32,7 +32,7 @@ func TestFilter(t *testing.T) {
 	}{
 		{"", labels},
 		{"popup", []string{"internal/editor/popup.go"}},
-		{"fin go", []string{"cmd/modal-editor-ext-finder/finder.go"}},
+		{"fin go", []string{"cmd/vi-imitation-ext-finder/finder.go"}},
 		{"make", []string{"Makefile"}},
 		{"Make", []string{"Makefile"}},
 		{"MAKE", nil},

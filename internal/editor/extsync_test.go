@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/extmgr"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/extmgr"
 )
 
 // extSyncEnv は、:ext sync のテストの git と go の子プロセスに渡す環境変数を返す。
@@ -37,7 +37,7 @@ func extSyncEnv(t *testing.T) []string {
 	}
 }
 
-const extSyncCommand = "modal-editor-ext-hello"
+const extSyncCommand = "vi-imitation-ext-hello"
 
 // extSyncRepo は、実行すると版の名前を出す拡張機能（ID は hello）の v1 と v2 のタグを持つ git のリポジトリを作り、パスを返す。
 func extSyncRepo(t *testing.T, env []string) string {

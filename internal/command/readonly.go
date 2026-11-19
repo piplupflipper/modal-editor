@@ -1,8 +1,8 @@
 package command
 
 import (
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // keepsTextActions は、バッファのテキストを変えず、インサートモードへも移らない本体の操作である。

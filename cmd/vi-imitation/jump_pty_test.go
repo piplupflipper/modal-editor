@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
-// TestDefinitionJumpBackInPTY は、LSP の拡張機能とテスト用の言語サーバー（cmd/modal-editor-ext-lsp/testdata/fakels）を実際に起動し、
+// TestDefinitionJumpBackInPTY は、LSP の拡張機能とテスト用の言語サーバー（cmd/vi-imitation-ext-lsp/testdata/fakels）を実際に起動し、
 // 定義へ移動（既定のキー <C-]>。#203）で別のファイルへ移った後に、<C-o> で元のファイルの元の位置へ戻れることを確かめる（#142）。
 // <C-^> で定義のファイルへ移り直し、もう一度 <C-^> で戻れることと、:ls の一覧も確かめる。
 //
@@ -20,7 +20,7 @@ func TestDefinitionJumpBackInPTY(t *testing.T) {
 	xdg := t.TempDir()
 	installExtension(t, xdg, "lsp")
 	fakels := filepath.Join(t.TempDir(), "fakels")
-	goBuild(t, fakels, "./"+filepath.ToSlash(filepath.Join("..", "modal-editor-ext-lsp", "testdata", "fakels")))
+	goBuild(t, fakels, "./"+filepath.ToSlash(filepath.Join("..", "vi-imitation-ext-lsp", "testdata", "fakels")))
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.go"), filepath.Join(dir, "b.go")
 	if err := os.WriteFile(a, []byte("package a\n\nfunc f() { g() }\n"), 0o600); err != nil {

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // inheritChildEnv があれば、TestInheritedSocketChild は子プロセスとして InheritedSocket を試す。

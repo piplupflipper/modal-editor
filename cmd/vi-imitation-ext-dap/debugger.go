@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 // providedOps は、この拡張機能が引き受ける本体の操作である（基本設計 5.5。FR-94）。
@@ -312,7 +312,7 @@ func newDebugger() *debugger {
 	d := &debugger{
 		settings: defaultSettings(),
 		timeouts: defaultTimeouts(),
-		logger:   log.New(os.Stderr, "modal-editor-ext-dap: ", log.LstdFlags),
+		logger:   log.New(os.Stderr, "vi-imitation-ext-dap: ", log.LstdFlags),
 		bps:      make(map[string][]bp),
 		gens:     make(map[string]uint64),
 		buffers:  make(map[string]bufState),

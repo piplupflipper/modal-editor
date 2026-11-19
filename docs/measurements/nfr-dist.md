@@ -12,7 +12,7 @@ cgo を使う tree-sitter の拡張機能は、musl を C の標準ライブラ�
 
 ## tree-sitter の拡張機能を静的にリンクする理由
 
-tree-sitter の拡張機能（`cmd/modal-editor-ext-treesitter`）は、文法を C でコンパイルするので cgo を使う。
+tree-sitter の拡張機能（`cmd/vi-imitation-ext-treesitter`）は、文法を C でコンパイルするので cgo を使う。
 `CGO_ENABLED=1` で普通にビルドすると、ビルドしたマシンの glibc に動的にリンクされる。
 2026-11-16 に Ubuntu 24.04（glibc 2.39）で作った実行ファイルは、`objdump -T` で見ると `GLIBC_2.32` と `GLIBC_2.34` のシンボルを要求していた。
 この実行ファイルと、静的にリンクした実行ファイルをコンテナで起動した結果は次のとおりである。
@@ -34,7 +34,7 @@ AlmaLinux 8 は、セキュリティの保守が 2029-05-31 まで続く（[Alma
 | 案 | ライセンスの義務 | ビルドの道具 | 確かめたこと |
 |---|---|---|---|
 | glibc 静的（`-extldflags "-static"` だけ） | glibc は LGPL-2.1-or-later。静的にリンクして配る場合、利用者がライブラリを差し替えて再リンクできるように、アプリケーション側のオブジェクトかソースを提供する義務が付く（LGPL 2.1 の 6 節） | `libc6-dev` の `libc.a` | 上の表の 3 環境で起動した |
-| musl 静的（`CC=musl-gcc`、採用） | musl は MIT。著作権の表示とライセンスの文面を添える | Debian と Ubuntu の `musl-tools` | 上の表の 3 環境とビルドしたマシンで起動し、静的にリンクした状態の `go test ./cmd/modal-editor-ext-treesitter` が成功した |
+| musl 静的（`CC=musl-gcc`、採用） | musl は MIT。著作権の表示とライセンスの文面を添える | Debian と Ubuntu の `musl-tools` | 上の表の 3 環境とビルドしたマシンで起動し、静的にリンクした状態の `go test ./cmd/vi-imitation-ext-treesitter` が成功した |
 | zig cc（`CC="zig cc -target x86_64-linux-musl"`） | musl 静的と同じ | zig の版を固定して取得する | 試していない。arm64 などへのクロスビルドが要るときの候補 |
 
 ライセンスの義務が軽いので、musl 静的を採った。
@@ -75,15 +75,15 @@ musl-gcc の静的リンクでは GCC の `libgcc.a` もリンクされる。
 | `make dist-check` | 配布物の宣言ファイルの `command` が同じディレクトリの実行ファイルを指し、全ての実行ファイルが静的。ライセンスの文面がある | NFR-01、NFR-06 | 実行する |
 | `make dist-smoke` | ビルド用の道具の無いコンテナに配布物を置き、起動する | NFR-01、NFR-06 | 実行する |
 
-`make build-check` と `make dist-check` は `internal/distcheck` のテストを、生成物のディレクトリを環境変数（`MODAL_EDITOR_BUILD_DIR`、`MODAL_EDITOR_DIST_DIR`）で渡して実行する。
+`make build-check` と `make dist-check` は `internal/distcheck` のテストを、生成物のディレクトリを環境変数（`VI_IMITATION_BUILD_DIR`、`VI_IMITATION_DIST_DIR`）で渡して実行する。
 `make check` の `go test ./...` では環境変数が無いので、このテストは飛ばされる。
 
 `make dist-smoke` は Docker を使う。
-コンテナはネットワークを切り（`--network none`）、配布物を読み取り専用で `/opt/modal-editor` に置いて、`internal/distcheck/testdata/smoke.sh` で次を実行する。
+コンテナはネットワークを切り（`--network none`）、配布物を読み取り専用で `/opt/vi-imitation` に置いて、`internal/distcheck/testdata/smoke.sh` で次を実行する。
 
 - 本体と MCP の中継コマンドの `--version`
 - 宣言ファイルのある拡張機能を、標準入力を閉じて起動する（接続が閉じたので終了コード 0 で終わる）
-- スクリプトの実行環境 `modal-editor-ext-script` を引数なしで起動し、使い方の表示を確かめる
+- スクリプトの実行環境 `vi-imitation-ext-script` を引数なしで起動し、使い方の表示を確かめる
 - tree-sitter の拡張機能に `initialize` と、Go のソースの `buffer/open` を送り、`decoration/set` が `keyword` と `function` の色を返すことを確かめる。文法の C のコードと、静的にリンクした musl を実行時に通す
 
 イメージは `debian:13.7-slim`、`almalinux:8.10-minimal`、`alpine:3.24.1`、`busybox:1.36.1` で、版のタグで固定する。
@@ -92,18 +92,18 @@ CI は、イメージの取得（`make dist-smoke-images`。失敗したら 10 �
 
 ## 配布物の形
 
-`make dist` は `dist/` を消してから `dist/modal-editor-<版>-<OS>-<アーキテクチャ>/` を作り、同じ名前の `tar.gz` にまとめる。
+`make dist` は `dist/` を消してから `dist/vi-imitation-<版>-<OS>-<アーキテクチャ>/` を作り、同じ名前の `tar.gz` にまとめる。
 
 ```text
-modal-editor-<版>-linux-amd64/
-├── modal-editor                 本体
-├── modal-editor-mcp-bridge      MCP の中継コマンド
-├── modal-editor-ext-script      スクリプトの実行環境（宣言ファイルは利用者のスクリプトごとに置く）
+vi-imitation-<版>-linux-amd64/
+├── vi-imitation                 本体
+├── vi-imitation-mcp-bridge      MCP の中継コマンド
+├── vi-imitation-ext-script      スクリプトの実行環境（宣言ファイルは利用者のスクリプトごとに置く）
 ├── extensions/
-│   ├── dap/         manifest.json と modal-editor-ext-dap
-│   ├── line/        manifest.json と modal-editor-ext-line
-│   ├── lsp/         manifest.json と modal-editor-ext-lsp
-│   └── treesitter/  manifest.json と modal-editor-ext-treesitter
+│   ├── dap/         manifest.json と vi-imitation-ext-dap
+│   ├── line/        manifest.json と vi-imitation-ext-line
+│   ├── lsp/         manifest.json と vi-imitation-ext-lsp
+│   └── treesitter/  manifest.json と vi-imitation-ext-treesitter
 └── licenses/        サードパーティのライセンスの文面
 ```
 

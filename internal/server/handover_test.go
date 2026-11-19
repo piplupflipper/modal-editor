@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
 )
 
 // recvType は、c から T のメッセージが届くまで読み、届いたものを返す。届く前に読んだ Draw の最後の画面も返す。

@@ -177,8 +177,8 @@ func TestHerdrSplitPane(t *testing.T) {
 		Size:      30,
 		Focus:     true,
 		Command: Command{
-			Args: []string{"/opt/modal-editor", "--pane", "it's"},
-			Env:  map[string]string{"MODAL_EDITOR_SOCKET": "/run/me/server.sock"},
+			Args: []string{"/opt/vi-imitation", "--pane", "it's"},
+			Env:  map[string]string{"VI_IMITATION_SOCKET": "/run/me/server.sock"},
 			Dir:  "/work",
 		},
 	})
@@ -195,8 +195,8 @@ func TestHerdrSplitPane(t *testing.T) {
 		"focus":          true,
 		"cwd":            "/work",
 		"env": map[string]any{
-			"MODAL_EDITOR_SOCKET": "/run/me/server.sock",
-			HerdrCommandEnv:       `/opt/modal-editor --pane 'it'\''s'`,
+			"VI_IMITATION_SOCKET": "/run/me/server.sock",
+			HerdrCommandEnv:       `/opt/vi-imitation --pane 'it'\''s'`,
 		},
 	}
 	if req.Method != "plugin.pane.open" || !reflect.DeepEqual(req.Params, want) {
@@ -262,7 +262,7 @@ func TestHerdrOpenPopup(t *testing.T) {
 	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
 	err := h.OpenPopup(testCtx(t), PopupOptions{
 		Target: "wW:p7", Width: 80, Height: 60,
-		Command: Command{Args: []string{"modal-editor", "--popup"}, Env: map[string]string{"A": "1"}},
+		Command: Command{Args: []string{"vi-imitation", "--popup"}, Env: map[string]string{"A": "1"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestHerdrOpenPopup(t *testing.T) {
 		"placement":  "popup",
 		"width":      "80%",
 		"height":     "60%",
-		"env":        map[string]any{"A": "1", HerdrCommandEnv: "modal-editor --popup"},
+		"env":        map[string]any{"A": "1", HerdrCommandEnv: "vi-imitation --popup"},
 	}
 	// herdr 0.9.0 はポップアップの target_pane_id を invalid_params で断るので、送らない。
 	if req := f.only(t); req.Method != "plugin.pane.open" || !reflect.DeepEqual(req.Params, want) {

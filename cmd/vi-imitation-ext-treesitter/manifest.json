@@ -1,6 +1,6 @@
 {
   "id": "treesitter",
-  "command": "./modal-editor-ext-treesitter",
+  "command": "./vi-imitation-ext-treesitter",
   "activation": [
     { "on": "filetype", "pattern": "go" },
     { "on": "filetype", "pattern": "json" }

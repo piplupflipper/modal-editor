@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // waitWrite は、fake.write が終わる（出力の欄 write に結果を書く）まで待ち、その結果の行を返す。

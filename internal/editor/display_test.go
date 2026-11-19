@@ -3,8 +3,8 @@ package editor
 import (
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 func pos(line, b int) buffer.Position { return buffer.Position{Line: line, Byte: b} }

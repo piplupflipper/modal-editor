@@ -1,4 +1,4 @@
-// Command fakeagent は、modal-editor-ext-acp のテストのための、ACP を話す偽のエージェントである。
+// Command fakeagent は、vi-imitation-ext-acp のテストのための、ACP を話す偽のエージェントである。
 //
 // 標準入出力で、1 件を 1 行にした JSON-RPC 2.0 を話す（ACP の Transports）。
 // session/prompt のプロンプトの本文を JSON の操作として読み、操作ごとに決まった更新とリクエストを送る。

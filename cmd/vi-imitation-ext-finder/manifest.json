@@ -1,6 +1,6 @@
 {
   "id": "finder",
-  "command": "./modal-editor-ext-finder",
+  "command": "./vi-imitation-ext-finder",
   "activation": [
     { "on": "command", "id": "finder.files" },
     { "on": "command", "id": "finder.grep" },

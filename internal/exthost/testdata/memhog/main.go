@@ -15,8 +15,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // allocChunk は、test/alloc で 1 回に確保するバイト数である。

@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 // providedOps は、この拡張機能が引き受ける本体の操作である（基本設計 5.5。FR-94）。
@@ -55,7 +55,7 @@ type extension struct {
 func newExtension(ctx context.Context) *extension {
 	x := &extension{
 		srv:            server.New(),
-		log:            log.New(os.Stderr, "modal-editor-ext-lsp: ", log.LstdFlags),
+		log:            log.New(os.Stderr, "vi-imitation-ext-lsp: ", log.LstdFlags),
 		ctx:            ctx,
 		requestTimeout: defaultRequestTimeout,
 		byBuffer:       make(map[ext.BufferID]*client),

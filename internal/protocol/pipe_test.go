@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 func TestPipeDeliversInOrder(t *testing.T) {

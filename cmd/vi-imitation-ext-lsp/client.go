@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // errNotReady は、言語サーバーが稼働していないので問い合わせられないことを表す。
@@ -272,7 +272,7 @@ func (c *client) start() {
 
 	params := initializeParams{
 		ProcessID:             os.Getpid(),
-		ClientInfo:            clientInfo{Name: "modal-editor"},
+		ClientInfo:            clientInfo{Name: "vi-imitation"},
 		RootURI:               pathToURI(root),
 		InitializationOptions: c.cfg.InitializationOptions,
 		Capabilities:          json.RawMessage(clientCapabilities),
@@ -456,7 +456,7 @@ func (c *client) serverRequest(req *rpc.Request, reply rpc.Replier) {
 			c.showServerMessage(p)
 		}
 	case lspApplyEdit:
-		result = map[string]any{"applied": false, "failureReason": "modal-editor does not support workspace/applyEdit"}
+		result = map[string]any{"applied": false, "failureReason": "vi-imitation does not support workspace/applyEdit"}
 	case lspWorkspaceFolders:
 		c.mu.Lock()
 		root := c.root

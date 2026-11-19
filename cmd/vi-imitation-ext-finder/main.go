@@ -1,4 +1,4 @@
-// Command modal-editor-ext-finder は、ファジーファインダーの拡張機能である（基本設計 6.9。FR-106、FR-107）。
+// Command vi-imitation-ext-finder は、ファジーファインダーの拡張機能である（基本設計 6.9。FR-106、FR-107）。
 //
 // 本体（internal/exthost）が、宣言ファイル manifest.json の contributes.commands のコマンドが呼ばれたときに、子プロセスとして起動する。
 // 本体とは標準入出力で JSON-RPC のメッセージをやり取りするので、ログは標準エラー出力へ書く。
@@ -45,7 +45,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("modal-editor-ext-finder: %v", err)
+		log.Fatalf("vi-imitation-ext-finder: %v", err)
 	}
 }
 

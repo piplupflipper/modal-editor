@@ -1,4 +1,4 @@
-// Command modal-editor-mcp-bridge は、MCP のクライアントと起動中のエディタの間を中継する実行ファイルである。
+// Command vi-imitation-mcp-bridge は、MCP のクライアントと起動中のエディタの間を中継する実行ファイルである。
 //
 // MCP のクライアント（コーディングエージェント）は、このコマンドを標準入出力の MCP サーバーとして起動する。
 // このコマンドは起動中のエディタの Unix ドメインソケットへ接続し、
@@ -8,7 +8,7 @@
 // 接続先のソケットは、次の順で決める。
 //
 //  1. `--socket <path>` で指定されたパス
-//  2. 環境変数 MODAL_EDITOR_MCP_SOCKET（仮の名前）のパス
+//  2. 環境変数 VI_IMITATION_MCP_SOCKET（仮の名前）のパス
 //
 // どちらも無いとき、または接続できないときは、理由を標準エラー出力に書いて終了コード 1 で終わる。
 // 起動中のエディタを中継コマンドが見つける規則は要件定義 7 章で未決なので、ここでは裁定に依存しない最小の規則だけを持つ。
@@ -22,12 +22,12 @@ import (
 	"net"
 	"os"
 
-	"github.com/piplupflipper/modal-editor/internal/version"
+	"github.com/piplupflipper/vi-imitation/internal/version"
 )
 
 // socketEnv は、接続先のソケットのパスを渡す環境変数の名前である（仮）。
 // エディタが子プロセスへこの変数を渡すと、その子孫の中継コマンドは起動元のエディタへ繋がる。
-const socketEnv = "MODAL_EDITOR_MCP_SOCKET"
+const socketEnv = "VI_IMITATION_MCP_SOCKET"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv); err != nil {
@@ -35,7 +35,7 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, "modal-editor-mcp-bridge:", err)
+		fmt.Fprintln(os.Stderr, "vi-imitation-mcp-bridge:", err)
 		os.Exit(1)
 	}
 }
@@ -46,7 +46,7 @@ func main() {
 //
 // req: FR-33
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) error {
-	flags := flag.NewFlagSet("modal-editor-mcp-bridge", flag.ContinueOnError)
+	flags := flag.NewFlagSet("vi-imitation-mcp-bridge", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	showVersion := flags.Bool("version", false, "バージョンを表示して終了する")
 	socket := flags.String("socket", "", "接続先のエディタの Unix ドメインソケットのパス（省略時は環境変数 "+socketEnv+"）")

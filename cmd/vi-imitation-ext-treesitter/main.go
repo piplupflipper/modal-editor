@@ -1,4 +1,4 @@
-// Command modal-editor-ext-treesitter は、tree-sitter で構文を解析し、色を付ける範囲の一覧を本体へ送り、
+// Command vi-imitation-ext-treesitter は、tree-sitter で構文を解析し、色を付ける範囲の一覧を本体へ送り、
 // 構文に沿ったテキストオブジェクト（関数、型、引数）に答える拡張機能である（基本設計 6.1）。
 //
 // 本体（internal/exthost）が、文法を持つ種類のファイルを開いたときに子プロセスとして起動する（宣言ファイル manifest.json の filetype の契機）。
@@ -37,7 +37,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("modal-editor-ext-treesitter: %v", err)
+		log.Fatalf("vi-imitation-ext-treesitter: %v", err)
 	}
 }
 

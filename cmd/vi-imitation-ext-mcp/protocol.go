@@ -11,7 +11,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/piplupflipper/modal-editor/internal/version"
+	"github.com/piplupflipper/vi-imitation/internal/version"
 )
 
 // MCP の版（パッケージの doc の「MCP の版」）。
@@ -25,10 +25,10 @@ const (
 )
 
 // serverName は、serverInfo の name である。
-const serverName = "modal-editor"
+const serverName = "vi-imitation"
 
 // serverInstructions は、言語モデル向けの使い方の説明である（server/discover と initialize の instructions）。
-const serverInstructions = "Tools to read and edit the buffers of a running modal-editor instance. " +
+const serverInstructions = "Tools to read and edit the buffers of a running vi-imitation instance. " +
 	"Positions are 1-based: line counts from 1, column counts bytes from the start of the line from 1. " +
 	"Call read_buffer to get the text and its version before edit_buffer; " +
 	"edit_buffer is rejected when the buffer has changed since that version."
@@ -112,7 +112,7 @@ type mcpSession struct {
 // 接続の受け取り方（ソケットの待ち受け、引き継いだファイル記述子）には依らない。
 //
 // 読み取りが EOF になったら、処理中のリクエストの応答を書き終えてから conn を閉じて nil を返す。
-// 中継コマンドは標準入力の EOF で書き込み側だけを閉じ、最後の応答を待つためである（cmd/modal-editor-mcp-bridge の bridge）。
+// 中継コマンドは標準入力の EOF で書き込み側だけを閉じ、最後の応答を待つためである（cmd/vi-imitation-mcp-bridge の bridge）。
 // ctx が終わったら、処理中のリクエストを取り消し、conn を閉じて戻る。
 //
 // リクエストは 1 件ずつ別の goroutine で処理するので、時間のかかるツールの呼び出しが、後のリクエストと取り消しの通知を止めない。

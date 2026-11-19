@@ -15,13 +15,13 @@ import (
 
 	"github.com/traefik/yaegi/extract"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
 // envRunAsMain が設定されていれば、テストの実行ファイルは main として動く。
 // exthost が子プロセスとして起動する実行ファイルに、テストの実行ファイル自身を使うためである。
-const envRunAsMain = "MODAL_EDITOR_EXT_SCRIPT_TEST_MAIN"
+const envRunAsMain = "VI_IMITATION_EXT_SCRIPT_TEST_MAIN"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(envRunAsMain) == "1" {
@@ -177,7 +177,7 @@ func (hs *host) resolve(id, obj string, cursor ext.Position, count int) (ext.Tex
 func pos(line, b int) ext.Position { return ext.Position{Line: line, Byte: b} }
 
 // TestLineScript は、例のスクリプト（testdata/line）を、宣言ファイルの command と args で本体の監視の下に起動し、
-// textObject/resolve に答えることを確かめる。期待する範囲は modal-editor-ext-line の line.inner と同じである。
+// textObject/resolve に答えることを確かめる。期待する範囲は vi-imitation-ext-line の line.inner と同じである。
 //
 // req: FR-10, FR-36
 func TestLineScript(t *testing.T) {
@@ -450,8 +450,8 @@ func TestHang(t *testing.T) {
 // ext に公開の型や関数を足したのに go generate を打ち忘れると、スクリプトから使えないまま気づかないので、ここで落とす。
 func TestSymbolsUpToDate(t *testing.T) {
 	for _, pkg := range []string{
-		"github.com/piplupflipper/modal-editor/ext",
-		"github.com/piplupflipper/modal-editor/ext/server",
+		"github.com/piplupflipper/vi-imitation/ext",
+		"github.com/piplupflipper/vi-imitation/ext/server",
 	} {
 		e := extract.Extractor{Dest: "main"}
 		var buf bytes.Buffer
@@ -464,7 +464,7 @@ func TestSymbolsUpToDate(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(got, buf.Bytes()) {
-			t.Errorf("%s is out of date; run go generate ./cmd/modal-editor-ext-script", file)
+			t.Errorf("%s is out of date; run go generate ./cmd/vi-imitation-ext-script", file)
 		}
 	}
 }

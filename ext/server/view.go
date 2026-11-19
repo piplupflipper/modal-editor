@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // この節は、ポップアップと表示の部品（ext の view.go。基本設計 1.4、5.3 の段階 3 の表）を扱う。

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 // テキストオブジェクトの ID。宣言ファイル（manifest.json）の contributes.textObjects と一致させる。

@@ -1,4 +1,4 @@
-// Command modal-editor-ext-mcp は、エディタの状態と編集の操作を MCP（Model Context Protocol）のツールとして提供する拡張機能である（基本設計 6.2、FR-32）。
+// Command vi-imitation-ext-mcp は、エディタの状態と編集の操作を MCP（Model Context Protocol）のツールとして提供する拡張機能である（基本設計 6.2、FR-32）。
 //
 // 本体（internal/exthost）が、宣言ファイル manifest.json の起動の契機 socket（ext.ActivationSocket）で、
 // MCP のソケットへの最初の接続を受け付けたときに子プロセスとして起動する（FR-14）。
@@ -6,15 +6,15 @@
 //
 // # MCP の接続
 //
-// MCP のクライアント（コーディングエージェント）は、中継コマンド modal-editor-mcp-bridge を標準入出力の MCP サーバーとして起動し、
+// MCP のクライアント（コーディングエージェント）は、中継コマンド vi-imitation-mcp-bridge を標準入出力の MCP サーバーとして起動し、
 // 中継コマンドが Unix ドメインソケットでこの拡張機能へ接続する（FR-33）。
 // 1 本の接続の上の MCP のメッセージは、MCP の stdio と同じ改行区切りの JSON-RPC 2.0 である（serveMCP）。
 // serveMCP は 1 本の io.ReadWriteCloser だけを受け取り、接続をどう受け取ったかには依らない。
 //
 // 接続の受け取り方は、基本設計 6.2 の起動の契機 socket（#43 の裁定 4）である。
 //
-//   - 本体は、環境変数 MODAL_EDITOR_MCP_SOCKET（ext.EnvMCPSocket。中継コマンドと同じ名前）のパスで起動時から待ち受ける。
-//     パスは本体が起動ごとに決めて、すべての拡張機能へ渡す（$XDG_RUNTIME_DIR/modal-editor/<pid>-<乱数>/mcp.sock）。
+//   - 本体は、環境変数 VI_IMITATION_MCP_SOCKET（ext.EnvMCPSocket。中継コマンドと同じ名前）のパスで起動時から待ち受ける。
+//     パスは本体が起動ごとに決めて、すべての拡張機能へ渡す（$XDG_RUNTIME_DIR/vi-imitation/<pid>-<乱数>/mcp.sock）。
 //     ACP の拡張機能は同じ変数から中継コマンドの引数を作るので、ACP で起動したエージェントはこの拡張機能へつながる
 //   - 本体は、最初の接続を受け付けた時点でこの拡張機能を起動し、待ち受けているソケットと受け付けた接続のファイル記述子を引き継ぐ。
 //     拡張機能は ext/server の InheritedSocket で net.Listener と net.Conn にし、initialize を受け取った時点で、
@@ -43,12 +43,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("modal-editor-ext-mcp: %v", err)
+		log.Fatalf("vi-imitation-ext-mcp: %v", err)
 	}
 }
 
@@ -59,7 +59,7 @@ func run() error {
 	defer stop()
 	ln, conns, err := server.InheritedSocket()
 	if err != nil {
-		log.Printf("modal-editor-ext-mcp: inherited socket: %v", err)
+		log.Printf("vi-imitation-ext-mcp: inherited socket: %v", err)
 	}
 	x := newExtension(os.Getenv(socketEnv), ln, conns, err)
 	defer x.stop()

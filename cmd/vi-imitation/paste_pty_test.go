@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // TestPasteInPTY は、ノーマルモードとビジュアルモードの bracketed paste が、貼った文字列をコマンドとして実行せずに入れることを確かめる
@@ -42,9 +42,9 @@ func TestPasteInPTY(t *testing.T) {
 // 端末を元に戻してから panic で終わることを確かめる（#114、基本設計 8 章）。
 // panic は、テストが差し込んだロガー（panicHandler）が、拡張機能が標準エラー出力に書いた印の行を記録するときに起こす。
 func TestExtensionPanicRestoresTerminal(t *testing.T) {
-	const marker = "modal-editor-test-panic"
+	const marker = "vi-imitation-test-panic"
 	xdg := t.TempDir()
-	dir := filepath.Join(xdg, "data", "modal-editor", "extensions", "boom")
+	dir := filepath.Join(xdg, "data", "vi-imitation", "extensions", "boom")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

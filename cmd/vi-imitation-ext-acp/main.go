@@ -1,4 +1,4 @@
-// Command modal-editor-ext-acp は、ACP（Agent Client Protocol）のクライアントとして、コーディングエージェントを
+// Command vi-imitation-ext-acp は、ACP（Agent Client Protocol）のクライアントとして、コーディングエージェントを
 // 子プロセスで起動して話す拡張機能である（基本設計 6.5、FR-34）。
 //
 // 本体（internal/exthost）が、宣言ファイル manifest.json のコマンドが呼ばれたときに子プロセスとして起動する。
@@ -42,7 +42,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("modal-editor-ext-acp: %v", err)
+		log.Fatalf("vi-imitation-ext-acp: %v", err)
 	}
 }
 

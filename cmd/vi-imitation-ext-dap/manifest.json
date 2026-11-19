@@ -1,6 +1,6 @@
 {
   "id": "dap",
-  "command": "./modal-editor-ext-dap",
+  "command": "./vi-imitation-ext-dap",
   "provides": [
     "breakpoint.toggle", "breakpoint.conditional", "breakpoint.clear",
     "debug.continue", "debug.pause", "debug.terminate", "debug.restart", "debug.runLast",

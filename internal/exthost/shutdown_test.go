@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // 正常な終了（基本設計 5.2）の手順を確かめる。

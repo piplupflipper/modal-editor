@@ -8,7 +8,7 @@ import (
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // errEditOutOfRange は、編集の位置が手元の全文の外を指すことを表す。

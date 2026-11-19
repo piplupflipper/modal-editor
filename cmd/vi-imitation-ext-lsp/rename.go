@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // 名前の変更（textDocument/rename）の適用。全部のファイルを変えるか、何も変えないかにする（基本設計 4.4、6.3。#237）。

@@ -1,4 +1,4 @@
-// Command modal-editor-ext-line は、行のテキストオブジェクトを提供する拡張機能である。
+// Command vi-imitation-ext-line は、行のテキストオブジェクトを提供する拡張機能である。
 //
 // 標準の拡張機能の 1 本目で、要件定義 8 章の段階 1 で「拡張機能が提供するテキストオブジェクトを、別のプロセス経由で動かす」ために置く。
 // 本体（internal/exthost）が子プロセスとして起動し、標準入出力で JSON-RPC のメッセージをやり取りする。
@@ -22,7 +22,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("modal-editor-ext-line: %v", err)
+		log.Fatalf("vi-imitation-ext-line: %v", err)
 	}
 }
 

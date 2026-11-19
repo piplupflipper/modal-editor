@@ -7,11 +7,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // 端末多重化ソフトのポップアップとペインの部品の client（基本設計 1.2、1.3、1.4。FR-66、FR-67、FR-115、FR-123）。
@@ -23,9 +23,9 @@ import (
 // viewFields に置いたまま（中央のポップアップは float、ペインは panes）で、部品の client は描く場所だけを替える（floatState.remote）。
 //
 //   - 中央のポップアップ: 元の client の float の中央のポップアップを開いたら、Config.OpenPopup で端末多重化ソフトのポップアップを開き、
-//     その中で modal-editor -popup <部品の ID> を起動させる（requestPopup）。部品の client が繋ぐまでと、開けなかったときは、
+//     その中で vi-imitation -popup <部品の ID> を起動させる（requestPopup）。部品の client が繋ぐまでと、開けなかったときは、
 //     これまでどおり元の client の画面の中央に描く（FR-67 の「どちらも使えないときは、client が自分のペインの中央に描く」）
-//   - ペイン: 拡張機能の pane/open で、Config.OpenPane で元の client のペインを分割し、その中で modal-editor -pane <部品の ID> を起動させる
+//   - ペイン: 拡張機能の pane/open で、Config.OpenPane で元の client のペインを分割し、その中で vi-imitation -pane <部品の ID> を起動させる
 //     （paneOpenRequest）。端末多重化ソフトの外と、ペインを開けなかったときは、ペインに代えて中央のポップアップに出す（FR-123）
 //
 // 部品の client が server に繋ぐと、server が AttachComponent を呼び、部品に部品の client の端末をつなぐ。

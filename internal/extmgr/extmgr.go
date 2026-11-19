@@ -1,7 +1,7 @@
 // Package extmgr は、拡張機能の取得、ビルド、更新、削除と、ロックファイルを持つ（基本設計 5.6。要件定義 4.13）。
 //
 // 設定ファイルの extensions.install に並べた拡張機能を、git のリポジトリから取得し、go build でビルドして、
-// 利用者の拡張機能のディレクトリ（$XDG_DATA_HOME/modal-editor/extensions/<名前>/）に置く。
+// 利用者の拡張機能のディレクトリ（$XDG_DATA_HOME/vi-imitation/extensions/<名前>/）に置く。
 // 拡張機能のプロセスの管理（起動、停止、入れ替えた拡張機能の再起動）は持たない（internal/exthost）。
 //
 // 基本設計 2 章の層では、internal/exthost と internal/config と同じ「機能」の層に置く。
@@ -105,7 +105,7 @@ import (
 
 	"github.com/tailscale/hujson"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // ManifestFileName は、宣言ファイルの名前である（基本設計 5.1。config.ManifestFileName と同じ）。
@@ -130,10 +130,10 @@ type Spec struct {
 
 // Options は、Sync の設定である。
 type Options struct {
-	// ExtensionsDir は、拡張機能を置くディレクトリ（$XDG_DATA_HOME/modal-editor/extensions）である。省けない。
+	// ExtensionsDir は、拡張機能を置くディレクトリ（$XDG_DATA_HOME/vi-imitation/extensions）である。省けない。
 	ExtensionsDir string
 	// WorkDir は、取得したソースと、ビルドと入れ替えの途中のディレクトリを置くディレクトリである。
-	// 空なら ExtensionsDir の隣の extmgr（$XDG_DATA_HOME/modal-editor/extmgr）を使う。
+	// 空なら ExtensionsDir の隣の extmgr（$XDG_DATA_HOME/vi-imitation/extmgr）を使う。
 	WorkDir string
 	// LockPath は、ロックファイルのパス（設定ファイルと同じディレクトリの LockFileName）である。省けない。
 	LockPath string

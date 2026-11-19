@@ -1,26 +1,26 @@
-# modal-editor が同梱する herdr のプラグインの宣言ファイル（雛形。基本設計 1.3）。
+# vi-imitation が同梱する herdr のプラグインの宣言ファイル（雛形。基本設計 1.3）。
 #
 # server は、このプラグインの `run` を herdr の socket API の plugin.pane.open で開き、
 # 中央のポップアップ（placement = "popup"）と、分割したペイン（placement = "split"）の中で
 # 表示の部品を描く client を起動する。placement、大きさ、分割の向きは、開くたびに server が指定する。
 #
-# 起動するコマンドは、server が環境変数 MODAL_EDITOR_MUX_COMMAND に、シェルの引用を済ませた
+# 起動するコマンドは、server が環境変数 VI_IMITATION_MUX_COMMAND に、シェルの引用を済ませた
 # 1 つの文字列として渡す（internal/mux の Herdr）。宣言ファイルに本体の実行ファイルのパスを書かずに済ませるためである。
 #
 # make dist は、この宣言ファイルを配布物の herdr-plugin/ に置く。利用者は herdr plugin link <配布物>/herdr-plugin で
 # 1 回登録する（基本設計 1.3。#244）。本体の実行ファイルのパスを書いていないので、配布物を入れ替えても登録し直さなくてよい。
 # ID と entrypoint の名前は internal/mux の HerdrPluginID と HerdrPluginEntrypoint に合わせる。
-id = "modal-editor"
-name = "modal-editor"
+id = "vi-imitation"
+name = "vi-imitation"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
-description = "Popups and panes opened by the modal-editor server"
+description = "Popups and panes opened by the vi-imitation server"
 platforms = ["linux", "macos"]
 
 [[panes]]
 id = "run"
-title = "modal-editor"
+title = "vi-imitation"
 placement = "popup"
 width = "80%"
 height = "80%"
-command = ["sh", "-c", "eval \"exec $MODAL_EDITOR_MUX_COMMAND\""]
+command = ["sh", "-c", "eval \"exec $VI_IMITATION_MUX_COMMAND\""]

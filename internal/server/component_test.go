@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
 )
 
 // 中央のポップアップを開いた編集の client がペインを知っていれば、server は Config.OpenPopup で部品の client を起動させる。

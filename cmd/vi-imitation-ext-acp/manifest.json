@@ -1,6 +1,6 @@
 {
   "id": "acp",
-  "command": "./modal-editor-ext-acp",
+  "command": "./vi-imitation-ext-acp",
   "activation": [
     { "on": "command", "id": "acp.prompt" },
     { "on": "command", "id": "acp.cancel" }

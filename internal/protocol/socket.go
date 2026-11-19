@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // ソケットの上のメッセージのメソッドの名前（仮）。どれも JSON-RPC 2.0 の通知で、応答を求めない。

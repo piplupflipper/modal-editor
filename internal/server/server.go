@@ -36,7 +36,7 @@
 // # 層
 //
 // internal/editor と internal/protocol を import するので、その上の層に置く。
-// internal/client と同じ層で、互いに import しない。両者をつなぐのは cmd/modal-editor である。
+// internal/client と同じ層で、互いに import しない。両者をつなぐのは cmd/vi-imitation である。
 package server
 
 import (
@@ -51,9 +51,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // flushTimeout は、Run が終わるときに、client へまだ送っていないクリップボードへの書き込みを送り終えるのを待つ上限である。

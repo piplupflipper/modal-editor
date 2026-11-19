@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // :registers は、履歴と名前付きのレジスターの一覧を浮かべる窓に出し、j と k で選び、<CR> で選んだ項目をカーソルの後に貼る。

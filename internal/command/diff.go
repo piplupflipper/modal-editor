@@ -1,8 +1,8 @@
 package command
 
 import (
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // actDiff は、見比べの操作（]c、[c、do、dp。基本設計 6.8。FR-101）である。

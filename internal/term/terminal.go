@@ -13,8 +13,8 @@ import (
 
 	xterm "golang.org/x/term"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // DefaultEscTimeout は、ESC で始まる列の続きを待つ時間の既定値である。

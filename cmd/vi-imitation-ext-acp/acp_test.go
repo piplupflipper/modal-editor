@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // TestPromptUpdates は、プロンプトを送ると、エージェントを起動してセッションを作り、session/update の更新を
@@ -45,7 +45,7 @@ func TestSessionSetup(t *testing.T) {
 	s.MCPBridge = bridge
 	h := newHost(t, s, func(k string) string {
 		if k == envMCPSocket {
-			return "/run/modal-editor/test.sock"
+			return "/run/vi-imitation/test.sock"
 		}
 		return ""
 	})
@@ -66,7 +66,7 @@ func TestSessionSetup(t *testing.T) {
 	if got.Session.Cwd != wd {
 		t.Errorf("cwd = %q, want %q", got.Session.Cwd, wd)
 	}
-	want := []mcpServer{{Name: mcpServerName, Command: bridge, Args: []string{"--socket", "/run/modal-editor/test.sock"}, Env: []envVariable{}}}
+	want := []mcpServer{{Name: mcpServerName, Command: bridge, Args: []string{"--socket", "/run/vi-imitation/test.sock"}, Env: []envVariable{}}}
 	if len(got.Session.MCPServers) != 1 || got.Session.MCPServers[0].Command != want[0].Command ||
 		!slices.Equal(got.Session.MCPServers[0].Args, want[0].Args) || got.Session.MCPServers[0].Name != want[0].Name {
 		t.Errorf("mcpServers = %+v, want %+v", got.Session.MCPServers, want)
@@ -97,7 +97,7 @@ func TestMCPBridgePath(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			exe := filepath.Join(dir, "extensions", "acp", "modal-editor-ext-acp")
+			exe := filepath.Join(dir, "extensions", "acp", "vi-imitation-ext-acp")
 			if err := os.MkdirAll(filepath.Dir(exe), 0o750); err != nil {
 				t.Fatal(err)
 			}

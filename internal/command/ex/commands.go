@@ -3,7 +3,7 @@ package ex
 import (
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // rangeKind は、コマンドが範囲を取るかと、省略したときの範囲を表す。

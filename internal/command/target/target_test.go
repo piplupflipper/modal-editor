@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // parse は、"|" でカーソルの位置を示したテキストから、"|" を除いたバッファと、カーソルの位置を返す。

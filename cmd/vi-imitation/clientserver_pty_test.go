@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/server"
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/server"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // serverProc は、-listen で端末を使わずに起動した server のプロセスである。
@@ -223,7 +223,7 @@ func TestSingleProcessListensInPTY(t *testing.T) {
 	runtime := t.TempDir()
 	p := startEditorIn(t, t.TempDir(), []string{"XDG_RUNTIME_DIR=" + runtime})
 	p.out.WaitForString(t, "NORMAL")
-	matches, err := filepath.Glob(filepath.Join(runtime, "modal-editor", strconv.Itoa(p.cmd.Process.Pid)+"-*", server.SocketName))
+	matches, err := filepath.Glob(filepath.Join(runtime, "vi-imitation", strconv.Itoa(p.cmd.Process.Pid)+"-*", server.SocketName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestSingleProcessListensInPTY(t *testing.T) {
 	}
 	_ = c.Close()
 
-	// 待つだけの client（MODAL_EDITOR_SOCKET の server に繋ぐ modal-editor）のファイルは、この client のタブに開く。
+	// 待つだけの client（VI_IMITATION_SOCKET の server に繋ぐ vi-imitation）のファイルは、この client のタブに開く。
 	waited := filepath.Join(t.TempDir(), "waited.txt")
 	w := exec.Command(os.Args[0], waited) //nolint:gosec // テストの実行ファイル自身を待つだけの client として起動する
 	w.Env = append(muxFreeEnv(), envRunMain+"=1", envSocket+"="+sock)

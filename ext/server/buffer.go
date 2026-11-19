@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // ErrInvalidPosition は、位置がバッファの外にあるか、UTF-8 の文字の途中を指すことを表す。

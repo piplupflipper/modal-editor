@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // envBuildDir は、`make build` が実行ファイルを置いたディレクトリを渡す環境変数の名前である（internal/distcheck と同じ）。
 // 起動時間とメモリの検査は、テストの実行ファイル（-race と -cover の計測を含む）ではなく、`make build` の本体を測る。
-const envBuildDir = "MODAL_EDITOR_BUILD_DIR"
+const envBuildDir = "VI_IMITATION_BUILD_DIR"
 
 // NFR-05 の目標値（要件定義 5 章）と、検査の条件。
 // 条件は docs/measurements/nfr05-footprint.md の道具（scripts/nfr05-footprint.py）に合わせる。
@@ -61,7 +61,7 @@ func TestFootprintInPTY(t *testing.T) {
 	if dir == "" {
 		t.Skipf("%s が指定されていない（make footprint-check で実行する）", envBuildDir)
 	}
-	bin := filepath.Join(dir, "modal-editor")
+	bin := filepath.Join(dir, "vi-imitation")
 	if _, err := os.Stat(bin); err != nil { //nolint:gosec // make footprint-check が渡す bin/ の実行ファイルを確かめる
 		t.Fatal(err)
 	}

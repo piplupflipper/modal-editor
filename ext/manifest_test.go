@@ -11,7 +11,7 @@ import (
 func validManifest() Manifest {
 	return Manifest{
 		ID:      "surround",
-		Command: "./modal-editor-ext-surround",
+		Command: "./vi-imitation-ext-surround",
 		Activation: []Activation{
 			{On: ActivationOperator, ID: "surround.add"},
 			{On: ActivationFileType, Pattern: "markdown"},
@@ -28,7 +28,7 @@ func TestManifestJSON(t *testing.T) {
 	// 基本設計 5.1 の例からコメントを除いたもの。
 	const doc = `{
   "id": "surround",
-  "command": "./modal-editor-ext-surround",
+  "command": "./vi-imitation-ext-surround",
   "activation": [
     { "on": "operator", "id": "surround.add" },
     { "on": "filetype", "pattern": "markdown" }
@@ -48,7 +48,7 @@ func TestManifestJSON(t *testing.T) {
 	if ws, err := got.Validate(); err != nil || ws != nil {
 		t.Errorf("Validate = %v, %v, want nil, nil", ws, err)
 	}
-	roundTrip(t, got, `{"id":"surround","command":"./modal-editor-ext-surround",`+
+	roundTrip(t, got, `{"id":"surround","command":"./vi-imitation-ext-surround",`+
 		`"activation":[{"on":"operator","id":"surround.add"},{"on":"filetype","pattern":"markdown"}],`+
 		`"contributes":{"operators":[{"id":"surround.add","keys":"ys"}],"textObjects":[{"id":"surround.inner","keys":"is"}]}}`)
 }

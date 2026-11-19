@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/piplupflipper/modal-editor/internal/config"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/config"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // appearanceCheck は、設定の見た目の項目（colors、symbols、statusline）を、描画（internal/ui）が知る名前と規則で確かめる関数の組である。

@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // この節は、ファイルでないバッファの作成と、拡張機能から始める見比べ（ext の diffstart.go。基本設計 6.8、6.9）を扱う。

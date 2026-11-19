@@ -3,7 +3,7 @@ package protocol
 import (
 	"errors"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // ErrClosed は、相手か自分が接続を閉じた後に Send を呼んだことを表す。
@@ -19,13 +19,13 @@ type ClientKind string
 
 // client の種類。
 const (
-	// KindEdit は、編集の client（利用者がペインで起動した modal-editor）である。
+	// KindEdit は、編集の client（利用者がペインで起動した vi-imitation）である。
 	KindEdit ClientKind = "edit"
 	// KindPopup は、ポップアップの部品の client である（FR-67）。server が端末多重化ソフトの中央のポップアップの中で
-	// modal-editor -popup <部品の ID> として起動する。Hello の View に、描く部品の ID を載せる。
+	// vi-imitation -popup <部品の ID> として起動する。Hello の View に、描く部品の ID を載せる。
 	KindPopup ClientKind = "popup"
 	// KindPane は、ペインの部品の client である（FR-115）。server が端末多重化ソフトで分割したペインの中で
-	// modal-editor -pane <部品の ID> として起動する。Hello の View に、描く部品の ID を載せる。
+	// vi-imitation -pane <部品の ID> として起動する。Hello の View に、描く部品の ID を載せる。
 	KindPane ClientKind = "pane"
 	// KindWait は、待つだけの client である（FR-83）。端末を使わないので、大きさを持たない。
 	// Hello の Files を開かせ、それらのタブがすべて閉じられたら、server から理由の無い Exit を受けて終わる。
@@ -88,7 +88,7 @@ type Hello struct {
 	// HERDR_PANE_ID、HERDR_TAB_ID）である。server のプロセスの環境は、server を起動した client のものなので、client ごとに上書きする。
 	Env []string
 	// Parent は、待つだけの client（KindWait）を起動したプロセスの祖先にある編集の client の識別子である（FR-83、FR-117）。
-	// :! を実行した client が子プロセスの環境変数 MODAL_EDITOR_CLIENT に入れた値で、server は Files をこの client のタブに開く。
+	// :! を実行した client が子プロセスの環境変数 VI_IMITATION_CLIENT に入れた値で、server は Files をこの client のタブに開く。
 	// 0 なら知らない（:! の外で起動した）ので、server は操作中の client に開く。
 	Parent uint64
 	// Features は、client が扱える機能の名前の列である（#226。PR #234 のレビューの必須 1）。
@@ -184,8 +184,8 @@ type TerminalRun struct {
 	ID uint64
 	// Commands は、順に動かすコマンドである。
 	Commands []TerminalCommand
-	// Env は、子プロセスの環境変数に、client の環境の後に足す "名前=値" の列である（FR-82 の MODAL_EDITOR_SOCKET、EDITOR、GIT_EDITOR と、
-	// :! を実行した client の識別子 MODAL_EDITOR_CLIENT）。
+	// Env は、子プロセスの環境変数に、client の環境の後に足す "名前=値" の列である（FR-82 の VI_IMITATION_SOCKET、EDITOR、GIT_EDITOR と、
+	// :! を実行した client の識別子 VI_IMITATION_CLIENT）。
 	Env []string
 	// Prompt は、終わった後に「続けるには ENTER を押してください」を出し、キーを 1 つ待ってから代替画面に戻ることを表す（:! の Vim の動作）。
 	// 待つ間に打ったキーが <CR>、<Space>、<Esc> でなければ、そのキーを TerminalDone の後に server へ送る（Vim の hit-enter と同じ）。

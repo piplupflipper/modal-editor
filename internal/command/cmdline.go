@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // ErrShellPending は、マクロの再生の途中の :{range}! と :r ! が外部のコマンドの実行を求めた（Result.Shell）ので、

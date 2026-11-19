@@ -1,6 +1,6 @@
 /bin/
 /dist/
-/modal-editor
+/vi-imitation
 *.test
 *.out
 coverage.*

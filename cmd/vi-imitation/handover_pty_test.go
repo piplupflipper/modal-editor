@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // gitEnv は、利用者の git の設定を読まずに、一時のリポジトリでコミットできる環境変数である。
@@ -19,7 +19,7 @@ func gitEnv() []string {
 	}
 }
 
-// :!git commit で、git が起動したエディタ（環境変数 GIT_EDITOR の modal-editor）が待つだけの client になり、
+// :!git commit で、git が起動したエディタ（環境変数 GIT_EDITOR の vi-imitation）が待つだけの client になり、
 // コミットのメッセージを :! を打った client のタブで開き、:wq で閉じると git がコミットを続ける（FR-82、FR-83、FR-117）。
 // :! は端末を子プロセスへ渡し、終わったら「続けるには ENTER を押してください」で待ち、<CR> で画面を描き直す（FR-80）。
 // 端末を渡している間の <C-c> は子プロセスにだけ効き、エディタは終わらない。
@@ -90,7 +90,7 @@ func TestHandoverInPTY(t *testing.T) {
 	}
 }
 
-// --new を付けた modal-editor は、MODAL_EDITOR_SOCKET があっても親の server に繋がず、新しい server と client を起動する（FR-84）。
+// --new を付けた vi-imitation は、VI_IMITATION_SOCKET があっても親の server に繋がず、新しい server と client を起動する（FR-84）。
 // :! の中で起動すると、渡された端末でエディタとして動き、終わると :! の問いに戻る。
 //
 // req: FR-84
@@ -199,7 +199,7 @@ func TestElevatedSaveInPTY(t *testing.T) {
 	}
 	log := filepath.Join(dir, "log")
 	xdg := t.TempDir()
-	cfgDir := filepath.Join(xdg, "config", "modal-editor")
+	cfgDir := filepath.Join(xdg, "config", "vi-imitation")
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatal(err)
 	}

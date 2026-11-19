@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
 // finderOf は、読み込んでいる client のファインダーの一覧のバッファの中身と、一覧のカーソルの行と、見出しを返す。
@@ -115,15 +115,15 @@ func TestFinderPopup(t *testing.T) {
 	}
 }
 
-// buildFinder は、ファジーファインダーの拡張機能（cmd/modal-editor-ext-finder）を一時ディレクトリへビルドし、拡張機能の定義を返す。
+// buildFinder は、ファジーファインダーの拡張機能（cmd/vi-imitation-ext-finder）を一時ディレクトリへビルドし、拡張機能の定義を返す。
 func buildFinder(t *testing.T) exthost.Spec {
 	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go が無い")
 	}
-	src := filepath.Join("..", "..", "cmd", "modal-editor-ext-finder")
+	src := filepath.Join("..", "..", "cmd", "vi-imitation-ext-finder")
 	dir := t.TempDir()
-	out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "modal-editor-ext-finder"), "./"+src).CombinedOutput() //nolint:gosec // テストのために一時ディレクトリへビルドする
+	out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "vi-imitation-ext-finder"), "./"+src).CombinedOutput() //nolint:gosec // テストのために一時ディレクトリへビルドする
 	if err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}

@@ -78,7 +78,7 @@ type Command struct {
 	// Args は、起動するプログラムとその引数である。空にしない。
 	// 端末多重化ソフトにはシェルのコマンドの文字列として渡すので、各要素はシェルの引用で囲んで渡す。
 	Args []string
-	// Env は、足す環境変数である（server のソケットのパス MODAL_EDITOR_SOCKET など。基本設計 1.3）。
+	// Env は、足す環境変数である（server のソケットのパス VI_IMITATION_SOCKET など。基本設計 1.3）。
 	Env map[string]string
 	// Dir は、起動するディレクトリである。空なら端末多重化ソフトの既定に任せる。
 	Dir string

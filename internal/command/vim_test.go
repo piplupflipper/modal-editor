@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/input"
+	"github.com/piplupflipper/vi-imitation/internal/input"
 )
 
 // vimCase は、Vim 9.1 と突き合わせたケースである。

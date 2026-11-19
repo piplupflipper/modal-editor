@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 const testTimeout = 10 * time.Second
@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(dir)
 		os.Exit(1)
 	}
-	extBinary = filepath.Join(dir, "modal-editor-ext-acp")
+	extBinary = filepath.Join(dir, "vi-imitation-ext-acp")
 	out, err = exec.Command("go", "build", "-o", extBinary, ".").CombinedOutput() //nolint:gosec // テストのために拡張機能を一時ディレクトリへビルドする
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build extension: %v\n%s", err, out)

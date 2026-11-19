@@ -1,4 +1,4 @@
-module github.com/piplupflipper/modal-editor
+module github.com/piplupflipper/vi-imitation
 
 go 1.27.4
 

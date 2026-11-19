@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // socketSpec は、起動の契機 socket だけを宣言した、modeSocket のテスト用の拡張機能の定義を作る。

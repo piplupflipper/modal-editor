@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
-// socketEnv は、本体が待ち受けるソケットのパスを受け取る環境変数の名前である（仮。cmd/modal-editor-mcp-bridge と同じ）。
+// socketEnv は、本体が待ち受けるソケットのパスを受け取る環境変数の名前である（仮。cmd/vi-imitation-mcp-bridge と同じ）。
 // 本体（internal/editor）が起動ごとにパスを決め、すべての拡張機能へ渡す（基本設計 6.2）。
 // この拡張機能は、パスを利用者へ知らせるのに使うだけで、自分では待ち受けない。
 const socketEnv = ext.EnvMCPSocket
@@ -65,7 +65,7 @@ type extension struct {
 func newExtension(path string, ln net.Listener, conns []net.Conn, inheritErr error) *extension {
 	x := &extension{
 		srv: server.New(), replicas: newReplicaSet(), path: path, ln: ln, conns: conns,
-		log: log.New(os.Stderr, "modal-editor-ext-mcp: ", log.LstdFlags),
+		log: log.New(os.Stderr, "vi-imitation-ext-mcp: ", log.LstdFlags),
 	}
 	if ln == nil {
 		x.listenErr = inheritErr

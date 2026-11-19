@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // テスト用の拡張機能は、テストの実行ファイル自身を、引数 fakeExtFlag と動き方の名前を付けて起動したものである。
@@ -555,7 +555,7 @@ func runFakeExt(mode string) int {
 // fakeOpenedPath は、fake.pane files の項目を選んだときに偽の拡張機能が開くファイルのパスである。pid はテストのプロセスの ID である
 // （偽の拡張機能はテストのプロセスの子なので、os.Getppid で同じパスを作れる）。
 func fakeOpenedPath(pid int) string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("modal-editor-fake-%d-opened.txt", pid))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("vi-imitation-fake-%d-opened.txt", pid))
 }
 
 // fakePopup は、fake.popup の引数 kind の部品のポップアップの params を返す。

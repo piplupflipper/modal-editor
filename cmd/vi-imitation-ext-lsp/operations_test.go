@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // wordAt は、位置の前後の識別子を返す。位置が識別子の外なら空を返す。

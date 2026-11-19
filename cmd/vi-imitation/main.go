@@ -1,4 +1,4 @@
-// Command modal-editor は、エディタ本体の実行ファイルである。
+// Command vi-imitation は、エディタ本体の実行ファイルである。
 //
 // 引数のファイルを開き、端末（標準入力と標準出力）でエディタを動かす。
 // 編集の状態を持つのは server（internal/server）で、端末を持つのは編集の client（internal/client）である（基本設計 1.2）。
@@ -28,16 +28,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/client"
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/config"
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/mux"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/server"
-	"github.com/piplupflipper/modal-editor/internal/term"
-	"github.com/piplupflipper/modal-editor/internal/version"
+	"github.com/piplupflipper/vi-imitation/internal/client"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/config"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/mux"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/server"
+	"github.com/piplupflipper/vi-imitation/internal/term"
+	"github.com/piplupflipper/vi-imitation/internal/version"
 )
 
 // closeTimeout は、終了のときに拡張機能が止まるのを待つ上限である。超えたら残りを SIGKILL で終わらせる（editor.Editor.Close）。
@@ -53,7 +53,7 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, "modal-editor:", err)
+		fmt.Fprintln(os.Stderr, "vi-imitation:", err)
 		os.Exit(1)
 	}
 }
@@ -62,10 +62,10 @@ func main() {
 // テストから呼び出せるように、引数と入出力を受け取る形にしている。
 // エディタを動かすのは、stdin と stdout がどちらも端末の *os.File のときだけである。
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	flags := flag.NewFlagSet("modal-editor", flag.ContinueOnError)
+	flags := flag.NewFlagSet("vi-imitation", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
-		_, _ = fmt.Fprintln(flags.Output(), "使い方: modal-editor [オプション] [ファイル ...]") // 使い方を書けなくても続ける
+		_, _ = fmt.Fprintln(flags.Output(), "使い方: vi-imitation [オプション] [ファイル ...]") // 使い方を書けなくても続ける
 		flags.PrintDefaults()
 	}
 	showVersion := flags.Bool("version", false, "バージョンを表示して終了する")
@@ -104,8 +104,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return component(kind, view, in, out, *logPath, *connect)
 	}
 	if sock := os.Getenv(envSocket); sock != "" && !*newServer && countSet(*listen, *connect, *serverPath) == 0 {
-		// :! などの子孫として起動した modal-editor は、待つだけの client になる（FR-83）。
-		// MODAL_EDITOR_SOCKET の server がもう無ければ、規則 2 以降でソケットを決める編集の client として動く（基本設計 1.2）。
+		// :! などの子孫として起動した vi-imitation は、待つだけの client になる（FR-83）。
+		// VI_IMITATION_SOCKET の server がもう無ければ、規則 2 以降でソケットを決める編集の client として動く（基本設計 1.2）。
 		if conn, err := protocol.Dial(sock); err == nil {
 			return waitClient(conn, os.Getenv, flags.Args(), *readOnly)
 		}

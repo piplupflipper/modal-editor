@@ -1,8 +1,8 @@
 package command
 
 import (
-	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // actOutput は、出力の欄（基本設計 6.7）を操作するキーの操作である。

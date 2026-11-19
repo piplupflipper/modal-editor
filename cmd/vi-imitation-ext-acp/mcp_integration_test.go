@@ -15,16 +15,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
 // buildMCP は、MCP の拡張機能と中継コマンドを dir へビルドし、それぞれのパスを返す。
 func buildMCP(t *testing.T, dir string) (extPath, bridgePath string) {
 	t.Helper()
-	extPath = filepath.Join(dir, "modal-editor-ext-mcp")
-	bridgePath = filepath.Join(dir, "modal-editor-mcp-bridge")
-	for _, b := range []struct{ out, pkg string }{{extPath, "../modal-editor-ext-mcp"}, {bridgePath, "../modal-editor-mcp-bridge"}} {
+	extPath = filepath.Join(dir, "vi-imitation-ext-mcp")
+	bridgePath = filepath.Join(dir, "vi-imitation-mcp-bridge")
+	for _, b := range []struct{ out, pkg string }{{extPath, "../vi-imitation-ext-mcp"}, {bridgePath, "../vi-imitation-mcp-bridge"}} {
 		out, err := exec.Command("go", "build", "-o", b.out, b.pkg).CombinedOutput() //nolint:gosec // テストで使う実行ファイルを一時ディレクトリへビルドする
 		if err != nil {
 			t.Fatalf("build %s: %v\n%s", b.pkg, err, out)
@@ -101,7 +101,7 @@ func TestMCPSocketSharedWithACP(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sock.Remove() })
 
-	mcpManifest := readManifest(t, "../modal-editor-ext-mcp/manifest.json")
+	mcpManifest := readManifest(t, "../vi-imitation-ext-mcp/manifest.json")
 	acpManifest := readManifest(t, "manifest.json")
 	if _, err = ext.ValidateManifests([]ext.Manifest{mcpManifest, acpManifest}); err != nil {
 		t.Fatal(err)

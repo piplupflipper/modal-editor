@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // 段階 2 の確認（要件定義 8 章「拡張機能の起動、監視、再起動の仕組みが、実際の拡張機能で機能するか」）として、
-// 実際にビルドした modal-editor-ext-lsp を Host から起動し、言語サーバーの代わりに LSP を話すテスト用のサーバー
-// （cmd/modal-editor-ext-lsp/testdata/fakels）を使って、次を確かめる。
+// 実際にビルドした vi-imitation-ext-lsp を Host から起動し、言語サーバーの代わりに LSP を話すテスト用のサーバー
+// （cmd/vi-imitation-ext-lsp/testdata/fakels）を使って、次を確かめる。
 //
 //   - ファイルの種類の契機で起動し、initialize の settings が届く（settings に書いた言語サーバーが起動する）
 //   - 開いたバッファの診断が DiagnosticSet で届く
@@ -32,12 +32,12 @@ import (
 
 func TestStage2LSP(t *testing.T) {
 	if testing.Short() {
-		t.Skip("builds modal-editor-ext-lsp and its fake language server")
+		t.Skip("builds vi-imitation-ext-lsp and its fake language server")
 	}
 	dir := t.TempDir()
-	src := filepath.Join("..", "..", "cmd", "modal-editor-ext-lsp")
+	src := filepath.Join("..", "..", "cmd", "vi-imitation-ext-lsp")
 	for _, b := range []struct{ out, pkg string }{
-		{"modal-editor-ext-lsp", src},
+		{"vi-imitation-ext-lsp", src},
 		{"fakels", filepath.Join(src, "testdata", "fakels")},
 	} {
 		//nolint:gosec // 引数は定数と、テストが作った一時ディレクトリのパスだけである

@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/config"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/config"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // 同梱する設定の例（config.example.jsonc）は、誤り無く読め、見た目の項目がすべて描画に渡る。

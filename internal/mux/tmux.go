@@ -131,7 +131,7 @@ func (t *Tmux) OpenPopup(ctx context.Context, opts PopupOptions) error {
 		return err
 	}
 	client := c.name
-	dir, err := os.MkdirTemp("", "modal-editor-popup-")
+	dir, err := os.MkdirTemp("", "vi-imitation-popup-")
 	if err != nil {
 		return fmt.Errorf("tmux display-popup: %w", err)
 	}

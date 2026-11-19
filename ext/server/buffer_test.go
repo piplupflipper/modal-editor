@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 func pos(line, b int) ext.Position { return ext.Position{Line: line, Byte: b} }

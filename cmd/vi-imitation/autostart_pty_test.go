@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/server"
+	"github.com/piplupflipper/vi-imitation/internal/server"
 )
 
 // shortRuntimeDir は、XDG_RUNTIME_DIR に使う、権限 0700 の短いパスのディレクトリを作る。
@@ -35,7 +35,7 @@ func shortRuntimeDir(t *testing.T) string {
 
 // unitSocket は、XDG_RUNTIME_DIR が runtime のときの、server の単位 unit の server のソケットのパスである（基本設計 1.2）。
 func unitSocket(runtime, unit string) string {
-	return filepath.Join(runtime, "modal-editor", server.UnitDirName(unit), server.SocketName)
+	return filepath.Join(runtime, "vi-imitation", server.UnitDirName(unit), server.SocketName)
 }
 
 // serverPIDs は、sock を -server に渡して起動した server のプロセスの ID を、/proc から探して返す。
@@ -157,7 +157,7 @@ func herdrEnv(runtime, herdrSock, pane string) []string {
 	return []string{"XDG_RUNTIME_DIR=" + runtime, "HERDR_ENV=1", "HERDR_SOCKET_PATH=" + herdrSock, "HERDR_PANE_ID=" + pane}
 }
 
-// TestAutostartHerdrInPTY は、herdr の中（偽の socket API）で起動した modal-editor が、
+// TestAutostartHerdrInPTY は、herdr の中（偽の socket API）で起動した vi-imitation が、
 // タブの server を自分の子として別のプロセスで起動して繋ぐこと、同じタブの 2 つ目は同じ server に繋ぐこと、
 // 別のタブでは別の server になること、最後の編集の client が終わると server も終わってソケットを消すことを確かめる。
 //
@@ -314,7 +314,7 @@ func TestAutostartClientKilledInPTY(t *testing.T) {
 // req: FR-61
 func TestServeAutoWithoutClient(t *testing.T) {
 	runtime := shortRuntimeDir(t)
-	sock := filepath.Join(runtime, "modal-editor", "u-test", server.SocketName)
+	sock := filepath.Join(runtime, "vi-imitation", "u-test", server.SocketName)
 	killServersAtCleanup(t, sock)
 	xdg := t.TempDir()
 	cmd := exec.Command(os.Args[0], "-server", sock) //nolint:gosec // テストの実行ファイルを server として起動する
@@ -347,7 +347,7 @@ func TestServeAutoWithoutClient(t *testing.T) {
 
 // TestAutostartStaleSocketInPTY は、SIGKILL で終わった server が残したソケットのファイルがあっても、
 // 次に起動した client が新しい server を起動して繋ぐことを確かめる（基本設計 1.2）。
-// また、MODAL_EDITOR_SOCKET の指す server がもう無ければ、規則 2 以降でソケットを決めることを確かめる。
+// また、VI_IMITATION_SOCKET の指す server がもう無ければ、規則 2 以降でソケットを決めることを確かめる。
 //
 // req: FR-59
 func TestAutostartStaleSocketInPTY(t *testing.T) {
@@ -394,7 +394,7 @@ func TestAutostartUnitErrorInPTY(t *testing.T) {
 	if err := p.wait(t); err != nil {
 		t.Fatalf("エディタの終了 = %v。出力: %q", err, tail(p.out.String()))
 	}
-	if m, _ := filepath.Glob(filepath.Join(runtime, "modal-editor", "u-*")); len(m) != 0 {
+	if m, _ := filepath.Glob(filepath.Join(runtime, "vi-imitation", "u-*")); len(m) != 0 {
 		t.Errorf("server のディレクトリができた: %q", m)
 	}
 }
@@ -413,7 +413,7 @@ func newTestTmuxServer(t *testing.T, env []string) *testTmuxServer {
 	if err != nil {
 		t.Skip("tmux が無い")
 	}
-	ts := &testTmuxServer{bin: bin, name: fmt.Sprintf("modal-editor-autostart-test-%d-%d", os.Getpid(), time.Now().UnixNano()), env: env}
+	ts := &testTmuxServer{bin: bin, name: fmt.Sprintf("vi-imitation-autostart-test-%d-%d", os.Getpid(), time.Now().UnixNano()), env: env}
 	t.Cleanup(func() {
 		q := exec.Command(bin, "-L", ts.name, "display-message", "-p", "#{socket_path}") //nolint:gosec // テスト用の tmux
 		q.Env = env

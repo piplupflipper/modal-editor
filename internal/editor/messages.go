@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // メッセージの履歴と、拡張機能のメッセージで本体の誤りを消さない規則（#211。基本設計 8 章）。

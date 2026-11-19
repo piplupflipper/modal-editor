@@ -1,4 +1,4 @@
-// Command modal-editor-ext-dap は、DAP（Debug Adapter Protocol）のクライアントとしてデバッグを行う拡張機能である（基本設計 6.4、FR-31）。
+// Command vi-imitation-ext-dap は、DAP（Debug Adapter Protocol）のクライアントとしてデバッグを行う拡張機能である（基本設計 6.4、FR-31）。
 //
 // 本体（internal/exthost）が、宣言ファイル manifest.json の provides で名乗った本体の操作が呼ばれたときに、子プロセスとして起動する。
 // 本体とは標準入出力で JSON-RPC のメッセージをやり取りするので、ログは標準エラー出力へ書く。
@@ -39,7 +39,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("modal-editor-ext-dap: %v", err)
+		log.Fatalf("vi-imitation-ext-dap: %v", err)
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // refChar は、行 line の先頭からのバイト数 b を、unicode/utf16 で数えた UTF-16 の位置にする（検証用の参照実装）。
@@ -339,7 +339,7 @@ func TestManifest(t *testing.T) {
 	if warnings, verr := m.Validate(); verr != nil || len(warnings) > 0 {
 		t.Fatalf("Validate = %v, %v", warnings, verr)
 	}
-	if m.Command != "./modal-editor-ext-lsp" || !m.SaveHook {
+	if m.Command != "./vi-imitation-ext-lsp" || !m.SaveHook {
 		t.Errorf("manifest = %+v", m)
 	}
 	// 段階 2 のコマンド（lsp.definition など）は、provides で名乗る本体の操作に置き換えた（#203）。

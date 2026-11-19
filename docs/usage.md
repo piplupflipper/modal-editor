@@ -10,20 +10,20 @@
 ## 配布物の本体を起動する
 
 標準の拡張機能は、`make dist` が作る配布物の本体からだけ使える。
-`make build` の `bin/modal-editor` は宣言ファイルを読まないので、標準の拡張機能が動かない（README の「使い方」）。
+`make build` の `bin/vi-imitation` は宣言ファイルを読まないので、標準の拡張機能が動かない（README の「使い方」）。
 
 ```sh
 make dist
-dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor main.go
+dist/vi-imitation-<コミット>-<OS>-<アーキテクチャ>/vi-imitation main.go
 ```
 
-配布物のディレクトリは、本体、MCP の中継コマンド（`modal-editor-mcp-bridge`）、スクリプトの拡張機能を動かす実行ファイル（`modal-editor-ext-script`）と、標準の拡張機能ごとのディレクトリ（`extensions/<ID>/`）と、herdr の同梱のプラグイン（`herdr-plugin/`。[herdr のプラグインを登録する](#herdr-のプラグインを登録する)）からなる。
+配布物のディレクトリは、本体、MCP の中継コマンド（`vi-imitation-mcp-bridge`）、スクリプトの拡張機能を動かす実行ファイル（`vi-imitation-ext-script`）と、標準の拡張機能ごとのディレクトリ（`extensions/<ID>/`）と、herdr の同梱のプラグイン（`herdr-plugin/`。[herdr のプラグインを登録する](#herdr-のプラグインを登録する)）からなる。
 本体は、自分の実行ファイルの隣の `extensions/` から宣言ファイルを探す（`internal/config` の `ExtensionDirs`）。
 
 ## 設定ファイル
 
-設定ファイルは `$XDG_CONFIG_HOME/modal-editor/config.jsonc` に置く。
-`XDG_CONFIG_HOME` が空なら `~/.config/modal-editor/config.jsonc` である。
+設定ファイルは `$XDG_CONFIG_HOME/vi-imitation/config.jsonc` に置く。
+`XDG_CONFIG_HOME` が空なら `~/.config/vi-imitation/config.jsonc` である。
 ファイルは JSONC（コメントと末尾のカンマを許す JSON）で書く。
 ファイルが無ければ、すべての項目が既定値になる。
 設定を変えたら、本体を起動し直す。
@@ -421,14 +421,14 @@ LSP と DAP の操作（定義へ移動、ホバー、ブレークポイント�
 | `:qa`、`:qa!` | この client のタブをすべて閉じて終わる。`:qa!` は未保存の変更を捨てる |
 | `:wqa`（`:xa`） | この client のタブのうち未保存の変更のあるものを書き出してから終わる |
 
-最後のタブを閉じると、その client（ペインの `modal-editor`）が終わる。
+最後のタブを閉じると、その client（ペインの `vi-imitation`）が終わる。
 タブを移るときは、未保存の変更があっても E37 を出さない（離れたタブもタブの行に残るため）。
 最後のタブを閉じると server も終わるとき（同じ window にほかの client が無いとき）は、未保存の変更のある別のバッファがあれば、`:q` と `:qa` は E162 でそのバッファの名前を出し、そのタブへ移る。
 レジスターとその履歴、ドットリピート（`.`）、`;`、`@@`、マクロの記録は、タブを切り替えても引き継ぐ（`qa:bn<CR>...q` で、複数のファイルにまたがる編集を記録できる）。
 
 ### 同じ window の複数の client
 
-tmux の同じ window（herdr の同じタブ）の別のペインで `modal-editor` を起動すると、同じ server の 2 つ目の client になる。
+tmux の同じ window（herdr の同じタブ）の別のペインで `vi-imitation` を起動すると、同じ server の 2 つ目の client になる。
 client ごとに自分のタブの行を持ち、1 つのファイルはどれか 1 つの client のタブになる。
 
 - 別の client のタブになっているファイルを `:e` や `:b` で開こうとすると、開かずに、その client のペインへフォーカスを移し、そのタブを表示する。その client が入力の途中（インサートモードなど）なら、タブは替えずにフォーカスだけを移す
@@ -503,7 +503,7 @@ client ごとに自分のタブの行を持ち、1 つのファイルはどれ�
 | 禁止にする方法 | 対象 |
 |---|---|
 | `:readonly`（`:reado` まで省略できる） | カーソルのあるバッファ。打つたびに禁止と解除が切り替わる |
-| 起動のオプション `-R`（`modal-editor -R a.go`） | 起動の引数のファイル。`:e` で後から開くファイルは禁止しない |
+| 起動のオプション `-R`（`vi-imitation -R a.go`） | 起動の引数のファイル。`:e` で後から開くファイルは禁止しない |
 | 設定の `readonlyPaths` | 並べたディレクトリの下のファイル。開いた時点で禁止にする。`/` か `~/` で始まるパスはそのディレクトリの下、`/` を含まない名前（`node_modules`）はどの階層のディレクトリの名前と一致しても当たる |
 
 ```jsonc
@@ -529,13 +529,13 @@ Vim との違い（Vim の `-R` は編集を許して保存を断る、など）
 終了コードが 0 でなければ、その前に `シェルが N を返しました` が出る。シグナルで終わったときは `コマンドが中断されました` が出る（Vim の `Command terminated`）。
 `:!sh` のような対話のコマンドも使え、`<C-c>` はコマンドに届き、エディタは終わらない。
 
-`:!` などでエディタが起動したコマンドには、環境変数 `MODAL_EDITOR_SOCKET`（server のソケット）、`EDITOR` と `GIT_EDITOR`（`modal-editor` の実行ファイル）が入る（FR-82）。
-このもとで `modal-editor` を起動すると、新しい画面を作らずに、渡したファイルを `:!` を打った client のタブで開き、タブが閉じられるまで待つ（FR-83、FR-117）。
+`:!` などでエディタが起動したコマンドには、環境変数 `VI_IMITATION_SOCKET`（server のソケット）、`EDITOR` と `GIT_EDITOR`（`vi-imitation` の実行ファイル）が入る（FR-82）。
+このもとで `vi-imitation` を起動すると、新しい画面を作らずに、渡したファイルを `:!` を打った client のタブで開き、タブが閉じられるまで待つ（FR-83、FR-117）。
 たとえば `:!git commit` では、コミットのメッセージがタブで開く。
 書いて `:wq` でタブを閉じると、git がコミットを続け、終わると `続けるには ENTER を押してください` が出る。
 `:!sh` の中で `git commit` を打っても同じに動く。
 
-入れ子のエディタとして別に使いたいときは、`modal-editor --new <ファイル>` と打つ（FR-84）。
+入れ子のエディタとして別に使いたいときは、`vi-imitation --new <ファイル>` と打つ（FR-84）。
 親の server に繋がずに、渡された端末で新しいエディタが動く。
 
 ### 権限の足りないファイルの保存
@@ -720,12 +720,12 @@ tmux と herdr の中では、中央のポップアップを端末多重化ソ�
 herdr の中で中央のポップアップとペインを開くには、配布物の `herdr-plugin/` にある同梱のプラグインを、herdr に 1 回登録する。
 
 ```sh
-herdr plugin link dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/herdr-plugin
+herdr plugin link dist/vi-imitation-<コミット>-<OS>-<アーキテクチャ>/herdr-plugin
 ```
 
 登録していないと、herdr の中でもエディタの画面の中央に描き、メッセージの行に「herdr のプラグインを登録してください」と出す。
 プラグインは、本体が起動を頼んだコマンドを動かすだけで、本体の実行ファイルの場所を持たないので、配布物を入れ替えても登録し直さなくてよい。
-外すときは `herdr plugin unlink modal-editor` を打つ。
+外すときは `herdr plugin unlink vi-imitation` を打つ。
 
 ## ヘルプとキーの一覧
 
@@ -812,7 +812,7 @@ gopls は PATH から探す。
 ほかの操作は [LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー) にある。
 
 言語サーバーを変える、保存の前の整形をやめるといった設定は、`extensions.settings.lsp` に書く。
-項目は `go doc -u ./cmd/modal-editor-ext-lsp settings` と `serverConfig` にある。
+項目は `go doc -u ./cmd/vi-imitation-ext-lsp settings` と `serverConfig` にある。
 
 ### DAP によるデバッグ
 
@@ -830,13 +830,13 @@ gopls は PATH から探す。
 デバッグが失敗したときの理由も、この欄で読む。
 
 デバッグアダプターや launch の引数を変える設定は、`extensions.settings.dap` に書く。
-項目と例は `go doc -u ./cmd/modal-editor-ext-dap settings` にある。
+項目と例は `go doc -u ./cmd/vi-imitation-ext-dap settings` にある。
 
 ### ACP のエージェント
 
 ACP（Agent Client Protocol）で話すコーディングエージェントを子プロセスとして起動し、プロンプトを送る。
 エージェントには既定が無いので、`extensions.settings.acp.agent` に起動のコマンドを書く（[設定ファイル](#設定ファイル)の例）。
-`agent` には `command`、`args`、`env` を書ける（`go doc -u ./cmd/modal-editor-ext-acp settings`）。
+`agent` には `command`、`args`、`env` を書ける（`go doc -u ./cmd/vi-imitation-ext-acp settings`）。
 書かずに `:acp.prompt` を打つと、「エージェントが設定されていない（設定の agent.command に書く）」と出る。
 この `agent.command` は、設定ファイルの `extensions.settings.acp.agent.command` のことである。
 
@@ -876,39 +876,39 @@ HEAD の版は、作業ツリーへ取り出すときと同じ改行の変換（
 ### MCP のサーバー
 
 MCP（Model Context Protocol）のクライアント（Claude Code などのコーディングエージェント）から、起動中のエディタのバッファを読み書きできる。
-ツールの一覧は `go doc ./cmd/modal-editor-ext-mcp` と基本設計 6.2 にある。
+ツールの一覧は `go doc ./cmd/vi-imitation-ext-mcp` と基本設計 6.2 にある。
 
 本体は、起動時から Unix ドメインソケットで MCP のクライアントの接続を待つ。
 ソケットのパスは起動ごとに変わる。
 `:mcp.start` を打つと、最下行にパスが出る。
 
 ```text
-MCP のサーバーは /tmp/modal-editor-2518129-2071416057/mcp.sock で接続を待っています
+MCP のサーバーは /tmp/vi-imitation-2518129-2071416057/mcp.sock で接続を待っています
 ```
 
-パスは `$XDG_RUNTIME_DIR/modal-editor/` の下に作り、そこに作れないときは一時ディレクトリ（`TMPDIR` か `/tmp`）の下に作る（`internal/exthost` の `NewMCPSocket`）。
+パスは `$XDG_RUNTIME_DIR/vi-imitation/` の下に作り、そこに作れないときは一時ディレクトリ（`TMPDIR` か `/tmp`）の下に作る（`internal/exthost` の `NewMCPSocket`）。
 上の例は、`XDG_RUNTIME_DIR` が長くてソケットのパスの上限を超えたので、`/tmp` の下に作ったものである。
 
-MCP のクライアントには、配布物の中継コマンド `modal-editor-mcp-bridge` を、標準入出力で話す MCP のサーバーとして登録する。
+MCP のクライアントには、配布物の中継コマンド `vi-imitation-mcp-bridge` を、標準入出力で話す MCP のサーバーとして登録する。
 中継コマンドの `--socket` に、`:mcp.start` が出したパスを渡す。
 Claude Code では、次の JSON を `--mcp-config` に渡して確かめた。
 
 ```json
 {
   "mcpServers": {
-    "modal-editor": {
+    "vi-imitation": {
       "type": "stdio",
-      "command": "/path/to/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor-mcp-bridge",
-      "args": ["--socket", "/tmp/modal-editor-2518129-2071416057/mcp.sock"]
+      "command": "/path/to/vi-imitation-<コミット>-<OS>-<アーキテクチャ>/vi-imitation-mcp-bridge",
+      "args": ["--socket", "/tmp/vi-imitation-2518129-2071416057/mcp.sock"]
     }
   }
 }
 ```
 
 ```sh
-echo 'modal-editor の MCP ツールで notes.txt の 1 行目の先頭に "MCP: " を挿入して' |
+echo 'vi-imitation の MCP ツールで notes.txt の 1 行目の先頭に "MCP: " を挿入して' |
   claude -p --mcp-config mcp.json \
-    --allowedTools mcp__modal-editor__list_buffers mcp__modal-editor__edit_buffer
+    --allowedTools mcp__vi-imitation__list_buffers mcp__vi-imitation__edit_buffer
 ```
 
 `--allowedTools` で、使わせる MCP のツールを許可しておく。
@@ -972,8 +972,8 @@ git のリポジトリにある拡張機能を、設定ファイルに並べて�
 {
   "extensions": {
     "install": [
-      // name は $XDG_DATA_HOME/modal-editor/extensions/<name>/ のディレクトリの名前になる
-      { "name": "surround", "repo": "https://github.com/example/modal-editor-surround", "version": "v0.1.0" }
+      // name は $XDG_DATA_HOME/vi-imitation/extensions/<name>/ のディレクトリの名前になる
+      { "name": "surround", "repo": "https://github.com/example/vi-imitation-surround", "version": "v0.1.0" }
     ]
   }
 }
@@ -1009,9 +1009,9 @@ git のリポジトリにある拡張機能を、設定ファイルに並べて�
 ## スクリプトの拡張機能
 
 Go のソースファイル 1 つを、コンパイルせずに拡張機能として動かせる。
-配布物の `modal-editor-ext-script` が、Go のインタープリター yaegi でスクリプトを実行する。
+配布物の `vi-imitation-ext-script` が、Go のインタープリター yaegi でスクリプトを実行する。
 
-`$XDG_DATA_HOME/modal-editor/extensions/<ID>/`（`XDG_DATA_HOME` が空なら `~/.local/share/modal-editor/extensions/<ID>/`）に、宣言ファイルとスクリプトを置く。
+`$XDG_DATA_HOME/vi-imitation/extensions/<ID>/`（`XDG_DATA_HOME` が空なら `~/.local/share/vi-imitation/extensions/<ID>/`）に、宣言ファイルとスクリプトを置く。
 次の例は、カーソルの行の前に `// hello` の行を入れるコマンド `hello.insert` である。
 
 `extensions/hello/manifest.json`:
@@ -1019,7 +1019,7 @@ Go のソースファイル 1 つを、コンパイルせずに拡張機能と�
 ```json
 {
   "id": "hello",
-  "command": "/path/to/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor-ext-script",
+  "command": "/path/to/vi-imitation-<コミット>-<OS>-<アーキテクチャ>/vi-imitation-ext-script",
   "args": ["hello.go"],
   "activation": [{ "on": "command", "id": "hello.insert" }],
   "contributes": { "commands": [{ "id": "hello.insert", "description": "カーソルの行の前に // hello の行を入れる" }] }
@@ -1037,8 +1037,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 func main() {
@@ -1059,7 +1059,7 @@ func insert(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (e
 
 本体を起動し直して `:hello.insert` を打つと、カーソルの行の前に `// hello` が入る。
 
-`command` には、配布物の `modal-editor-ext-script` の絶対パスを書く。
+`command` には、配布物の `vi-imitation-ext-script` の絶対パスを書く。
 配布物の場所を書かずに指す方法は未決である（基本設計 10 章）。
 `args` の相対パスは、宣言ファイルのディレクトリから解決される。
-モーション、テキストオブジェクト、オペレーターの足し方と、yaegi の制限は `go doc ./cmd/modal-editor-ext-script` にある。
+モーション、テキストオブジェクト、オペレーターの足し方と、yaegi の制限は `go doc ./cmd/vi-imitation-ext-script` にある。

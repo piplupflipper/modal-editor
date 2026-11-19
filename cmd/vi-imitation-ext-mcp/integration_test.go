@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // diagExtFlag の引数で起動したテストの実行ファイルは、テストを実行せずに、診断を送る拡張機能として動く（runDiagExt）。
@@ -42,9 +42,9 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	extBin = filepath.Join(dir, "modal-editor-ext-mcp")
-	bridgeBin = filepath.Join(dir, "modal-editor-mcp-bridge")
-	for _, b := range []struct{ out, pkg string }{{extBin, "."}, {bridgeBin, "../modal-editor-mcp-bridge"}} {
+	extBin = filepath.Join(dir, "vi-imitation-ext-mcp")
+	bridgeBin = filepath.Join(dir, "vi-imitation-mcp-bridge")
+	for _, b := range []struct{ out, pkg string }{{extBin, "."}, {bridgeBin, "../vi-imitation-mcp-bridge"}} {
 		out, err := exec.Command("go", "build", "-o", b.out, b.pkg).CombinedOutput() //nolint:gosec // テストで使う実行ファイルを一時ディレクトリへビルドする
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "build %s: %v\n%s", b.pkg, err, out)
@@ -244,7 +244,7 @@ func TestThroughBridge(t *testing.T) {
 	t.Setenv(socketEnv, filepath.Join(rt, "stale"))
 
 	term, sock, logs := startEditor(t, work, aPath)
-	if !strings.HasPrefix(sock, filepath.Join(rt, "modal-editor")+string(filepath.Separator)) {
+	if !strings.HasPrefix(sock, filepath.Join(rt, "vi-imitation")+string(filepath.Separator)) {
 		t.Fatalf("ソケットのパス = %q, want under %s", sock, rt)
 	}
 	// 本体は起動時から、決めたパスで待ち受けている。

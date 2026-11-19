@@ -1,6 +1,6 @@
 {
   "id": "git",
-  "command": "./modal-editor-ext-git",
+  "command": "./vi-imitation-ext-git",
   "activation": [
     { "on": "command", "id": "git.diffHead" }
   ],

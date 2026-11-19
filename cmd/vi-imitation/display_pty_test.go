@@ -9,19 +9,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
-// installExtension は、標準の拡張機能 name（cmd/modal-editor-ext-<name>）をビルドし、
+// installExtension は、標準の拡張機能 name（cmd/vi-imitation-ext-<name>）をビルドし、
 // 宣言ファイルと一緒に xdg の下の利用者の拡張機能のディレクトリへ置く（基本設計 7 章の拡張機能を探す規則）。
 func installExtension(t *testing.T, xdg, name string) {
 	t.Helper()
-	src := filepath.Join("..", "modal-editor-ext-"+name)
-	dir := filepath.Join(xdg, "data", "modal-editor", "extensions", name)
+	src := filepath.Join("..", "vi-imitation-ext-"+name)
+	dir := filepath.Join(xdg, "data", "vi-imitation", "extensions", name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	goBuild(t, filepath.Join(dir, "modal-editor-ext-"+name), "./"+filepath.ToSlash(src))
+	goBuild(t, filepath.Join(dir, "vi-imitation-ext-"+name), "./"+filepath.ToSlash(src))
 	manifest, err := os.ReadFile(filepath.Join(src, "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func goBuild(t *testing.T, out, pkg string) {
 // writeConfig は、xdg の下に設定ファイルを置く。
 func writeConfig(t *testing.T, xdg, text string) {
 	t.Helper()
-	dir := filepath.Join(xdg, "config", "modal-editor")
+	dir := filepath.Join(xdg, "config", "vi-imitation")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestOutputPaneInPTY(t *testing.T) {
 	xdg := t.TempDir()
 	installExtension(t, xdg, "acp")
 	agent := filepath.Join(t.TempDir(), "fakeagent")
-	goBuild(t, agent, "./"+filepath.ToSlash(filepath.Join("..", "modal-editor-ext-acp", "testdata", "fakeagent")))
+	goBuild(t, agent, "./"+filepath.ToSlash(filepath.Join("..", "vi-imitation-ext-acp", "testdata", "fakeagent")))
 	writeConfig(t, xdg, `{ "extensions": { "settings": { "acp": { "agent": { "command": `+strconv.Quote(agent)+` } } } } }`)
 	p := startEditorIn(t, xdg, nil, filepath.Join(t.TempDir(), "a.txt"))
 	before := ptytest.Termios(t, p.tty)
@@ -93,7 +93,7 @@ func TestChoiceInPTY(t *testing.T) {
 	xdg := t.TempDir()
 	installExtension(t, xdg, "acp")
 	agent := filepath.Join(t.TempDir(), "fakeagent")
-	goBuild(t, agent, "./"+filepath.ToSlash(filepath.Join("..", "modal-editor-ext-acp", "testdata", "fakeagent")))
+	goBuild(t, agent, "./"+filepath.ToSlash(filepath.Join("..", "vi-imitation-ext-acp", "testdata", "fakeagent")))
 	writeConfig(t, xdg, `{ "extensions": { "settings": { "acp": { "agent": { "command": `+strconv.Quote(agent)+` } } } } }`)
 	p := startEditorIn(t, xdg, nil, filepath.Join(t.TempDir(), "a.txt"))
 	before := ptytest.Termios(t, p.tty)

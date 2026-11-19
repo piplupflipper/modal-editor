@@ -14,7 +14,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/piplupflipper/modal-editor/internal/reqtrace"
+	"github.com/piplupflipper/vi-imitation/internal/reqtrace"
 )
 
 func main() {

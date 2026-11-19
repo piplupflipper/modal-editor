@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // writeRaw は、c へ本文 bodies を Content-Length の区切りで順に書く goroutine を起こす（net.Pipe は読む側が読むまで書き込みが止まるため）。

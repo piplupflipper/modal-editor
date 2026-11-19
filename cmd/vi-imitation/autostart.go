@@ -16,18 +16,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/mux"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/server"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/mux"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/server"
 )
 
 // envSocket は、server のソケットのパスを渡す環境変数である（基本設計 1.2 のソケットのパスの規則 1。FR-82）。
-const envSocket = "MODAL_EDITOR_SOCKET"
+const envSocket = "VI_IMITATION_SOCKET"
 
 // envServerStatusFD は、client が起動した server（-server）へ、起動の結果を書くパイプのファイル記述子の番号を渡す環境変数である。
 // server は読んだら環境変数から消す（拡張機能と :! のコマンドへ引き継がない）。
-const envServerStatusFD = "MODAL_EDITOR_SERVER_STATUS_FD"
+const envServerStatusFD = "VI_IMITATION_SERVER_STATUS_FD"
 
 // server が起動の結果としてパイプに書く 1 行。どれでもない行は、起動の誤りの文言である。
 const (
@@ -118,7 +118,7 @@ func withFocus(cfg editor.Config, m mux.Mux) editor.Config {
 
 // connectAuto は、基本設計 1.2 の規則で server のソケットのパスを決め、server に繋ぐ（FR-59）。
 //
-//  1. 環境変数 MODAL_EDITOR_SOCKET があり、その server に繋げれば、待つだけの client になる（FR-83。run が connectAuto の前に waitClient で扱う）。
+//  1. 環境変数 VI_IMITATION_SOCKET があり、その server に繋げれば、待つだけの client になる（FR-83。run が connectAuto の前に waitClient で扱う）。
 //     繋げなければ（シェルが server より長く残った）、規則 2 以降で決める。connectAuto はこの規則を見ない
 //  2. tmux の中なら、tmux のサーバーのソケットのパスと window の ID（m.Unit）から決めたパスの server に繋ぐ
 //  3. herdr の中なら、herdr のソケットのパスとタブの ID（m.Unit）から決めたパスの server に繋ぐ

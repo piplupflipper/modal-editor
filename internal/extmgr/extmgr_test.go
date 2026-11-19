@@ -91,7 +91,7 @@ func (r *repo) commitExt(greeting string) string {
 	return r.commit(extFiles(greeting))
 }
 
-const testCommand = "modal-editor-ext-hello"
+const testCommand = "vi-imitation-ext-hello"
 
 func extFiles(greeting string) map[string]string {
 	return map[string]string{

@@ -16,7 +16,7 @@ import (
 // HerdrPluginID と HerdrPluginEntrypoint は、本体が同梱する herdr のプラグイン（HerdrPluginManifest）の ID と、
 // ポップアップと分割したペインを開くときに使う entrypoint（[[panes]] の id）である。
 const (
-	HerdrPluginID         = "modal-editor"
+	HerdrPluginID         = "vi-imitation"
 	HerdrPluginEntrypoint = "run"
 )
 
@@ -26,7 +26,7 @@ const HerdrPluginNotFound = "plugin_not_found"
 
 // HerdrCommandEnv は、herdr のプラグインのペインで起動するコマンドを渡す環境変数の名前である。
 // 値は、Command.Args をシェルの引用で囲んでつないだ 1 つの文字列で、プラグインの command が eval して exec する。
-const HerdrCommandEnv = "MODAL_EDITOR_MUX_COMMAND"
+const HerdrCommandEnv = "VI_IMITATION_MUX_COMMAND"
 
 // HerdrPluginManifest は、本体が同梱する herdr のプラグインの宣言ファイル（herdr-plugin.toml）の中身である（雛形）。
 // herdr でポップアップと分割したペインを開くには、この宣言ファイルを置いたディレクトリを herdr plugin link で登録しておく。
@@ -251,7 +251,7 @@ func (h *Herdr) call(ctx context.Context, method string, params any, out any) er
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
-	id := "modal-editor:" + strconv.FormatUint(herdrRequestID.Add(1), 10)
+	id := "vi-imitation:" + strconv.FormatUint(herdrRequestID.Add(1), 10)
 	req, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
 	if err != nil {
 		return fmt.Errorf("herdr %s: %w", method, err)

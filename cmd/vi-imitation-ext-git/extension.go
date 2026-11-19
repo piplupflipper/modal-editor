@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // cmdDiffHead は、バッファのファイルを git の HEAD の版と見比べるコマンドの ID である（manifest.json）。

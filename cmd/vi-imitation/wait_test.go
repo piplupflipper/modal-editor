@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
 )
 
-// 待つだけの client は、ファイルを絶対パスにし、MODAL_EDITOR_CLIENT の client を Parent にした Hello を送り、
+// 待つだけの client は、ファイルを絶対パスにし、VI_IMITATION_CLIENT の client を Parent にした Hello を送り、
 // 理由の無い終わりの知らせで nil を、理由付きで誤りを、知らせの無い切断で errWaitServerLost を返す（FR-83）。
 //
 // req: FR-83

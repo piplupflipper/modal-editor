@@ -23,7 +23,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piplupflipper/modal-editor/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
 // Kind は、範囲の端の扱い（Vim の exclusive、inclusive、linewise。`:help exclusive`、`:help linewise`）を表す。

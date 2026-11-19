@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // objectSource は、テキストオブジェクトの対象（関数、関数リテラル、メソッド、型、引数）を含む Go のソースである。

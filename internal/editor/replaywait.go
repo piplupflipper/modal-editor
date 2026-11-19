@@ -6,9 +6,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/command"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
 // heldInput は、外部のコマンドの実行（shellJob）か、再生中の拡張機能の結果の待ち（replayWait）の間に止めた、

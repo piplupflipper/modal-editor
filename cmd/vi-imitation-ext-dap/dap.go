@@ -9,7 +9,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 // この節は、デバッグアダプターとの DAP の送受信である。
@@ -167,7 +167,7 @@ func (c *dapConn) readLoop(r *bufio.Reader) {
 			_ = c.write(func(seq int) any {
 				return dapResponse{
 					Seq: seq, Type: "response", RequestSeq: m.Seq, Success: false,
-					Command: m.Command, Message: "not supported by modal-editor-ext-dap",
+					Command: m.Command, Message: "not supported by vi-imitation-ext-dap",
 				}
 			})
 		default:

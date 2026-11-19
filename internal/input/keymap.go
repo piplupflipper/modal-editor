@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // BindingKind は、キーマップに登録する操作の種類を表す。

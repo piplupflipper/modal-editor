@@ -1,6 +1,6 @@
 package server
 
-import "github.com/piplupflipper/modal-editor/ext"
+import "github.com/piplupflipper/vi-imitation/ext"
 
 // SetStatusLine は、本体へ statusline/set を送り、宣言ファイルの contributes.statusline で足した部品 part の中身を text にする
 // （基本設計 7.1。FR-92）。style は部品の色の名前で、空なら利用者の設定の statusline.ext の色で描く。text が空なら部品を出さない。

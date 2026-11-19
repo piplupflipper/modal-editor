@@ -17,7 +17,7 @@ import (
 
 // helperEnv が設定されたプロセスは、テストではなく main を実行する。
 // 終了コードを確かめるために、テストの実行ファイルを中継コマンドとして起動し直す。
-const helperEnv = "MODAL_EDITOR_MCP_BRIDGE_TEST_MAIN"
+const helperEnv = "VI_IMITATION_MCP_BRIDGE_TEST_MAIN"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(helperEnv) == "1" {

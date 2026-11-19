@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // TestSearchInPTY は、偽の端末の上で、/ のパターンの入力がコマンドラインの行に "/" と一緒に出ること、

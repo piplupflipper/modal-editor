@@ -1,6 +1,6 @@
-# modal-editor
+# vi-imitation
 
-Vim のキーバインドを持つ、ターミナル用のモーダルエディタ（仮称）。
+Vim のキーバインドを持つ、ターミナル用のモーダルエディタ。
 本体は端末で動く。
 
 - 要件定義: [docs/requirements.md](docs/requirements.md)
@@ -15,7 +15,7 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 
 - Go（バージョンは [go.mod](go.mod) を参照）
 - make
-- C コンパイラ（gcc など）。tree-sitter の拡張機能（`cmd/modal-editor-ext-treesitter/`）が cgo で文法をコンパイルするので、`make check`、`make test`、`make build` に要る。本体は cgo を使わない
+- C コンパイラ（gcc など）。tree-sitter の拡張機能（`cmd/vi-imitation-ext-treesitter/`）が cgo で文法をコンパイルするので、`make check`、`make test`、`make build` に要る。本体は cgo を使わない
 - musl-gcc（Debian と Ubuntu では `musl-tools`）。`make build` が tree-sitter の拡張機能を musl で静的にリンクするので要る。別の場所にあるなら `make build MUSL_CC=<パス>` で指定する
 
 配布物の利用者には、C コンパイラも Go も要らない。
@@ -27,26 +27,28 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 
 ```sh
 make build
-bin/modal-editor [ファイル ...]   # 最初のファイルを表示して起動する。ファイルを省くと空のバッファで起動する
-bin/modal-editor --log ed.log a.go # ログを ed.log に追記する（既定ではログを書かない）
-bin/modal-editor -R a.go           # 引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）
-bin/modal-editor --version         # バージョン（ビルドしたコミット）を表示して終わる
+bin/vi-imitation [ファイル ...]   # 最初のファイルを表示して起動する。ファイルを省くと空のバッファで起動する
+bin/vi-imitation --log ed.log a.go # ログを ed.log に追記する（既定ではログを書かない）
+bin/vi-imitation -R a.go           # 引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）
+bin/vi-imitation --version         # バージョン（ビルドしたコミット）を表示して終わる
 ```
 
+`vi` で起動したいときは、シェルの設定に `alias vi=vi-imitation` を書く。
+
 標準入力と標準出力が端末のときだけ起動する。
-端末でなければ、`modal-editor: 標準入力と標準出力が端末のときだけ起動できる` と出して終了コード 1 で終わる。
+端末でなければ、`vi-imitation: 標準入力と標準出力が端末のときだけ起動できる` と出して終了コード 1 で終わる。
 
 起動するとノーマルモードになり、Vim と同じキーで編集する。
 `:w` で保存し、`:q` で終わる。
 変更を保存していなければ `:q` は `E37` のエラーを出すので、変更を捨てて終わるには `:q!` を打つ。
 Vim との違いは [docs/vim-differences.md](docs/vim-differences.md) にある。
 
-起動時に、設定ファイル（`$XDG_CONFIG_HOME/modal-editor/config.jsonc`）と、拡張機能の宣言ファイル（`$XDG_DATA_HOME/modal-editor/extensions/<名前>/manifest.json` と、本体の隣の `extensions/<名前>/manifest.json`）を読む。
+起動時に、設定ファイル（`$XDG_CONFIG_HOME/vi-imitation/config.jsonc`）と、拡張機能の宣言ファイル（`$XDG_DATA_HOME/vi-imitation/extensions/<名前>/manifest.json` と、本体の隣の `extensions/<名前>/manifest.json`）を読む。
 置き場所と項目は仮で、`go doc ./internal/config` にある。
 設定の誤りは、起動後にコマンドラインの行へ位置と内容を 1 行で出す（例: `config.jsonc:2:19: fixendofline は true か false にする`）。
 
-`make build` は `bin/` に実行ファイルだけを作り、宣言ファイルを置かないので、`bin/modal-editor` は標準の拡張機能を読まない（行のテキストオブジェクトの `dil` を打っても何も起きない）。
-標準の拡張機能も使うときは、`make dist` で作る配布物の本体（`dist/modal-editor-<コミット>-<OS>-<アーキテクチャ>/modal-editor`）を起動する。
+`make build` は `bin/` に実行ファイルだけを作り、宣言ファイルを置かないので、`bin/vi-imitation` は標準の拡張機能を読まない（行のテキストオブジェクトの `dil` を打っても何も起きない）。
+標準の拡張機能も使うときは、`make dist` で作る配布物の本体（`dist/vi-imitation-<コミット>-<OS>-<アーキテクチャ>/vi-imitation`）を起動する。
 配布物では、宣言ファイルと実行ファイルが本体の隣の `extensions/<名前>/` に並ぶ。
 設定ファイルの書き方、拡張機能のコマンドのキーへの割り当て、標準の拡張機能（LSP、DAP、ACP、MCP など）ごとのコマンドと使い方は [docs/usage.md](docs/usage.md) にある。
 端末は xterm の制御シーケンスで制御する（代替画面、bracketed paste、24 ビット色、カーソルの形）。terminfo は読まない。
@@ -83,16 +85,16 @@ Go はコンパイル言語なので、型チェックはコンパイルの一�
 
 | パス | 内容 |
 |---|---|
-| `cmd/modal-editor/` | エディタ本体の実行ファイルの入口 |
-| `cmd/modal-editor-mcp-bridge/` | MCP の中継コマンド。標準入出力と起動中のエディタの Unix ドメインソケットの間でメッセージを転送する |
-| `cmd/modal-editor-ext-line/` | 標準の拡張機能（行のテキストオブジェクト）の実行ファイルと宣言ファイル |
-| `cmd/modal-editor-ext-script/` | スクリプトの拡張機能（利用者が置く Go のソースファイル）を yaegi で実行する実行ファイル。宣言ファイルの `args` でスクリプトのパスを受け取る。スクリプトの書き方と yaegi の制限はパッケージの doc（`go doc ./cmd/modal-editor-ext-script`）にある |
-| `cmd/modal-editor-ext-treesitter/` | 標準の拡張機能（tree-sitter による構文ハイライト）の実行ファイルと宣言ファイル。cgo を使い、ビルドに C コンパイラが要る |
-| `cmd/modal-editor-ext-dap/` | 標準の拡張機能（DAP によるデバッグ）の実行ファイルと宣言ファイル。デバッグアダプター（既定は delve の `dlv dap`）を子プロセスとして起動する |
-| `cmd/modal-editor-ext-lsp/` | 標準の拡張機能（LSP のクライアント。診断、定義へ移動、ホバー、整形）の実行ファイルと宣言ファイル。言語サーバー（既定は Go の gopls）を子プロセスとして起動する |
-| `cmd/modal-editor-ext-acp/` | 標準の拡張機能（ACP のクライアント。プロンプトの送信、返答の表示、権限の確認、エディタの内容を通したファイルの読み書き）の実行ファイルと宣言ファイル。設定に書いたコーディングエージェントを子プロセスとして起動する |
-| `cmd/modal-editor-ext-mcp/` | 標準の拡張機能（MCP のサーバー。バッファの一覧と内容、カーソル位置、選択範囲、診断の取得、編集、ファイルを開く、保存のツール）の実行ファイルと宣言ファイル。中継コマンドからの接続を Unix ドメインソケットで受ける。本体が環境変数 `MODAL_EDITOR_MCP_SOCKET` のパスで起動時から待ち受け、最初の接続で起動してソケットを引き継ぐ（起動の契機 `socket`）。使い方はパッケージの doc（`go doc ./cmd/modal-editor-ext-mcp`）にある |
-| `cmd/modal-editor-ext-git/` | 標準の拡張機能（git 連携。バッファのファイルを git の HEAD の版と見比べる）の実行ファイルと宣言ファイル。PATH の `git` を子プロセスとして起動する |
+| `cmd/vi-imitation/` | エディタ本体の実行ファイルの入口 |
+| `cmd/vi-imitation-mcp-bridge/` | MCP の中継コマンド。標準入出力と起動中のエディタの Unix ドメインソケットの間でメッセージを転送する |
+| `cmd/vi-imitation-ext-line/` | 標準の拡張機能（行のテキストオブジェクト）の実行ファイルと宣言ファイル |
+| `cmd/vi-imitation-ext-script/` | スクリプトの拡張機能（利用者が置く Go のソースファイル）を yaegi で実行する実行ファイル。宣言ファイルの `args` でスクリプトのパスを受け取る。スクリプトの書き方と yaegi の制限はパッケージの doc（`go doc ./cmd/vi-imitation-ext-script`）にある |
+| `cmd/vi-imitation-ext-treesitter/` | 標準の拡張機能（tree-sitter による構文ハイライト）の実行ファイルと宣言ファイル。cgo を使い、ビルドに C コンパイラが要る |
+| `cmd/vi-imitation-ext-dap/` | 標準の拡張機能（DAP によるデバッグ）の実行ファイルと宣言ファイル。デバッグアダプター（既定は delve の `dlv dap`）を子プロセスとして起動する |
+| `cmd/vi-imitation-ext-lsp/` | 標準の拡張機能（LSP のクライアント。診断、定義へ移動、ホバー、整形）の実行ファイルと宣言ファイル。言語サーバー（既定は Go の gopls）を子プロセスとして起動する |
+| `cmd/vi-imitation-ext-acp/` | 標準の拡張機能（ACP のクライアント。プロンプトの送信、返答の表示、権限の確認、エディタの内容を通したファイルの読み書き）の実行ファイルと宣言ファイル。設定に書いたコーディングエージェントを子プロセスとして起動する |
+| `cmd/vi-imitation-ext-mcp/` | 標準の拡張機能（MCP のサーバー。バッファの一覧と内容、カーソル位置、選択範囲、診断の取得、編集、ファイルを開く、保存のツール）の実行ファイルと宣言ファイル。中継コマンドからの接続を Unix ドメインソケットで受ける。本体が環境変数 `VI_IMITATION_MCP_SOCKET` のパスで起動時から待ち受け、最初の接続で起動してソケットを引き継ぐ（起動の契機 `socket`）。使い方はパッケージの doc（`go doc ./cmd/vi-imitation-ext-mcp`）にある |
+| `cmd/vi-imitation-ext-git/` | 標準の拡張機能（git 連携。バッファのファイルを git の HEAD の版と見比べる）の実行ファイルと宣言ファイル。PATH の `git` を子プロセスとして起動する |
 | `cmd/reqtrace/` | 要件ごとの進捗を生成するツール |
 | `internal/distcheck/` | `make build` と `make dist` の生成物を検査するテスト |
 | `internal/` | このリポジトリの中だけで使うパッケージ |

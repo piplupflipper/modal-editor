@@ -1,8 +1,8 @@
-// Command modal-editor-ext-script は、スクリプトの拡張機能を 1 つ実行する実行ファイルである（FR-10、FR-36、基本設計 6.6）。
+// Command vi-imitation-ext-script は、スクリプトの拡張機能を 1 つ実行する実行ファイルである（FR-10、FR-36、基本設計 6.6）。
 //
 // 使い方:
 //
-//	modal-editor-ext-script <スクリプトのパス>
+//	vi-imitation-ext-script <スクリプトのパス>
 //
 // スクリプトは、利用者が置く Go のソースファイル 1 つである。
 // Go のインタープリター yaegi（github.com/traefik/yaegi）で実行するので、コンパイルは要らない。
@@ -16,14 +16,14 @@
 // 1 つのプロセスは 1 つのスクリプトだけを実行する。
 // スクリプトの無限ループや panic で、他のスクリプトの拡張機能を止めないためである（NFR-03）。
 //
-// args の相対パスは、本体が環境変数 MODAL_EDITOR_EXTENSION_DIR（ext.EnvExtensionDir）で渡す宣言ファイルのディレクトリから解決する。
+// args の相対パスは、本体が環境変数 VI_IMITATION_EXTENSION_DIR（ext.EnvExtensionDir）で渡す宣言ファイルのディレクトリから解決する。
 // 子プロセスの作業ディレクトリは本体のものなので、作業ディレクトリからは解決しない。
 // 環境変数が無いか空なら、作業ディレクトリからの相対パスとして扱う。
 //
 // この実行ファイルは、複数のスクリプトで 1 つを共有できる。
 // ただし本体は command を PATH から探さず、相対パスを常に宣言ファイルのディレクトリから解決する（基本設計 5.1）。
-// 共有するには、command に共有の実行ファイルの絶対パスか、宣言ファイルのディレクトリからの相対パス（../bin/modal-editor-ext-script など）を書く。
-// 例の宣言ファイルの ./modal-editor-ext-script は、実行ファイルを宣言ファイルと同じディレクトリに置く（コピーかシンボリックリンク）書き方である。
+// 共有するには、command に共有の実行ファイルの絶対パスか、宣言ファイルのディレクトリからの相対パス（../bin/vi-imitation-ext-script など）を書く。
+// 例の宣言ファイルの ./vi-imitation-ext-script は、実行ファイルを宣言ファイルと同じディレクトリに置く（コピーかシンボリックリンク）書き方である。
 // 本体が拡張機能を探す規則は、仮に決まっている（要件定義 6 章、基本設計 7 章）。
 // 利用者のスクリプトの宣言ファイルが、配布物のこの実行ファイルを、配布物を置いた場所を書かずに指す方法は未決である（基本設計 10 章、6.6）。
 //
@@ -94,10 +94,10 @@ import (
 	"github.com/traefik/yaegi/stdlib"
 	"github.com/traefik/yaegi/stdlib/unrestricted"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
-const name = "modal-editor-ext-script"
+const name = "vi-imitation-ext-script"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stderr))
@@ -154,7 +154,7 @@ func runScript(path string, stderr io.Writer) error {
 		}
 		// yaegi の誤りは、先頭にパスと行と列を含む。
 		// undefined: max のように、Go では正しいのに yaegi では誤りになるものがあるので、制限の一覧の場所を添える。
-		return fmt.Errorf("%w\n(yaegi の制限は go doc github.com/piplupflipper/modal-editor/cmd/modal-editor-ext-script を参照)", err)
+		return fmt.Errorf("%w\n(yaegi の制限は go doc github.com/piplupflipper/vi-imitation/cmd/vi-imitation-ext-script を参照)", err)
 	}
 	return nil
 }

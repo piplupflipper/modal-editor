@@ -1,5 +1,5 @@
-// modal-editor の設定の例（見た目）。
-// $XDG_CONFIG_HOME/modal-editor/config.jsonc（未設定なら ~/.config/modal-editor/config.jsonc）に写して使う。
+// vi-imitation の設定の例（見た目）。
+// $XDG_CONFIG_HOME/vi-imitation/config.jsonc（未設定なら ~/.config/vi-imitation/config.jsonc）に写して使う。
 // 項目の説明は docs/usage.md の「見た目の設定」にある。
 //
 // 配色は iceberg（https://github.com/cocopon/iceberg.vim）の暗い背景の色に近づけたもので、

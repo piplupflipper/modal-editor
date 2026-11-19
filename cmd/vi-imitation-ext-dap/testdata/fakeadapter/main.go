@@ -1,4 +1,4 @@
-// Command fakeadapter は、modal-editor-ext-dap のテストで使う、DAP を話すデバッグアダプターの代役である。
+// Command fakeadapter は、vi-imitation-ext-dap のテストで使う、DAP を話すデバッグアダプターの代役である。
 //
 // 実際のプログラムは動かさず、受け取ったブレークポイントの位置で順に止まったことにする。
 // 既定では標準入出力で話し、-client-addr unix:<path> を渡すと、そのソケットへ自分から接続して話す（dlv dap の --client-addr と同じ形）。

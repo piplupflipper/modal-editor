@@ -104,7 +104,7 @@ func spawn(d *debugger, cfg adapterConfig) (*session, error) {
 		}
 	}
 	if useSocket {
-		dir, err := os.MkdirTemp("", "modal-editor-ext-dap-")
+		dir, err := os.MkdirTemp("", "vi-imitation-ext-dap-")
 		if err != nil {
 			return nil, err
 		}
@@ -305,8 +305,8 @@ func (s *session) start(launch map[string]any) error {
 	defer cancel()
 	var caps capabilities
 	err := c.call(ctx, "initialize", initializeArguments{
-		ClientID:        "modal-editor",
-		ClientName:      "modal-editor",
+		ClientID:        "vi-imitation",
+		ClientName:      "vi-imitation",
 		AdapterID:       s.d.settings.AdapterID,
 		LinesStartAt1:   linesStartAt1,
 		ColumnsStartAt1: linesStartAt1,

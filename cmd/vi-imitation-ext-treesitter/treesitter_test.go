@@ -15,8 +15,8 @@ import (
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 const testTimeout = 5 * time.Second
@@ -503,8 +503,8 @@ func TestManifest(t *testing.T) {
 	if warnings, verr := m.Validate(); verr != nil || len(warnings) > 0 {
 		t.Fatalf("Validate = %v, %v; want no warnings and no error", warnings, verr)
 	}
-	if m.Command != "./modal-editor-ext-treesitter" {
-		t.Errorf("command = %q, want ./modal-editor-ext-treesitter", m.Command)
+	if m.Command != "./vi-imitation-ext-treesitter" {
+		t.Errorf("command = %q, want ./vi-imitation-ext-treesitter", m.Command)
 	}
 	var patterns, want []string
 	for _, a := range m.Activation {

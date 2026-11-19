@@ -6,8 +6,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/ext/server"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
 )
 
 // maxDecorationSetBytes は、1 回の decoration/set の本文（JSON）の大きさの上限である。
@@ -77,7 +77,7 @@ type highlighter struct {
 func newHighlighter() (*highlighter, error) {
 	h := &highlighter{
 		langs:    map[string]*language{},
-		log:      log.New(os.Stderr, "modal-editor-ext-treesitter: ", log.LstdFlags),
+		log:      log.New(os.Stderr, "vi-imitation-ext-treesitter: ", log.LstdFlags),
 		maxBytes: maxDecorationSetBytes,
 		active:   map[ext.BufferID]*language{},
 		pending:  map[ext.BufferID]*job{},

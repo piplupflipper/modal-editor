@@ -14,19 +14,19 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // envRunMain は、テストの実行ファイルを、エディタ本体として起動させる環境変数である。
 // 偽の端末の結合のテストは、テストの実行ファイル自身を子プロセスとして起動し、main を動かす（go build を待たないため）。
-const envRunMain = "MODAL_EDITOR_TEST_RUN_MAIN"
+const envRunMain = "VI_IMITATION_TEST_RUN_MAIN"
 
 // envPanicOnStderr は、エディタとして起動したテストの実行ファイルで、拡張機能の標準エラー出力にこの値の行が来たら、
 // それを記録するロガーの中で panic させる環境変数である。拡張機能の goroutine の panic で端末が戻ることを確かめるのに使う（#114）。
-const envPanicOnStderr = "MODAL_EDITOR_TEST_PANIC_ON_STDERR"
+const envPanicOnStderr = "VI_IMITATION_TEST_PANIC_ON_STDERR"
 
 // envFirstClientTimeout は、エディタとして起動したテストの実行ファイルで、firstClientTimeout を置き換える環境変数である（time.ParseDuration の形）。
-const envFirstClientTimeout = "MODAL_EDITOR_TEST_FIRST_CLIENT_TIMEOUT"
+const envFirstClientTimeout = "VI_IMITATION_TEST_FIRST_CLIENT_TIMEOUT"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(envRunMain) == "1" {
@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// muxFreeEnv は、テストを動かす環境から、tmux と herdr の中であることを表す環境変数と MODAL_EDITOR_SOCKET を除いたものを返す。
+// muxFreeEnv は、テストを動かす環境から、tmux と herdr の中であることを表す環境変数と VI_IMITATION_SOCKET を除いたものを返す。
 // テストを tmux か herdr の中で動かしても、起動したエディタが端末多重化ソフトの外の構成（FR-60）で動き、
 // 利用者の tmux と herdr に server の単位を問い合わせないようにする。
 func muxFreeEnv() []string {
@@ -89,7 +89,7 @@ func startEditorWithConfig(t *testing.T, configText string, args ...string) *edi
 	t.Helper()
 	xdg := t.TempDir()
 	if configText != "" {
-		dir := filepath.Join(xdg, "config", "modal-editor")
+		dir := filepath.Join(xdg, "config", "vi-imitation")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}

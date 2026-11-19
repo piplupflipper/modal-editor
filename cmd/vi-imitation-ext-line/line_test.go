@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/rpc"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/rpc"
 )
 
 const testTimeout = 5 * time.Second
@@ -161,8 +161,8 @@ func TestManifest(t *testing.T) {
 	if warnings, verr := m.Validate(); verr != nil || len(warnings) > 0 {
 		t.Fatalf("Validate = %v, %v; want no warnings and no error", warnings, verr)
 	}
-	if m.Command != "./modal-editor-ext-line" {
-		t.Errorf("command = %q, want ./modal-editor-ext-line", m.Command)
+	if m.Command != "./vi-imitation-ext-line" {
+		t.Errorf("command = %q, want ./vi-imitation-ext-line", m.Command)
 	}
 	var ids []string
 	for _, c := range m.Contributes.TextObjects {

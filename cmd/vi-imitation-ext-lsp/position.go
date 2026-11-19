@@ -3,7 +3,7 @@ package main
 import (
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // encoding は、LSP の位置の文字の数え方（PositionEncodingKind）である。

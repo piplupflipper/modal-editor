@@ -16,21 +16,21 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/server"
-	"github.com/piplupflipper/modal-editor/internal/term/ptytest"
+	"github.com/piplupflipper/vi-imitation/internal/server"
+	"github.com/piplupflipper/vi-imitation/internal/term/ptytest"
 )
 
 // envLatency は、段階 3 の応答の計測（TestStage3Latency）を動かす環境変数である。1 のときだけ動かす（段階 1 の計測と同じ）。
-const envLatency = "MODAL_EDITOR_LATENCY"
+const envLatency = "VI_IMITATION_LATENCY"
 
 // envLatencyRuns は、統計に使う回数を latencyRuns から変える環境変数である。計測の道具を試すときに少なくする。
-const envLatencyRuns = "MODAL_EDITOR_LATENCY_RUNS"
+const envLatencyRuns = "VI_IMITATION_LATENCY_RUNS"
 
 // envLatencyLog は、外れ値を調べるための記録を置くディレクトリを渡す環境変数である。
 // 指定すると、回ごとの時刻と値（samples.csv。組み合わせ、回、キーを書いた時刻の UNIX ナノ秒、値のナノ秒）、
 // 本体のプロセスを起動した時刻（procs.csv）、本体の標準エラー出力（<組み合わせ>-server.log、-client.log）を書く。
 // GODEBUG=gctrace=1 と一緒に使うと、本体のガベージコレクションの記録が標準エラー出力のファイルに入る。
-const envLatencyLog = "MODAL_EDITOR_LATENCY_LOG"
+const envLatencyLog = "VI_IMITATION_LATENCY_LOG"
 
 // 要件定義 8.1 の測り方。
 const (
@@ -45,7 +45,7 @@ const (
 )
 
 // envLatencyOps は、計測する操作を名前（latencyOp.name）のカンマ区切りで絞る環境変数である。空ならすべて測る。
-const envLatencyOps = "MODAL_EDITOR_LATENCY_OPS"
+const envLatencyOps = "VI_IMITATION_LATENCY_OPS"
 
 // latencyOp は、計測する操作である。
 type latencyOp struct {
@@ -132,7 +132,7 @@ func screenHas(s string) func(*vscreen) bool {
 	return func(v *vscreen) bool { return strings.Contains(v.String(), s) }
 }
 
-// selectedOps は、MODAL_EDITOR_LATENCY_OPS で絞った操作を返す。
+// selectedOps は、VI_IMITATION_LATENCY_OPS で絞った操作を返す。
 func selectedOps() []latencyOp {
 	names := os.Getenv(envLatencyOps)
 	if names == "" {
@@ -152,8 +152,8 @@ func selectedOps() []latencyOp {
 // 80 列 24 行の偽の端末にキーを書いてから、その入力で変わった画面が偽の端末から読めるまでの時間を測る。
 // 結果と判定を RESULT と VERDICT で始まる行に出す。手順と結果は docs/measurements/stage3-client-server-latency.md にある。
 //
-// 環境変数 MODAL_EDITOR_LATENCY が 1 でなければ飛ばす。
-// 本体は、MODAL_EDITOR_BUILD_DIR があればその下の modal-editor を、無ければ go build で作ったもの（-race なし）を使う。
+// 環境変数 VI_IMITATION_LATENCY が 1 でなければ飛ばす。
+// 本体は、VI_IMITATION_BUILD_DIR があればその下の vi-imitation を、無ければ go build で作ったもの（-race なし）を使う。
 func TestStage3Latency(t *testing.T) {
 	if os.Getenv(envLatency) != "1" {
 		t.Skipf("%s=1 のときだけ動かす（計測に十数分かかる）", envLatency)
@@ -218,9 +218,9 @@ func configName(split bool) string {
 func latencyBinary(t *testing.T) string {
 	t.Helper()
 	if dir := os.Getenv(envBuildDir); dir != "" {
-		return filepath.Join(dir, "modal-editor")
+		return filepath.Join(dir, "vi-imitation")
 	}
-	bin := filepath.Join(t.TempDir(), "modal-editor")
+	bin := filepath.Join(t.TempDir(), "vi-imitation")
 	cmd := exec.Command("go", "build", "-o", bin, ".") //nolint:gosec // 計測する本体をビルドする
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -388,7 +388,7 @@ func measureLatency(t *testing.T, bin, file string, op latencyOp, interval time.
 		runs = n
 	}
 	var samples []time.Duration
-	var b strings.Builder // 回ごとの記録（MODAL_EDITOR_LATENCY_LOG）。計測の後にまとめて書く
+	var b strings.Builder // 回ごとの記録（VI_IMITATION_LATENCY_LOG）。計測の後にまとめて書く
 	for i := range latencyWarmup + runs {
 		pre, preDone, key, keyDone := op.step(i)
 		if pre != "" {
@@ -463,7 +463,7 @@ func startLatencyClient(t *testing.T, bin string, args, env []string, logDir, na
 // createLog は、計測の記録のファイルを作る。テストの終わりで閉じる。
 func createLog(t *testing.T, path string) *os.File {
 	t.Helper()
-	f, err := os.Create(path) //nolint:gosec // 計測する人が MODAL_EDITOR_LATENCY_LOG で指定したディレクトリに書く
+	f, err := os.Create(path) //nolint:gosec // 計測する人が VI_IMITATION_LATENCY_LOG で指定したディレクトリに書く
 	if err != nil {
 		t.Fatal(err)
 	}

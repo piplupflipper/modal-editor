@@ -33,7 +33,7 @@ func TestUnitDirName(t *testing.T) {
 	}
 }
 
-// 同じ単位からは同じパスを決め、ディレクトリを 0700 で作る。XDG_RUNTIME_DIR が無ければ一時ディレクトリの modal-editor-<uid>/ に置く。
+// 同じ単位からは同じパスを決め、ディレクトリを 0700 で作る。XDG_RUNTIME_DIR が無ければ一時ディレクトリの vi-imitation-<uid>/ に置く。
 //
 // req: FR-59
 func TestSocketPathForUnit(t *testing.T) {
@@ -43,7 +43,7 @@ func TestSocketPathForUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(runtime, "modal-editor", UnitDirName(unit), SocketName)
+	want := filepath.Join(runtime, "vi-imitation", UnitDirName(unit), SocketName)
 	if got != want {
 		t.Errorf("パス = %q, want %q", got, want)
 	}
@@ -61,7 +61,7 @@ func TestSocketPathForUnit(t *testing.T) {
 
 	for _, rt := range []string{"", "relative", filepath.Join(runtime, "missing")} {
 		got, err = SocketPathForUnit(unit, rt, tmp)
-		want = filepath.Join(tmp, "modal-editor-"+strconv.Itoa(os.Geteuid()), UnitDirName(unit), SocketName)
+		want = filepath.Join(tmp, "vi-imitation-"+strconv.Itoa(os.Geteuid()), UnitDirName(unit), SocketName)
 		if err != nil || got != want {
 			t.Errorf("XDG_RUNTIME_DIR=%q のパス = %q, %v; want %q", rt, got, err, want)
 		}
@@ -72,7 +72,7 @@ func TestSocketPathForUnit(t *testing.T) {
 func TestSocketPathForUnitRejectsSharedDir(t *testing.T) {
 	runtime, tmp := shortDir(t), shortDir(t)
 	unit := "u"
-	shared := filepath.Join(runtime, "modal-editor")
+	shared := filepath.Join(runtime, "vi-imitation")
 	if err := os.Mkdir(shared, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestSocketPathForUnitRejectsSharedDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := SocketPathForUnit(unit, runtime, tmp)
-	want := filepath.Join(tmp, "modal-editor-"+strconv.Itoa(os.Geteuid()), UnitDirName(unit), SocketName)
+	want := filepath.Join(tmp, "vi-imitation-"+strconv.Itoa(os.Geteuid()), UnitDirName(unit), SocketName)
 	if err != nil || got != want {
 		t.Errorf("パス = %q, %v; want %q（一時ディレクトリへ移る）", got, err, want)
 	}

@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/mux"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/mux"
 )
 
 // splitTimeout は、:diffsplit でペインを分割するときに、端末多重化ソフトの操作を待つ上限である（仮。FR-63 のフォーカスの移動と同じ値）。
@@ -20,7 +20,7 @@ const splitTimeout = 2 * time.Second
 // dir で起動する。新しい client には、環境変数 editor.EnvSplit で待ちの印 token を渡す。client は Hello の Env でそれを知らせ、
 // イベントループがその client のタブと見比べを始める。
 //
-// #228 は環境変数 MODAL_EDITOR_SOCKET でソケットを渡していたが、#226 の後はこの環境変数のもとで起動した modal-editor が
+// #228 は環境変数 VI_IMITATION_SOCKET でソケットを渡していたが、#226 の後はこの環境変数のもとで起動した vi-imitation が
 // 待つだけの client（FR-83）になり、ファイルを from の client のタブに開いて新しいペインに何も出さなかった（#245 で見つけた）。
 // ソケットのパスの規則（基本設計 1.2）に頼らずに -connect で繋ぐので、from の client が別の window へ動いた後（FR-112）も、
 // herdr のペインに HERDR_PANE_ID が入らないときも、この server に繋ぐ。

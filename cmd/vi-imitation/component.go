@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/piplupflipper/modal-editor/internal/client"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
-	"github.com/piplupflipper/modal-editor/internal/term"
+	"github.com/piplupflipper/vi-imitation/internal/client"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/term"
 )
 
 // component は、-popup と -pane のときの本体で、部品の client として動く（基本設計 1.2、1.3。FR-67、FR-115）。

@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/piplupflipper/modal-editor/internal/ui"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // vt は、テストのための小さな端末の模型である。Painter と Terminal が書く制御シーケンス

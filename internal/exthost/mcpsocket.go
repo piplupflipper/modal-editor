@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // mcpSocketName は、MCP のソケットのファイル名である。
@@ -34,11 +34,11 @@ type MCPSocket struct {
 //
 // パスは次の順に決める。
 //
-//  1. 環境変数 XDG_RUNTIME_DIR が絶対パスなら、`$XDG_RUNTIME_DIR/modal-editor/<pid>-<乱数>/mcp.sock`
-//  2. 1 が使えなければ（変数が無い、ディレクトリを作れない、パスが長すぎる、`$XDG_RUNTIME_DIR/modal-editor` が私用のディレクトリでない）、
-//     `<一時ディレクトリ>/modal-editor-<pid>-<乱数>/mcp.sock`。一時ディレクトリは os.TempDir（TMPDIR か /tmp）である
+//  1. 環境変数 XDG_RUNTIME_DIR が絶対パスなら、`$XDG_RUNTIME_DIR/vi-imitation/<pid>-<乱数>/mcp.sock`
+//  2. 1 が使えなければ（変数が無い、ディレクトリを作れない、パスが長すぎる、`$XDG_RUNTIME_DIR/vi-imitation` が私用のディレクトリでない）、
+//     `<一時ディレクトリ>/vi-imitation-<pid>-<乱数>/mcp.sock`。一時ディレクトリは os.TempDir（TMPDIR か /tmp）である
 //
-// `$XDG_RUNTIME_DIR/modal-editor` は、既にあれば、シンボリックリンクでないディレクトリで、持ち主が実効ユーザー ID で、
+// `$XDG_RUNTIME_DIR/vi-imitation` は、既にあれば、シンボリックリンクでないディレクトリで、持ち主が実効ユーザー ID で、
 // 他の利用者の権限（0o077）が無いことを確かめる。
 // su（- 無し）や sudo -E で他の利用者の XDG_RUNTIME_DIR を引き継いで起動すると、元の利用者が中のディレクトリを作り直して
 // ソケットを置く場所を握れるためである。
@@ -60,14 +60,14 @@ func NewMCPSocket() (*MCPSocket, error) {
 func newMCPSocket(runtimeDir, tempDir string, pid int) (*MCPSocket, error) {
 	var errs []error
 	if filepath.IsAbs(runtimeDir) {
-		base := filepath.Join(runtimeDir, "modal-editor")
+		base := filepath.Join(runtimeDir, "vi-imitation")
 		s, err := makeMCPSocket(base, strconv.Itoa(pid)+"-", true)
 		if err == nil {
 			return s, nil
 		}
 		errs = append(errs, err)
 	}
-	s, err := makeMCPSocket(tempDir, "modal-editor-"+strconv.Itoa(pid)+"-", false)
+	s, err := makeMCPSocket(tempDir, "vi-imitation-"+strconv.Itoa(pid)+"-", false)
 	if err == nil {
 		return s, nil
 	}

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/vi-imitation/ext"
 )
 
 // writeManifest は、dir/name/manifest.json に src を書き、そのパスを返す。
@@ -31,7 +31,7 @@ func writeManifest(t *testing.T, dir, name, src string) string {
 const surroundManifest = `{
   // 拡張機能の ID。ドットリピートの記録と設定で使う
   "id": "surround",
-  "command": "./modal-editor-ext-surround",
+  "command": "./vi-imitation-ext-surround",
   // 起動の契機。どれか 1 つが成り立った時点で起動する
   "activation": [
     { "on": "operator", "id": "surround.add" },
@@ -56,7 +56,7 @@ func TestLoadManifestJSONC(t *testing.T) {
 	}
 	want := ext.Manifest{
 		ID:      "surround",
-		Command: "./modal-editor-ext-surround",
+		Command: "./vi-imitation-ext-surround",
 		Activation: []ext.Activation{
 			{On: ext.ActivationOperator, ID: "surround.add"},
 			{On: ext.ActivationFileType, Pattern: "markdown"},
@@ -77,7 +77,7 @@ func TestLoadManifestJSONC(t *testing.T) {
 func TestLoadManifestProvides(t *testing.T) {
 	p := writeManifest(t, t.TempDir(), "dap", `{
   "id": "dap",
-  "command": "./modal-editor-ext-dap",
+  "command": "./vi-imitation-ext-dap",
   // 本体の操作のうち、この拡張機能が引き受けるもの
   "provides": ["debug.continue", "breakpoint.toggle", "debug.future"],
 }`)
@@ -246,7 +246,7 @@ func TestExtensionFields(t *testing.T) {
 //
 // req: FR-90
 func TestStandardManifestDescriptions(t *testing.T) {
-	paths, err := filepath.Glob(filepath.Join("..", "..", "cmd", "modal-editor-ext-*", ManifestFileName))
+	paths, err := filepath.Glob(filepath.Join("..", "..", "cmd", "vi-imitation-ext-*", ManifestFileName))
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("Glob = %v, %v", paths, err)
 	}

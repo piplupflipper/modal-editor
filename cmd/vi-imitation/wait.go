@@ -13,15 +13,15 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/piplupflipper/modal-editor/internal/editor"
-	"github.com/piplupflipper/modal-editor/internal/protocol"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
 )
 
 // このファイルは、エディタの中で起動したエディタ（基本設計 4.9。FR-82、FR-83、FR-84）と、端末を子プロセスへ渡している間のシグナルの扱いである。
 
 // withChildEnv は、cfg に、本体が起動する子プロセス（:! と :{range}! と :r ! のシェル、拡張機能とその子プロセス）の環境変数を足して返す（FR-82）。
-// MODAL_EDITOR_SOCKET を server のソケットのパス sock に、EDITOR と GIT_EDITOR を本体の実行ファイルの絶対パスにする。
-// その子プロセスが起動した modal-editor は、待つだけの client になる（waitClient）。
+// VI_IMITATION_SOCKET を server のソケットのパス sock に、EDITOR と GIT_EDITOR を本体の実行ファイルの絶対パスにする。
+// その子プロセスが起動した vi-imitation は、待つだけの client になる（waitClient）。
 // 実行ファイルのパスを決められなければ、EDITOR と GIT_EDITOR は足さない（利用者の環境のものを残す）。
 //
 // req: FR-82
@@ -40,14 +40,14 @@ func withChildEnv(cfg editor.Config, sock string, logger *slog.Logger) editor.Co
 // errWaitServerLost は、待つだけの client が、終わりの知らせを受けずに server との接続を失ったことを表す。
 var errWaitServerLost = errors.New("server との接続が切れた（ファイルの編集を待てない）")
 
-// waitClient は、環境変数 MODAL_EDITOR_SOCKET の server に繋いだ conn で、待つだけの client として動く（FR-83。基本設計 4.9）。
+// waitClient は、環境変数 VI_IMITATION_SOCKET の server に繋いだ conn で、待つだけの client として動く（FR-83。基本設計 4.9）。
 //
 // 端末には描かず、キーも受けない。files（絶対パスにして送る）を開かせ、server がそれらのタブがすべて閉じられたことを知らせる
 // （理由の無い終わりの知らせ）まで待ち、nil で戻る（終了コード 0。git はコミットを続ける）。
 // ファイルを開けない、タブを開いた client が終わったなど、理由付きの終わりの知らせを受けたら、その理由の誤りで戻る（0 でない終了コード。
 // git はコミットをやめる）。終わりの知らせを受けずに接続が切れたときも誤りで戻る。
 // files が空なら、名前の無い空のタブを開かせる。
-// タブを開く先は、環境変数 MODAL_EDITOR_CLIENT（editor.EnvClient）の client（:! を実行した client）である。
+// タブを開く先は、環境変数 VI_IMITATION_CLIENT（editor.EnvClient）の client（:! を実行した client）である。
 //
 // req: FR-83
 func waitClient(conn protocol.ClientConn, getenv func(string) string, files []string, readOnly bool) error {

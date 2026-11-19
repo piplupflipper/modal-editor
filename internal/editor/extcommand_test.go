@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piplupflipper/modal-editor/ext"
-	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
 // 拡張機能のコマンドは、コマンドラインから ID で呼べ、ID の後の文字列を command/execute の args の text で渡す。
@@ -98,18 +98,18 @@ func TestBuildExCommandsDuplicate(t *testing.T) {
 	}
 }
 
-// buildACP は、ACP の拡張機能と、そのテスト用のエージェント（cmd/modal-editor-ext-acp/testdata/fakeagent）を
+// buildACP は、ACP の拡張機能と、そのテスト用のエージェント（cmd/vi-imitation-ext-acp/testdata/fakeagent）を
 // 一時ディレクトリへビルドし、拡張機能の定義を返す。設定の agent.command にテスト用のエージェントを書く。
 func buildACP(t *testing.T) exthost.Spec {
 	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go が無い")
 	}
-	src := filepath.Join("..", "..", "cmd", "modal-editor-ext-acp")
+	src := filepath.Join("..", "..", "cmd", "vi-imitation-ext-acp")
 	dir := t.TempDir()
 	agent := filepath.Join(dir, "fakeagent")
 	for _, b := range []struct{ out, pkg string }{
-		{filepath.Join(dir, "modal-editor-ext-acp"), "./" + src},
+		{filepath.Join(dir, "vi-imitation-ext-acp"), "./" + src},
 		{agent, "./" + filepath.Join(src, "testdata", "fakeagent")},
 	} {
 		out, err := exec.Command("go", "build", "-o", b.out, b.pkg).CombinedOutput() //nolint:gosec // テストのために一時ディレクトリへビルドする
