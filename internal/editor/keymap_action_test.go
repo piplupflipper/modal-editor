@@ -161,6 +161,10 @@ func TestInsertDeleteWordAndLineStart(t *testing.T) {
 		{"漢字かな|", "A<C-w><Esc>", "漢字", "0:3"},
 		{"abcあいう|", "A<C-w><Esc>", "abc", "0:2"},
 		{"あ　い|", "A<C-w><Esc>", "あ　", "0:3"},
+		// 全角空白（U+3000）の直後では、db と同じく全角空白を飛ばしてその前の単語まで消す（Vim と違う。Vim の <C-w> は
+		// 全角空白を空白と見ず、全角空白だけを消して "あ" と "foo" になる）。
+		{"あ　|", "A<C-w><Esc>", "", "0:0"},
+		{"foo　|", "A<C-w><Esc>", "", "0:0"},
 		{"x éé|", "A<C-w><Esc>", "x ", "0:1"},
 		// このインサートで入力した文字より前も消す（Vim は入力の始まりで 1 度止まり、どちらも "abc def" になる）。
 		{"abc def|", "Ax<C-w><Esc>", "abc ", "0:3"},
@@ -190,6 +194,31 @@ func TestInsertDeleteWordAndLineStart(t *testing.T) {
 		{"a|bc def", "3Ax<C-u><Esc>", "", "0:0"},
 		{"a|bc def", "3Ax<C-u>y<Esc>", "y", "0:0"},
 	})
+}
+
+// レジスターのテキストから再生するマクロでも、2 つの操作が働く（PR #261 のレビューの推奨 1）。
+// "ay$ で取った行の生の 0x17 と 0x15 は、@a で <C-w> と <C-u> として読む（internal/command の keysFromText）。u で再生の前に戻る。
+// 期待値は Vim 9.1 の <C-w> と <C-u> で取った値と同じである。"ay$ がレジスターの履歴に 1 件積むので、runInsertCases は使わない。
+//
+// req: FR-128
+func TestInsertDeleteWordFromRegisterText(t *testing.T) {
+	for _, tc := range []struct{ line, keys, want, cursor string }{
+		{"A\x17\x1b", `"ay$j@a`, "abc ", "1:3"},
+		{"A\x17\x1b", `"ay$j@au`, "abc def", "1:6"},
+		{"A\x15x\x1b", `"ay$j@a`, "x", "1:0"},
+		{"A\x15x\x1b", `"ay$j@au`, "abc def", "1:6"},
+	} {
+		buf := buffer.New(tc.line + "\nabc def\n")
+		st := command.New(buf, input.NewParser(emacsKeymap(t)))
+		for _, k := range editcmd.MustParseKeys(tc.keys) {
+			st.Feed(k)
+		}
+		c := st.Cursor()
+		want := tc.line + "\n" + tc.want
+		if got, cursor := strings.TrimSuffix(buf.Text(), "\n"), fmt.Sprintf("%d:%d", c.Line, c.Byte); got != want || cursor != tc.cursor || st.Mode() != command.ModeNormal {
+			t.Errorf("%q %s: text %q cursor %s mode %v, want %q %s", tc.line, tc.keys, got, cursor, st.Mode(), want, tc.cursor)
+		}
+	}
 }
 
 // config.example.jsonc の Emacs 風の 10 個のキーと、<BS> として届く Ctrl-H は、#257 と #260 の表のとおりに働く。行頭、行末、最初と最後の行、空のバッファ、全角文字の上では、
