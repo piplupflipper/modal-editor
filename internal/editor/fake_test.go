@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/piplupflipper/modal-editor/ext/server"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/rpc"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
@@ -125,6 +127,41 @@ func runFakeExt(mode string) int {
 			go func() {
 				r, err := s.OpenPopup(hostCtx, fakePopup(a.Text))
 				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("opened %d err=%v", r.View, err))
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
+		// fake.headdiff は、buffer/create で編集を禁止した "HEAD:x" のバッファ（中身は one と TWO の 2 行）を作り、
+		// diff/start でカーソルのあるバッファ（A）と見比べさせる（#245。git 連携の拡張機能の代役）。
+		// 引数が数なら、作らずにその番号のバッファを B にし、notab なら、作った 2 つのバッファを見比べさせる。
+		// 結果は message/show で "headdiff buf=<作った番号> split=<分割したか> err=<誤り>" と出す。
+		s.Command("fake.headdiff", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var a struct{ Text string }
+			_ = json.Unmarshal(p.Args, &a)
+			cur := p.Buffer
+			go func() {
+				var created ext.BufferCreateResult
+				var err error
+				dp := ext.DiffStartParams{A: cur}
+				if n, perr := strconv.ParseUint(a.Text, 10, 64); perr == nil {
+					dp.B = ext.BufferID(n)
+				} else {
+					created, err = s.CreateBuffer(hostCtx, ext.BufferCreateParams{Title: "HEAD:x", Text: "one\nTWO"})
+					dp.B = created.Buffer
+					if err == nil && a.Text == "notab" {
+						var other ext.BufferCreateResult
+						other, err = s.CreateBuffer(hostCtx, ext.BufferCreateParams{Title: "other", Text: ""})
+						dp.A = other.Buffer
+					}
+				}
+				var r ext.DiffStartResult
+				if err == nil {
+					r, err = s.StartDiff(hostCtx, dp)
+				}
+				var re *rpc.Error
+				if errors.As(err, &re) {
+					err = errors.New(re.Message)
+				}
+				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("headdiff buf=%d split=%v err=%v", created.Buffer, r.Split, err))
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
@@ -436,7 +473,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				act(ext.ActivationTextObject, "fake.hang"), act(ext.ActivationCommand, "fake.upper"),
 				act(ext.ActivationCommand, "fake.echo"), act(ext.ActivationCommand, "fake.openlater"),
 				act(ext.ActivationCommand, "fake.write"), act(ext.ActivationCommand, "fake.touch"),
-				act(ext.ActivationCommand, "fake.popup"),
+				act(ext.ActivationCommand, "fake.popup"), act(ext.ActivationCommand, "fake.headdiff"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -448,7 +485,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
 					contrib("fake.write", ""), contrib("fake.touch", ""),
-					contrib("fake.popup", ""),
+					contrib("fake.popup", ""), contrib("fake.headdiff", ""),
 				},
 				// ポップアップの中だけで効くキー（FR-69）。x は本体では文字を消すキーで、ポップアップの中ではこちらが先に効く。
 				// gx は g で始まるので、gg はキーの列が当たらずに本体の gg として動く。

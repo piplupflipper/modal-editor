@@ -13,7 +13,7 @@ import (
 // 値は次の型のポインターのいずれかである。
 //
 //   - 拡張機能からのリクエスト: [EditRequest]、[EditorStateRequest]、[EditorOpenRequest]、[BufferSaveRequest]、
-//     [DiagnosticListRequest]、[ChoiceAskRequest]、[PopupOpenRequest]
+//     [DiagnosticListRequest]、[ChoiceAskRequest]、[PopupOpenRequest]、[BufferCreateRequest]、[DiffStartRequest]
 //   - 拡張機能からの通知: [DecorationSet]、[MessageShow]、[DiagnosticSet]、[SignSet]、[PopupShow]、[OutputAppend]、
 //     [ViewUpdate]、[ViewClose]
 //   - Host が作るもの: [StateChange]、[QueryResult]
@@ -220,6 +220,33 @@ func (r *PopupOpenRequest) Reply(result ext.PopupOpenResult) error {
 	return r.reply(result, nil)
 }
 
+// BufferCreateRequest は、拡張機能からの buffer/create のリクエストである（基本設計 5.3、6.9。FR-88、FR-104）。
+// Params は ext.BufferCreateParams.Validate を通したものである。
+// イベントループは、ファイルでないバッファを作って [Host.OpenBuffer] を呼んでから [BufferCreateRequest.Reply] で番号を返す。
+type BufferCreateRequest struct {
+	Extension string
+	Params    ext.BufferCreateParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ buffer/create の結果を返す。
+func (r *BufferCreateRequest) Reply(result ext.BufferCreateResult) error {
+	return r.reply(result, nil)
+}
+
+// DiffStartRequest は、拡張機能からの diff/start のリクエストである（基本設計 5.3、6.8。FR-99、FR-104）。
+// Params は ext.DiffStartParams.Validate を通したものである。
+type DiffStartRequest struct {
+	Extension string
+	Params    ext.DiffStartParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ diff/start の結果を返す。
+func (r *DiffStartRequest) Reply(result ext.DiffStartResult) error {
+	return r.reply(result, nil)
+}
+
 // ViewUpdate は、拡張機能からの view/update の通知である。読めない部品（ext.ViewComponent.Validate の誤り）は Host が捨てる。
 type ViewUpdate struct {
 	Extension string
@@ -280,6 +307,8 @@ func (*PopupShow) isEvent()             {}
 func (*OutputAppend) isEvent()          {}
 func (*StatusLineSet) isEvent()         {}
 func (*PopupOpenRequest) isEvent()      {}
+func (*BufferCreateRequest) isEvent()   {}
+func (*DiffStartRequest) isEvent()      {}
 func (*ViewUpdate) isEvent()            {}
 func (*ViewClose) isEvent()             {}
 func (*StateChange) isEvent()           {}

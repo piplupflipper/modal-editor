@@ -65,4 +65,6 @@ package ext
 // 0.6.0 で、ポップアップと表示の部品のメソッド（popup/open、view/update、view/close、view/closed、view/select、input/change、view/key。
 // view.go）と、宣言ファイルの contributes.popupKeys と、editor/open の peek を足した（#236）。
 // 古い本体は popup/open に method not found で応答し、peek を黙って捨てて本物のファイルを開く。
-const APIVersion = "0.6.0"
+// 0.7.0 で、ファイルでないバッファを作る buffer/create と、2 つのバッファの見比べを始める diff/start を足した（diffstart.go。#245）。
+// 古い本体はどちらにも method not found で応答する。
+const APIVersion = "0.7.0"

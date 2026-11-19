@@ -12,7 +12,7 @@ import (
 func init() {
 	Symbols["github.com/piplupflipper/modal-editor/ext/ext"] = map[string]reflect.Value{
 		// function, constant and variable definitions
-		"APIVersion":               reflect.ValueOf(constant.MakeFromLiteral("\"0.6.0\"", token.STRING, 0)),
+		"APIVersion":               reflect.ValueOf(constant.MakeFromLiteral("\"0.7.0\"", token.STRING, 0)),
 		"ActivationCommand":        reflect.ValueOf(ext.ActivationCommand),
 		"ActivationFileType":       reflect.ValueOf(ext.ActivationFileType),
 		"ActivationMotion":         reflect.ValueOf(ext.ActivationMotion),
@@ -28,6 +28,7 @@ func init() {
 		"MessageWarning":           reflect.ValueOf(ext.MessageWarning),
 		"MethodBufferChange":       reflect.ValueOf(constant.MakeFromLiteral("\"buffer/change\"", token.STRING, 0)),
 		"MethodBufferClose":        reflect.ValueOf(constant.MakeFromLiteral("\"buffer/close\"", token.STRING, 0)),
+		"MethodBufferCreate":       reflect.ValueOf(constant.MakeFromLiteral("\"buffer/create\"", token.STRING, 0)),
 		"MethodBufferDidSave":      reflect.ValueOf(constant.MakeFromLiteral("\"buffer/didSave\"", token.STRING, 0)),
 		"MethodBufferEdit":         reflect.ValueOf(constant.MakeFromLiteral("\"buffer/edit\"", token.STRING, 0)),
 		"MethodBufferOpen":         reflect.ValueOf(constant.MakeFromLiteral("\"buffer/open\"", token.STRING, 0)),
@@ -40,6 +41,7 @@ func init() {
 		"MethodDecorationSet":      reflect.ValueOf(constant.MakeFromLiteral("\"decoration/set\"", token.STRING, 0)),
 		"MethodDiagnosticList":     reflect.ValueOf(constant.MakeFromLiteral("\"diagnostic/list\"", token.STRING, 0)),
 		"MethodDiagnosticSet":      reflect.ValueOf(constant.MakeFromLiteral("\"diagnostic/set\"", token.STRING, 0)),
+		"MethodDiffStart":          reflect.ValueOf(constant.MakeFromLiteral("\"diff/start\"", token.STRING, 0)),
 		"MethodEditorOpen":         reflect.ValueOf(constant.MakeFromLiteral("\"editor/open\"", token.STRING, 0)),
 		"MethodEditorState":        reflect.ValueOf(constant.MakeFromLiteral("\"editor/state\"", token.STRING, 0)),
 		"MethodInitialize":         reflect.ValueOf(constant.MakeFromLiteral("\"initialize\"", token.STRING, 0)),
@@ -116,6 +118,8 @@ func init() {
 		"ActivationKind":          reflect.ValueOf((*ext.ActivationKind)(nil)),
 		"BufferChangeParams":      reflect.ValueOf((*ext.BufferChangeParams)(nil)),
 		"BufferCloseParams":       reflect.ValueOf((*ext.BufferCloseParams)(nil)),
+		"BufferCreateParams":      reflect.ValueOf((*ext.BufferCreateParams)(nil)),
+		"BufferCreateResult":      reflect.ValueOf((*ext.BufferCreateResult)(nil)),
 		"BufferDidSaveParams":     reflect.ValueOf((*ext.BufferDidSaveParams)(nil)),
 		"BufferEditParams":        reflect.ValueOf((*ext.BufferEditParams)(nil)),
 		"BufferEditResult":        reflect.ValueOf((*ext.BufferEditResult)(nil)),
@@ -143,6 +147,8 @@ func init() {
 		"DiagnosticListResult":    reflect.ValueOf((*ext.DiagnosticListResult)(nil)),
 		"DiagnosticSetParams":     reflect.ValueOf((*ext.DiagnosticSetParams)(nil)),
 		"DiagnosticSeverity":      reflect.ValueOf((*ext.DiagnosticSeverity)(nil)),
+		"DiffStartParams":         reflect.ValueOf((*ext.DiffStartParams)(nil)),
+		"DiffStartResult":         reflect.ValueOf((*ext.DiffStartResult)(nil)),
 		"Edit":                    reflect.ValueOf((*ext.Edit)(nil)),
 		"EditorOpenParams":        reflect.ValueOf((*ext.EditorOpenParams)(nil)),
 		"EditorOpenResult":        reflect.ValueOf((*ext.EditorOpenResult)(nil)),

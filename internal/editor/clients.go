@@ -206,6 +206,7 @@ func (e *Editor) attach(req attachRequest) {
 		req.done <- err
 		return
 	}
+	e.diffAdopt(req.info.Files)
 	e.startClient(c)
 	e.diffAttached(c)
 	req.done <- nil

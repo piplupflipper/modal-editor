@@ -26,6 +26,7 @@ import (
 // file が既に別の client のタブなら、ペインを分割せずにそのタブと見比べる。
 // :diffthis は、Vim と同じく 2 つのタブで打つと、その 2 つを見比べ始める。
 // :diffoff は、カーソルのあるタブの組を終える。どちらかのバッファを閉じても終わる。
+// 拡張機能は、diff/start で 2 つのバッファの見比べを始めさせる（diffstart.go）。
 // 端末多重化ソフトの外（FR-60）では編集の client が 1 つなので、:diffsplit は誤りにする（基本設計 10 章の仮）。
 //
 // # 差分の計算
@@ -61,8 +62,13 @@ const diffPendingTimeout = 30 * time.Second
 type diffPending struct {
 	// from は、:diffsplit を打ったタブのバッファである。
 	from *bufferState
-	// path は、新しい client が開くファイルの絶対パスである。
+	// path は、新しい client が開くファイルの絶対パスである。buf を使うときは空である。
 	path string
+	// buf は、拡張機能の diff/start で、新しい client のタブにするバッファ（どのタブでもないもの）である。:diffsplit では nil。
+	// 新しい client はファイルを渡さずに起動し、繋いだときに（diffAdopt）このバッファをタブにする（diffstart.go）。
+	buf *bufferState
+	// swap は、見比べの左の側（diff.A）を buf にすることを表す（diff/start の A がタブでなかった）。
+	swap bool
 	// at は、ペインを開くよう頼んだ時刻である。
 	at time.Time
 }
@@ -278,7 +284,7 @@ func (e *Editor) diffClosed(bs *bufferState) {
 	if e.diff.this == bs {
 		e.diff.this = nil
 	}
-	if p := e.diff.pending; p != nil && p.from == bs {
+	if p := e.diff.pending; p != nil && (p.from == bs || p.buf == bs) {
 		e.diff.pending = nil
 	}
 }
@@ -291,6 +297,21 @@ func (e *Editor) diffAttached(c *clientView) {
 	}
 	if time.Since(p.at) > diffPendingTimeout {
 		e.diff.pending = nil
+		return
+	}
+	if p.buf != nil {
+		// 拡張機能の diff/start のバッファは、繋ぐ前に diffAdopt がこの client のタブにしている。
+		if !slices.Contains(c.tabs, p.buf) {
+			return
+		}
+		e.diff.pending = nil
+		if p.from.owner != nil && p.from.owner != c && slices.Contains(e.bufs, p.from) {
+			if p.swap {
+				e.startDiff(p.buf, p.from)
+			} else {
+				e.startDiff(p.from, p.buf)
+			}
+		}
 		return
 	}
 	for _, bs := range c.tabs {
@@ -352,28 +373,40 @@ func (e *Editor) diffSplit(bs *bufferState, file string) error {
 		e.startDiff(bs, o)
 		return nil
 	}
-	pane := e.view.info.Pane
+	if err := e.splitForDiff(e.view, abs, &diffPending{from: bs, path: abs, at: time.Now()}); err != nil {
+		return err
+	}
+	e.message = infoMessage(fmt.Sprintf("%s を別のペインで開いて見比べます", filepath.Base(abs)))
+	return nil
+}
+
+// splitForDiff は、client c のペインを端末多重化ソフトの層（Config.SplitPane）で分割し、そこでこの server に繋ぐ編集の client を
+// 起動するよう頼んで、p を相手の client を待つ見比べにする。file は新しい client に渡すファイルで、空ならファイルを渡さない（diff/start）。
+// 端末多重化ソフトの外（ペインを知らない、SplitPane が無い）なら errOutsideMux を返す。
+// 分割の誤りは、別の goroutine で知り、イベントループで c のメッセージの行に出す。
+func (e *Editor) splitForDiff(c *clientView, file string, p *diffPending) error {
+	pane := c.info.Pane
 	if e.cfg.SplitPane == nil || pane == "" {
 		return errOutsideMux
 	}
-	p := &diffPending{from: bs, path: abs, at: time.Now()}
 	e.diff.pending = p
-	split, dir, c := e.cfg.SplitPane, e.workDir(), e.view
-	e.message = infoMessage(fmt.Sprintf("%s を別のペインで開いて見比べます", filepath.Base(abs)))
+	split, abs := e.cfg.SplitPane, file
+	var dir string
+	e.withView(c, func() { dir = e.workDir() })
 	go func() {
 		defer e.recoverPanic()
 		err := split(pane, abs, dir)
 		if err == nil {
 			return
 		}
-		e.log.Warn(":diffsplit のペインを開けない", "file", abs, "err", err)
-		// 誤りは、イベントループで、:diffsplit を打った client に知らせる。
+		e.log.Warn("見比べのペインを開けない", "file", abs, "err", err)
+		// 誤りは、イベントループで、分割を頼んだ client に知らせる。
 		f := func() {
 			if e.diff.pending == p {
 				e.diff.pending = nil
 			}
 			if c.attached() {
-				e.withView(c, func() { e.showError(fmt.Errorf(":diffsplit のペインを開けません: %w", err)) })
+				e.withView(c, func() { e.showError(fmt.Errorf("見比べのペインを開けません: %w", err)) })
 			}
 		}
 		select {
