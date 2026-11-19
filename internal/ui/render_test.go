@@ -27,6 +27,10 @@ func testTheme() Theme {
 		StyleStatusLine:        {Reverse: true, Bold: true},
 		StyleDiagnosticError:   {Undercurl: true, Sp: Indexed(9)},
 		StyleDiagnosticWarning: {Underline: true, Sp: Indexed(10)},
+		// タブの行は、カーソルのあるタブを反転と太字（'S'）、他のタブを下線（'_'）、空いた列を反転（'v'）で読み分ける。
+		StyleTabLine:         {Underline: true},
+		StyleTabLineSelected: {Reverse: true, Bold: true},
+		StyleTabLineFill:     {Reverse: true},
 	}
 }
 

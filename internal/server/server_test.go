@@ -493,7 +493,9 @@ func TestRunFlushesClipboardBeforeClose(t *testing.T) {
 }
 
 // server のソケットで待ち受けた Serve は、最初に Hello を送った編集の client を繋ぎ、その接続で編集して :q で終わる。
-// 編集の client を繋いだ後に届いた接続は、理由 BusyReason の終わりの知らせを送って閉じる。Serve はソケットのファイルを消して戻る。
+// 後から届いた編集の client も繋ぎ、編集の client でない接続は理由付きの終わりの知らせを送って閉じる。Serve はソケットのファイルを消して戻る。
+//
+// req: FR-62, FR-114
 func TestServeOverSocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.txt")
 	srv := newServer(t)
@@ -524,17 +526,49 @@ func TestServeOverSocket(t *testing.T) {
 		t.Fatalf("first message = %#v, want a 40x10 Draw", m)
 	}
 
+	// 2 つ目の編集の client も繋ぎ、その client の Files をその client のタブに開く（FR-62）。:q で最後のタブを閉じると、
+	// その client にだけ終わりの知らせを送って閉じ、最初の client は続ける（FR-114）。
+	bpath := filepath.Join(filepath.Dir(path), "b.txt")
 	second, err := protocol.Dial(sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m, rerr := second.Recv(); rerr != nil || m != (protocol.Exit{Reason: BusyReason}) {
-		t.Fatalf("second client Recv = %#v, %v; want an Exit with BusyReason", m, rerr)
+	if err = second.Send(protocol.Hello{Kind: protocol.KindEdit, Width: 30, Height: 8, Files: []string{bpath}}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err = second.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("second client Recv after Exit = %v, want io.EOF (closed by the server)", err)
+	if m, rerr := second.Recv(); rerr != nil {
+		t.Fatalf("second client Recv = %v", rerr)
+	} else if d, ok := m.(protocol.Draw); !ok || d.Screen.Grid.Width() != 30 || !strings.Contains(d.Screen.Grid.String(), "b.txt") {
+		t.Fatalf("second client first message = %#v, want a 30-column Draw of b.txt", m)
+	}
+	secondMsgs := collect(second)
+	sendKeys(t, second, ":q<CR>")
+	var exits []protocol.Exit
+	for _, m := range <-secondMsgs {
+		if ex, ok := m.(protocol.Exit); ok {
+			exits = append(exits, ex)
+		}
+	}
+	if len(exits) != 1 || exits[0].Reason != "" {
+		t.Errorf("second client exits = %#v, want one Exit without a reason", exits)
 	}
 	_ = second.Close()
+
+	// 編集の client でない接続は、理由付きの終わりの知らせを送って閉じる。
+	wait, err := protocol.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = wait.Send(protocol.Hello{Kind: protocol.KindWait}); err != nil {
+		t.Fatal(err)
+	}
+	if m, rerr := wait.Recv(); rerr != nil || m != (protocol.Exit{Reason: UnsupportedReason}) {
+		t.Fatalf("wait client Recv = %#v, %v; want an Exit with UnsupportedReason", m, rerr)
+	}
+	if _, err = wait.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("wait client Recv after Exit = %v, want io.EOF (closed by the server)", err)
+	}
+	_ = wait.Close()
 
 	msgs := collect(c)
 	sendKeys(t, c, "isock<Esc>:wq<CR>")
@@ -715,7 +749,8 @@ func TestServeOpensHelloFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	msgs := collect(c)
-	sendKeys(t, c, "xx:q!<CR>")
+	// 2 つのファイルは 2 つのタブになるので（FR-62）、:qa! で client のタブをすべて閉じて終える。
+	sendKeys(t, c, "xx:qa!<CR>")
 	if err := <-done; err != nil {
 		t.Fatalf("Run = %v", err)
 	}
@@ -726,7 +761,8 @@ func TestServeOpensHelloFiles(t *testing.T) {
 			last = d.Screen.Grid.String()
 		}
 	}
-	if !strings.HasPrefix(last, "bee ") {
+	// 1 行目はタブの行で、2 行目からがバッファである。
+	if lines := strings.Split(last, "\n"); len(lines) < 2 || !strings.HasPrefix(lines[0], " b.txt") || !strings.HasPrefix(lines[1], "bee ") {
 		t.Errorf("最後の画面の 1 行目が、最初の引数 b.txt の内容（xx で消えない）でない:\n%s", last)
 	}
 	if got, err := os.ReadFile(b); err != nil || string(got) != "bee\n" {

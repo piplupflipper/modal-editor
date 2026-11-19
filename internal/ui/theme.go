@@ -71,6 +71,12 @@ const (
 	StyleStatusLineModeInsert      = "statusline.mode.insert"
 	StyleStatusLineModeVisual      = "statusline.mode.visual"
 	StyleStatusLineModeCommandLine = "statusline.mode.commandline"
+	// StyleTabLine は、タブの行の、カーソルの無いタブの見出しである（FR-62。Vim の TabLine）。
+	StyleTabLine = "tabline"
+	// StyleTabLineSelected は、タブの行の、カーソルのあるタブの見出しである（Vim の TabLineSel）。
+	StyleTabLineSelected = "tabline.selected"
+	// StyleTabLineFill は、タブの行の、見出しの右の空いた列である（Vim の TabLineFill）。
+	StyleTabLineFill = "tabline.fill"
 )
 
 // styleNames は、本体が色を付ける対象の名前の全部である（StyleNames）。
@@ -86,6 +92,7 @@ var styleNames = []string{
 	StyleStatusLineMode, StyleStatusLineName, StyleStatusLineModified, StyleStatusLineReadOnly, StyleStatusLineFileType,
 	StyleStatusLineRecording, StyleStatusLineRuler, StyleStatusLinePosition,
 	StyleStatusLineModeNormal, StyleStatusLineModeInsert, StyleStatusLineModeVisual, StyleStatusLineModeCommandLine,
+	StyleTabLine, StyleTabLineSelected, StyleTabLineFill,
 }
 
 // StyleNames は、本体が色を付ける対象の名前（設定の colors に書ける名前。FR-91）を、定義の順に返す。
@@ -150,6 +157,10 @@ func DefaultTheme() Theme {
 		StyleSignDiagnosticWarning:    {Fg: Indexed(11)},
 		StyleSignDiagnosticInfo:       {Fg: Indexed(12)},
 		StyleSignDiagnosticHint:       {Fg: Indexed(8)},
+		// タブの行は Vim 9.1 の暗い背景の既定（TabLine は下線、TabLineSel は太字、TabLineFill は反転）に近づけた。
+		StyleTabLine:         {Underline: true, Fg: Indexed(15), Bg: Indexed(8)},
+		StyleTabLineSelected: {Bold: true},
+		StyleTabLineFill:     {Reverse: true},
 	}
 }
 

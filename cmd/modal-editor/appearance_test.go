@@ -31,4 +31,9 @@ func TestConfigExample(t *testing.T) {
 	if got := uiColor(config.Color{Kind: config.ColorIndexed, Index: 3}); got != ui.Indexed(3) {
 		t.Errorf("uiColor(3) = %v", got)
 	}
+	for show, want := range map[string]ui.TabLineMode{"": ui.TabLineAlways, config.TabLineAlways: ui.TabLineAlways, config.TabLineMultiple: ui.TabLineMultiple} {
+		if got := uiTabLine(show); got != want {
+			t.Errorf("uiTabLine(%q) = %v, want %v", show, got, want)
+		}
+	}
 }

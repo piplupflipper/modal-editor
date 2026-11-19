@@ -384,11 +384,14 @@ func (e *Editor) appendOutput(extID string, p ext.OutputAppendParams) {
 	if n := len(lines); n > maxOutputLines {
 		dropped := n - maxOutputLines
 		lines = append([]string(nil), lines[dropped:]...)
-		if v := e.outView; v != nil && v.bottom >= 0 && e.shownOutput() == key {
-			if v.bottom -= dropped; v.bottom <= 0 {
-				v.bottom, v.skip = 0, 0 // 見ていた行が捨てられた。欄は先頭の行から出す
+		// 欄は client ごとに開くので、それぞれの見ている位置をずらす。
+		e.eachView(func(*clientView) {
+			if v := e.outView; v != nil && v.bottom >= 0 && e.shownOutput() == key {
+				if v.bottom -= dropped; v.bottom <= 0 {
+					v.bottom, v.skip = 0, 0 // 見ていた行が捨てられた。欄は先頭の行から出す
+				}
 			}
-		}
+		})
 	}
 	e.outputs[key] = lines
 }

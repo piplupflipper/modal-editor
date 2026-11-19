@@ -1,0 +1,32 @@
+## 既定（TabLineAlways）では、タブが 1 つでも出す
+size 30x6 cursor 1,0 block
+   | a.go                         |
+fx |______vvvvvvvvvvvvvvvvvvvvvvvv|
+   |one                           |
+   |two                           |
+   |three                         |
+   | NORMAL  a.go        1,1  Top |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                              |
+
+## タブが 2 つ以上なら一番上の行に出し、表示領域を 1 行減らす
+size 30x6 cursor 3,0 block
+   | a.go  b.go [+]  [No Name] [RO|
+fx |______SSSSSSSSSS______________|
+   |two                           |
+   |three                         |
+   |four                          |
+   | NORMAL  b.go        4,1  33% |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                              |
+
+## 幅に収まらなければ、カーソルのあるタブが収まるまで左を省く
+size 30x6 cursor 1,0 block
+   |< third.go  current.go  after.|
+fx |___________SSSSSSSSSSSS_______|
+   |one                           |
+   |two                           |
+   |three                         |
+   | NORMAL  c.go        1,1  Top |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                              |

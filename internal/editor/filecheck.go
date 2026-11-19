@@ -385,7 +385,7 @@ func (e *Editor) warnStalled() {
 // shortName は、問いと警告に出すバッファの名前を返す。作業ディレクトリの下のファイルなら相対パスにする。
 // 問いの答え方（[O]K, (L)oad File:）を行の末尾に置くので、絶対パスで行の幅を超えて答え方が見えなくなるのを避けるためである（Vim も開いたときの名前で出す）。
 func (e *Editor) shortName(bs *bufferState) string {
-	if rel, err := filepath.Rel(e.cfg.WorkDir, bs.path); err == nil && filepath.IsLocal(rel) {
+	if rel, err := filepath.Rel(e.workDir(), bs.path); err == nil && filepath.IsLocal(rel) {
 		return rel
 	}
 	return displayName(bs)

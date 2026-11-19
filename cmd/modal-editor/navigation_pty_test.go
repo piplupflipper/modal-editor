@@ -22,7 +22,8 @@ func TestNavigationKeysInPTY(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p := startEditor(t, path)
+	// 22 行の表示領域の <PageDown> を確かめるので、タブが 1 つのときはタブの行を出さない（設定の tabline。#215）。
+	p := startEditorWithConfig(t, `{ "tabline": { "show": "multiple" } }`, path)
 	before := ptytest.Termios(t, p.tty)
 	p.out.WaitForString(t, "a.txt")
 

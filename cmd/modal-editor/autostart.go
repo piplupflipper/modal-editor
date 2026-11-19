@@ -66,9 +66,49 @@ type startOptions struct {
 	logPath string
 }
 
-// errServerBusy は、同じ window の server に別の編集の client が繋いでいて、1 つのプロセスで動かすときに、起動後のメッセージで知らせる文言である
-// （基本設計 1.2 の FR-62 までの扱い。仮）。80 桁の端末のメッセージの行に収まる長さにする。
-var errServerBusy = errors.New("別の client が server を使用中のため単独で起動（レジスター等を共有しない）")
+// focusTimeout は、FR-63 のフォーカスの移動で、端末多重化ソフトの操作を待つ上限である（仮）。
+const focusTimeout = 2 * time.Second
+
+// clientEnvNames は、編集の client が Hello で server へ知らせる環境変数の名前である（protocol.Hello.Env）。
+// server のプロセスの環境は server を起動した client のものなので、外部のコマンドへは client ごとにこの値で上書きする（#215）。
+var clientEnvNames = []string{"TMUX_PANE", "HERDR_PANE_ID", "HERDR_TAB_ID"}
+
+// clientHello は、編集の client が server へ送る Hello を作る。files は絶対パスにしたもの、w と h は端末の大きさである。
+// ペイン（FR-63）は、getenv から判定した端末多重化ソフトのペインの ID（tmux の TMUX_PANE、herdr の HERDR_PANE_ID）で、
+// 作業ディレクトリと、clientEnvNames の環境変数も載せる（PR #207 の未確認事項）。
+func clientHello(getenv func(string) string, files []string, readOnly bool, w, h int) protocol.Hello {
+	hello := protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h, Files: files, ReadOnly: readOnly}
+	switch mux.Detect(getenv).Kind() {
+	case mux.KindTmux:
+		hello.Pane = getenv("TMUX_PANE")
+	case mux.KindHerdr:
+		hello.Pane = getenv("HERDR_PANE_ID")
+	case mux.KindNone:
+	}
+	if wd, err := os.Getwd(); err == nil {
+		hello.WorkDir = wd
+	}
+	for _, name := range clientEnvNames {
+		if v := getenv(name); v != "" {
+			hello.Env = append(hello.Env, name+"="+v)
+		}
+	}
+	return hello
+}
+
+// withFocus は、cfg に、端末多重化ソフトの層 m でペインへフォーカスを移す関数（FR-63。editor.Config.FocusPane）を入れて返す。
+// 端末多重化ソフトの外なら入れない。
+func withFocus(cfg editor.Config, m mux.Mux) editor.Config {
+	if m.Kind() == mux.KindNone {
+		return cfg
+	}
+	cfg.FocusPane = func(from, pane string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), focusTimeout)
+		defer cancel()
+		return m.FocusPane(ctx, from, pane)
+	}
+	return cfg
+}
 
 // connectAuto は、基本設計 1.2 の規則で server のソケットのパスを決め、server に繋ぐ（FR-59）。
 //
@@ -358,7 +398,7 @@ func serveAuto(path, logPath string) (err error) {
 	if err != nil {
 		return fmt.Errorf("server のソケットで待ち受けられない: %w", err)
 	}
-	srv, err := server.New(loadConfig(logger))
+	srv, err := server.New(withFocus(loadConfig(logger), mux.Detect(os.Getenv)))
 	if err != nil {
 		_ = ln.Close() // ソケットのファイルを消す
 		return fmt.Errorf("エディタを作れない: %w", err)

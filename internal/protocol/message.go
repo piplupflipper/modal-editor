@@ -64,8 +64,7 @@ func ClampSize(width, height int) (int, int) {
 
 // Hello は、client が接続の最初に送るメッセージである。client の種類と端末の大きさを知らせる（基本設計 1.2）。
 // server は、最初のメッセージが Hello でなければ、その接続を受け付けない。
-// ペインの ID（FR-63）、部品の client の元の client（FR-67、FR-115）、待つだけの client の開くファイル（FR-83）は、
-// それぞれを動かす issue でここに足す。
+// 部品の client の元の client（FR-67、FR-115）、待つだけの client の開くファイル（FR-83）は、それぞれを動かす issue でここに足す。
 type Hello struct {
 	Kind ClientKind
 	// Width と Height は、端末の列数と行数である。端末を持たない client（KindWait）では 0 である。
@@ -76,6 +75,16 @@ type Hello struct {
 	Files []string
 	// ReadOnly は、Files を編集を禁止した状態で開くことを表す（起動のオプション -R。FR-119）。
 	ReadOnly bool
+	// Pane は、client のペインの識別子（tmux の TMUX_PANE、herdr の HERDR_PANE_ID）である。
+	// server は、別の client のタブのファイルを開こうとした client から、そのタブの client のペインへフォーカスを移すのに使う（FR-63）。
+	// 端末多重化ソフトの外では空である。
+	Pane string
+	// WorkDir は、client の作業ディレクトリである（#215。PR #207 の未確認事項）。
+	// server は、この client で打った :e の相対パスと、外部のコマンドの作業ディレクトリに使う。空なら server の作業ディレクトリを使う。
+	WorkDir string
+	// Env は、client の環境変数のうち、server が外部のコマンドへ client ごとに渡すもの（"名前=値" の列。TMUX_PANE、
+	// HERDR_PANE_ID、HERDR_TAB_ID）である。server のプロセスの環境は、server を起動した client のものなので、client ごとに上書きする。
+	Env []string
 }
 
 func (Hello) clientMessage() {}

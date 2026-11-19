@@ -183,12 +183,15 @@ var (
 		{keys: "<C-w><PageUp>", id: "output-scroll-up", modes: MapNormal},
 		{keys: "<C-w><PageDown>", id: "output-scroll-down", modes: MapNormal},
 		// ジャンプリスト（Vim の CTRL-O と CTRL-I）と、裏のバッファへの切り替え（CTRL-^）。
-		// 端末は CTRL-I を Tab と同じ 0x09 で送り、internal/term は <Tab> に読むので、<Tab> も CTRL-I にする（Vim と同じ）。
-		// <C-i> は、CTRL-I を区別して送る端末（CSI u）のための登録である。
+		// 端末は CTRL-I を Tab と同じ 0x09 で送り、internal/term は <Tab> に読む。<Tab> はタブの移動に使うので（FR-98）、
+		// 既定では端末から CTRL-I でジャンプリストを進められない（要件定義 1.1）。
+		// <C-i> は、CTRL-I を区別して送る端末（CSI u）と、設定の keymap で別のキーを <C-i> に展開したときのための登録である。
 		{keys: "<C-o>", id: "jump-older", modes: MapNormal},
-		{keys: "<Tab>", id: "jump-newer", modes: MapNormal},
 		{keys: "<C-i>", id: "jump-newer", modes: MapNormal},
 		{keys: "<C-^>", id: "alternate-buffer", modes: MapNormal},
+		// client の中の次と前のタブへ移る（FR-98。基本設計 4.4 の段階 3 のタブとバッファ）。
+		{keys: "<Tab>", id: "tab-next", modes: MapNormal},
+		{keys: "<S-Tab>", id: "tab-prev", modes: MapNormal},
 		// 貼り付けの直後に、貼ったテキストを履歴の古いほう（<C-p>）、新しいほう（<C-n>）の項目に置き換える（FR-55。キーは仮。基本設計 4.5）。
 		// Vim のノーマルモードの CTRL-P と CTRL-N は k と j と同じ移動で、ここでは移動に割り当てていない。
 		{keys: "<C-p>", id: "put-older", modes: MapNormal},

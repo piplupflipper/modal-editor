@@ -16,7 +16,8 @@ import (
 // req: FR-54, FR-55
 func TestRegisterList(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "one two\n"})
-	h := start(t, Config{WorkDir: dir}, "a.txt")
+	// 6 行の偽の端末の行の位置を確かめるので、タブが 1 つのときはタブの行を出さない。
+	h := start(t, Config{WorkDir: dir, TabLine: ui.TabLineMultiple}, "a.txt")
 
 	h.keys(`yiwwyiw"ayl$:reg<CR>`)
 	// 画面は 6 行なので、窓には見出しと 3 項目が収まる（4 項目目の "a は、選ぶと見える位置までずらす）。

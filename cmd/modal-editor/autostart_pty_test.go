@@ -161,9 +161,9 @@ func herdrEnv(runtime, herdrSock, pane string) []string {
 // タブの server を自分の子として別のプロセスで起動して繋ぐこと、同じタブの 2 つ目は同じ server に繋ぐこと、
 // 別のタブでは別の server になること、最後の編集の client が終わると server も終わってソケットを消すことを確かめる。
 //
-// 今の server は編集の client を 1 つだけ繋ぐので、同じタブの 2 つ目は断られ、1 つのプロセスで動く（基本設計 1.2 の FR-62 までの扱い）。
+// 同じタブの 2 つ目は、同じ server の 2 つ目の編集の client になる（FR-62）。
 //
-// req: FR-59, FR-61
+// req: FR-59, FR-61, FR-62
 func TestAutostartHerdrInPTY(t *testing.T) {
 	runtime := shortRuntimeDir(t)
 	herdrSock := fakeHerdrPanes(t, map[string]string{"wA:p1": "wA:t1", "wA:p2": "wA:t1", "wA:p3": "wA:t2"})
@@ -187,12 +187,15 @@ func TestAutostartHerdrInPTY(t *testing.T) {
 		t.Errorf("server のプロセスグループ = %d, %v; want client（%d）のプロセスグループの外", pgid, err, a.cmd.Process.Pid)
 	}
 
-	// 同じタブの 2 つ目は、同じ server に繋ぐ。今は断られるので、そのことを知らせて 1 つのプロセスで引数のファイルを開く（FR-62 までの扱い）。
-	// server は増えない
+	// 同じタブの 2 つ目は、同じ server に 2 つ目の編集の client として繋ぎ、自分の引数のファイルをタブに開く（FR-62）。
+	// server は増えない。2 つ目が :wq で終わっても、server は 1 つ目のために残る
 	pathB := filepath.Join(t.TempDir(), "b.txt")
 	b := startEditorIn(t, t.TempDir(), herdrEnv(runtime, herdrSock, "wA:p2"), pathB)
-	b.out.WaitForString(t, "使用中")
 	b.out.WaitForString(t, "b.txt")
+	b.out.WaitForString(t, "NORMAL")
+	if strings.Contains(b.out.String(), "1 つのプロセス") {
+		t.Errorf("同じタブの 2 つ目が 1 つのプロセスで動いた。出力: %q", tail(b.out.String()))
+	}
 	if got := waitServers(t, sock1, 1); got[0] != pids[0] {
 		t.Errorf("同じタブの server = %v, want %v のまま", got, pids)
 	}
@@ -202,6 +205,9 @@ func TestAutostartHerdrInPTY(t *testing.T) {
 	}
 	if got, err := os.ReadFile(pathB); err != nil || string(got) != "bee\n" {
 		t.Errorf("b.txt = %q, %v; want %q", got, err, "bee\n")
+	}
+	if got := serverPIDs(t, sock1); len(got) != 1 || got[0] != pids[0] {
+		t.Errorf("2 つ目の client の後の server = %v, want %v のまま", got, pids)
 	}
 
 	// 別のタブでは、別の server になる
@@ -232,7 +238,7 @@ func TestAutostartHerdrInPTY(t *testing.T) {
 }
 
 // TestAutostartRaceInPTY は、同じタブの 2 つのペインでほぼ同時に起動しても、server のロックで server が 1 つになることを確かめる（基本設計 1.2）。
-// 先に繋いだ方が server の編集の client になり、もう一方は断られて 1 つのプロセスで動く。
+// どちらも同じ server の編集の client になる（FR-62）。
 // どちらのペインにも、そのペインで打った引数のファイルが開く（server を起動した側の引数を、先に繋いだ他方のペインに開かない。PR #207 のレビューの推奨 1）。
 //
 // req: FR-59
@@ -252,8 +258,10 @@ func TestAutostartRaceInPTY(t *testing.T) {
 			for _, p := range []*editorProc{p1, p2} {
 				p.out.WaitForString(t, "NORMAL")
 			}
-			if a, b := strings.Contains(p1.out.String(), "使用中"), strings.Contains(p2.out.String(), "使用中"); a == b {
-				t.Errorf("1 つのプロセスで動くと知らせた方: p1 %v, p2 %v; want ちょうど 1 つ", a, b)
+			for _, p := range []*editorProc{p1, p2} {
+				if strings.Contains(p.out.String(), "1 つのプロセス") {
+					t.Errorf("1 つのプロセスで動いた。出力: %q", tail(p.out.String()))
+				}
 			}
 			for _, tc := range []struct {
 				p     *editorProc
@@ -505,13 +513,14 @@ func (ts *testTmuxServer) waitPane(t *testing.T, pane, want string) {
 
 // TestAutostartTmux は、tmux（tmux -L の別のサーバー）の中で、次を確かめる。
 //
-//   - 同じ window の 2 つのペインからほぼ同時に起動しても、server は 1 つになる（2 つ目は同じ server に断られ、1 つのプロセスで動く）。
+//   - 同じ window の 2 つのペインからほぼ同時に起動しても、server は 1 つになり、どちらも同じ server の編集の client になる（FR-62）。
 //     どちらのペインにも、そのペインで打ったファイルが開く
+//   - 別の client のタブのファイルを :e で開こうとすると、そのペインへフォーカスを移す（FR-63）
 //   - 別の window では、別の server になる
 //   - ペインを別の window へ動かした client は、起動したときの server に繋いだまま編集を続けられる（FR-112）
 //   - 最後の編集の client を閉じると、server が終わり、ソケットのファイルを消す（FR-61）
 //
-// req: FR-59, FR-61, FR-112
+// req: FR-59, FR-61, FR-62, FR-63, FR-112
 func TestAutostartTmux(t *testing.T) {
 	runtime := shortRuntimeDir(t)
 	xdg := t.TempDir()
@@ -530,35 +539,37 @@ func TestAutostartTmux(t *testing.T) {
 	sock1 := unitSocket(runtime, unit1)
 	killServersAtCleanup(t, sock1)
 
-	// 先に繋いだ方が server の編集の client になり、もう一方は断られて、そのことを知らせて 1 つのプロセスで動く（FR-62 までの扱い）。
-	// どちらのペインにも、そのペインで打ったファイルが開く
+	// どちらも同じ server の編集の client になり（FR-62）、どちらのペインにも、そのペインで打ったファイルが開く
 	ts.waitPane(t, p1, "a.txt")
 	ts.waitPane(t, p2, "c.txt")
-	deadline := time.Now().Add(10 * time.Second)
-	var alive, single, alivePath string
-	var aliveEditor, singleEditor tmuxEditor
-	for alive == "" {
-		s1 := ts.run(t, "capture-pane", "-p", "-J", "-t", p1)
-		s2 := ts.run(t, "capture-pane", "-p", "-J", "-t", p2)
-		switch {
-		case strings.Contains(s1, "使用中") && !strings.Contains(s2, "使用中"):
-			alive, aliveEditor, alivePath, single, singleEditor = p2, e2, pathC, p1, e1
-		case strings.Contains(s2, "使用中") && !strings.Contains(s1, "使用中"):
-			alive, aliveEditor, alivePath, single, singleEditor = p1, e1, pathA, p2, e2
+	ts.waitPane(t, p1, "NORMAL")
+	ts.waitPane(t, p2, "NORMAL")
+	alive, aliveEditor, alivePath := p1, e1, pathA
+	pids1 := waitServers(t, sock1, 1)
+	for _, p := range []string{p1, p2} {
+		if s := ts.run(t, "capture-pane", "-p", "-J", "-t", p); strings.Contains(s, "1 つのプロセス") {
+			t.Errorf("ペイン %s が 1 つのプロセスで動いた。画面:\n%s", p, s)
 		}
+	}
+
+	// p1 で、p2 のタブの c.txt を開こうとすると、開かずに p2 のペインへフォーカスを移す（FR-63）
+	ts.run(t, "send-keys", "-t", p1, ":e "+pathC, "Enter")
+	ts.waitPane(t, p1, "client")
+	deadline := time.Now().Add(10 * time.Second)
+	for ts.run(t, "display-message", "-p", "-t", p2, "#{pane_active}") != "1" {
 		if time.Now().After(deadline) {
-			t.Fatalf("どちらか一方だけが 1 つのプロセスで動くと知らせない。画面:\n%s\n---\n%s", s1, s2)
+			t.Fatalf("p2 のペインへフォーカスが移らない。p1 の画面:\n%s", ts.run(t, "capture-pane", "-p", "-J", "-t", p1))
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	ts.waitPane(t, alive, "NORMAL")
-	pids1 := waitServers(t, sock1, 1)
-	ts.run(t, "send-keys", "-t", single, ":q", "Enter")
-	if status := singleEditor.wait(t); status != 0 {
-		t.Errorf("1 つのプロセスで動いたエディタの終了コード = %d。標準エラー出力: %q", status, singleEditor.stderr())
+
+	// p2 が :q で終わっても、server は p1 のために残る
+	ts.run(t, "send-keys", "-t", p2, ":q", "Enter")
+	if status := e2.wait(t); status != 0 {
+		t.Errorf("2 つ目の client の終了コード = %d。標準エラー出力: %q", status, e2.stderr())
 	}
 	if got := serverPIDs(t, sock1); len(got) != 1 || got[0] != pids1[0] {
-		t.Errorf("1 つのプロセスで動いたエディタの後の server = %v, want %v のまま", got, pids1)
+		t.Errorf("2 つ目の client の後の server = %v, want %v のまま", got, pids1)
 	}
 
 	// 別の window では、別の server になる

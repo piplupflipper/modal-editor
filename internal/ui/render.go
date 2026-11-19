@@ -61,9 +61,13 @@ type Renderer struct {
 	Symbols Symbols
 	// StatusLine は、ステータス行に並べる部品の列（設定の statusline。FR-92）である。nil なら DefaultStatusLine を使う。
 	StatusLine *StatusLine
+	// TabLine は、タブの行（Frame.Tabs）を出す場合である（設定の tabline.show）。ゼロ値はタブが 1 つでも出す（TabLineAlways）。
+	TabLine TabLineMode
 
-	top  int // 表示領域の最初の行の番号（0 から数える）
-	left int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
+	top int // 表示領域の最初の行の番号（0 から数える）
+	// tabRows は、直前の Render でタブの行に使った行数（0 か 1）である。Render の外から読む表示領域の行数（TextRows）から除く。
+	tabRows int
+	left    int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
 
 	// gutter と outRows は、直前の Render（layout）で決めた、左の欄の列数と出力の欄の中身の行数である。
 	gutter, outRows int
@@ -113,9 +117,9 @@ func (r *Renderer) Columns() Columns {
 // 出力の欄を開いていれば、欄の中身と欄の名前の行の分だけ減る。
 func (r *Renderer) textRows() int {
 	if r.outRows > 0 {
-		return max(r.Height-3-r.outRows, 0)
+		return max(r.Height-r.tabRows-3-r.outRows, 0)
 	}
-	return max(r.Height-2, 0)
+	return max(r.Height-r.tabRows-2, 0)
 }
 
 // textLeft は、バッファのテキストを描く最初の画面の列を返す。
@@ -144,7 +148,17 @@ type cursorPlace struct {
 
 // Render は、f を描いた画面を返す。
 // カーソルが表示領域に収まるように、縦と横のスクロールの位置を更新する。
+// タブの行を出すとき（f.Tabs と TabLine。tabLineShown）は、一番上の行をタブの行にし、残りをその下に描く。
 func (r *Renderer) Render(f *Frame) Screen {
+	if r.tabLineShown(f) {
+		return r.renderWithTabLine(f)
+	}
+	r.tabRows = 0
+	return r.render(f)
+}
+
+// render は、タブの行を除いた Render である。
+func (r *Renderer) render(f *Frame) Screen {
 	theme := r.Theme
 	if theme == nil {
 		theme = DefaultTheme()

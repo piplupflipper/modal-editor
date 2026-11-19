@@ -233,6 +233,36 @@ func TestParseRegisterClipboard(t *testing.T) {
 	}{{1, 29, `registers.clipboard は "osc52" か "off"`}})
 }
 
+// tabline.show は "always" か "multiple" で、項目が無いときと誤りのときは空（既定の "always"）のままにする（#215 のオーナーの裁定）。
+//
+// req: FR-62
+func TestParseTabLine(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+		errs int
+	}{
+		{`{}`, "", 0},
+		{`{"tabline": {"show": "always"}}`, TabLineAlways, 0},
+		{`{"tabline": {"show": "multiple"}}`, TabLineMultiple, 0},
+		{`{"tabline": {"show": "never"}}`, "", 1},
+		{`{"tabline": {"show": 2}}`, "", 1},
+		{`{"tabline": {"parts": []}}`, "", 1},
+		{`{"tabline": "always"}`, "", 1},
+	}
+	for _, c := range cases {
+		cfg, errs := Parse("c", []byte(c.src))
+		if len(errs) != c.errs || cfg.TabLineShow != c.want {
+			t.Errorf("%s: show = %q, errs = %v", c.src, cfg.TabLineShow, errs)
+		}
+	}
+	_, errs := Parse("c", []byte(`{"tabline": {"show": "never"}}`))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{{1, 22, `tabline.show は "always" か "multiple"`}})
+}
+
 // autoread と checkIntervalMs は、項目が無いときの nil（editor の既定値）と、書いた値を区別する（#143）。
 // checkIntervalMs の 0 は「定期的に確かめない」である。
 func TestParseExternalChange(t *testing.T) {

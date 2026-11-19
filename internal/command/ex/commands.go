@@ -96,6 +96,7 @@ func init() {
 		{name: "wqall", min: 3, bang: true, rng: rangeNone, run: runAll(true, true)},
 		{name: "xall", min: 2, bang: true, rng: rangeNone, run: runAll(true, true)},
 		{name: "bdelete", min: 2, bang: true, rng: rangeNone, run: runBufferDelete},
+		{name: "tabmove", min: 4, rng: rangeNone, run: runTabMove},
 	}
 }
 
@@ -108,7 +109,8 @@ func runAll(write, quit bool) func(c *execCtx, inv *invocation) error {
 			return err
 		}
 		if write {
-			c.actions = append(c.actions, Action{Kind: ActionWriteAll, Force: inv.bang})
+			// :wqa と :xa は、閉じる client のタブだけを書き出す（基本設計 4.4。:wa は server のすべてのバッファ）。
+			c.actions = append(c.actions, Action{Kind: ActionWriteAll, Force: inv.bang, ClientOnly: quit})
 		}
 		if quit {
 			c.actions = append(c.actions, Action{Kind: ActionQuitAll, Force: inv.bang})
@@ -387,10 +389,53 @@ func runEdit(c *execCtx, inv *invocation) error {
 	if err != nil {
 		return err
 	}
-	if err := c.checkModified(inv); err != nil {
-		return err
+	if file == "" {
+		// 段階 3 では :e {file} は新しいタブで開き、元のタブを残すので（FR-113）、未保存の変更を確かめるのは読み直しだけである。
+		if err := c.checkModified(inv); err != nil {
+			return err
+		}
 	}
 	c.actions = append(c.actions, Action{Kind: ActionEdit, File: file, Force: inv.bang})
+	return nil
+}
+
+// runTabMove は :tabm[ove] [N|+N|-N|$] を実行する（Vim 9.1 と同じ書き方）。
+// 引数が無いか $ なら末尾へ、N なら N 番目のタブの後ろへ（0 なら先頭へ）、+N と -N なら N だけ右と左へ動かす。
+// + と - だけなら 1 とする。並びの外を指すかは、タブを持つ呼び出し側が確かめる（Vim 9.1 は E475）。
+//
+// req: FR-65
+func runTabMove(c *execCtx, inv *invocation) error {
+	arg := strings.TrimSpace(inv.arg)
+	a := Action{Kind: ActionTabMove, Count: -1, Text: arg}
+	if arg != "" && arg != "$" {
+		s := &scanner{src: inv.arg, base: inv.argPos}
+		s.skipBlanks()
+		sign := 0
+		switch s.peek() {
+		case '+':
+			sign = 1
+			s.next()
+		case '-':
+			sign = -1
+			s.next()
+		}
+		n, ok := s.number()
+		s.skipBlanks()
+		switch {
+		case !s.eof() || (!ok && sign == 0):
+			return errAt(inv.argPos, codeInvalidArgument, "無効な引数です: %s", arg)
+		case sign != 0 && ok && n == 0:
+			// Vim 9.1 は :tabmove -0 と :tabmove +0 を E475 にする。
+			return errAt(inv.argPos, codeInvalidArgument, "無効な引数です: %s", arg)
+		case !ok:
+			n = 1
+		}
+		a.Count = n
+		if sign != 0 {
+			a.Count, a.Relative = sign*n, true
+		}
+	}
+	c.actions = append(c.actions, a)
 	return nil
 }
 

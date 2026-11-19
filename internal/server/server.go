@@ -4,18 +4,18 @@
 // イベントループが組み立てた画面とクリップボードへの書き込みを client へ送る。
 // 端末は持たない。端末の raw モード、キーの解読、画面の出力は client（internal/client）が持つ。
 //
-// # 段階 3 の 2 段目の範囲
+// # 編集の client
 //
-// 編集の client は 1 つだけ繋ぐ。1 つのプロセスの中の接続（protocol.Pipe。FR-60 の構成）でも、
+// 複数の編集の client を同時に繋ぐ（FR-58、FR-62）。最初の client は、1 つのプロセスの中の接続（protocol.Pipe。FR-60 の構成）でも、
 // server のソケット（protocol.NewServerSocket。Listen で待ち受ける）でもよい（Serve）。
-// 1 つのプロセスの構成でも server のソケットを待ち受けるが（基本設計 1.2）、2 つ目からの接続は、
-// 理由（BusyReason）付きの終わりの知らせを送って閉じる。
-// 複数の編集の client、部品の client、待つだけの client、client ごとのタブの並びは後の段で足す。
-// それに備えて、client ごとに識別子（editor.ClientID）を割り当て、キーのイベントに付けてイベントループへ渡す（基本設計 2.1）。
+// 2 つ目からの client は server のソケットで受け付け、editor.Editor.Attach でイベントループへ渡す。
+// 1 つのプロセスの構成でも server のソケットを待ち受け（基本設計 1.2）、ソケットで繋いだ編集の client を受け付ける。
+// 部品の client と待つだけの client は、まだ受け付けず、理由付きの終わりの知らせを送って閉じる。
 //
-// 今の Server は、editor.Editor が持つ唯一の editor.Terminal を、1 つの接続で演じる形である（段階 3 の仮の形）。
-// 複数の編集の client の issue では、接続の受け付けと切断をイベントループへ送ること、client ごとの画面の大きさと描画、
-// editor.Terminal の口の client 別への置き換えが要る（PR #187 のレビューの推奨 4）。
+// client ごとに識別子（editor.ClientID）を割り当て、接続 1 つを editor.Terminal の口（clientTerm）にする。
+// イベントループは client ごとの画面の大きさで描き、client ごとの clientTerm へ渡す（internal/editor の clients.go）。
+// client が :q で最後のタブを閉じたら、イベントループが clientTerm.Exit を呼び、その接続へ終わりの知らせを送って閉じる。
+// 最後の client が終わったら、イベントループ（editor.Editor.Run）が戻り、Serve が戻る（FR-61）。
 //
 // # 並行処理
 //
@@ -71,10 +71,16 @@ type Server struct {
 	FirstClientTimeout time.Duration
 
 	ed *editor.Editor
-	// client は、繋いだ編集の client である。今は 1 つだけで、Run か Serve で繋ぐ。
-	client *clientTerm
-	nextID editor.ClientID
-	log    *slog.Logger
+	// client は、最初に繋ぐ編集の client である（editor.New に渡した端末）。Run か Serve で繋ぐ。
+	client  *clientTerm
+	onPanic func()
+	nextID  atomic.Uint64
+	log     *slog.Logger
+
+	// mu は terms を守る。
+	mu sync.Mutex
+	// terms は、繋いだ編集の client のすべてである。Serve の終わりに、まだ終わっていない client へ終わりの知らせを送る。
+	terms []*clientTerm
 }
 
 // New は、cfg でイベントループ（editor.Editor）を作り、Server を返す。
@@ -84,12 +90,26 @@ func New(cfg editor.Config) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	t := &clientTerm{onPanic: cfg.OnPanic, log: logger, events: make(chan editor.TermEvent)}
-	ed, err := editor.New(t, cfg)
+	s := &Server{onPanic: cfg.OnPanic, log: logger}
+	s.client = s.newTerm()
+	ed, err := editor.New(s.client, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
-	return &Server{ed: ed, client: t, log: logger}, nil
+	s.ed = ed
+	return s, nil
+}
+
+// newTerm は、1 つの client との接続を editor.Terminal の口にするものを作る。
+func (s *Server) newTerm() *clientTerm {
+	t := &clientTerm{onPanic: s.onPanic, log: s.log, events: make(chan editor.TermEvent)}
+	t.onEnd = func() { s.untrack(t) }
+	return t
+}
+
+// clientInfo は、Hello から、イベントループへ渡す client ごとの情報を作る。
+func clientInfo(id editor.ClientID, h protocol.Hello) editor.ClientInfo {
+	return editor.ClientInfo{ID: id, Pane: h.Pane, WorkDir: h.WorkDir, Env: h.Env, Files: h.Files, ReadOnly: h.ReadOnly}
 }
 
 // Open は、path のファイルを開き、カーソルのあるバッファにする（editor.Editor.Open）。Run の前に呼ぶ。
@@ -122,42 +142,97 @@ func (s *Server) Run(ctx context.Context, conn protocol.ServerConn) error {
 	return s.Serve(ctx, nil, conn)
 }
 
-// Serve は、編集の client を 1 つ繋ぎ、イベントループを動かす。Run と Serve は、1 つの Server で合わせて 1 回だけ呼べる。
+// Serve は、編集の client を繋ぎ、イベントループを動かす。Run と Serve は、1 つの Server で合わせて 1 回だけ呼べる。
 //
-// first が nil でなければ、それを編集の client にする（1 つのプロセスの構成）。
-// first が nil なら、ln で受け付けた接続のうち、最初に編集の client の Hello を送ったものを編集の client にする（server だけのプロセス）。
+// first が nil でなければ、それを最初の編集の client にする（1 つのプロセスの構成）。
+// first が nil なら、ln で受け付けた接続のうち、最初に編集の client の Hello を送ったものを最初の編集の client にする（server だけのプロセス）。
 // FirstClientTimeout の間に来なければ ErrNoClient で戻る。
-// 編集の client を繋いだら、その Hello の Files を Hello.ReadOnly に従って開いてから（OpenArgs と同じ順）、イベントループを動かす。
+// 最初の編集の client を繋いだら、その Hello の Files を Hello.ReadOnly に従って開いてから（OpenArgs と同じ順）、イベントループを動かす。
 // 開けなければ、その理由の終わりの知らせを送り、誤りで戻る。
-// ln が nil でなければ、Serve の間 ln で待ち受け、編集の client を繋いだ後に届いた接続は、理由 BusyReason の終わりの知らせを送って閉じる（今は 2 つ目の client に応えない）。
+// ln が nil でなければ、Serve の間 ln で待ち受け、後から編集の client の Hello を送った接続を、イベントループへ足す（editor.Editor.Attach。FR-62）。
+// その client の Files を開けなければ、その理由の終わりの知らせを送って閉じる。編集の client でない接続は、理由付きの終わりの知らせを送って閉じる。
 // Serve は戻る前に ln を閉じる。
 //
-// 戻り値は editor.Editor.Run と同じで、:q で nil、client が接続を閉じたら editor.ErrTerminalLost、ctx の終わりで ctx.Err() である。
+// 戻り値は editor.Editor.Run と同じで、最後の client が :q などで終われば nil、最後の client が接続を閉じたら editor.ErrTerminalLost、
+// ctx の終わりで ctx.Err() である。
 // client が最初のメッセージを送る前に ctx が終わっても、ctx.Err() で戻る。
 // first の最初のメッセージが編集の client の Hello でなければ、ErrUnexpectedHello で戻る。
 //
-// 戻る前に編集の client の接続を閉じる。client はそれを見て端末を戻す。
+// 戻る前に、まだ繋いでいる編集の client へ終わりの知らせを送り、接続を閉じる。client はそれを見て端末を戻す。
 // 拡張機能はまだ止めないので、呼び出し側は client が端末を戻すのを待ってから Close を呼ぶ（editor.Editor.Close の doc の順序）。
 func (s *Server) Serve(ctx context.Context, ln net.Listener, first protocol.ServerConn) error {
 	var a *acceptor
 	if ln != nil {
-		a = s.startAccept(ln, first != nil)
+		a = s.startAccept(ln)
 		defer a.stop()
 	}
 	conn, hello, err := s.firstClient(ctx, a, first)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }() // 閉じる誤りは、client の側の Recv の誤りで分かる
-	s.nextID++
-	s.client.attach(s.nextID, conn, hello)
+	id := editor.ClientID(s.nextID.Add(1))
+	s.client.attach(id, conn, hello)
+	s.track(s.client)
+	s.ed.SetClientInfo(clientInfo(id, hello))
 	if err = s.openArgs(hello.Files, hello.ReadOnly); err != nil {
-		s.client.finish(err.Error())
+		s.client.end(err.Error())
 		return err
 	}
+	if a != nil {
+		go s.attachLoop(a)
+	}
 	err = s.ed.Run(ctx)
-	s.client.finish(exitReason(ctx, err))
+	reason := exitReason(ctx, err)
+	s.mu.Lock()
+	terms := slices.Clone(s.terms)
+	s.mu.Unlock()
+	for _, t := range terms {
+		t.end(reason)
+	}
 	return err
+}
+
+// track は、繋いだ client の t を覚える（Serve の終わりに終わりの知らせを送るため）。
+// 終わった（end の後の）client は、untrack で一覧から外す（PR #223 のレビューの推奨 4）。
+func (s *Server) track(t *clientTerm) {
+	s.mu.Lock()
+	s.terms = append(s.terms, t)
+	s.mu.Unlock()
+}
+
+// untrack は、終わった client の t を一覧から外す。
+func (s *Server) untrack(t *clientTerm) {
+	s.mu.Lock()
+	s.terms = slices.DeleteFunc(s.terms, func(o *clientTerm) bool { return o == t })
+	s.mu.Unlock()
+}
+
+// attachLoop は、最初の client の後に Hello を送った編集の client を、イベントループへ足す。a が止まるまで続ける。
+func (s *Server) attachLoop(a *acceptor) {
+	defer s.client.recoverPanic()
+	for {
+		var j joined
+		select {
+		case j = <-a.joined:
+		case <-a.done:
+			return
+		}
+		id := editor.ClientID(s.nextID.Add(1))
+		t := s.newTerm()
+		t.attach(id, j.conn, j.hello)
+		// Attach の直後に client が終わっても（Exit）、一覧から外せるように、先に足す。
+		s.track(t)
+		if err := s.ed.Attach(t, clientInfo(id, j.hello)); err != nil {
+			reason := err.Error()
+			if errors.Is(err, editor.ErrStopped) {
+				reason = "server が終わった"
+			}
+			s.log.Info("編集の client を足せない", "client", id, "err", err)
+			t.end(reason)
+			continue
+		}
+		s.log.Info("編集の client を足した", "client", id, "pane", j.hello.Pane)
+	}
 }
 
 // exitReason は、イベントループが err で終わったときに、client へ知らせる終わりの理由を返す。:q などの正常な終わりは空である。
@@ -197,27 +272,13 @@ func (s *Server) firstClient(ctx context.Context, a *acceptor, first protocol.Se
 		defer timer.Stop()
 		expired = timer.C
 	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, protocol.Hello{}, ctx.Err()
-		case <-expired:
-			return nil, protocol.Hello{}, ErrNoClient
-		case conn := <-a.candidates:
-			hctx, cancel := context.WithTimeout(ctx, helloTimeout)
-			h, err := handshake(hctx, conn)
-			cancel()
-			if err == nil {
-				return conn, h, nil
-			}
-			// 閉じる前に次の接続を受け付けられるようにする（閉じたのを見た client がすぐ繋ぎ直しても断らない）。
-			a.busy.Store(false)
-			_ = conn.Close()
-			if ctx.Err() != nil {
-				return nil, protocol.Hello{}, ctx.Err()
-			}
-			s.log.Warn("client の接続を断った", "err", err)
-		}
+	select {
+	case <-ctx.Done():
+		return nil, protocol.Hello{}, ctx.Err()
+	case <-expired:
+		return nil, protocol.Hello{}, ErrNoClient
+	case j := <-a.joined:
+		return j.conn, j.hello, nil
 	}
 }
 
@@ -246,25 +307,34 @@ func handshake(ctx context.Context, conn protocol.ServerConn) (protocol.Hello, e
 		return protocol.Hello{}, errPeerClosed
 	}
 	h, ok := r.m.(protocol.Hello)
-	if !ok || h.Kind != protocol.KindEdit {
+	if !ok {
 		return protocol.Hello{}, fmt.Errorf("%w: %#v", ErrUnexpectedHello, r.m)
+	}
+	if h.Kind != protocol.KindEdit {
+		return protocol.Hello{}, fmt.Errorf("%w: kind %q: %w", ErrUnexpectedHello, h.Kind, errUnsupportedKind)
 	}
 	return h, nil
 }
 
+// errUnsupportedKind は、Hello の client の種類を、まだ受け付けないことを表す（ErrUnexpectedHello を包む）。
+var errUnsupportedKind = errors.New("server: unsupported client kind")
+
 // acceptor は、server のソケットで接続を受け付ける goroutine である。
 type acceptor struct {
 	ln net.Listener
-	// busy は、編集の client が繋いでいる（か、繋ぐ手続きの途中）かである。true の間に届いた接続は閉じる。
-	busy atomic.Bool
-	// candidates は、busy が false のときに届いた接続を、編集の client の候補として渡す。
-	candidates chan protocol.ServerConn
-	done       chan struct{}
+	// joined は、編集の client の Hello を送った接続を、届いた順に渡す。最初のものは firstClient が、後のものは attachLoop が受け取る。
+	joined chan joined
+	done   chan struct{}
 }
 
-func (s *Server) startAccept(ln net.Listener, busy bool) *acceptor {
-	a := &acceptor{ln: ln, candidates: make(chan protocol.ServerConn), done: make(chan struct{})}
-	a.busy.Store(busy)
+// joined は、編集の client の Hello を送った接続である。
+type joined struct {
+	conn  protocol.ServerConn
+	hello protocol.Hello
+}
+
+func (s *Server) startAccept(ln net.Listener) *acceptor {
+	a := &acceptor{ln: ln, joined: make(chan joined), done: make(chan struct{})}
 	go func() {
 		defer s.client.recoverPanic()
 		for {
@@ -272,38 +342,57 @@ func (s *Server) startAccept(ln net.Listener, busy bool) *acceptor {
 			if err != nil {
 				return // ln を閉じた
 			}
-			conn := protocol.NewServerSocket(c)
-			if !a.busy.CompareAndSwap(false, true) {
-				s.log.Info("2 つ目の client には応えないので、接続を閉じる")
-				go s.reject(conn)
-				continue
-			}
-			select {
-			case a.candidates <- conn:
-			case <-a.done:
-				_ = conn.Close()
-				return
-			}
+			go s.admit(a, protocol.NewServerSocket(c))
 		}
 	}()
 	return a
 }
 
-// BusyReason は、2 つ目の編集の client を断るときに、終わりの知らせ（protocol.Exit）の理由に載せる文言である。
-// 今の server は編集の client を 1 つだけ繋ぐ（複数の編集の client は後の段で足す。パッケージの doc）。
-const BusyReason = "この server には別の編集の client が繋いでいる（同じ window の 2 つ目の編集の client はまだ使えない）"
+// admit は、受け付けた接続 conn の Hello を helloTimeout まで待ち、編集の client なら a.joined へ渡す。
+// Hello を送らない接続は閉じ、編集の client でない種類の Hello を送った接続は、理由付きの終わりの知らせを送って閉じる。
+// 1 つの接続の Hello を待つ間も、他の接続を受け付けられるように、接続ごとの goroutine で呼ぶ。
+func (s *Server) admit(a *acceptor, conn protocol.ServerConn) {
+	defer s.client.recoverPanic()
+	ctx, cancel := context.WithTimeout(context.Background(), helloTimeout)
+	go func() {
+		select {
+		case <-a.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	h, err := handshake(ctx, conn)
+	cancel()
+	switch {
+	case errors.Is(err, errUnsupportedKind):
+		s.log.Info("編集の client でない接続を断った", "err", err)
+		s.reject(conn, UnsupportedReason)
+		return
+	case err != nil:
+		s.log.Warn("client の接続を断った", "err", err)
+		_ = conn.Close()
+		return
+	}
+	select {
+	case a.joined <- joined{conn: conn, hello: h}:
+	case <-a.done:
+		s.reject(conn, "server が終わった")
+	}
+}
+
+// UnsupportedReason は、まだ受け付けない種類の client（部品の client、待つだけの client）を断るときに、
+// 終わりの知らせ（protocol.Exit）の理由に載せる文言である。
+const UnsupportedReason = "この種類の client はまだ使えない"
 
 // rejectTimeout は、断る client へ終わりの知らせを送るのを待つ上限である。超えたら送らずに閉じる。
 const rejectTimeout = time.Second
 
-// reject は、受け付けない接続 conn に、理由 BusyReason の終わりの知らせを送ってから閉じる。
+// reject は、受け付けない接続 conn に、理由 reason の終わりの知らせを送ってから閉じる。
 // client は、server が異常終了したとみなさずに、理由を出して終わる（基本設計 1.2）。
-// 読まない接続で受け付けの goroutine が止まらないよう、別の goroutine で呼ぶ。
-func (s *Server) reject(conn protocol.ServerConn) {
-	defer s.client.recoverPanic()
+func (s *Server) reject(conn protocol.ServerConn, reason string) {
 	timer := time.AfterFunc(rejectTimeout, func() { _ = conn.Close() }) // 送り終えなければ閉じて Send を戻す
 	defer timer.Stop()
-	if err := conn.Send(protocol.Exit{Reason: BusyReason}); err != nil && !errors.Is(err, protocol.ErrClosed) {
+	if err := conn.Send(protocol.Exit{Reason: reason}); err != nil && !errors.Is(err, protocol.ErrClosed) {
 		s.log.Warn("断る client へ終わりの知らせを送れない", "err", err)
 	}
 	_ = conn.Close() // 閉じる誤りは、client の側の Recv で分かる
@@ -332,6 +421,36 @@ type clientTerm struct {
 	width, height int
 
 	out outbox
+	// ended は、end を 1 回だけ行うためのものである。
+	ended sync.Once
+	// onEnd は、end の後に呼ぶ関数である（Server の一覧から外す）。newTerm で決め、後から変えない。
+	onEnd func()
+}
+
+// end は、まだ送っていないクリップボードへの書き込みと、終わりの知らせ（理由 reason）を送り（finish）、接続を閉じる。
+// 2 回目からは何もしない。attach の前に呼んだら、接続を閉じるだけにする。
+func (t *clientTerm) end(reason string) {
+	t.ended.Do(func() {
+		if t.conn == nil {
+			return
+		}
+		if t.out.stop != nil {
+			t.finish(reason)
+		}
+		_ = t.conn.Close() // 閉じる誤りは、client の側の Recv の誤りで分かる
+	})
+	if t.onEnd != nil {
+		t.onEnd()
+	}
+}
+
+// Exit は、editor.ClientExiter である。client が :q で最後のタブを閉じ、他の client が残るときに、イベントループが呼ぶ。
+// 送り終えるのを待つとイベントループが止まるので、別の goroutine で end を行う。
+func (t *clientTerm) Exit(reason string) {
+	go func() {
+		defer t.recoverPanic()
+		t.end(reason)
+	}()
 }
 
 // outbox は、client へ送るのを待つ画面とクリップボードへの書き込みの置き場である。

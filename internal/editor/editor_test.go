@@ -15,6 +15,7 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // writeFiles は、作業ディレクトリを作り、files（名前から内容）を置いて、そのパスを返す。
@@ -35,7 +36,8 @@ func writeFiles(t *testing.T, files map[string]string) string {
 // req: FR-01, FR-05
 func TestKeysAndScreen(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "hello\nworld\nzzz\n"})
-	h := start(t, Config{WorkDir: dir}, "a.txt")
+	// 画面の行の位置を確かめるので、タブが 1 つのときはタブの行を出さない（6 行の偽の端末の 1 行を取らないため）。
+	h := start(t, Config{WorkDir: dir, TabLine: ui.TabLineMultiple}, "a.txt")
 	h.keys("xjdd")
 	h.settle()
 	if got := h.text(); got != "ello\nzzz" {
@@ -474,7 +476,8 @@ func TestUIChoice(t *testing.T) {
 // req: FR-34
 func TestChoiceQueue(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
-	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	// 6 行の偽の端末に問いを描くので、タブが 1 つのときはタブの行を出さない。
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), TabLine: ui.TabLineMultiple}, "a.txt")
 	h.keys(`\3`)
 	h.eventually("3 つの問い", func() bool { return h.e.activeChoice() != nil && len(h.e.choices) == 3 })
 	h.settle()
@@ -739,7 +742,7 @@ func TestRunStops(t *testing.T) {
 	}
 
 	h2 := start(t, Config{})
-	close(h2.term.in)
+	h2.term.closeInput()
 	select {
 	case err := <-h2.done:
 		if !errors.Is(err, ErrTerminalLost) {

@@ -337,13 +337,12 @@ func continueClient(ctx context.Context, conn protocol.ClientConn, first protoco
 	return clientUntil(ctx, conn, func() error { return client.Continue(tm, conn, first, logger) })
 }
 
-// startClient は、tmux と herdr の中で繋いだ server へ、起動の引数のファイル（絶対パスにしたもの）と -R を載せた Hello を送り、
-// 最初のメッセージを返す（client.Start）。server は、この client を繋いだ後にファイルを開く。
+// startClient は、tmux と herdr の中で繋いだ server へ、起動の引数のファイル（絶対パスにしたもの）と -R とペインと作業ディレクトリを
+// 載せた Hello を送り（clientHello）、最初のメッセージを返す（client.Start）。server は、この client を繋いだ後にファイルを開く。
+// 同じ server に別の編集の client が繋いでいても、この client を足す（FR-62）。
 //
-// server が理由 server.BusyReason の終わりの知らせで断ったとき（同じ window の server に別の編集の client が繋いでいる）と、
-// 最初のメッセージの前に接続が切れたときは、problem に理由を入れて返す。
-// 呼び出し側は、それを知らせて 1 つのプロセスで動かす（基本設計 1.2 の FR-62 までの扱い。仮）。
-// それ以外の理由付きの終わりの知らせ（ファイルを開けないなど）は first として返し、client.Continue がその理由で終わる。
+// 最初のメッセージの前に接続が切れたときは、problem に理由を入れて返す。呼び出し側は、それを知らせて 1 つのプロセスで動かす。
+// 理由付きの終わりの知らせ（ファイルを開けないなど）は first として返し、client.Continue がその理由で終わる。
 func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, readOnly bool) (first protocol.ServerMessage, problem error) {
 	abs := make([]string, len(files))
 	for i, f := range files {
@@ -354,12 +353,9 @@ func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, re
 		abs[i] = a
 	}
 	w, h := tm.Size()
-	first, err := client.Start(conn, protocol.Hello{Kind: protocol.KindEdit, Width: w, Height: h, Files: abs, ReadOnly: readOnly})
+	first, err := client.Start(conn, clientHello(os.Getenv, abs, readOnly, w, h))
 	if err != nil {
 		return nil, fmt.Errorf("server に繋げないので 1 つのプロセスで動かす: %w", err)
-	}
-	if ex, ok := first.(protocol.Exit); ok && ex.Reason == server.BusyReason {
-		return nil, errServerBusy
 	}
 	return first, nil
 }
@@ -430,6 +426,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		Colors:           uiColors(cfg.Colors),
 		Symbols:          cfg.Symbols,
 		StatusLine:       uiStatusLine(cfg.StatusLine),
+		TabLine:          uiTabLine(cfg.TabLineShow),
 		Registers: command.RegisterConfig{
 			HistorySize:     cfg.RegisterHistorySize,
 			MaxEntryBytes:   cfg.RegisterMaxEntryBytes,

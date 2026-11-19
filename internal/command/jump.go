@@ -12,7 +12,7 @@ import (
 type Navigator interface {
 	// MarkJump は、ジャンプする前のカーソルの位置 from を、このバッファの位置としてジャンプリストに記録する（Vim 9.1 の setpcmark）。
 	MarkJump(from buffer.Position)
-	// Navigate は、a（ex.ActionJump か、ex.ActionBuffer の BufferAlternate）の移動を行う。cursor は現在のカーソルである。
+	// Navigate は、a（ex.ActionJump か、ex.ActionBuffer の BufferAlternate、BufferNext、BufferPrev）の移動を行う。cursor は現在のカーソルである。
 	// 移動先がこのバッファの中なら、移す位置と true を返し、State がカーソルを動かす。
 	// 別のバッファへ移したら ErrBufferSwitched を返す。State は操作をそこで終え、マクロの再生の残りは移った先のバッファで続く。
 	// 移動先が無ければ ErrFailed を包んだエラーを、未保存の変更などで移れなければ画面に出す誤りを返す。
@@ -64,6 +64,20 @@ func actAlternate(s *State, cmd editcmd.Command) error {
 		a.Count = cmd.Count
 	}
 	return s.navigate(a)
+}
+
+// actTab は、<Tab>（dir が 1）と <S-Tab>（dir が -1）である。client の中の次と前のタブへ、回数だけ移る（FR-98）。
+// 端の次は反対の端へ回る（:bn と :bp と同じ。基本設計 4.4 の段階 3 のタブとバッファ）。
+//
+// req: FR-98
+func actTab(dir int) actionFunc {
+	return func(s *State, cmd editcmd.Command) error {
+		op := ex.BufferNext
+		if dir < 0 {
+			op = ex.BufferPrev
+		}
+		return s.navigate(ex.Action{Kind: ex.ActionBuffer, Buffer: op, Count: max(cmd.Count, 1)})
+	}
 }
 
 // navigate は、Navigator に移動を頼み、同じバッファの中の移動ならカーソルを動かす。

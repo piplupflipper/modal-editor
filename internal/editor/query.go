@@ -30,6 +30,8 @@ type pendingQuery struct {
 	ref editcmd.Ref
 	// d は、command.State が保留した操作である。Feed が戻ってから trackDeferred が入れる。
 	d *command.Deferred
+	// client は、問い合わせを始めた client である。結果はこの client の状態で扱う（applyDeferred。基本設計 1.2）。
+	client *clientView
 }
 
 // openRequest は、command/execute の結果の Open のうち、Feed が戻ってから行うものである。
@@ -109,6 +111,8 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 			return errWithheld(ref)
 		}
 	}
+	// この拡張機能が後から届ける editor/open などは、問い合わせを始めた client に出す（extView。基本設計 1.2）。
+	e.extClient[ref.Extension] = e.view
 	e.tagSeq++
 	tag := queryTag(e.tagSeq)
 	timeout := e.syncTimeout()
@@ -123,7 +127,7 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 		if e.deferred != nil {
 			e.deferred.q.Cancel()
 		}
-		e.deferred = &pendingQuery{q: q, tag: tag, bs: bs, method: method, ref: ref}
+		e.deferred = &pendingQuery{q: q, tag: tag, bs: bs, method: method, ref: ref, client: e.view}
 		return command.ErrDeferred
 	}
 	opts := exthost.SendOptions{Tag: tag, Timeout: max(timeout, 0)}
