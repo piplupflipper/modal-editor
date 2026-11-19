@@ -270,6 +270,10 @@ func TestWriteMakeDirectoryDenied(t *testing.T) {
 	h := start(t, Config{WorkDir: dir}, "a.txt")
 	h.keys(":w ro/sub/c.txt<CR>")
 	h.settle()
+	// 権限の不足なので、権限を上げて作るかを問う（FR-116）。n で断ると E212 を出す。
+	h.eventually("権限を上げる問い", func() bool { return h.e.prompt != nil && strings.Contains(h.e.prompt.text, "権限が足りない") })
+	h.keys("n")
+	h.settle()
 	if msg := h.message(); !strings.HasPrefix(msg, "E212: ディレクトリ") {
 		t.Errorf("message = %q, want E212", msg)
 	}

@@ -112,7 +112,8 @@ func withFocus(cfg editor.Config, m mux.Mux) editor.Config {
 
 // connectAuto は、基本設計 1.2 の規則で server のソケットのパスを決め、server に繋ぐ（FR-59）。
 //
-//  1. 環境変数 MODAL_EDITOR_SOCKET があり、その server に繋げれば、それに繋ぐ。繋げなければ（シェルが server より長く残った）、規則 2 以降で決める
+//  1. 環境変数 MODAL_EDITOR_SOCKET があり、その server に繋げれば、待つだけの client になる（FR-83。run が connectAuto の前に waitClient で扱う）。
+//     繋げなければ（シェルが server より長く残った）、規則 2 以降で決める。connectAuto はこの規則を見ない
 //  2. tmux の中なら、tmux のサーバーのソケットのパスと window の ID（m.Unit）から決めたパスの server に繋ぐ
 //  3. herdr の中なら、herdr のソケットのパスとタブの ID（m.Unit）から決めたパスの server に繋ぐ
 //
@@ -123,16 +124,10 @@ func withFocus(cfg editor.Config, m mux.Mux) editor.Config {
 //
 // 返した接続は、起動したときに決めたソケットのものなので、ペインを別の window へ動かしても繋いだままである（FR-112）。
 //
-// 規則 1 でも、今は編集の client として繋ぐ。待つだけの client（FR-83）の issue で、規則 1 の接続の種類を変える。
-//
 // req: FR-59, FR-112
 func connectAuto(ctx context.Context, getenv func(string) string, m mux.Mux, start func(path string) (*serverChild, error), logger *slog.Logger) (conn protocol.ClientConn, problem error) {
 	if p := getenv(envSocket); p != "" {
-		c, err := protocol.Dial(p)
-		if err == nil {
-			return c, nil
-		}
-		logger.Info(envSocket+" の server に繋げないので、次の規則でソケットを決める", "path", p, "err", err)
+		logger.Info(envSocket+" の server に繋げないので、次の規則でソケットを決める", "path", p)
 	}
 	if m.Kind() == mux.KindNone {
 		return nil, nil
@@ -398,7 +393,7 @@ func serveAuto(path, logPath string) (err error) {
 	if err != nil {
 		return fmt.Errorf("server のソケットで待ち受けられない: %w", err)
 	}
-	srv, err := server.New(withFocus(loadConfig(logger), mux.Detect(os.Getenv)))
+	srv, err := server.New(withFocus(withChildEnv(loadConfig(logger), path, logger), mux.Detect(os.Getenv)))
 	if err != nil {
 		_ = ln.Close() // ソケットのファイルを消す
 		return fmt.Errorf("エディタを作れない: %w", err)

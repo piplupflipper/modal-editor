@@ -10,7 +10,14 @@
 // server のソケット（protocol.NewServerSocket。Listen で待ち受ける）でもよい（Serve）。
 // 2 つ目からの client は server のソケットで受け付け、editor.Editor.Attach でイベントループへ渡す。
 // 1 つのプロセスの構成でも server のソケットを待ち受け（基本設計 1.2）、ソケットで繋いだ編集の client を受け付ける。
-// 部品の client と待つだけの client は、まだ受け付けず、理由付きの終わりの知らせを送って閉じる。
+// 待つだけの client（FR-83）は、server のソケットで受け付け、editor.Editor.Wait でファイルを開かせて、タブが閉じられるまで繋いでおく（serveWait）。
+// 部品の client は、まだ受け付けず、理由付きの終わりの知らせを送って閉じる。
+//
+// # 端末の受け渡し
+//
+// :! と権限を上げた保存（FR-79、FR-80、FR-117）では、イベントループが clientTerm の editor.TerminalHandover を呼び、
+// client へ protocol.TerminalRun などを送る。client の返事（protocol.TerminalDone、TerminalReleased）は、キーと同じ列で
+// editor.TermEvent の Terminal としてイベントループへ渡す。
 //
 // client ごとに識別子（editor.ClientID）を割り当て、接続 1 つを editor.Terminal の口（clientTerm）にする。
 // イベントループは client ごとの画面の大きさで描き、client ごとの clientTerm へ渡す（internal/editor の clients.go）。
@@ -294,6 +301,11 @@ var errPeerClosed = errors.New("server: client closed before hello")
 // handshake は、conn の最初のメッセージを待ち、編集の client の Hello なら返す。
 // 待つ間に ctx が終わったら ctx.Err() を返す。そのとき最初のメッセージを待つ goroutine は、呼び出し側が conn を閉じると戻る。
 func handshake(ctx context.Context, conn protocol.ServerConn) (protocol.Hello, error) {
+	return handshakeKinds(ctx, conn, protocol.KindEdit)
+}
+
+// handshakeKinds は、handshake と同じく conn の最初のメッセージを待ち、kinds のどれかの種類の client の Hello なら返す。
+func handshakeKinds(ctx context.Context, conn protocol.ServerConn, kinds ...protocol.ClientKind) (protocol.Hello, error) {
 	type received struct {
 		m   protocol.ClientMessage
 		err error
@@ -316,7 +328,7 @@ func handshake(ctx context.Context, conn protocol.ServerConn) (protocol.Hello, e
 	if !ok {
 		return protocol.Hello{}, fmt.Errorf("%w: %#v", ErrUnexpectedHello, r.m)
 	}
-	if h.Kind != protocol.KindEdit {
+	if !slices.Contains(kinds, h.Kind) {
 		return protocol.Hello{}, fmt.Errorf("%w: kind %q: %w", ErrUnexpectedHello, h.Kind, errUnsupportedKind)
 	}
 	return h, nil
@@ -367,16 +379,19 @@ func (s *Server) admit(a *acceptor, conn protocol.ServerConn) {
 		case <-ctx.Done():
 		}
 	}()
-	h, err := handshake(ctx, conn)
+	h, err := handshakeKinds(ctx, conn, protocol.KindEdit, protocol.KindWait)
 	cancel()
 	switch {
 	case errors.Is(err, errUnsupportedKind):
-		s.log.Info("編集の client でない接続を断った", "err", err)
+		s.log.Info("編集の client でも待つだけの client でもない接続を断った", "err", err)
 		s.reject(conn, UnsupportedReason)
 		return
 	case err != nil:
 		s.log.Warn("client の接続を断った", "err", err)
 		_ = conn.Close()
+		return
+	case h.Kind == protocol.KindWait:
+		s.serveWait(a, conn, h)
 		return
 	}
 	select {
@@ -386,7 +401,61 @@ func (s *Server) admit(a *acceptor, conn protocol.ServerConn) {
 	}
 }
 
-// UnsupportedReason は、まだ受け付けない種類の client（部品の client、待つだけの client）を断るときに、
+// serveWait は、待つだけの client の接続 conn を扱う（FR-83）。admit の goroutine で、待ち終えるまで動く。
+//
+// Hello のファイルを、Hello の Parent の編集の client のタブに開かせ（editor.Editor.Wait）、それらのタブがすべて閉じられたら、
+// 理由の無い終わりの知らせを送って閉じる。待つだけの client はそれを受けて正常に終わる（git はコミットを続ける）。
+// ファイルを開けないとき、タブを開いた client が終わったとき、server が終わるときは、理由付きの終わりの知らせを送る
+// （待つだけの client は 0 でない終了コードで終わる）。待つだけの client の接続が先に切れたら、待つのをやめる（タブは残す）。
+//
+// req: FR-83
+func (s *Server) serveWait(a *acceptor, conn protocol.ServerConn, h protocol.Hello) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-a.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	ended := make(chan string, 1)
+	stopWait, err := s.ed.Wait(ctx, editor.WaitInfo{
+		Files: h.Files, ReadOnly: h.ReadOnly, Parent: editor.ClientID(h.Parent),
+		Done: func(reason string) { ended <- reason },
+	})
+	if err != nil {
+		reason := err.Error()
+		if errors.Is(err, editor.ErrStopped) || errors.Is(err, context.Canceled) {
+			reason = "server が終わった"
+		}
+		s.log.Info("待つだけの client を断った", "err", err)
+		s.reject(conn, reason)
+		return
+	}
+	s.log.Info("待つだけの client を足した", "files", h.Files, "parent", h.Parent)
+	gone := make(chan struct{})
+	go func() {
+		defer s.client.recoverPanic()
+		defer close(gone)
+		for {
+			if _, err := conn.Recv(); err != nil {
+				return // 待つだけの client は何も送らない。接続が切れるか、こちらが閉じるまで読む
+			}
+		}
+	}()
+	select {
+	case reason := <-ended:
+		s.reject(conn, reason)
+	case <-gone:
+		stopWait()
+		_ = conn.Close()
+	case <-a.done:
+		s.reject(conn, "server が終わった")
+	}
+}
+
+// UnsupportedReason は、まだ受け付けない種類の client（部品の client）を断るときに、
 // 終わりの知らせ（protocol.Exit）の理由に載せる文言である。
 const UnsupportedReason = "この種類の client はまだ使えない"
 
@@ -466,14 +535,16 @@ func (t *clientTerm) Exit(reason string) {
 // クリップボードは OSC 52 でホストのクリップボードに残るのが最後の 1 つなので、まとめても利用者から見て変わらない。
 // 読まない client（端末の出力を <C-s> で止めた、固まったペイン）の間にヤンクを繰り返しても、置き場は大きくならない（PR #200 のレビューの推奨 7）。
 //
-// 送る順序は「クリップボード、画面」だけを気にしている。画面と他のメッセージの前後を保つ必要のあるメッセージ
-// （:! の端末の受け渡し。FR-80、FR-117）を足すときは、置き場を順序を保つ列にし、画面だけを列の中の直前の画面と置き換える形に変える
-// （PR #200 のレビューの推奨 4）。
+// 端末の受け渡しの頼み（protocol.TerminalRun、TerminalReclaim、TerminalRelease。FR-80、FR-117）は、捨てずに入れた順に ctrl に置き、
+// 「クリップボード、頼み、画面」の順に送る。頼みを入れた後に組み立てた画面は、必ず頼みの後に届く。
+// client は、端末を渡している間の画面を捨て、取り戻したら次の画面で全体を描き直すので、TerminalReclaim の後に画面が届かないと何も描けない。
+// イベントループは、頼みを入れた処理の後に必ず描く（Run の各周回の終わり）ので、この順なら取り戻した後の画面が届く。
 type outbox struct {
 	mu     sync.Mutex
-	screen *ui.Screen // まだ送っていない最新の画面。nil なら無い
-	clip   *string    // まだ送っていない最新のクリップボードへの書き込み。nil なら無い
-	exit   string     // finish で決めた、終わりの知らせ（protocol.Exit）の理由
+	screen *ui.Screen               // まだ送っていない最新の画面。nil なら無い
+	clip   *string                  // まだ送っていない最新のクリップボードへの書き込み。nil なら無い
+	ctrl   []protocol.ServerMessage // まだ送っていない端末の受け渡しの頼み（入れた順）
+	exit   string                   // finish で決めた、終わりの知らせ（protocol.Exit）の理由
 
 	wake chan struct{} // 置き場に入れたことを送る goroutine に知らせる。溜めは 1
 	stop chan struct{} // Run の終わりで閉じる
@@ -530,8 +601,17 @@ func (t *clientTerm) read() {
 			}
 			return
 		}
-		ev, ok := m.(protocol.Event)
-		if !ok {
+		var ev protocol.Event
+		switch m := m.(type) {
+		case protocol.Event:
+			ev = m
+		case protocol.TerminalDone:
+			t.events <- editor.TermEvent{Client: t.id, Terminal: &editor.TerminalResult{ID: m.ID, Status: m.Status, Err: m.Err}}
+			continue
+		case protocol.TerminalReleased:
+			t.events <- editor.TermEvent{Client: t.id, Terminal: &editor.TerminalResult{ID: m.ID, Released: true}}
+			continue
+		default:
 			t.log.Warn("client から 2 回目の Hello が届いた。無視する")
 			continue
 		}
@@ -560,8 +640,8 @@ func (t *clientTerm) send() {
 			stopping = true
 		}
 		t.out.mu.Lock()
-		scr, clip, reason := t.out.screen, t.out.clip, t.out.exit
-		t.out.screen, t.out.clip = nil, nil
+		scr, clip, ctrl, reason := t.out.screen, t.out.clip, t.out.ctrl, t.out.exit
+		t.out.screen, t.out.clip, t.out.ctrl = nil, nil, nil
 		t.out.mu.Unlock()
 		if clip != nil && !t.sent(t.conn.Send(protocol.SetClipboard{Text: *clip})) {
 			return
@@ -569,6 +649,11 @@ func (t *clientTerm) send() {
 		if stopping {
 			t.sent(t.conn.Send(protocol.Exit{Reason: reason}))
 			return
+		}
+		for _, m := range ctrl {
+			if !t.sent(t.conn.Send(m)) {
+				return
+			}
 		}
 		if scr != nil && !t.sent(t.conn.Send(protocol.Draw{Screen: *scr})) {
 			return
@@ -632,6 +717,29 @@ func (t *clientTerm) Draw(s ui.Screen) error {
 	t.out.mu.Unlock()
 	t.wakeSender()
 	return nil
+}
+
+// RunInTerminal は、editor.TerminalHandover である。端末を子プロセスへ渡して job を動かすよう client に頼む（FR-79、FR-80）。
+func (t *clientTerm) RunInTerminal(job editor.TerminalJob) {
+	cmds := make([]protocol.TerminalCommand, len(job.Commands))
+	for i, c := range job.Commands {
+		cmds[i] = protocol.TerminalCommand(c)
+	}
+	t.control(protocol.TerminalRun{ID: job.ID, Commands: cmds, Env: job.Env, Prompt: job.Prompt})
+}
+
+// ReclaimTerminal は、editor.TerminalHandover である。実行中の id の間に端末を取り戻すよう client に頼む（FR-117）。
+func (t *clientTerm) ReclaimTerminal(id uint64) { t.control(protocol.TerminalReclaim{ID: id}) }
+
+// ReleaseTerminal は、editor.TerminalHandover である。取り戻した端末を子プロセスへ渡し直すよう client に頼む（FR-117）。
+func (t *clientTerm) ReleaseTerminal(id uint64) { t.control(protocol.TerminalRelease{ID: id}) }
+
+// control は、端末の受け渡しの頼み m を、送る置き場の列に入れる。送り終えるのを待たない（outbox の doc）。
+func (t *clientTerm) control(m protocol.ServerMessage) {
+	t.out.mu.Lock()
+	t.out.ctrl = append(t.out.ctrl, m)
+	t.out.mu.Unlock()
+	t.wakeSender()
 }
 
 // SetClipboard は、text をホストのクリップボードへ送るよう client に頼む（FR-56）。送り終えるのを待たない。

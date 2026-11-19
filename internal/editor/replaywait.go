@@ -208,7 +208,9 @@ func (e *Editor) replayAnswered(c *clientView, r *exthost.QueryResult) {
 // feedMapped と handlePaste は、これが nil でなくなったら、残りのキーと貼り付けをここへ移す。
 func (e *Editor) suspension() *heldInput {
 	c := e.view
-	if e.shell != nil && e.shell.client == c {
+	// 外部のコマンドの子孫が起動した待つだけの client のタブを編集している間（FR-117 の reclaimed）は、その client は待っていない。
+	// このとき e.shell は前から動いているもので、このキーで始めたものではない。
+	if e.shell != nil && e.shell.client == c && !e.shell.reclaimed {
 		return &e.shell.heldInput
 	}
 	if c != nil && c.replay != nil {

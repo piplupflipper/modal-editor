@@ -114,6 +114,8 @@ func (h *handover) start(req protocol.TerminalRun) {
 // run は、req のコマンドを動かし、終わったら端末を取り戻して TerminalDone を返す。start が起こす goroutine で動く。
 func (h *handover) run(ho Handover, req protocol.TerminalRun) {
 	in, out := ho.TTY()
+	// 代替画面から戻った通常の画面の、前の出力（前回の :! の問いなど）の行の続きから書き始めないよう、改行してから動かす。
+	_, _ = out.Write([]byte("\r\n")) // 書けなくてもコマンドは動かす
 	status, errText := runCommands(req, in, out)
 	h.mu.Lock()
 	reclaimed := h.job.reclaimed

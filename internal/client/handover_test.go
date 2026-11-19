@@ -56,7 +56,7 @@ func (h *handoverTerm) Reacquire(screen bool) error {
 	}
 	return nil
 }
-func (h *handoverTerm) EnsureForeground()         {}
+func (h *handoverTerm) EnsureForeground()       {}
 func (h *handoverTerm) TTY() (in, out *os.File) { return h.devnull, h.out }
 
 func (h *handoverTerm) callList() []string {
@@ -140,7 +140,7 @@ func TestTerminalRunShellPrompt(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got, want := tm.written(t), "out 9\n\r\nシェルが 3 を返しました\r\n"+promptText; got != want {
+	if got, want := tm.written(t), "\r\nout 9\n\r\nシェルが 3 を返しました\r\n"+promptText; got != want {
 		t.Errorf("端末 = %q, want %q", got, want)
 	}
 	tm.in <- term.Event{Key: editcmd.Rune(':')}
@@ -199,7 +199,7 @@ func TestTerminalRunArgvInput(t *testing.T) {
 	if b, err := os.ReadFile(target); err != nil || string(b) != "a\nb\n" {
 		t.Errorf("書いた中身 = %q, %v", b, err)
 	}
-	if w := tm.written(t); w != "" {
+	if w := tm.written(t); w != "\r\n" {
 		t.Errorf("tee の標準出力が端末へ出た: %q", w)
 	}
 	if got, want := tm.callList(), []string{"release", "reacquire"}; !reflect.DeepEqual(got, want) {

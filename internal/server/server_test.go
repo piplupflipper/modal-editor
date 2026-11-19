@@ -554,21 +554,21 @@ func TestServeOverSocket(t *testing.T) {
 	}
 	_ = second.Close()
 
-	// 編集の client でない接続は、理由付きの終わりの知らせを送って閉じる。
-	wait, err := protocol.Dial(sock)
+	// まだ受け付けない種類の client（部品の client）の接続は、理由付きの終わりの知らせを送って閉じる。
+	popup, err := protocol.Dial(sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = wait.Send(protocol.Hello{Kind: protocol.KindWait}); err != nil {
+	if err = popup.Send(protocol.Hello{Kind: protocol.KindPopup}); err != nil {
 		t.Fatal(err)
 	}
-	if m, rerr := wait.Recv(); rerr != nil || m != (protocol.Exit{Reason: UnsupportedReason}) {
-		t.Fatalf("wait client Recv = %#v, %v; want an Exit with UnsupportedReason", m, rerr)
+	if m, rerr := popup.Recv(); rerr != nil || m != (protocol.Exit{Reason: UnsupportedReason}) {
+		t.Fatalf("popup client Recv = %#v, %v; want an Exit with UnsupportedReason", m, rerr)
 	}
-	if _, err = wait.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("wait client Recv after Exit = %v, want io.EOF (closed by the server)", err)
+	if _, err = popup.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("popup client Recv after Exit = %v, want io.EOF (closed by the server)", err)
 	}
-	_ = wait.Close()
+	_ = popup.Close()
 
 	msgs := collect(c)
 	sendKeys(t, c, "isock<Esc>:wq<CR>")
