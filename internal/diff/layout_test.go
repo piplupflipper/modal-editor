@@ -1,10 +1,8 @@
 package diff
 
 import (
-	"fmt"
 	"math/rand/v2"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -89,15 +87,8 @@ func TestLayoutScreen(t *testing.T) {
 //   - LineAtRow が Row と詰め物の数の逆になる
 //   - 変えた行の Other が、もう片側の行を指す
 func TestLayoutRows(t *testing.T) {
-	rng := rand.New(rand.NewPCG(7, 228))
-	gen := func() string {
-		n := rng.IntN(12)
-		var sb strings.Builder
-		for range n {
-			fmt.Fprintf(&sb, "%c\n", 'a'+rune(rng.IntN(4)))
-		}
-		return sb.String()
-	}
+	rng := rand.New(rand.NewPCG(7, 228)) //nolint:gosec // 再現できる無作為の入力が要る。暗号の用途ではない。
+	gen := func() string { return randomText(rng, rng.IntN(12)) }
 	for range 500 {
 		a, b := gen(), gen()
 		r := Compute(Parse(a), Parse(b))

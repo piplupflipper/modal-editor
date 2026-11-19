@@ -93,9 +93,10 @@ func TestDiffSplit(t *testing.T) {
 		}
 	})
 	// B の画面の 2 行目（タブの行の下の 2 行目）の TWO は、違う文字を diff.text（背景 9）で、行末の右を diff.change（背景 5）で描く。
-	b.term.mu.Lock()
-	text, rest := b.term.last.Grid.At(2, 0).Attr, b.term.last.Grid.At(2, 10).Attr
-	b.term.mu.Unlock()
+	ft := b.term.fakeTerm
+	ft.mu.Lock()
+	text, rest := ft.last.Grid.At(2, 0).Attr, ft.last.Grid.At(2, 10).Attr
+	ft.mu.Unlock()
 	if text.Bg != ui.Indexed(9) || rest.Bg != ui.Indexed(5) {
 		t.Errorf("B の TWO の属性 = %+v、行末の右 = %+v, want 背景 9 と 5", text, rest)
 	}

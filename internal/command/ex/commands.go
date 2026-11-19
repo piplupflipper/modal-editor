@@ -106,8 +106,7 @@ func init() {
 }
 
 // runDiffSplit は :diffs[plit] {file} を実行する。file が無ければ、Vim 9.1 と同じく E471 にする。
-//
-// req: FR-99
+// 見比べを始めるのは、Action を受け取る呼び出し側（internal/editor）である。
 func runDiffSplit(c *execCtx, inv *invocation) error {
 	file, err := fileArg(inv)
 	if err != nil {
@@ -122,8 +121,6 @@ func runDiffSplit(c *execCtx, inv *invocation) error {
 
 // runDiff は、引数を取らない見比べのコマンド（:diffthis、:diffoff、:diffupdate）を実行する関数を返す。
 // :diffoff! と :diffupdate! の ! は受け付けて無視する（見比べは 2 つのタブの組で、:diffoff はその組を終えるため）。
-//
-// req: FR-99
 func runDiff(op DiffOp) func(c *execCtx, inv *invocation) error {
 	return func(c *execCtx, inv *invocation) error {
 		if err := noArg(inv); err != nil {

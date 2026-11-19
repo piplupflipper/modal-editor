@@ -535,4 +535,3 @@ func (e *Editor) syncSession(s *diffSession) {
 	cur[o] = ob.state.Cursor().Line
 	s.lastRow, s.lastCur = row, cur
 }
-
