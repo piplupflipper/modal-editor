@@ -114,6 +114,42 @@ func TestReadHeadIgnoresRepoEnv(t *testing.T) {
 	}
 }
 
+// 作業ツリーへ取り出すときの変換（.gitattributes の eol=crlf）を通した HEAD の版を読む。本体のバッファは CR を行の中のバイトとして持つので、
+// 作業ツリーと同じ CRLF で読めば、変えていない行は同じ行になる（PR #247 のレビューの推奨 1）。
+//
+// req: FR-104
+func TestReadHeadCRLF(t *testing.T) {
+	isolateGit(t)
+	dir := newRepo(t, map[string]string{".gitattributes": "*.crlf text eol=crlf\n", "w.crlf": "one\ntwo\n"})
+	got, err := readHead(context.Background(), filepath.Join(dir, "w.crlf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != "one\r\ntwo\r" {
+		t.Errorf("Text = %q, want %q", got.Text, "one\r\ntwo\r")
+	}
+}
+
+// シンボリックリンクのファイルは、リンクの先のファイルの HEAD の版を読む（PR #247 のレビューの推奨 2）。
+//
+// req: FR-104
+func TestReadHeadSymlink(t *testing.T) {
+	isolateGit(t)
+	dir := newRepo(t, map[string]string{"sub/a.txt": "target\n"})
+	if err := os.Symlink(filepath.Join("sub", "a.txt"), filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "link.txt")
+	runGit(t, dir, "commit", "-q", "-m", "link")
+	got, err := readHead(context.Background(), filepath.Join(dir, "link.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "sub/a.txt" || got.Text != "target" {
+		t.Errorf("readHead = %+v, want sub/a.txt の target", got)
+	}
+}
+
 func TestGitEnv(t *testing.T) {
 	got := gitEnv([]string{"PATH=/bin", "GIT_DIR=/x", "GIT_OPTIONAL_LOCKS=1", "GIT_AUTHOR_NAME=a", "GIT_COMMON_DIR=/y"})
 	want := []string{"PATH=/bin", "GIT_AUTHOR_NAME=a", "GIT_OPTIONAL_LOCKS=0"}

@@ -140,7 +140,8 @@ func TestDiffHeadInTmux(t *testing.T) {
 	p1 := ts.run("split-window", "-d", "-h", "-t", p0, "-c", repo, "-P", "-F", "#{pane_id}", fmt.Sprintf("'%s' a.txt", editor))
 	ts.waitPane(p1, "a.txt を開いた画面", func(s string) bool { return strings.Contains(s, "TWO") && strings.Contains(s, "a.txt") })
 
-	ts.run("send-keys", "-t", p1, "-l", " gd")
+	// 続けて 2 回打つ。2 回目は、1 回目のペインの client を待っている間なので断られ、ペインもバッファも増えない（PR #247 のレビューの必須 1）。
+	ts.run("send-keys", "-t", p1, "-l", " gd gd")
 	var p2 string
 	deadline := time.Now().Add(15 * time.Second)
 	for p2 == "" {
@@ -165,6 +166,15 @@ func TestDiffHeadInTmux(t *testing.T) {
 		t.Errorf("HEAD の版のペインに作業ツリーの行が出た:\n%s", head)
 	}
 	ts.waitPane(p1, "見比べを始めた知らせ", func(s string) bool { return strings.Contains(s, "見比べます") })
+	ts.run("send-keys", "-t", p1, ":ls", "Enter")
+	ls := ts.waitPane(p1, ":ls の一覧", func(s string) bool { return strings.Contains(s, `"HEAD:a.txt"`) })
+	if n := strings.Count(ls, `"HEAD:a.txt"`); n != 1 {
+		t.Errorf(":ls の HEAD:a.txt = %d 個, want 1:\n%s", n, ls)
+	}
+	if n := len(ts.panes()); n != 3 {
+		t.Errorf("ペイン = %d, want 3（待つだけのもの、ファイル、HEAD の版）", n)
+	}
+	ts.run("send-keys", "-t", p1, "Enter")
 
 	// 2 行目で、HEAD の版へは dp で送れず（E21）、do で HEAD の内容を取り込める（基本設計 6.8）。
 	ts.run("send-keys", "-t", p1, "-l", "2Gdp")
@@ -187,6 +197,47 @@ func TestDiffHeadInTmux(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(repo, "a.txt")); string(b) != "one\nTWO\nthree\nfour\n" {
 		t.Errorf("a.txt = %q", b)
 	}
+}
+
+// TestDiffHeadOutsideMuxInTmux は、端末多重化ソフトの外（tmux のペインで TMUX と TMUX_PANE を外して起動した本体）で <Leader>gd を打つと、
+// 見比べられないことを知らせ、HEAD の版のバッファを作らない（隠れたバッファを残さない。FR-64）ことを確かめる（PR #247 のレビューの必須 1）。
+//
+// req: FR-104
+func TestDiffHeadOutsideMuxInTmux(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short では実物の tmux を使うテストを飛ばす")
+	}
+	isolateGit(t)
+	tmuxBin, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux が無い")
+	}
+	editor := buildDist(t)
+	repo := newRepo(t, map[string]string{"a.txt": "one\n"})
+	writeTestFiles(t, repo, map[string]string{"a.txt": "ONE\n"})
+	ts := &testTmux{t: t, bin: tmuxBin, name: fmt.Sprintf("modal-editor-git-test-%d-%d", os.Getpid(), time.Now().UnixNano()), env: testEnv(t)}
+	t.Cleanup(func() {
+		k := exec.Command(tmuxBin, "-L", ts.name, "kill-server") //nolint:gosec // テスト用の tmux
+		k.Env = ts.env
+		_ = k.Run()
+	})
+	p := ts.run("new-session", "-d", "-s", "t", "-x", "160", "-y", "20", "-c", repo, "-P", "-F", "#{pane_id}",
+		fmt.Sprintf("env -u TMUX -u TMUX_PANE '%s' a.txt; sleep 600", editor))
+	ts.waitPane(p, "a.txt を開いた画面", func(s string) bool { return strings.Contains(s, "ONE") })
+	for range 2 {
+		ts.run("send-keys", "-t", p, "-l", " gd")
+		ts.waitPane(p, "見比べられない知らせ", func(s string) bool { return strings.Contains(s, "外では HEAD と見比べられません") })
+		ts.run("send-keys", "-t", p, "-l", "j")
+	}
+	ts.run("send-keys", "-t", p, ":ls", "Enter")
+	ls := ts.waitPane(p, ":ls の一覧", func(s string) bool { return strings.Contains(s, `%a   "a.txt"`) })
+	if strings.Contains(ls, "HEAD:") {
+		t.Errorf(":ls に HEAD の版のバッファが残った:\n%s", ls)
+	}
+	if n := len(ts.panes()); n != 1 {
+		t.Errorf("ペイン = %d, want 1", n)
+	}
+	ts.run("send-keys", "-t", p, "Enter", ":q!", "Enter")
 }
 
 // hasFillerLine は、画面に、- だけで埋めた行（見比べの詰め物の行）があるかを返す。

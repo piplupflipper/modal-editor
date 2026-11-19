@@ -13,7 +13,8 @@ import (
 // 値は次の型のポインターのいずれかである。
 //
 //   - 拡張機能からのリクエスト: [EditRequest]、[EditorStateRequest]、[EditorOpenRequest]、[BufferSaveRequest]、
-//     [DiagnosticListRequest]、[ChoiceAskRequest]、[PopupOpenRequest]、[BufferCreateRequest]、[DiffStartRequest]
+//     [DiagnosticListRequest]、[ChoiceAskRequest]、[PopupOpenRequest]、[BufferCreateRequest]、[BufferUpdateRequest]、
+//     [BufferDisposeRequest]、[DiffStartRequest]
 //   - 拡張機能からの通知: [DecorationSet]、[MessageShow]、[DiagnosticSet]、[SignSet]、[PopupShow]、[OutputAppend]、
 //     [ViewUpdate]、[ViewClose]
 //   - Host が作るもの: [StateChange]、[QueryResult]
@@ -234,6 +235,30 @@ func (r *BufferCreateRequest) Reply(result ext.BufferCreateResult) error {
 	return r.reply(result, nil)
 }
 
+// BufferUpdateRequest は、拡張機能からの buffer/update のリクエストである（ext の diffstart.go）。
+type BufferUpdateRequest struct {
+	Extension string
+	Params    ext.BufferUpdateParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ buffer/update の結果を返す。
+func (r *BufferUpdateRequest) Reply(result ext.BufferUpdateResult) error {
+	return r.reply(result, nil)
+}
+
+// BufferDisposeRequest は、拡張機能からの buffer/dispose のリクエストである（ext の diffstart.go）。
+type BufferDisposeRequest struct {
+	Extension string
+	Params    ext.BufferDisposeParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ buffer/dispose の結果を返す。
+func (r *BufferDisposeRequest) Reply() error {
+	return r.reply(ext.BufferDisposeResult{}, nil)
+}
+
 // DiffStartRequest は、拡張機能からの diff/start のリクエストである（基本設計 5.3、6.8。FR-99、FR-104）。
 // Params は ext.DiffStartParams.Validate を通したものである。
 type DiffStartRequest struct {
@@ -309,6 +334,8 @@ func (*StatusLineSet) isEvent()         {}
 func (*PopupOpenRequest) isEvent()      {}
 func (*BufferCreateRequest) isEvent()   {}
 func (*DiffStartRequest) isEvent()      {}
+func (*BufferUpdateRequest) isEvent()   {}
+func (*BufferDisposeRequest) isEvent()  {}
 func (*ViewUpdate) isEvent()            {}
 func (*ViewClose) isEvent()             {}
 func (*StateChange) isEvent()           {}

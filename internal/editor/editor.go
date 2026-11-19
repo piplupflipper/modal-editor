@@ -158,8 +158,9 @@ type Config struct {
 	// SplitPane は、:diffsplit（基本設計 6.8。FR-99）で、from のペインを分割し、新しいペインで file を開く編集の client を、
 	// このエディタの server に繋ぐ形で起動する関数である（internal/mux の Mux.SplitPane を包んだもの）。dir は起動するディレクトリである。
 	// file が空なら、ファイルを渡さずに起動する（拡張機能の diff/start。diffstart.go）。
+	// 新しい client は、環境変数 EnvSplit に token を入れて起動する。client はそれを Hello の Env で知らせ、イベントループが待ちと照らし合わせる。
 	// イベントループを止めないよう、別の goroutine で呼ぶ。nil なら :diffsplit は端末多重化ソフトの外として誤りにする。
-	SplitPane func(from, file, dir string) error
+	SplitPane func(from, file, dir, token string) error
 	// FocusPane は、別の編集の client のタブのファイルを開こうとしたときに、from のペインから pane のペインへ
 	// フォーカスを移す関数である（FR-63。internal/mux の Mux.FocusPane を包んだもの）。ペインは ClientInfo.Pane である。
 	// イベントループを止めないよう、別の goroutine で呼ぶ。nil なら移さず、メッセージだけを出す。
@@ -362,6 +363,8 @@ type bufferState struct {
 	// title は、ファイルでないバッファ（:help のヘルプ、キーの一覧。help.go）の名前である。タブの行、ステータス行、:ls に
 	// path の代わりに出す。ファイルのバッファと、名前の無いバッファ（[No Name]）では空である。
 	title string
+	// creator は、このバッファを buffer/create で作った拡張機能の ID である（diffstart.go）。それ以外のバッファでは空。
+	creator string
 	// sent は、exthost へ知らせたバージョン番号である（FR-16）。
 	sent uint64
 	// replacedInReplay は、マクロの再生の途中の :e で、この bufferState の buf と state を作り直した（replaceBuffer）ことを表す。

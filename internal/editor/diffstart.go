@@ -4,22 +4,45 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
+	"strings"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 )
 
-// 拡張機能が作るファイルでないバッファ（buffer/create）と、拡張機能から始める見比べ（diff/start）（基本設計 5.3、6.8、6.9。FR-88、FR-99、FR-104）。
+// 拡張機能が作るファイルでないバッファ（buffer/create、buffer/update、buffer/dispose）と、拡張機能から始める見比べ（diff/start）
+// （基本設計 5.3、6.8、6.9。FR-64、FR-88、FR-99、FR-104）。
 //
 // git 連携の拡張機能（cmd/modal-editor-ext-git）は、HEAD の版を buffer/create で編集を禁止したファイルでないバッファにし、
 // diff/start でファイルのバッファと見比べさせる。
 //
-// buffer/create で作ったバッファは、どのタブにもしない（:ls には出し、:b で開ける）。
-// diff/start で、片方のバッファだけがタブなら、:diffsplit と同じくそのタブの client のペインを分割し、ファイルを渡さずに新しい編集の client を起動する。
-// その client が繋いだら（attach）、名前の無い空のタブを作る代わりに、もう片方のバッファをタブにして（diffAdopt）、見比べを始める（diffAttached）。
-// 新しい client は起動の引数で見分けられないので、待っている間（diffPendingTimeout）に、ファイルを渡さずに繋いだ最初の編集の client を使う（仮）。
+// buffer/create で作ったバッファは、どのタブにもせず、作った拡張機能（bufferState.creator）を覚える。
+// その拡張機能だけが、buffer/update で中身を置き換え（編集を禁止していても置き換える）、buffer/dispose で閉じられる。
+// 隠れたバッファを持たない（FR-64）ため、diff/start で見比べが始まらなかったとき（誤りで応答した、分割したペインの client が
+// 期限までに繋がなかった、分割に失敗した）は、まだタブでない作ったバッファを閉じる（discardCreated）。
+//
+// diff/start で、片方のバッファだけがタブなら、:diffsplit と同じくそのタブの client のペインを分割し、ファイルを渡さずに
+// 新しい編集の client を起動する。新しい client は、server のソケットを指定して繋ぎ（cmd/modal-editor の -connect）、
+// 環境変数 EnvSplit の印を Hello で知らせる。印が待ちと同じ client が繋いだら、名前の無い空のタブを作る代わりに、
+// もう片方のバッファをタブにして（diffAdopt）、見比べを始める（diffAttached）。
+
+// EnvSplit は、server が見比べのために分割したペインで起動する編集の client の、待ちの印を入れる環境変数の名前である（仮）。
+// client は Hello の Env でこの値を知らせ、attach がそれを取り出して、ClientInfo.Env から外す（外部のコマンドへ渡さない）。
+const EnvSplit = "MODAL_EDITOR_SPLIT"
+
+// takeSplitToken は、info.Env から EnvSplit の値を取り出して外し、その値を返す。無ければ空を返す。
+func takeSplitToken(info *ClientInfo) string {
+	token := ""
+	info.Env = slices.DeleteFunc(slices.Clone(info.Env), func(kv string) bool {
+		v, ok := strings.CutPrefix(kv, EnvSplit+"=")
+		if ok {
+			token = v
+		}
+		return ok
+	})
+	return token
+}
 
 // bufferCreateRequest は、buffer/create を処理する。ファイルでないバッファを作り、稼働中の拡張機能へ buffer/open を送ってから応答する。
 // Writable が false なら（既定）、編集を禁止した状態で始める（FR-88）。
@@ -32,13 +55,63 @@ func (e *Editor) bufferCreateRequest(ev *exthost.BufferCreateRequest) {
 	b.SetReadOnly(!p.Writable)
 	bs := e.newBuffer(b, "", p.FileType)
 	bs.title = p.Title
+	bs.creator = ev.Extension
 	_ = ev.Reply(ext.BufferCreateResult{Buffer: bs.id, Version: ext.Version(b.Version())})
 }
 
-// diffStartRequest は、diff/start を処理する。始められなければ、画面に出せる日本語の誤りで応答する。
+// createdBy は、番号 id のバッファが、拡張機能 extID が buffer/create で作ったものなら返す。そうでなければ誤りを返す。
+func (e *Editor) createdBy(extID string, id ext.BufferID) (*bufferState, error) {
+	bs := e.findBuffer(id)
+	switch {
+	case bs == nil:
+		return nil, invalidParams("unknown buffer %d", id)
+	case bs.creator != extID:
+		return nil, invalidParams("buffer %d was not created by this extension", id)
+	}
+	return bs, nil
+}
+
+// bufferUpdateRequest は、buffer/update を処理する。作った拡張機能のバッファの中身を、読み直しと同じ入り口（reload）で置き換える。
+// 編集を禁止していても置き換え（基本設計 4.6 の、本体が中身を正当に書き換える場合）、変わった行の差分を buffer/change で送る。
+func (e *Editor) bufferUpdateRequest(ev *exthost.BufferUpdateRequest) {
+	bs, err := e.createdBy(ev.Extension, ev.Params.Buffer)
+	if err != nil {
+		_ = ev.ReplyError(err)
+		return
+	}
+	cursor := bs.state.Cursor()
+	e.reload(bs, buffer.New(ev.Params.Text))
+	line := min(cursor.Line, bs.buf.LineCount()-1)
+	bs.state.SetCursor(buffer.Position{Line: line, Byte: min(cursor.Byte, len(bs.buf.Line(line)))})
+	_ = ev.Reply(ext.BufferUpdateResult{Version: ext.Version(bs.buf.Version())})
+}
+
+// bufferDisposeRequest は、buffer/dispose を処理する。作った拡張機能のバッファを閉じる。タブならタブも閉じる（FR-64）。
+func (e *Editor) bufferDisposeRequest(ev *exthost.BufferDisposeRequest) {
+	bs, err := e.createdBy(ev.Extension, ev.Params.Buffer)
+	if err != nil {
+		_ = ev.ReplyError(err)
+		return
+	}
+	e.closeBufferState(bs)
+	_ = ev.Reply()
+}
+
+// discardCreated は、bs が buffer/create で作ったバッファで、まだどのタブでもなければ閉じる（FR-64）。nil なら何もしない。
+//
+// req: FR-64
+func (e *Editor) discardCreated(bs *bufferState) {
+	if bs != nil && bs.creator != "" && bs.owner == nil && slices.Contains(e.bufs, bs) {
+		e.closeBufferState(bs)
+	}
+}
+
+// diffStartRequest は、diff/start を処理する。始められなければ、まだタブでない作ったバッファを閉じ、画面に出せる日本語の誤りで応答する。
 func (e *Editor) diffStartRequest(ev *exthost.DiffStartRequest) {
 	res, err := e.diffStart(ev.Params)
 	if err != nil {
+		e.discardCreated(e.findBuffer(ev.Params.A))
+		e.discardCreated(e.findBuffer(ev.Params.B))
 		_ = ev.ReplyError(err)
 		return
 	}
@@ -77,7 +150,7 @@ func (e *Editor) diffStart(p ext.DiffStartParams) (ext.DiffStartResult, error) {
 		from, other, swap = b, a, true
 	}
 	c := from.owner
-	if err := e.splitForDiff(c, "", &diffPending{from: from, buf: other, swap: swap, at: time.Now()}); err != nil {
+	if err := e.splitForDiff(c, "", &diffPending{from: from, buf: other, swap: swap}); err != nil {
 		return ext.DiffStartResult{}, err
 	}
 	text := fmt.Sprintf("%s を別のペインで開いて見比べます", e.bufferName(other))
@@ -85,15 +158,15 @@ func (e *Editor) diffStart(p ext.DiffStartParams) (ext.DiffStartResult, error) {
 	return ext.DiffStartResult{Split: true}, nil
 }
 
-// diffAdopt は、繋ぐ client（読み込んでいる client。まだタブが無い）が、diff/start で分割したペインの client なら、
-// 待っているバッファをその client のタブにする。attach が startClient の前に呼ぶ。files は client の起動の引数のファイルである。
-func (e *Editor) diffAdopt(files []string) {
+// diffAdopt は、繋ぐ client（読み込んでいる client）が、diff/start で分割したペインの client（印 token が待ちのものと同じ）なら、
+// 待っているバッファをその client のタブにする。attach が startClient の前に呼ぶので、名前の無い空のタブは作られない。
+func (e *Editor) diffAdopt(token string) {
 	p := e.diff.pending
-	if p == nil || p.buf == nil || len(files) != 0 || e.cur != nil {
+	if p == nil || p.buf == nil || token == "" || token != p.token {
 		return
 	}
-	if time.Since(p.at) > diffPendingTimeout || p.buf.owner != nil || !slices.Contains(e.bufs, p.buf) {
-		e.diff.pending = nil
+	if p.buf.owner != nil || !slices.Contains(e.bufs, p.buf) {
+		e.dropPending(p)
 		return
 	}
 	e.enter(p.buf)

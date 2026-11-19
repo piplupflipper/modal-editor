@@ -21,6 +21,19 @@ func (s *Server) CreateBuffer(ctx context.Context, p ext.BufferCreateParams) (ex
 	return call[ext.BufferCreateResult](ctx, s, ext.MethodBufferCreate, p)
 }
 
+// UpdateBuffer は、本体へ buffer/update を送り、CreateBuffer で作ったバッファの中身を置き換えさせる。応答は置き換えた後のバージョン番号である。
+// Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す。
+func (s *Server) UpdateBuffer(ctx context.Context, p ext.BufferUpdateParams) (ext.BufferUpdateResult, error) {
+	return call[ext.BufferUpdateResult](ctx, s, ext.MethodBufferUpdate, p)
+}
+
+// DisposeBuffer は、本体へ buffer/dispose を送り、CreateBuffer で作ったバッファを閉じさせる。
+// Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す。
+func (s *Server) DisposeBuffer(ctx context.Context, id ext.BufferID) error {
+	_, err := call[ext.BufferDisposeResult](ctx, s, ext.MethodBufferDispose, ext.BufferDisposeParams{Buffer: id})
+	return err
+}
+
 // StartDiff は、本体へ diff/start を送り、2 つのバッファの見比べを始めさせる。
 // p が ext.DiffStartParams.Validate を通らなければ、送らずにその誤りを返す。
 // 見比べを始められなければ（端末多重化ソフトの外、同じ client の 2 つのタブなど）、本体は誤りで応答する。誤りの文言は画面に出せる日本語である。

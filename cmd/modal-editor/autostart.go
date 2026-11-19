@@ -71,7 +71,8 @@ const focusTimeout = 2 * time.Second
 
 // clientEnvNames は、編集の client が Hello で server へ知らせる環境変数の名前である（protocol.Hello.Env）。
 // server のプロセスの環境は server を起動した client のものなので、外部のコマンドへは client ごとにこの値で上書きする（#215）。
-var clientEnvNames = []string{"TMUX_PANE", "HERDR_PANE_ID", "HERDR_TAB_ID"}
+// editor.EnvSplit は、server が見比べのために分割したペインの client の印で、server が読んで外す（#245）。
+var clientEnvNames = []string{"TMUX_PANE", "HERDR_PANE_ID", "HERDR_TAB_ID", editor.EnvSplit}
 
 // clientHello は、編集の client が server へ送る Hello を作る。files は絶対パスにしたもの、w と h は端末の大きさである。
 // ペイン（FR-63）は、getenv から判定した端末多重化ソフトのペインの ID（tmux の TMUX_PANE、herdr の HERDR_PANE_ID）で、

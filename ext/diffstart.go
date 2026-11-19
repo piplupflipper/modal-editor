@@ -11,13 +11,50 @@ import "errors"
 //
 //   - buffer/create（拡張機能 → 本体、リクエスト）: BufferCreateParams のテキストで、ファイルでないバッファを作る。
 //     応答は BufferCreateResult。作ったバッファはどのタブにもしない。本体は応答より先に、稼働中の拡張機能へ buffer/open を送る
+//   - buffer/update（拡張機能 → 本体、リクエスト）: buffer/create で作ったバッファの中身を BufferUpdateParams のテキストに置き換える。
+//     編集を禁止したバッファでも置き換える。応答は BufferUpdateResult
+//   - buffer/dispose（拡張機能 → 本体、リクエスト）: buffer/create で作ったバッファを閉じる（BufferDisposeParams）。タブならタブも閉じる
 //   - diff/start（拡張機能 → 本体、リクエスト）: DiffStartParams の 2 つのバッファの見比べを始める。応答は DiffStartResult
+//
+// buffer/update と buffer/dispose を送れるのは、そのバッファを buffer/create で作った拡張機能だけである。
+// 他の拡張機能のバッファと、利用者が開いたバッファには、本体は JSON-RPC の誤りで応答する。
+//
+// 本体は隠れたバッファを持たない（FR-64）。拡張機能は、作ったバッファを、タブにする（editor/open の buffer と focus）か、
+// diff/start に渡すか、buffer/dispose で閉じる。diff/start で見比べが始まらなかったとき（誤りで応答したとき、
+// 分割したペインの client が繋がなかったとき）は、本体が、まだタブでない作ったバッファを閉じる。
 const (
 	// MethodBufferCreate は、拡張機能から本体へのリクエストである。params は BufferCreateParams、result は BufferCreateResult。
 	MethodBufferCreate = "buffer/create"
+	// MethodBufferUpdate は、拡張機能から本体へのリクエストである。params は BufferUpdateParams、result は BufferUpdateResult。
+	MethodBufferUpdate = "buffer/update"
+	// MethodBufferDispose は、拡張機能から本体へのリクエストである。params は BufferDisposeParams、result は BufferDisposeResult。
+	MethodBufferDispose = "buffer/dispose"
 	// MethodDiffStart は、拡張機能から本体へのリクエストである。params は DiffStartParams、result は DiffStartResult。
 	MethodDiffStart = "diff/start"
 )
+
+// BufferUpdateParams は、buffer/update の params である。
+type BufferUpdateParams struct {
+	// Buffer は、buffer/create で作ったバッファの番号である。
+	Buffer BufferID `json:"buffer"`
+	// Text は、新しい中身である。末尾の改行を含めない。
+	Text string `json:"text"`
+}
+
+// BufferUpdateResult は、buffer/update の result である。
+type BufferUpdateResult struct {
+	// Version は、置き換えた後のバージョン番号である。中身が同じなら変わらない。
+	Version Version `json:"version"`
+}
+
+// BufferDisposeParams は、buffer/dispose の params である。
+type BufferDisposeParams struct {
+	// Buffer は、buffer/create で作ったバッファの番号である。
+	Buffer BufferID `json:"buffer"`
+}
+
+// BufferDisposeResult は、buffer/dispose の result である。項目は無い。
+type BufferDisposeResult struct{}
 
 // BufferCreateParams は、buffer/create の params である。
 //
@@ -62,6 +99,8 @@ type BufferCreateResult struct {
 //   - どちらもタブでなければ、誤りにする
 //
 // 端末多重化ソフトの外（FR-60）では、分割できないので誤りにする。
+// 拡張機能は、editor/state の CanSplit で、分割できるかを buffer/create の前に確かめられる。
+// 分割したペインの client を待っている間に届いた、分割の要る diff/start も誤りにする。
 type DiffStartParams struct {
 	// A は、見比べの左の側のバッファの番号である。
 	A BufferID `json:"a"`

@@ -490,6 +490,9 @@ type EditorStateResult struct {
 	Selections []Range `json:"selections,omitempty"`
 	// Buffers は、開いているバッファの一覧である。
 	Buffers []BufferInfo `json:"buffers"`
+	// CanSplit は、カーソルのあるタブの client のペインを、端末多重化ソフトの層で分割できるかである（diff/start。#245）。
+	// 端末多重化ソフトの外（FR-60）では false で、省く。
+	CanSplit bool `json:"canSplit,omitempty"`
 }
 
 // BufferInfo は、editor/state で返す、開いているバッファ 1 つの情報である。

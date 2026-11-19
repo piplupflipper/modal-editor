@@ -75,6 +75,16 @@ func hasArgs(args json.RawMessage) bool {
 // startDiff は、path の HEAD の版をファイルでないバッファにし（buffer/create）、バッファ id と見比べさせる（diff/start）。
 // ループの外の goroutine で呼ぶ。
 func (x *extension) startDiff(ctx context.Context, id ext.BufferID, path, fileType string) {
+	// 端末多重化ソフトの外では見比べを使えない（基本設計 6.8、10 章の仮）ので、git を実行してバッファを作る前に断る。
+	st, err := x.server.EditorState(ctx)
+	if err != nil {
+		_ = x.server.ShowMessage(ext.MessageError, fmt.Sprintf("編集の状態を問い合わせられません: %s", remoteMessage(err)))
+		return
+	}
+	if !st.CanSplit {
+		_ = x.server.ShowMessage(ext.MessageWarning, "端末多重化ソフト（tmux、herdr）の外では HEAD と見比べられません（見比べには 2 つ目の編集の client が要ります）")
+		return
+	}
 	head, err := readHead(ctx, path)
 	if err != nil {
 		_ = x.server.ShowMessage(ext.MessageWarning, err.Error())

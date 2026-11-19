@@ -134,10 +134,36 @@ func runFakeExt(mode string) int {
 		// diff/start でカーソルのあるバッファ（A）と見比べさせる（#245。git 連携の拡張機能の代役）。
 		// 引数が数なら、作らずにその番号のバッファを B にし、notab なら、作った 2 つのバッファを見比べさせる。
 		// 結果は message/show で "headdiff buf=<作った番号> split=<分割したか> err=<誤り>" と出す。
+		// "update <番号> <テキスト>" なら buffer/update を、"dispose <番号>" なら buffer/dispose を送り、
+		// "headdiff update version=<番号> err=<誤り>" か "headdiff dispose err=<誤り>" と出す。
 		s.Command("fake.headdiff", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			var a struct{ Text string }
 			_ = json.Unmarshal(p.Args, &a)
 			cur := p.Buffer
+			plain := func(err error) error {
+				var re *rpc.Error
+				if errors.As(err, &re) {
+					return errors.New(re.Message)
+				}
+				return err
+			}
+			if f := strings.SplitN(a.Text, " ", 3); len(f) >= 2 && (f[0] == "update" || f[0] == "dispose") {
+				n, _ := strconv.ParseUint(f[1], 10, 64)
+				go func() {
+					if f[0] == "dispose" {
+						err := s.DisposeBuffer(hostCtx, ext.BufferID(n))
+						_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("headdiff dispose err=%v", plain(err)))
+						return
+					}
+					text := ""
+					if len(f) == 3 {
+						text = strings.ReplaceAll(f[2], `\n`, "\n")
+					}
+					r, err := s.UpdateBuffer(hostCtx, ext.BufferUpdateParams{Buffer: ext.BufferID(n), Text: text})
+					_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("headdiff update version=%d err=%v", r.Version, plain(err)))
+				}()
+				return ext.CommandExecuteResult{OK: true}, nil
+			}
 			go func() {
 				var created ext.BufferCreateResult
 				var err error
@@ -157,11 +183,7 @@ func runFakeExt(mode string) int {
 				if err == nil {
 					r, err = s.StartDiff(hostCtx, dp)
 				}
-				var re *rpc.Error
-				if errors.As(err, &re) {
-					err = errors.New(re.Message)
-				}
-				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("headdiff buf=%d split=%v err=%v", created.Buffer, r.Split, err))
+				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("headdiff buf=%d split=%v err=%v", created.Buffer, r.Split, plain(err)))
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})

@@ -93,6 +93,11 @@ func readHead(ctx context.Context, path string) (headVersion, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return headVersion{}, errors.New("git のコマンドが見つかりません")
 	}
+	// シンボリックリンクは、リンクの先のファイルの HEAD の版と見比べる（バッファの中身はリンクの先の中身なので）。
+	// git show はリンクそのもの（先のパスの文字列）を返すため、先に解く。解けなければ（まだ無いファイルなど）そのまま使う。
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	dir, base := filepath.Dir(path), filepath.Base(path)
 	prefix, err := git(ctx, dir, "rev-parse", "--show-prefix")
 	if err != nil {
@@ -100,7 +105,10 @@ func readHead(ctx context.Context, path string) (headVersion, error) {
 	}
 	name := strings.TrimSpace(string(prefix)) + base
 	// HEAD:./<名前> の ./ は、-C のディレクトリからの相対パスを表す（gitrevisions(7)）。
-	out, err := git(ctx, dir, "show", "HEAD:./"+base)
+	// --filters は、作業ツリーへ取り出すときと同じ変換（.gitattributes の eol、core.autocrlf、smudge のフィルター）を通す
+	// （git-cat-file(1)）。通さないと、改行が CRLF のファイルの全行が違って見える（PR #247 のレビュー）。
+	// smudge のフィルター（git-lfs など）が遅いと、git の期限（gitTimeout）で失敗しうる。
+	out, err := git(ctx, dir, "cat-file", "--filters", "HEAD:./"+base)
 	if err != nil {
 		return headVersion{}, fmt.Errorf("HEAD の %s を読めません（%w）", name, err)
 	}
