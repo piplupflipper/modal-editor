@@ -129,8 +129,8 @@ var (
 	// outputTitleRe は、欄の名前の行の " [出力] " の後（23 行目の 9 列目）に "acp" を描いた出力に一致する。色を付ける列（SGR）が間に入ってよい。
 	// 差分で 9 列目だけを書き直した形（CUP の 23;9H の後）と、行を " [出力] " から書いた形の両方に一致する。
 	outputTitleRe = regexp.MustCompile(`(\x1b\[23;9H|\x1b\[23;1H(\x1b\[[0-9;]*m)* \[出力\] )(\x1b\[[0-9;]*m)*acp`)
-	// signRe は、1 行目の先頭（CUP の 1;1H）に、印の列の "B" と空白に続いてバッファの行が描かれた出力に一致する。
-	signRe = regexp.MustCompile(`\x1b\[1;1H(\x1b\[[0-9;]*m)*B (\x1b\[[0-9;]*m)*package`)
+	// signRe は、バッファの 1 行目（タブの行の下の 2 行目。CUP の 2;1H）の先頭に、印の列の "B" と空白に続いてバッファの行が描かれた出力に一致する。
+	signRe = regexp.MustCompile(`\x1b\[2;1H(\x1b\[[0-9;]*m)*B (\x1b\[[0-9;]*m)*package`)
 	// firstLineRe は、1 行目の先頭（CUP の 1;1H）に、バッファの 1 行目の "aaa" が描かれた出力に一致する。
 	firstLineRe = regexp.MustCompile(`\x1b\[1;1H(\x1b\[[0-9;]*m)*aaa`)
 )
@@ -147,7 +147,10 @@ func TestFitHeightInPTY(t *testing.T) {
 	if err := os.WriteFile(path, []byte(text.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p := startEditorIn(t, t.TempDir(), nil, path)
+	// 表示領域の行数で決まる位置を確かめるので、タブが 1 つのときはタブの行を出さない（設定の tabline。#215）。
+	xdg := t.TempDir()
+	writeConfig(t, xdg, `{ "tabline": { "show": "multiple" } }`)
+	p := startEditorIn(t, xdg, nil, path)
 	before := ptytest.Termios(t, p.tty)
 	p.out.WaitForString(t, "a.txt")
 	// 欄を開くと表示領域は 11 行になり、カーソルの行（20 行目）が下から 2 行目に来るよう、11 行目から出す。

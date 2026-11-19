@@ -426,6 +426,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		Colors:           uiColors(cfg.Colors),
 		Symbols:          cfg.Symbols,
 		StatusLine:       uiStatusLine(cfg.StatusLine),
+		TabLine:          uiTabLine(cfg.TabLineShow),
 		Registers: command.RegisterConfig{
 			HistorySize:     cfg.RegisterHistorySize,
 			MaxEntryBytes:   cfg.RegisterMaxEntryBytes,

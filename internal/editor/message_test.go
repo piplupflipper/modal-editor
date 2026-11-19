@@ -15,7 +15,8 @@ import (
 //
 // req: FR-30
 func TestPopupLines(t *testing.T) {
-	h := start(t, Config{})
+	// 6 行の偽の端末の行の位置を確かめるので、タブが 1 つのときはタブの行を出さない。
+	h := start(t, Config{TabLine: ui.TabLineMultiple})
 	h.keys("iabc<CR>def<Esc>gg")
 	h.settle()
 	h.e.do(func() {

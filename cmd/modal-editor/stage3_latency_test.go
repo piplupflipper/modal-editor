@@ -92,11 +92,12 @@ var latencyOps = []latencyOp{
 		},
 	},
 	{
-		// dd。1 行目を消し続ける。終わりは、画面の 1 行目が次の行の中身になったとき。
+		// dd。1 行目を消し続ける。終わりは、バッファの 1 行目（タブの行の下）が次の行の中身になったとき。
 		name: "dd",
 		step: func(i int) (string, func(*vscreen) bool, string, func(*vscreen) bool) {
 			want := fmt.Sprintf("line %06d:", i+2)
-			return "", nil, "dd", func(v *vscreen) bool { return strings.HasPrefix(v.row(0), want) }
+			// 画面の 1 行目はタブの行（既定で常に出す。#215）なので、バッファの 1 行目は画面の 2 行目である。
+			return "", nil, "dd", func(v *vscreen) bool { return strings.HasPrefix(v.row(1), want) }
 		},
 	},
 	{
@@ -118,7 +119,7 @@ var latencyOps = []latencyOp{
 		name:     "p-other",
 		otherPre: "yy",
 		otherSetup: func(s *latencySession) {
-			s.keys("ifrom-b\x1b", func(v *vscreen) bool { return strings.Contains(v.row(0), "from-b") })
+			s.keys("ifrom-b\x1b", screenHas("from-b"))
 		},
 		step: func(i int) (string, func(*vscreen) bool, string, func(*vscreen) bool) {
 			return "", nil, "p", rulerIs(i+2, 1)

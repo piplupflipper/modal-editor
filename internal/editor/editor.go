@@ -148,7 +148,7 @@ type Config struct {
 	Symbols ui.Symbols
 	// StatusLine は、ステータス行に並べる部品の列（設定の statusline。FR-92）である。nil なら ui.DefaultStatusLine を使う。
 	StatusLine *ui.StatusLine
-	// TabLine は、タブの行を出す場合（設定の tabline。FR-62。仮）である。ゼロ値は、タブが 2 つ以上のときだけ出す。
+	// TabLine は、タブの行を出す場合（設定の tabline.show。FR-62）である。ゼロ値は、タブが 1 つでも出す（ui.TabLineAlways。#215 のオーナーの裁定）。
 	TabLine ui.TabLineMode
 	// FocusPane は、別の編集の client のタブのファイルを開こうとしたときに、from のペインから pane のペインへ
 	// フォーカスを移す関数である（FR-63。internal/mux の Mux.FocusPane を包んだもの）。ペインは ClientInfo.Pane である。

@@ -12,15 +12,15 @@ type Tab struct {
 	Current bool
 }
 
-// TabLineMode は、タブの行を出す場合を決める（設定の tabline。仮）。
+// TabLineMode は、タブの行を出す場合を決める（設定の tabline の show。基本設計 7.1）。
 type TabLineMode int
 
 const (
-	// TabLineMultiple は、タブが 2 つ以上あるときだけタブの行を出す（Vim の 'showtabline' の既定の 1 と同じ。既定）。
-	TabLineMultiple TabLineMode = iota
-	// TabLineAlways は、タブが 1 つでもタブの行を出す（Vim の 'showtabline' の 2）。
-	TabLineAlways
-	// TabLineNever は、タブの行を出さない（Vim の 'showtabline' の 0）。
+	// TabLineAlways は、タブが 1 つでもタブの行を出す（Vim の 'showtabline' の 2。VS Code に寄せた既定。#215 のオーナーの裁定）。
+	TabLineAlways TabLineMode = iota
+	// TabLineMultiple は、タブが 2 つ以上あるときだけタブの行を出す（Vim の 'showtabline' の既定の 1）。
+	TabLineMultiple
+	// TabLineNever は、タブの行を出さない（Vim の 'showtabline' の 0）。設定からは選べず、テストが Vim の画面と比べるときに使う。
 	TabLineNever
 )
 

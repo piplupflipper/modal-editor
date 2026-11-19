@@ -61,7 +61,7 @@ type Renderer struct {
 	Symbols Symbols
 	// StatusLine は、ステータス行に並べる部品の列（設定の statusline。FR-92）である。nil なら DefaultStatusLine を使う。
 	StatusLine *StatusLine
-	// TabLine は、タブの行（Frame.Tabs）を出す場合である（設定の tabline。仮）。ゼロ値はタブが 2 つ以上のときだけ出す。
+	// TabLine は、タブの行（Frame.Tabs）を出す場合である（設定の tabline.show）。ゼロ値はタブが 1 つでも出す（TabLineAlways）。
 	TabLine TabLineMode
 
 	top int // 表示領域の最初の行の番号（0 から数える）

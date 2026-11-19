@@ -289,6 +289,43 @@ func (s *source) statusLine(v *hujson.Value, cfg *Config) *StatusLine {
 	return out
 }
 
+// tabline.show の値である（基本設計 7.1。FR-62。名前は仮）。
+const (
+	// TabLineAlways は、タブが 1 つでもタブの行を出すことを表す（既定。#215 のオーナーの裁定で VS Code に寄せた）。
+	TabLineAlways = "always"
+	// TabLineMultiple は、タブが 2 つ以上のときだけタブの行を出すことを表す（Vim の showtabline の既定の 1）。
+	TabLineMultiple = "multiple"
+)
+
+// tabLine は、tabline の値を読み、show の値を返す（基本設計 7.1。FR-62）。
+// 値は show の項目を持つオブジェクトで、show は "always" か "multiple" である。それ以外の値は誤りとして既定値（空）を返す。
+// タブの行の部品の並び（statusline の left と right に当たるもの）は、まだ無い。
+func (s *source) tabLine(v *hujson.Value) string {
+	obj, ok := s.object(v, "tabline")
+	if !ok {
+		return ""
+	}
+	show := ""
+	for _, m := range s.members(obj, "tabline") {
+		path := join("tabline", m.name)
+		if m.name != "show" {
+			s.report(m.nameOff, "未知の項目 %s を無視する", path)
+			continue
+		}
+		str, ok := s.str(m.value, path)
+		if !ok {
+			continue
+		}
+		switch str {
+		case TabLineAlways, TabLineMultiple:
+			show = str
+		default:
+			s.report(m.value.StartOffset, "%s は %q か %q にする", path, TabLineAlways, TabLineMultiple)
+		}
+	}
+	return show
+}
+
 // with は、e の位置で、内容を書き換えた誤りを返す。e が nil（位置を記録していない）なら位置の無い誤りを返す。
 func (e *Error) with(format string, args ...any) error {
 	out := &Error{Msg: fmt.Sprintf(format, args...)}

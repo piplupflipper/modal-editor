@@ -13,7 +13,7 @@ func TestGoldenTabLine(t *testing.T) {
 	tabs := []Tab{{Name: "a.go"}, {Name: "b.go", Modified: true, Current: true}, {Name: "", ReadOnly: true}}
 	r := newRenderer(30, 6)
 	golden(t, "tabline", renderSteps(r, []step{
-		{"タブが 1 つなら出さない", Frame{Text: b, Name: "a.go", Cursor: pos(0, 0), Tabs: tabs[:1]}},
+		{"既定（TabLineAlways）では、タブが 1 つでも出す", Frame{Text: b, Name: "a.go", Cursor: pos(0, 0), Tabs: tabs[:1]}},
 		{"タブが 2 つ以上なら一番上の行に出し、表示領域を 1 行減らす", Frame{Text: b, Name: "b.go", Cursor: pos(3, 0), Tabs: tabs}},
 		{"幅に収まらなければ、カーソルのあるタブが収まるまで左を省く", Frame{Text: b, Name: "c.go", Cursor: pos(0, 0), Tabs: []Tab{
 			{Name: "first.go"}, {Name: "second.go"}, {Name: "third.go"}, {Name: "current.go", Current: true}, {Name: "after.go"},

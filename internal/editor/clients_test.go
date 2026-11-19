@@ -351,10 +351,11 @@ func TestClientsShowBufferDecorations(t *testing.T) {
 		h.e.render()
 	})
 	a, bs := h.term.screen(), b.term.screen()
-	if !strings.HasPrefix(a, "E alpha") || !strings.Contains(a, "bad alpha") || strings.Contains(a, "beta") {
+	// 1 行目はタブの行で、2 行目からがバッファである。
+	if !strings.Contains(a, "\nE alpha") || !strings.Contains(a, "bad alpha") || strings.Contains(a, "beta") {
 		t.Errorf("A の画面:\n%s", a)
 	}
-	if !strings.HasPrefix(bs, "=>beta") || !strings.Contains(bs, "hover of beta") || strings.Contains(bs, "alpha") {
+	if !strings.Contains(bs, "\n=>beta") || !strings.Contains(bs, "hover of beta") || strings.Contains(bs, "alpha") {
 		t.Errorf("B の画面:\n%s", bs)
 	}
 }

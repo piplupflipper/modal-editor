@@ -237,7 +237,8 @@ func TestOutputBeforeExtCommand(t *testing.T) {
 //
 // req: FR-31
 func TestSignColumn(t *testing.T) {
-	h := start(t, Config{})
+	// 6 行の偽の端末の行の位置を確かめるので、タブが 1 つのときはタブの行を出さない。
+	h := start(t, Config{TabLine: ui.TabLineMultiple})
 	h.keys("ia<CR>b<CR>c<Esc>")
 	h.settle()
 	h.e.do(func() {

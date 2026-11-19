@@ -1,9 +1,10 @@
-## タブが 1 つなら出さない
-size 30x6 cursor 0,0 block
+## 既定（TabLineAlways）では、タブが 1 つでも出す
+size 30x6 cursor 1,0 block
+   | a.go                         |
+fx |______vvvvvvvvvvvvvvvvvvvvvvvv|
    |one                           |
    |two                           |
    |three                         |
-   |four                          |
    | NORMAL  a.go        1,1  Top |
 fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
    |                              |

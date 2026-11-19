@@ -60,7 +60,8 @@ import (
 //	  "registers": { "historySize": 100, "maxEntryBytes": 1048576, "deleteToHistory": true, "clipboard": "osc52" },
 //	  "colors": { "diagnostic.error": { "sp": "#e27878", "undercurl": true }, "statusline": { "fg": 7, "bg": 0 } },
 //	  "symbols": { "sign.breakpoint": "●", "popup.border": "┌─┐│┘─└│" },
-//	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] }
+//	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] },
+//	  "tabline": { "show": "always" }
 //	}
 type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
@@ -133,6 +134,9 @@ type Config struct {
 	// StatusLine は statusline の値で、ステータス行に並べる部品の ID の列である（基本設計 7.1。FR-92）。
 	// 項目が無いか誤りなら nil で、本体の既定の並びを使う。部品の ID は CheckAppearance で確かめる。
 	StatusLine *StatusLine
+	// TabLineShow は tabline.show の値で、タブの行を出す場合である（基本設計 7.1。FR-62）。
+	// TabLineAlways か TabLineMultiple で、項目が無いか誤りなら空で、既定の TabLineAlways として扱う。
+	TabLineShow string
 
 	// pos は、見た目の設定の項目を書いた位置である（CheckAppearance）。
 	pos appearancePos
@@ -228,6 +232,8 @@ func Parse(path string, data []byte) (Config, []error) {
 			cfg.Symbols = s.symbols(m.value, &cfg)
 		case "statusline":
 			cfg.StatusLine = s.statusLine(m.value, &cfg)
+		case "tabline":
+			cfg.TabLineShow = s.tabLine(m.value)
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", join("", m.name))
 		}

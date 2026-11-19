@@ -47,3 +47,11 @@ func uiStatusLine(s *config.StatusLine) *ui.StatusLine {
 	}
 	return &ui.StatusLine{Left: s.Left, Right: s.Right}
 }
+
+// uiTabLine は、設定の tabline.show をタブの行を出す場合に写す（FR-62）。空（書いていない）なら既定の「常に出す」にする。
+func uiTabLine(show string) ui.TabLineMode {
+	if show == config.TabLineMultiple {
+		return ui.TabLineMultiple
+	}
+	return ui.TabLineAlways
+}
