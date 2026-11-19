@@ -49,19 +49,20 @@ func layoutExtParts(status, tab *ui.StatusLine) []string {
 // startStatusExtensions は、設定の並びに部品を書いた拡張機能を、起動の契機を待たずに起動する。
 // 部品の中身は拡張機能が送るまで無いので、並べた部品を出すために起動時に動かす（lualine の部品が描くたびに評価されるのに当たる）。
 // 並べた ID を足す拡張機能が無ければ、誤りとして返す（部品は出さない）。
+// 起動した拡張機能の ID は statusExts に覚え、:ext sync の入れ替えの後に起動し直す（restartStatusExtension）。
 func (e *Editor) startStatusExtensions() []error {
 	var errs []error
-	started := map[string]bool{}
+	e.statusExts = map[string]bool{}
 	for _, id := range layoutExtParts(e.cfg.StatusLine, e.cfg.TabLineParts) {
 		owner, ok := e.statusOwners[id]
 		if !ok {
 			errs = append(errs, fmt.Errorf("statusline か tabline の部品 %s は、本体の部品でも拡張機能の部品（contributes.statusline）でもないので出さない", id))
 			continue
 		}
-		if started[owner] {
+		if e.statusExts[owner] {
 			continue
 		}
-		started[owner] = true
+		e.statusExts[owner] = true
 		if err := e.host.Start(owner); err != nil {
 			errs = append(errs, fmt.Errorf("部品 %s の拡張機能 %s を起動できない: %w", id, owner, err))
 		}
@@ -69,8 +70,24 @@ func (e *Editor) startStatusExtensions() []error {
 	return errs
 }
 
+// restartStatusExtension は、未起動へ戻った拡張機能 extID（:ext sync の入れ替え。exthost.Host.Reload）が、
+// 並びに部品を置いた拡張機能なら起動し直す。起動し直した拡張機能は、initialize の後に部品を送り直す。
+// 既に起動の契機で起動していれば、Start は何もしない。
+func (e *Editor) restartStatusExtension(extID string) {
+	if !e.statusExts[extID] {
+		return
+	}
+	if err := e.host.Start(extID); err != nil {
+		e.log.Warn("部品の拡張機能を起動し直せない", "extension", extID, "err", err)
+	}
+}
+
+// maxStatusPartRunes は、拡張機能の部品の中身として持つ文字の数の上限である（仮）。超えた分は捨てる。
+const maxStatusPartRunes = 256
+
 // setStatusPart は、statusline/set の部品の中身を持つ（ext.MethodStatusLineSet）。
 // 送った拡張機能が宣言していない部品は捨てる。Text が空なら部品の中身を消す（部品を出さない）。
+// 中身は maxStatusPartRunes 文字までにする。
 //
 // req: FR-92
 func (e *Editor) setStatusPart(extID string, p ext.StatusLineSetParams) {
@@ -79,6 +96,10 @@ func (e *Editor) setStatusPart(extID string, p ext.StatusLineSetParams) {
 		return
 	}
 	text := ext.StatusLineText(p.Text)
+	if r := []rune(text); len(r) > maxStatusPartRunes {
+		// 描くたびに全体の幅を数えるので、受け取る時点で切っておく（PR #239 のレビューの推奨 1）。
+		text = string(r[:maxStatusPartRunes])
+	}
 	if text == "" {
 		delete(e.extParts, p.Part)
 		return

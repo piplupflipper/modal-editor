@@ -803,6 +803,36 @@ func TestHoldLimit(t *testing.T) {
 	})
 }
 
+// 部品の中身（statusline/set）は、同じ部品の前のものを後のもので置き換えてまとめ、上限を超えても捨てない
+// （最後の更新を捨てると、古い中身が出続けるため。PR #239 のレビューの推奨 5）。
+//
+// req: FR-92
+func TestHoldStatusLineSet(t *testing.T) {
+	h := start(t, Config{Host: exthost.Config{MaxQueuedEvents: 3}})
+	h.e.do(func() {
+		e := h.e
+		set := func(ext_, part, text string) *exthost.StatusLineSet {
+			return &exthost.StatusLineSet{Extension: ext_, Params: ext.StatusLineSetParams{Part: part, Text: text}}
+		}
+		e.hold(set("st", "st.mem", "1"))
+		e.hold(set("st", "st.review", "a"))
+		e.hold(set("st", "st.mem", "2"))
+		for i := range 5 {
+			e.hold(&exthost.MessageShow{Params: ext.MessageShowParams{Text: fmt.Sprint(i)}})
+		}
+		var got []string
+		for _, ev := range e.held {
+			if s, ok := ev.(*exthost.StatusLineSet); ok {
+				got = append(got, s.Params.Part+"="+s.Params.Text)
+			}
+		}
+		if want := []string{"st.review=a", "st.mem=2"}; !slices.Equal(got, want) {
+			t.Errorf("held の部品 = %v, want %v", got, want)
+		}
+		e.held = nil
+	})
+}
+
 // buffer/edit の noLines と endOfLine は、適用した後のバッファの行の無い状態と末尾の改行の記録を変え、書き出しの結果に効く。
 // 拡張機能へは、変わった finalNewline を buffer/open で送り直す。
 // 書き出しの結果は、Vim 9.1 で外から書き換えたファイルを :e! で読み直して :w したもの（"" は ""、"\n" は "\n"）と同じである。

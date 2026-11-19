@@ -103,9 +103,11 @@ func TestManifestValidate(t *testing.T) {
 					{ID: "surround.a b"},
 					{ID: "surround.count"},
 					{ID: "surround.count"},
+					{ID: "surround.b.x"},
 				}
 			},
 			want: []string{
+				`contributes.statusline[7].id "surround.b.x" の拡張機能の ID "surround" と "." の後が "." を含む`,
 				"contributes.statusline[0].id が空",
 				`contributes.statusline[1].id "count" が拡張機能の ID "surround" と "." で始まらない`,
 				`contributes.statusline[2].id "surround." が拡張機能の ID`,

@@ -41,9 +41,10 @@ func StatusLineText(s string) string {
 
 // StatusLinePart は、宣言ファイルの contributes.statusline の 1 つの部品である（基本設計 5.1、7.1。FR-92）。
 type StatusLinePart struct {
-	// ID は、部品の ID である。拡張機能の ID と "." を前に付ける（拡張機能の ID が "mrreview" なら "mrreview.status"）。
+	// ID は、部品の ID である。拡張機能の ID と "." を前に付け、その後には "." を含めない（拡張機能の ID が "mrreview" なら "mrreview.status"）。
 	// 利用者は、設定の statusline と tabline の left と right にこの ID を書いて並べる。
-	// 本体の部品の ID は "." を含まないので、前に付けた拡張機能の ID で、本体の部品と他の拡張機能の部品と重ならない。
+	// 本体の部品の ID は "." を含まないので、本体の部品と重ならない。拡張機能の ID は一意で、最後の "." より前が拡張機能の ID に決まるので、
+	// 拡張機能の ID が "." を含んでも、他の拡張機能の部品と重ならない。
 	ID string `json:"id"`
 	// Description は、部品の説明文である。本体はヘルプとキーの一覧に出さないが、利用者が宣言ファイルを読んで並べる部品を選べるように書く。
 	Description string `json:"description,omitempty"`

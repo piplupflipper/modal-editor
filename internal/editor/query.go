@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -201,7 +202,17 @@ func (e *Editor) wait(q *exthost.Query, tag queryTag) *exthost.QueryResult {
 // 待ちの間は exthost の列からここへ移すので、exthost の上限（NFR-03）が効かない。その代わりにここで抑える。
 // 上限を超えたら、最も古い通知（表示のデータとメッセージ）から捨てる。通知が無ければ、最も古いリクエストに誤りで応答して捨てる。
 // 問い合わせの結果（QueryResult）と状態の変化（StateChange）は捨てない。
+//
+// 部品の中身（StatusLineSet）は、同じ拡張機能の同じ部品の前のものを後のもので置き換えて 1 つにまとめ、上限を超えても捨てない。
+// 本体は部品ごとに最後の中身だけを使い、拡張機能は変わったときだけ送るので、最後の更新を捨てると古い中身が出続けるためである
+// （PR #239 のレビューの推奨 5）。まとめるので、取っておく数は宣言ファイルの部品の数を超えない。
 func (e *Editor) hold(ev exthost.Event) {
+	if s, ok := ev.(*exthost.StatusLineSet); ok {
+		e.held = slices.DeleteFunc(e.held, func(h exthost.Event) bool {
+			p, ok := h.(*exthost.StatusLineSet)
+			return ok && p.Extension == s.Extension && p.Params.Part == s.Params.Part
+		})
+	}
 	e.held = append(e.held, ev)
 	limit := e.cfg.Host.MaxQueuedEvents
 	if limit <= 0 {
@@ -214,7 +225,7 @@ func (e *Editor) hold(ev exthost.Event) {
 	for i, h := range e.held {
 		switch h.(type) {
 		case *exthost.DecorationSet, *exthost.MessageShow, *exthost.DiagnosticSet, *exthost.SignSet,
-			*exthost.PopupShow, *exthost.OutputAppend, *exthost.StatusLineSet:
+			*exthost.PopupShow, *exthost.OutputAppend:
 			drop = i
 		}
 		if drop >= 0 {

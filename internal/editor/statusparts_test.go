@@ -160,6 +160,15 @@ func TestExtensionStatusLineParts(t *testing.T) {
 	if other || part.Text != "base drift" {
 		t.Errorf("宣言していない部品を持った: st.other %v, st.review %+v", other, part)
 	}
+	// 長い中身は maxStatusPartRunes 文字で切って持つ。
+	h.e.do(func() {
+		h.e.setStatusPart("st", ext.StatusLineSetParams{Part: "st.review", Text: strings.Repeat("あ", 300)})
+		part = h.e.extParts["st.review"]
+		h.e.setStatusPart("st", ext.StatusLineSetParams{Part: "st.review", Text: "base drift"})
+	})
+	if n := len([]rune(part.Text)); n != maxStatusPartRunes {
+		t.Errorf("長い中身の文字数 = %d, want %d", n, maxStatusPartRunes)
+	}
 
 	// 異常で終わると部品を消す。再起動の後は、拡張機能が送り直したものだけを出す。
 	h.keys(":st.crash<CR>")
@@ -167,6 +176,17 @@ func TestExtensionStatusLineParts(t *testing.T) {
 		return strings.HasPrefix(h.statusRow(), " NORMAL  "+name+" ")
 	})
 	h.eventually("再起動の後に RSS を出し直す", func() bool { return strings.Contains(h.statusRow(), " RSS ") })
+
+	// :ext sync の入れ替え（exthost.Host.Reload）で未起動へ戻っても、activation の無い部品の拡張機能を起動し直し、
+	// 部品を送り直させる（PR #239 のレビューの必須 1）。入れ替えの前の中身（st.review）は消える。
+	h.eventually("稼働中", func() bool { return h.state("st") == exthost.StateRunning })
+	h.keys(":st.review before<CR>")
+	h.eventually("入れ替えの前のレビューの状態", func() bool { return strings.Contains(h.statusRow(), " before ") })
+	h.e.do(func() { h.e.stopExtension("st", h.e.host.Reload) })
+	h.eventually("入れ替えの後に起動し直して RSS を出し直す", func() bool {
+		row := h.statusRow()
+		return h.state("st") == exthost.StateRunning && strings.Contains(row, " RSS ") && !strings.Contains(row, " before ")
+	})
 }
 
 // 設定の並びに書いた "." を含む ID を、どの拡張機能も足していなければ、設定の誤りとして知らせて出さない。

@@ -133,6 +133,23 @@ func (r *Renderer) drawTabLine(g *Grid, theme Theme, f *Frame) {
 	for _, s := range slices.Concat(left, right) {
 		fixed += StringWidth(s.text, r.TabStop)
 	}
+	// ステータス行と同じく、本体の部品より先に拡張機能の部品を切る。タブの見出しを並べたら、いまのタブの見出しの幅を残す。
+	reserve := 0
+	if slices.ContainsFunc(slices.Concat(left, right), func(s statusSeg) bool { return s.id == TabLinePartTabs }) {
+		for _, t := range f.Tabs {
+			if t.Current {
+				reserve = StringWidth(r.tabLabel(t), r.TabStop)
+			}
+		}
+	}
+	if fixed+reserve > r.Width {
+		trimmed := r.trimExtSegs(fixed+reserve-r.Width, left, right)
+		left, right = trimmed[0], trimmed[1]
+		fixed = 0
+		for _, s := range slices.Concat(left, right) {
+			fixed += StringWidth(s.text, r.TabStop)
+		}
+	}
 	tabsWidth := max(r.Width-fixed, 0)
 	segWidth := func(s statusSeg) int {
 		if s.id == TabLinePartTabs {

@@ -65,6 +65,8 @@ type statusSeg struct {
 	id   string // 部品の ID
 	text string
 	attr Attr
+	// ext は、拡張機能が足した部品（Frame.ExtParts）かどうかである。幅が足りなければ本体の部品より先に切る（trimExtSegs）。
+	ext bool
 }
 
 // statusPart は、部品 id の中身の文字列と、部品に重ねる色の名前を返す。中身が無ければ（未保存でない、記録していないなど）空を返す。
@@ -151,9 +153,61 @@ func (r *Renderer) statusSegs(ids []string, theme Theme, base Attr, text Text, f
 		if !flagParts[id] || len(segs) == 0 {
 			s = " " + s
 		}
-		segs = append(segs, statusSeg{id: id, text: s + " ", attr: a})
+		segs = append(segs, statusSeg{id: id, text: s + " ", attr: a, ext: !IsStatusPart(id)})
 	}
 	return segs
+}
+
+// nameKeep は、幅が足りないときに、拡張機能の部品より優先して残す名前の末尾の列の数である（drawStatus。仮）。
+const nameKeep = 20
+
+// trimExtSegs は、部品の列 lists の幅の合計が、拡張機能の部品を除いた幅を保ったまま width を over 列超えるとき、
+// 拡張機能の部品（statusSeg.ext）を幅の広いものから順に切り詰めるか落として、超えた分を減らす（PR #239 のレビューの推奨 1）。
+// 拡張機能の部品の長さには上限が無いので、幅の狭い端末でも本体の部品（モード、位置など）を残すためである。
+// 切り詰めた部品は、中身の最後の 1 列を ">" にする。中身が 1 列も残らなければ部品を落とす。
+// 返す列は、落とした部品を除いたものである。
+func (r *Renderer) trimExtSegs(over int, lists ...[]statusSeg) [][]statusSeg {
+	tabStop := tabStopOr(r.TabStop)
+	for over > 0 {
+		// 残っている拡張機能の部品のうち、最も幅の広いもの（同じなら後ろのもの）を選ぶ。
+		var s *statusSeg
+		w := 0
+		for li := range lists {
+			for i := range lists[li] {
+				c := &lists[li][i]
+				if cw := StringWidth(c.text, r.TabStop); c.ext && c.text != "" && cw >= w {
+					s, w = c, cw
+				}
+			}
+		}
+		if s == nil {
+			break
+		}
+		// s.text は " " + 中身 + " "（印の部品と違い、拡張機能の部品は常に左の空白を持つ）。
+		keep := w - over - 2 - 1 // 残す中身の列（">" の 1 列を除く）
+		if keep < 1 {
+			over -= w
+			s.text = ""
+			continue
+		}
+		body := s.text[1 : len(s.text)-1]
+		col, off := 0, 0
+		for off < len(body) {
+			gl := nextGlyph(body, off, col, tabStop)
+			if col+gl.width > keep {
+				break
+			}
+			col += gl.width
+			off += gl.size
+		}
+		over -= w - (col + 3)
+		s.text = " " + body[:off] + "> "
+	}
+	out := make([][]statusSeg, len(lists))
+	for i, segs := range lists {
+		out[i] = slices.DeleteFunc(segs, func(s statusSeg) bool { return s.ext && s.text == "" })
+	}
+	return out
 }
 
 // fitName は、左の部品 segs が幅 width に収まらなければ、名前の部品（StatusPartName）の先頭を切って "<" を付け、
@@ -194,7 +248,8 @@ func (r *Renderer) fitName(segs []statusSeg, width int) {
 // drawStatus は、row 行目（バッファの表示領域のすぐ下）にステータス行を描く。
 //
 // 部品の並びは Renderer.StatusLine（nil なら DefaultStatusLine）で決める（FR-92）。
-// 左の部品を左の端から、右の部品を右の端に寄せて描く。幅が足りなければ右の部品を優先し、左の部品は名前の先頭を "<" で切って
+// 左の部品を左の端から、右の部品を右の端に寄せて描く。幅が足りなければ、まず拡張機能の部品を右の後ろから切り詰めるか落とす（trimExtSegs）。
+// それでも足りなければ右の部品を優先し、左の部品は名前の先頭を "<" で切って
 // 後ろの印を残し（fitName）、それでも収まらなければ右の端で切る。
 // 部品の中身は statusPart の doc にある。カーソルの位置は Vim のルーラーと同じく「行,バイトの列-表示の列」で、
 // 2 つの列が同じなら表示の列を省き、空の行では "0-1" と出す。範囲の位置は Vim と同じく All、Top、Bot、または上に隠れた行の割合である。
@@ -211,6 +266,21 @@ func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cur
 		layout = *r.StatusLine
 	}
 	right := r.statusSegs(layout.Right, theme, a, text, f, cur)
+	left := r.statusSegs(layout.Left, theme, a, text, f, cur)
+	// 名前は fitName が先頭を "<" で切って詰めるので、名前の末尾の nameKeep 列（ファイル名の部分）を残しても足りない分だけ、
+	// 拡張機能の部品を先に切る。長いパスで拡張機能の部品がすべて消えないように、名前の全体は守らない（仮）。
+	over := -r.Width
+	for _, s := range slices.Concat(left, right) {
+		w := StringWidth(s.text, r.TabStop)
+		if s.id == StatusPartName {
+			w = min(w, nameKeep+2)
+		}
+		over += w
+	}
+	if over > 0 {
+		trimmed := r.trimExtSegs(over, left, right)
+		left, right = trimmed[0], trimmed[1]
+	}
 	rw := 0
 	for _, s := range right {
 		rw += StringWidth(s.text, r.TabStop)
@@ -222,7 +292,6 @@ func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cur
 	}
 	start := max(r.Width-rw, 0)
 	r.drawSegs(g, row, start, r.Width, right)
-	left := r.statusSegs(layout.Left, theme, a, text, f, cur)
 	r.fitName(left, start)
 	r.drawSegs(g, row, 0, start, left)
 }

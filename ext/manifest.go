@@ -188,7 +188,7 @@ func (m *Manifest) HandlesFileType(ft string) bool {
 //   - 操作の契機は、同じ種類の操作として Contributes にある ID を指すこと
 //   - ファイルの種類の契機は、Pattern が空でないこと
 //   - Contributes の各操作の ID が空でなく、種類をまたいで重複しないこと
-//   - Contributes.StatusLine の各部品の ID が、拡張機能の ID と "." で始まり、その後が空でなく、空白を含まず、重複しないこと
+//   - Contributes.StatusLine の各部品の ID が、拡張機能の ID と "." で始まり、その後が空でなく "." を含まず、空白を含まず、重複しないこと
 //
 // 未知の種類の契機と、未知の操作の名前の provides は、誤りにせず、warnings に 1 件ずつ返す。
 // API の後の版で契機の種類を足しても、古い本体が新しい拡張機能の宣言ファイルを丸ごと拒まないようにするためである。
@@ -288,6 +288,11 @@ func (m *Manifest) validateStatusLine() []error {
 			continue
 		case m.ID == "" || !ok || local == "":
 			errs = append(errs, fmt.Errorf("%s.id %q が拡張機能の ID %q と \".\" で始まらないか、その後が空である", path, p.ID, m.ID))
+			continue
+		case strings.Contains(local, "."):
+			// 拡張機能の ID が "." を含むと、ID "a" の拡張機能の "a.b.x" と、ID "a.b" の拡張機能の "a.b.x" が重なるので、
+			// 拡張機能の ID の後には "." を置かせない（PR #239 のレビューの推奨 2）。
+			errs = append(errs, fmt.Errorf("%s.id %q の拡張機能の ID %q と \".\" の後が \".\" を含む", path, p.ID, m.ID))
 			continue
 		case strings.ContainsFunc(p.ID, isSpace):
 			errs = append(errs, fmt.Errorf("%s.id %q が空白を含む", path, p.ID))

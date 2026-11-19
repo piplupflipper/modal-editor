@@ -51,6 +51,34 @@ func TestStatusLineExtParts(t *testing.T) {
 	}
 }
 
+// 幅が足りなければ、本体の部品（モード、名前の末尾、位置）より先に、拡張機能の部品を幅の広いものから切り詰めるか落とす
+// （PR #239 のレビューの推奨 1。幅 30 で長いブランチ名の部品を送ると、ステータス行がブランチ名だけになっていた）。
+//
+// req: FR-92
+func TestStatusLineExtPartsNarrow(t *testing.T) {
+	b := buffer.New("abc\n")
+	layout := &StatusLine{Left: []string{"mode", "tp.a", "name"}, Right: []string{"tp.b", "tp.mem", "ruler"}}
+	parts := map[string]ExtPart{
+		"tp.a": {Text: "review:!12"}, "tp.b": {Text: "feature/very-long-branch-name"}, "tp.mem": {Text: "MEM"},
+	}
+	tests := []struct {
+		width int
+		want  string
+	}{
+		{80, " NORMAL  review:!12  a.txt              feature/very-long-branch-name  MEM  1,1 "},
+		{50, " NORMAL  review:!12  a.txt  feature/ve>  MEM  1,1 "},
+		{30, " NORMAL  re>  a.txt  MEM  1,1 "},
+		{20, " NORMAL  a.txt  1,1 "},
+	}
+	for _, tt := range tests {
+		r := &Renderer{Width: tt.width, Height: 4, StatusLine: layout}
+		got := r.Render(&Frame{Text: b, Name: "a.txt", ExtParts: parts}).Grid.RowText(2)
+		if got != tt.want {
+			t.Errorf("幅 %d\n got %q\nwant %q", tt.width, got, tt.want)
+		}
+	}
+}
+
 // タブの行も、ステータス行と同じく left と right の並びで部品を描く（FR-92）。
 // タブの見出しの並び（tabs）は、他の部品を描いた残りの幅を使い、収まらなければ #215 と同じく左のタブを省く。
 //
@@ -58,7 +86,7 @@ func TestStatusLineExtParts(t *testing.T) {
 func TestTabLineParts(t *testing.T) {
 	b := buffer.New("abc\n")
 	tabs := []Tab{{Name: "a.go"}, {Name: "b.go", Current: true}}
-	parts := map[string]ExtPart{"memusage.rss": {Text: "RSS 120M"}}
+	parts := map[string]ExtPart{"memusage.rss": {Text: "RSS 120M"}, "long.part": {Text: "feature/very-long-branch-name"}}
 	tests := []struct {
 		name   string
 		width  int
@@ -79,6 +107,10 @@ func TestTabLineParts(t *testing.T) {
 			"タブが残りの幅に収まらなければ左のタブを省く", 20, &StatusLine{Left: []string{"tabs"}, Right: []string{"memusage.rss"}},
 			[]Tab{{Name: "first.go"}, {Name: "second.go"}, {Name: "now.go", Current: true}},
 			"< now.go   RSS 120M ",
+		},
+		{
+			"幅が足りなければ拡張機能の部品を切り、いまのタブの見出しを残す", 20,
+			&StatusLine{Left: []string{"tabs"}, Right: []string{"long.part"}}, tabs, "< b.go feature/ver> ",
 		},
 		{
 			"タブを並べなければタブの見出しを出さない", 30, &StatusLine{Right: []string{"memusage.rss"}}, tabs,
