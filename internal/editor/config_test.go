@@ -93,7 +93,7 @@ func TestConfigProblems(t *testing.T) {
 		Keymap:   map[string]map[string]string{"normal": {"<Foo>": "x"}},
 	})
 	// 2 件目と、キーマップの誤り（<Foo>）の 2 件を、件数で知らせる。
-	if got := h.message(); got != "config.jsonc:3:5: 未知の項目 foo（他 2 件）" {
+	if got := h.message(); got != "設定の誤り 3 件（:messages）: config.jsonc:3:5: 未知の項目 foo" {
 		t.Errorf("message = %q", got)
 	}
 }

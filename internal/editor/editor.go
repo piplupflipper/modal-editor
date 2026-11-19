@@ -289,6 +289,10 @@ type Editor struct {
 	// pendingOpen は、command/execute の結果の Open のうち、別のバッファへ移るもので、Feed が戻ってから行うものである。
 	pendingOpen []openRequest
 
+	// msgHistory は、メッセージの履歴（本体の誤りと拡張機能の message/show）を古い順に並べたものである（:messages。messages.go）。
+	// client の間で共有する（仮）。
+	msgHistory []ui.Message
+
 	// clipPushes は、ホストのクリップボードへ最後に送ったか、送るかを判定したときの command.Registers.Pushes の値である（syncClipboard）。
 	clipPushes uint64
 
@@ -439,6 +443,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		warnings = append(warnings, err)
 	}
 	warnings = append(warnings, addHelpCommands(e.exCommands)...)
+	warnings = append(warnings, addMessagesCommand(e.exCommands)...)
 	warnings = append(warnings, removedCommandWarnings(cfg.Keymap, e.exCommands)...)
 	var w2 []error
 	var remap *remapper
@@ -452,13 +457,16 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	e.viewFields = first.v
 	for _, w := range warnings {
 		lg.Warn("設定の誤り", "err", w)
+		e.noteMessage(ui.Message{Text: w.Error(), Level: ui.MessageError})
 	}
 	if len(warnings) > 0 {
 		text := warnings[0].Error()
-		if n := len(warnings) - 1; n > 0 {
-			// 他にも誤りがあることを知らせる。全件はログ（Config.Logger）にある。
-			text = fmt.Sprintf("%s（他 %d 件）", text, n)
+		if n := len(warnings); n > 1 {
+			// 他にも誤りがあることを知らせる。全件は :messages とログ（Config.Logger）にある。
+			// 件数と案内は、1 件目の文が長くても端末の幅で切れないように前に置く（#229 のレビューの推奨 5）。
+			text = fmt.Sprintf("設定の誤り %d 件（:messages）: %s", n, text)
 		}
+		// 拡張機能の message/show は、利用者が次のキーを打つまでこれを上書きしない（showExtMessage。#211）。
 		e.message = ui.Message{Text: text, Level: ui.MessageError}
 	}
 	return e, nil
@@ -631,7 +639,8 @@ func (e *Editor) Run(ctx context.Context) error {
 		case req := <-e.attachCh:
 			e.attach(req)
 		case f := <-e.keyFireCh:
-			if f.c.attached() && f.gen == f.c.keyGen {
+			// 外部のコマンドか再生中の拡張機能の結果を待っている client は、待ちが終わってから次のキーで掛け直す（keyAllowed）。
+			if f.c.attached() && f.gen == f.c.keyGen && e.keyAllowed(f.c) {
 				e.useClient(f.c)
 				e.flushKeys()
 			}
@@ -640,8 +649,9 @@ func (e *Editor) Run(ctx context.Context) error {
 		case <-e.resizeCh:
 			e.applySize()
 		case <-e.intrCh:
-			// <C-c> のキーそのものは列から届くので、ここでは外部のコマンドの中断だけをする。
+			// <C-c> のキーそのものは列から届くので、ここでは外部のコマンドと再生中の拡張機能の待ちの中断だけをする。
 			e.interruptShell()
+			e.interruptReplay()
 		case o := <-e.shellDone:
 			e.shellFinished(o)
 		case ev, ok := <-e.host.Events():
@@ -940,7 +950,9 @@ func (e *Editor) keyTimeout() time.Duration {
 	return e.cfg.KeyTimeout
 }
 
-// showError は、誤りを 1 行のメッセージで知らせる（基本設計 8 章）。
+// showError は、誤りを 1 行のメッセージで知らせ、メッセージの履歴に残す（基本設計 8 章。:messages）。
+// 次のキーで消えるまで、拡張機能の message/show はこれを上書きしない（showExtMessage）。
 func (e *Editor) showError(err error) {
 	e.message = ui.Message{Text: err.Error(), Level: ui.MessageError}
+	e.noteMessage(e.message)
 }

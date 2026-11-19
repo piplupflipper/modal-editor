@@ -763,6 +763,23 @@ func TestReplayStopsOnException(t *testing.T) {
 	}
 }
 
+// TestReplayStopsOnExceptionWithoutSource は、止まった位置のソースが分からない停止でも、ブレークポイントとステップ実行以外の理由なら
+// ok を false で返して再生を止めることを確かめる（#224 のコメント）。ブレークポイントで止まったときは、カーソルを動かさずに続ける。
+//
+// req: FR-19
+func TestReplayStopsOnExceptionWithoutSource(t *testing.T) {
+	h := newHost(t, fakeSettings(t, nil, map[string]any{"exceptionOnContinue": true, "noSource": true}))
+	h.open(1, srcPath, srcText)
+	h.mustExec(cmdToggleBreakpoint, 2)
+	if res := h.replay(cmdStart, 0); !res.OK || res.Open != nil {
+		t.Fatalf("start (sync) = %+v, want ok without open", res)
+	}
+	if res := h.replay(cmdContinue, 0); res.OK {
+		t.Errorf("continue stopped by an exception without source (sync) = %+v, want ok = false", res)
+	}
+	h.waitMessage("再生を止めた")
+}
+
 // TestReplayStopInUnopenedFile は、再生中の停止の位置が開いていないファイルにあれば、ファイルの中身から列をバイトの位置にして
 // パスで返すことを確かめる（#217 のレビュー）。
 //

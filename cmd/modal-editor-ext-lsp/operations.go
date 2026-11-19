@@ -120,7 +120,7 @@ type listResult struct {
 //
 // sync が false なら、受け付けたことだけを ok で応答し、集めて選ばせるのは後から行う。
 // sync が true（マクロとドットリピートの再生中）なら、集め終えてから応答する（FR-19）。
-// 本体は応答を待つ間 choice/ask を処理できず、選んだキーは記録されていない（choice/ask への答えはマクロに入らない）ので、選ばせない。
+// 記録したときに選んだ候補はマクロに入らない（choice/ask への答えはマクロに記録されない）ので、選ばせない。
 // 候補が 1 つなら、その候補への移動を応答の open で返す。候補が無いか複数なら、そのことを知らせて ok を false にし、再生を止める。
 // 記録したときに選んだ候補を再生では決められないので、別の候補へ移って再生を続けるより、止めて利用者に任せる。
 func (x *extension) runList(ctx context.Context, sync bool, reply func(ext.ProviderInvokeResult, error), method, failText string,
@@ -352,7 +352,7 @@ var errRenameUnopened = errors.New("rename touches files that are not open")
 //
 // sync が true（マクロとドットリピートの再生中）なら、結果がそろってから応答し、問い合わせたバッファの編集を応答の transaction で返す
 // （基本設計 6 章の冒頭。後から buffer/edit で届けると、再生の次の操作でバージョン番号が進んだ後に届いて破棄される）。
-// 他のバッファの編集は、応答の後に buffer/edit で届ける。本体は応答を待つ間 buffer/edit を処理しないので、応答の前に送ると互いに待つ。
+// 他のバッファの編集は、応答の後に buffer/edit で届ける（本体は応答を待つ間も buffer/edit を処理するが、再生の続きの後に届いても困らない）。
 // 結果を得られないか適用できなければ、ok を false にして再生を止める。
 //
 // req: FR-94, FR-19

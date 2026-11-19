@@ -141,8 +141,9 @@ func (e *Editor) handleKeys() {
 // afterKey は、キーの処理の後に、中断の後始末と、曖昧なキーの列の時間切れの準備をする。
 func (e *Editor) afterKey() {
 	if c := e.op; c.intr.Load() {
-		// このキーで始めた外部のコマンドは、知らせ（intrCh）を Run が先に取っていても、ここで中断する。
+		// このキーで始めた外部のコマンドと再生中の拡張機能の待ちは、知らせ（intrCh）を Run が先に取っていても、ここで中断する。
 		e.interruptShell()
+		e.interruptReplay()
 		// 処理の途中に <C-c> が押された。中断はもう効いたので印を下ろし、<C-c> までの先打ちを捨てる。
 		e.interrupt.Store(false)
 		c.intr.Store(false)
@@ -243,13 +244,13 @@ func (e *Editor) handleKey(k editcmd.Key) {
 }
 
 // feedMapped は、キーマップを通した後のキーの列を、1 個ずつ command.State へ渡す。キーが失敗したら残りを捨てる。
-// 途中のキーで外部のコマンド（:{range}! と :r !）を始めたら、残りのキーを外部のコマンドに持たせ、
-// 終わって出力を入れた後に、再び展開せずに続ける（Vim はコマンドが終わってから展開の残りを実行する）。
+// 途中のキーで外部のコマンド（:{range}! と :r !）を始めたか、再生中の拡張機能の結果を待ち始めたら、残りのキーを待ちに持たせ、
+// 終わった後に、再び展開せずに続ける（Vim はコマンドが終わってから展開の残りを実行する）。
 func (e *Editor) feedMapped(keys []editcmd.Key) {
 	for i, k := range keys {
 		ok := e.feedKey(k)
-		if e.shell != nil {
-			e.shell.mapped = append(e.shell.mapped, keys[i+1:]...)
+		if h := e.suspension(); h != nil {
+			h.mapped = append(h.mapped, keys[i+1:]...)
 			return
 		}
 		if !ok {
@@ -278,9 +279,9 @@ func (e *Editor) handlePaste(text string) {
 	}
 	e.message = noMessage
 	e.feedMapped(e.remap.flush())
-	if e.shell != nil {
-		// 貼り付けの前に確定させたキーで外部のコマンドを始めたら、貼り付けは終わった後に入れる。
-		e.shell.paste = text
+	if h := e.suspension(); h != nil {
+		// 貼り付けの前に確定させたキーで外部のコマンドか再生中の拡張機能の待ちを始めたら、貼り付けは終わった後に入れる。
+		h.paste = text
 		return
 	}
 	bs := e.cur
@@ -290,7 +291,7 @@ func (e *Editor) handlePaste(text string) {
 // flushKeys は、曖昧なキーの列を、時間切れとして確定させて実行する。
 func (e *Editor) flushKeys() {
 	e.feedMapped(e.remap.flush())
-	if e.shell == nil {
+	if e.suspension() == nil {
 		_ = e.handleResult(e.cur, e.cur.state.Flush()) // 失敗は handleResult が知らせる
 	}
 	e.afterKey()
@@ -342,7 +343,17 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 			e.commitChange(bs, ch)
 		}
 	}
-	e.trackDeferred(bs, res.Deferred)
+	// 再生の途中で拡張機能の結果を待つために止めた。誤りではないので知らせない（残りは replayAnswered が続ける）。
+	queryPending := errors.Is(res.Err, command.ErrQueryPending)
+	if queryPending {
+		if err := e.holdReplay(res); err != nil {
+			res.Err = err
+			queryPending = false
+		}
+	} else {
+		e.trackDeferred(bs, res.Deferred)
+		e.dropOrphanReplay()
+	}
 	if res.Message.Text != "" {
 		// 検索したパターンと、検索の折り返しの警告。後に続く動作と失敗の知らせで上書きされる。
 		level := ui.MessageInfo
@@ -365,7 +376,7 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 		// Err は確認を求めた E493 なので知らせず、問いを出す（render）。
 		// 左の動作が失敗したら問いを出さない（:w! dir|3,1d。Vim 9.1 は :w が失敗すると右のコマンドを実行しない）。
 		e.confirm, e.confirmBS = res.Confirm, bs
-	case res.Err != nil && !switched && !shellPending && !actionFailed:
+	case res.Err != nil && !switched && !shellPending && !queryPending && !actionFailed:
 		e.reportError(res.Err)
 	}
 	if res.Shell != nil && !actionFailed {

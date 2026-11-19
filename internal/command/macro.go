@@ -85,6 +85,10 @@ func (s *State) play(cmd editcmd.Command) error {
 		return failf("macro nested too deeply")
 	}
 	n := max(cmd.Count, 1)
+	if s.playDepth == 0 {
+		// 拡張機能の結果を待つために止めたときに、止める前の再生が単位を作ったかを見分けるために控える（suspendQuery）。
+		s.playUndoStart = s.buf.UndoTip()
+	}
 	s.buf.BeginUndoGroup()
 	defer s.endPlayGroup()
 	s.lastPlayed = name
@@ -212,27 +216,96 @@ var ErrBufferSwitched = errors.New("command: replay continues in another buffer"
 // req: FR-05, FR-57
 func (s *State) ContinueReplay(segs []ReplaySegment) Result {
 	s.res = Result{}
+	s.playUndoStart = s.buf.UndoTip()
 	s.buf.BeginUndoGroup()
 	s.playDepth++
+	s.playSegments(segs)
+	s.playDepth--
+	if s.mode == ModeNormal || s.mode.visual() {
+		s.runResults(s.parser.Flush())
+	}
+	s.endPlayGroup()
+	return s.take()
+}
+
+// playSegments は、再生の残り segs を先頭から再生する（ContinueReplay と ResumeReplay）。
+// 区切りの Dot の印に来たら、ドットリピートの対象をその値にする。
+// 再生がまた止まった（suspendsReplay）ら、まだ再生していない区切りを Result.Remaining に足す。
+// 失敗したら（呼ぶ前に失敗していた場合も）、残りの印のうち最後のもの（いちばん外側の再生）を対象にする（FR-57）。
+func (s *State) playSegments(segs []ReplaySegment) {
 	for i, seg := range segs {
+		if s.res.Err != nil {
+			s.stopSegments(segs[i:])
+			return
+		}
 		if seg.Dot != nil {
 			s.finishPlayDot(seg.Dot)
 			continue
 		}
 		s.playKeys(seg.Keys, seg.Count)
-		if s.res.Err != nil {
-			if suspendsReplay(s.res.Err) {
-				s.res.Remaining = append(s.res.Remaining, segs[i+1:]...)
-				break
-			}
-			for _, rest := range segs[i+1:] {
-				if rest.Dot != nil {
-					s.finishPlayDot(rest.Dot)
-				}
-			}
-			break
+	}
+}
+
+// stopSegments は、再生が止まったときに、まだ再生していない区切り segs を扱う（playSegments）。
+func (s *State) stopSegments(segs []ReplaySegment) {
+	if suspendsReplay(s.res.Err) {
+		s.res.Remaining = append(s.res.Remaining, segs...)
+		return
+	}
+	for _, rest := range segs {
+		if rest.Dot != nil {
+			s.finishPlayDot(rest.Dot)
 		}
 	}
+}
+
+// ResumeReplay は、再生の途中で拡張機能の結果を待つために止めた（ErrQueryPending）再生を、届いた結果で続ける（FR-19。基本設計 5.4）。
+//
+// d と segs は、止めたときの Result.Deferred と Result.Remaining である。ext は、d を実行し直す間だけ State.Extensions の代わりに使う
+// 問い合わせ先で、止めた問い合わせ（と、同じ操作の中のそれより前の問い合わせ）には届いた結果を返す（ApplyDeferred と同じ）。
+// 実行し直した後は、ふだんの問い合わせ先で segs を再生する。どちらも再生中として扱う（Replaying が true）。
+//
+// d を実行し直すのは、バッファのバージョン番号、カーソル、モードが止めたときと同じ場合だけである（ApplyDeferred と同じ条件）。
+// 待つ間に拡張機能の編集や外での変更の読み直しでバッファが変わっていれば、ErrStale で再生を止める。
+// err が nil でなければ（結果を得られない、期限を超えた、中断した）、d を実行せずに err で再生を止める。
+// 止めたときは、segs の Dot の印のうち最後のものをドットリピートの対象にする（ContinueReplay の失敗と同じ）。
+// 実行し直した操作か segs の中でまた止まれば、ErrQueryPending などと残りが Result に入る。
+//
+// 止める前の再生が作ったアンドゥの単位が履歴の末尾のままなら、続きの変更をそこへつなぎ（buffer.Buffer.JoinUndoGroup）、
+// 再生の全体を 1 回の u で戻せるようにする（Vim の @a と同じ）。
+// 待つ間に別の client の操作でドットリピートの値、直前の検索、直前の :s、直前の f、@@ のレジスターが替わっていても、
+// 止めたときの値に戻してから続ける。レジスターは client の間で共有するもの（FR-58）なので戻さない。
+//
+// req: FR-07, FR-19
+func (s *State) ResumeReplay(d Deferred, ext Extensions, segs []ReplaySegment, err error) Result {
+	s.res = Result{}
+	if r := d.replay; r != nil {
+		// 待つ間に別の client の操作でドットリピートの値などが替わっていても、止めたときの値で続ける（#229 のレビュー）。
+		s.setRepeatState(r.repeat)
+	}
+	// 止める前の再生が作ったアンドゥの単位が末尾のまま（待つ間に誰もこのバッファを変えていない）なら、そこへつなぐ。
+	// 待つ間に変わっていれば、バージョン番号が変わっているので deferredReady が ErrStale で止める。
+	if r := d.replay; r != nil && r.undoTip != 0 && s.buf.JoinUndoGroup(r.undoTip) {
+		s.playUndoStart = r.undoStart
+	} else {
+		if r == nil || r.undoTip == 0 {
+			s.buf.BeginUndoGroup()
+		}
+		s.playUndoStart = s.buf.UndoTip()
+	}
+	s.playDepth++
+	switch {
+	case err != nil:
+		s.fail(err)
+	case !s.deferredReady(d):
+		s.fail(ErrStale)
+	default:
+		saved := s.Extensions
+		s.Extensions = ext
+		s.rerunDeferred(d)
+		s.Extensions = saved
+	}
+	s.playSegments(segs)
 	s.playDepth--
 	if s.mode == ModeNormal || s.mode.visual() {
 		s.runResults(s.parser.Flush())

@@ -34,6 +34,10 @@ type popupState struct {
 	markdown bool
 	// center は、カーソルの近くでなく画面の中央に出すかである（ui.Frame.PopupCenter。:ext sync の結果の内訳）。
 	center bool
+	// trackKeys が true なら、bs の State が解釈したキーの数（command.State.KeysFed）が keys から進んだら消す（render）。
+	// 利用者のキーは handleKey が消すので、再生のキー（マクロの残り）で消すためのものである（popup/show。showPopup）。
+	keys      uint64
+	trackKeys bool
 }
 
 var noMessage = ui.Message{}

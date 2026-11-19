@@ -42,11 +42,13 @@ type openRequest struct {
 
 // extQuery は、command.Extensions を exthost で実装する（基本設計 5.4）。
 // answer があれば、method が answerMethod の最初の問い合わせには、送らずに answer を返す（ApplyDeferred で、届いた結果を使う）。
+// replay があれば、問い合わせには送らずに、再生の途中で届いた結果を問い合わせた順に返す（ResumeReplay。replayAnswered）。
 type extQuery struct {
 	e            *Editor
 	bs           *bufferState
 	answer       *exthost.QueryResult
 	answerMethod string
+	replay       *replayAnswers
 }
 
 // errExtension は、拡張機能の操作の失敗を、利用者へ知らせる文言に包む。
@@ -87,13 +89,27 @@ func (x *extQuery) call(ref editcmd.Ref, method string, params any, info command
 		}
 		return nil
 	}
-	return x.e.query(x.bs, ref, method, params, info, out)
+	if x.replay != nil {
+		r, err := x.replay.next(method)
+		if err != nil {
+			return errExtension(ref, err)
+		}
+		if r != nil {
+			if err := r.Decode(out); err != nil {
+				return errExtension(ref, err)
+			}
+			return nil
+		}
+	}
+	return x.e.query(x.bs, ref, method, params, info, out, x.replay)
 }
 
 // query は、拡張機能 ref.Extension へ method を問い合わせる。期限の扱いは package の doc にある。
+// 再生中（info.Replaying）は、送って command.ErrQueryPending を返す（sendReplay）。prev は、再生の続きで操作を実行し直している
+// ときの、それまでに届いた結果である（無ければ nil）。
 //
 // req: FR-17, FR-18, FR-19
-func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params any, info command.QueryInfo, out any) error {
+func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params any, info command.QueryInfo, out any, prev *replayAnswers) error {
 	// マクロの再生の途中なら、ここまでの変更を拡張機能の複製へ送ってから問い合わせる（FR-16）。
 	e.syncChanges(bs, bs.state.PendingChanges())
 	if e.host.Withheld(bs.id) {
@@ -118,7 +134,7 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 	timeout := e.syncTimeout()
 	switch {
 	case info.Replaying:
-		timeout = e.cfg.ReplayTimeout
+		return e.sendReplay(bs, ref, method, params, tag, prev)
 	case timeout == 0:
 		q, err := e.host.Send(ref.Extension, method, params, exthost.SendOptions{Tag: tag})
 		if err != nil {
@@ -130,11 +146,8 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 		e.deferred = &pendingQuery{q: q, tag: tag, bs: bs, method: method, ref: ref, client: e.view}
 		return command.ErrDeferred
 	}
-	opts := exthost.SendOptions{Tag: tag, Timeout: max(timeout, 0)}
-	if !info.Replaying {
-		// 起動を含む問い合わせだけ長い期限で待つ（基本設計 5.2）。拡張機能が稼働中なら exthost は使わない。
-		opts.StartTimeout = e.startSyncTimeout()
-	}
+	// 起動を含む問い合わせだけ長い期限で待つ（基本設計 5.2）。拡張機能が稼働中なら exthost は使わない。
+	opts := exthost.SendOptions{Tag: tag, Timeout: max(timeout, 0), StartTimeout: e.startSyncTimeout()}
 	q, err := e.host.Send(ref.Extension, method, params, opts)
 	if err != nil {
 		return errExtension(ref, err)
@@ -468,6 +481,10 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 	if ref.Extension == extManagerExtension {
 		return extManagerTx(b), x.e.extManagerAction(q.Text)
 	}
+	if ref.Extension == messagesExtension {
+		x.e.showMessages()
+		return extManagerTx(b), nil
+	}
 	p := ext.CommandExecuteParams{
 		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,
 		Cursor: toExtPos(q.Cursor), Count: count(q.Count, q.CountGiven), Args: commandArgs(q), Sync: info.Replaying,
@@ -482,7 +499,8 @@ func (x *extQuery) invokeResult(ref editcmd.Ref, method string, params any, b *b
 	x.e.extRan = true
 	x.e.popupMark = popupMark{state: x.bs.state, keys: x.bs.state.KeysFed()}
 	err := x.call(ref, method, params, info, &r)
-	if (err != nil || !r.OK) && x.e.host.Withheld(x.bs.id) && !errors.Is(err, context.Canceled) && !errors.Is(err, command.ErrDeferred) {
+	if (err != nil || !r.OK) && x.e.host.Withheld(x.bs.id) && !errors.Is(err, context.Canceled) &&
+		!errors.Is(err, command.ErrDeferred) && !errors.Is(err, command.ErrQueryPending) {
 		// 送っていないバッファでは、バッファを使うコマンドは失敗する。拡張機能の返す理由より、送っていないことを知らせる。
 		return buffer.Transaction{}, errWithheld(ref)
 	}

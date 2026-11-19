@@ -92,7 +92,10 @@ type viewFields struct {
 	jumps   []jumpEntry
 	jumpIdx int
 	message ui.Message
-	popup   *popupState
+	// extMessage は、最後に拡張機能の message/show で出したメッセージである。
+	// message と違えば、メッセージの行のものは本体が出したものである（showExtMessage が本体の誤りを上書きしないために使う）。
+	extMessage ui.Message
+	popup      *popupState
 	// popupMark は、最後に拡張機能の操作（command/execute と provider/invoke）を問い合わせた State と、
 	// その時点の command.State.KeysFed の値である（invokeResult）。showPopup が、問い合わせの後に次のキーを解釈したかを調べる。
 	popupMark popupMark
@@ -122,6 +125,8 @@ type clientView struct {
 	// keyTimer と keyGen は、曖昧なキーの列を確定させるタイマーと、その世代である（armKeyTimer）。
 	keyTimer *time.Timer
 	keyGen   uint64
+	// replay は、この client のマクロかドットリピートの再生が待っている拡張機能の問い合わせである。無ければ nil（replaywait.go）。
+	replay *replayWait
 }
 
 // attached は、c が Editor に繋がっているかを返す。
@@ -479,6 +484,10 @@ func (e *Editor) removeClient(c *clientView) {
 		// 外部のコマンドを打った client が終わった。出力を入れる先の画面が無いので止める（結果は shellFinished が捨てる）。
 		e.shell.cancel()
 	}
+	if c.replay != nil {
+		// 再生の続きを入れる先の画面が無いので、問い合わせを取り消す（結果は replayAnswered が捨てる）。
+		c.replay.q.Cancel()
+	}
 	e.keys.drop(c)
 	if len(e.clients) == 0 {
 		return
@@ -545,6 +554,7 @@ func (e *Editor) showsQuestion() bool {
 
 // keyAllowed は、client c のキーを今処理してよいかを返す。
 // 問いの間は問いを出した client のキーだけを、外部のコマンドの実行中はそれを打った client 以外のキーを処理する（パッケージの doc）。
+// 再生中の拡張機能の結果を待っている client のキーも、続け終えるまで処理しない（replayWait）。
 func (e *Editor) keyAllowed(c *clientView) bool {
 	if c.detached {
 		return true // 外した client のキーは、取り出して捨てる
@@ -552,5 +562,5 @@ func (e *Editor) keyAllowed(c *clientView) bool {
 	if q := e.asker; q != nil && q != c {
 		return false
 	}
-	return e.shell == nil || e.shell.client != c
+	return (e.shell == nil || e.shell.client != c) && c.replay == nil
 }

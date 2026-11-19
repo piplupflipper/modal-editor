@@ -557,6 +557,37 @@ func TestUndoGroup(t *testing.T) {
 			t.Error("空のグループでアンドゥの単位ができた")
 		}
 	})
+
+	t.Run("JoinUndoGroup は末尾が変わっていなければ同じ単位にまとめる", func(t *testing.T) {
+		b := New("x")
+		insert(b, 1, "a")
+		b.BeginUndoGroup()
+		insert(b, 2, "b")
+		b.EndUndoGroup()
+		tip := b.UndoTip()
+		if !b.JoinUndoGroup(tip) {
+			t.Fatal("JoinUndoGroup = false")
+		}
+		insert(b, 3, "c")
+		b.EndUndoGroup()
+		b.Undo()
+		if b.Text() != "xa" {
+			t.Errorf("まとめた後の Undo: %q, want %q", b.Text(), "xa")
+		}
+
+		// 間に別の単位が入ったら、まとめない。
+		tip = b.UndoTip()
+		insert(b, 0, "y")
+		if b.JoinUndoGroup(tip) {
+			t.Error("末尾が変わったのに JoinUndoGroup = true")
+		}
+		insert(b, 0, "z")
+		b.EndUndoGroup()
+		b.Undo()
+		if b.Text() != "yxa" {
+			t.Errorf("まとめない Undo: %q, want %q", b.Text(), "yxa")
+		}
+	})
 }
 
 func TestModified(t *testing.T) {

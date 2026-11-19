@@ -458,6 +458,28 @@ func (b *Buffer) EndUndoGroup() {
 	}
 }
 
+// UndoTip は、アンドゥの履歴の末尾の単位の識別子を返す。履歴が空なら 0 である。
+// 末尾の単位に編集をまとめるたびに識別子は変わるので、ある時点の後に末尾の単位が変わっていないかを比べるのに使う（JoinUndoGroup）。
+func (b *Buffer) UndoTip() uint64 { return b.stateID() }
+
+// JoinUndoGroup は、BeginUndoGroup と同じくグループを開く。加えて、グループを開いていない状態から開き、
+// アンドゥの履歴の末尾の単位の識別子が tip（0 でないもの）と同じなら、このグループの編集を末尾の単位にまとめ、true を返す
+// （Vim の :undojoin に当たる）。違えば BeginUndoGroup と同じく新しい単位を作り、false を返す。
+// 閉じるのは EndUndoGroup である。
+//
+// 閉じたグループの続きを、間に入った他の操作で末尾が変わっていないときだけ同じ単位にするためのもので、
+// 拡張機能の結果を待つために止めたマクロの再生を続けるときに使う（internal/command の ResumeReplay）。
+//
+// req: FR-07
+func (b *Buffer) JoinUndoGroup(tip uint64) bool {
+	b.groupDepth++
+	if b.groupDepth != 1 || tip == 0 || b.stateID() != tip {
+		return false
+	}
+	b.groupStarted = true
+	return true
+}
+
 // closeUndoGroup は、開いているグループを全て閉じる。
 func (b *Buffer) closeUndoGroup() {
 	b.groupDepth = 0

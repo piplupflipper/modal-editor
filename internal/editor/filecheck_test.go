@@ -3,6 +3,7 @@ package editor
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/exthost"
+	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
 // stat が戻らないと、定期的な確認は期限の後に 1 回知らせ、:checktime もその旨を知らせる（黙って止まらない）。
@@ -536,7 +538,11 @@ func TestBufferSaveChangedOnDisk(t *testing.T) {
 	h.settle()
 	writeExternal(t, path, "X\n")
 	h.keys(`\w`)
-	h.eventually("断りの表示", func() bool { return strings.HasPrefix(h.e.message.Text, "saved=false") })
+	// 拡張機能の知らせ（saved=false）は、本体の断りの誤りを上書きせずに履歴に残る（#211）。
+	h.eventually("断りの表示", func() bool {
+		return strings.Contains(h.e.message.Text, "拡張機能の保存を断りました") &&
+			slices.ContainsFunc(h.e.msgHistory, func(m ui.Message) bool { return strings.HasPrefix(m.Text, "saved=false") })
+	})
 	if got := readFile(t, path); got != "X\n" {
 		t.Fatalf("buffer/save が上書きした: %q", got)
 	}

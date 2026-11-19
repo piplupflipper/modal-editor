@@ -13,7 +13,6 @@ import (
 
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
-	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
 // shellOutputLimit は、:{range}! と :r ! の外部のコマンドの出力（標準出力と標準エラー出力の合計）の上限のバイト数である（仮）。
@@ -44,12 +43,10 @@ type shellJob struct {
 	// interrupted は、<C-c> で中断したかである。
 	interrupted bool
 	// replay は、マクロの再生の途中で始めたときの、再生の残りである（command.ErrShellPending）。
-	// mapped は、キーマップの展開の途中で始めたときの、展開の残りのキーである（feedMapped）。
-	// paste は、貼り付けの前に確定させたキーで始めたときの、貼り付けのテキストである（handlePaste）。
+	// heldInput は、キーマップの展開の残りと貼り付けである。
 	// どれも、出力を入れ終えた後に、この順で続ける。実行できなかった、中断したときは捨てる（Vim の再生とキーマップが誤りで止まるのと同じ）。
 	replay []command.ReplaySegment
-	mapped []editcmd.Key
-	paste  string
+	heldInput
 }
 
 // shellOutcome は、外部のコマンドを動かす goroutine からイベントループへ送る結果である。
@@ -153,27 +150,13 @@ func (e *Editor) shellFinished(o shellOutcome) {
 }
 
 // continueAfterShell は、外部のコマンドの出力を入れた後に、止めていた再生の残り、キーマップの展開の残り、貼り付けを続ける。
-// 続きの中でまた外部のコマンドを始めたら、まだ続けていないものをその実行に引き継ぐ。
+// 続きの中でまた外部のコマンドを始めたか、再生中の拡張機能の結果を待ち始めたら、まだ続けていないものをその待ちに引き継ぐ（resumeInput）。
 func (e *Editor) continueAfterShell(job *shellJob) {
 	if len(job.replay) > 0 {
 		next := e.cur
 		_ = e.handleResult(next, next.state.ContinueReplay(job.replay)) // 失敗は handleResult が知らせる
-		if e.shell != nil {
-			e.shell.mapped = append(e.shell.mapped, job.mapped...)
-			e.shell.paste = job.paste
-			return
-		}
 	}
-	if len(job.mapped) > 0 {
-		e.feedMapped(job.mapped)
-		if e.shell != nil {
-			e.shell.paste = job.paste
-			return
-		}
-	}
-	if job.paste != "" {
-		e.handlePaste(job.paste)
-	}
+	e.resumeInput(job.heldInput)
 }
 
 // limitedBuffer は、shellOutputLimit までを溜める io.Writer である。超えたら over を立て、cancel で子を止め、誤りを返す。

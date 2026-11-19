@@ -53,6 +53,8 @@ type fakeOptions struct {
 	StopDelayMs int `json:"stopDelayMs"`
 	// ExceptionOnContinue は、continue で次のブレークポイントへ進まずに、その場で reason が exception の stopped を送る（panic の代役）。
 	ExceptionOnContinue bool `json:"exceptionOnContinue"`
+	// NoSource は、stackTrace のフレームの source を省く（止まった位置のソースが分からない停止の代役）。
+	NoSource bool `json:"noSource"`
 }
 
 type message struct {
@@ -291,10 +293,14 @@ func (a *adapter) handle(m *message) {
 		if col == 0 {
 			col = 1
 		}
-		a.respond(m, map[string]any{"stackFrames": []map[string]any{{
+		frame := map[string]any{
 			"id": 1000, "name": "main.main", "line": loc.line, "column": col,
 			"source": map[string]any{"name": filepath.Base(loc.path), "path": loc.path},
-		}}})
+		}
+		if a.opts.NoSource {
+			delete(frame, "source")
+		}
+		a.respond(m, map[string]any{"stackFrames": []map[string]any{frame}})
 	case "continue", "next", "stepIn", "stepOut":
 		a.stateMu.Lock()
 		running := a.running

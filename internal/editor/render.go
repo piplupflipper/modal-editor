@@ -55,7 +55,7 @@ func (e *Editor) frame() *ui.Frame {
 	if start, end, linewise, ok := st.Selection(); ok {
 		f.Selection = ui.Selection{Active: true, Start: start, End: end, Linewise: linewise}
 	}
-	if p := e.popup; p != nil && (p.bs != bs || p.cursor != st.Cursor()) {
+	if p := e.popup; p != nil && (p.bs != bs || p.cursor != st.Cursor() || (p.trackKeys && p.keys != st.KeysFed())) {
 		e.popup = nil
 	}
 	// 問いは、問いを出した client の画面にだけ出す（clients.go の doc）。

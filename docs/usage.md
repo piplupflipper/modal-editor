@@ -60,6 +60,9 @@ LSP と DAP の操作には既定のキー（[LSP と DAP の既定のキー](#l
 
 設定ファイルの他の項目（`fixendofline`、`fileTypes`、`extensions.syncTimeoutMs` など）は `go doc ./internal/config Config` にある。
 設定に誤りがあると、起動後にコマンドラインの行へ位置と内容を出し、誤りのある項目だけを既定値にする。
+誤りが複数あれば、行には最初の 1 件と件数を出す。
+`:messages`（`:mes`）で、すべての誤りと、拡張機能の知らせ（言語サーバーの進み具合など）を古い順に読める。
+行に出た誤りは、次のキーを打つまで、拡張機能の知らせで上書きされない。
 
 ### `<Leader>` と `leader`
 

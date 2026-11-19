@@ -247,7 +247,7 @@ func TestStartSyncTimeoutNotUsed(t *testing.T) {
 		if got := h.text(); got != "dil\nabc" {
 			t.Errorf("text = %q（再生中に起動を待った）", got)
 		}
-		if msg := h.message(); !strings.Contains(msg, "timed out") {
+		if msg := h.message(); !strings.Contains(msg, "の結果を 1ms 待ったので、再生を止めました") {
 			t.Errorf("message = %q", msg)
 		}
 	})

@@ -277,7 +277,8 @@ func TestReplayProviderWaits(t *testing.T) {
 	h.eventually("@c のホバー", func() bool { return popupOf() == "hover-popup" })
 
 	// 移動しないキー（zz）や、動いて戻るキー（jk）が続いても、記録したときと同じく再生の後に残らない（#217 のレビュー）。
-	for _, rec := range []string{"qeKzzq", "qfKjkq"} {
+	// 拡張機能の操作（<Space>db）が続いても残らない（#224 のコメント）。
+	for _, rec := range []string{"qeKzzq", "qfKjkq", "qgK<Space>dbq"} {
 		reg := rec[1:2]
 		h.keys("j" + rec)
 		h.settle()
@@ -304,7 +305,7 @@ func TestRemovedCommandWarnings(t *testing.T) {
 		t.Errorf("宣言された古いコマンド: errs = %v", errs)
 	}
 	h := start(t, Config{Keymap: km})
-	if msg := h.message(); !strings.Contains(msg, ":dap.toggleBreakpoint は無くなったコマンド") || !strings.Contains(msg, "他 1 件") {
+	if msg := h.message(); !strings.Contains(msg, ":dap.toggleBreakpoint は無くなったコマンド") || !strings.HasPrefix(msg, "設定の誤り 2 件（:messages）: ") {
 		t.Errorf("起動時のメッセージ = %q", msg)
 	}
 }

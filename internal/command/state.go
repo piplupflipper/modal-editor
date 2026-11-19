@@ -92,6 +92,7 @@ type Result struct {
 	Actions []ex.Action
 	// Deferred は、拡張機能が結果を保留した（ErrDeferred）操作である。無ければ nil。
 	// 呼び出し側は、結果が届いた時点で State.ApplyDeferred に渡す（FR-18）。
+	// Err が ErrQueryPending のときは、再生中に結果を待つために止めた操作で、State.ResumeReplay に渡す（FR-19）。
 	Deferred *Deferred
 	// Err は、操作の失敗である。マクロの再生は、失敗した時点で止める。
 	// 失敗までに適用した変更は Changes に残る。
@@ -99,8 +100,8 @@ type Result struct {
 	// Confirm は、Ex コマンドが続きを実行する前に利用者の確認を求めたときに nil でない（逆順の範囲の :4,2d など）。
 	// このとき Err は E493 の *ex.Error である。呼び出し側は Confirm.Prompt を示して y か n を受け、State.Confirm に渡す。
 	Confirm *ex.Confirm
-	// Remaining は、Err が ErrBufferSwitched か ErrShellPending のときの、マクロの再生の残りである。
-	// 呼び出し側は、カーソルのあるバッファの State の ContinueReplay に渡して再生を続ける。
+	// Remaining は、Err が ErrBufferSwitched か ErrShellPending か ErrQueryPending のときの、マクロの再生の残りである。
+	// 呼び出し側は、カーソルのあるバッファの State の ContinueReplay（ErrQueryPending なら ResumeReplay）に渡して再生を続ける。
 	Remaining []ReplaySegment
 	// Message は、操作が利用者に知らせる通知である（検索したパターンと、検索の折り返しの警告）。無ければ Text が空である。
 	// 呼び出し側は、Err が nil でなければ Err を優先して知らせる。
@@ -164,6 +165,9 @@ type State struct {
 	recorded       []editcmd.Key
 	lastPlayed     rune // @@ が再生するレジスター
 	playDepth      int
+	// playUndoStart は、いちばん外側の再生（play、ContinueReplay、ResumeReplay）を始めたときのアンドゥの履歴の末尾の識別子である
+	// （buffer.Buffer.UndoTip）。止めたときの末尾と違えば、止める前の再生が単位を作っている（suspendQuery、ResumeReplay）。
+	playUndoStart uint64
 	// lastPut は、直前に実行した値が貼り付けなら、その記録である（FR-55）。execute が値を実行するたびに prevPut へ移して消すので、
 	// 別の操作を挟むと無くなる。prevPut は、実行中の値の直前の貼り付けの記録で、<C-p> と <C-n>（actPutCycle）が読む。
 	lastPut, prevPut *putRecord
@@ -291,8 +295,13 @@ func (s *State) feed(k editcmd.Key) {
 }
 
 // runResults は、Parser の結果を順に実行する。
+// 再生中の問い合わせの結果を待つために止めた（ErrQueryPending）ら、残りの結果は実行しない。
+// 待つ間に実行すると、結果が届いて操作を実行し直す（ResumeReplay）ときに、バッファかカーソルが変わっているためである。
 func (s *State) runResults(rs []editcmd.Result) {
 	for _, r := range rs {
+		if errors.Is(s.res.Err, ErrQueryPending) {
+			return
+		}
 		switch r.Status {
 		case editcmd.StatusDone:
 			s.run(r.Command)
@@ -331,9 +340,27 @@ func (s *State) run(cmd editcmd.Command) {
 		// 保留した操作は、まだ行っていないものとして扱う。ビジュアルモードのオペレーターが動かしたカーソルを戻す。
 		s.cursor, s.want = d.Cursor, d.want
 		s.res.Deferred = &d
+	case errors.Is(err, ErrQueryPending):
+		s.suspendQuery(d, err)
 	default:
 		s.fail(err)
 	}
+}
+
+// suspendQuery は、再生中の問い合わせの結果を待つために、操作 d を Result.Deferred に入れて再生を止める（ErrQueryPending）。
+// 保留した操作は、まだ行っていないものとして扱い、カーソルを戻す（ErrDeferred と同じ）。
+// 入れ子の操作（. が繰り返す操作）で内側が既に入れていれば、内側のものを残す。
+func (s *State) suspendQuery(d Deferred, err error) {
+	if s.res.Deferred == nil {
+		s.cursor, s.want = d.Cursor, d.want
+		// 続けるときに、止める前の再生の単位へつなぎ、ドットリピートの値などを止めたときのものに戻す（ResumeReplay）。
+		d.replay = &replaySnapshot{repeat: s.repeatState()}
+		if s.playDepth > 0 && s.buf.UndoTip() != s.playUndoStart {
+			d.replay.undoTip, d.replay.undoStart = s.buf.UndoTip(), s.playUndoStart
+		}
+		s.res.Deferred = &d
+	}
+	s.fail(err)
 }
 
 // execute は、編集コマンドの値を 1 つ実行する。

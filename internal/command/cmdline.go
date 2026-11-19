@@ -14,9 +14,10 @@ import (
 // 実行できなかった、中断したときは、残りを捨てる（Vim の再生が誤りで止まるのと同じ）。
 var ErrShellPending = errors.New("command: replay waits for an external command")
 
-// suspendsReplay は、err が再生を止めて残りを Result.Remaining に積む理由（バッファの移動か、外部のコマンドの実行）かを返す。
+// suspendsReplay は、err が再生を止めて残りを Result.Remaining に積む理由（バッファの移動、外部のコマンドの実行、
+// 拡張機能の結果の待ち）かを返す。
 func suspendsReplay(err error) bool {
-	return errors.Is(err, ErrBufferSwitched) || errors.Is(err, ErrShellPending)
+	return errors.Is(err, ErrBufferSwitched) || errors.Is(err, ErrShellPending) || errors.Is(err, ErrQueryPending)
 }
 
 // CommandLine は、コマンドラインモードで入力中の文字列（先頭の ":" を除く）を返す。
