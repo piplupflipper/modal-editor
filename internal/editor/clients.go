@@ -95,7 +95,9 @@ type viewFields struct {
 	// extMessage は、最後に拡張機能の message/show で出したメッセージである。
 	// message と違えば、メッセージの行のものは本体が出したものである（showExtMessage が本体の誤りを上書きしないために使う）。
 	extMessage ui.Message
-	popup      *popupState
+	// offscreenNote は、メッセージの行に出した、画面に出さないバッファを閉じた知らせである（offscreen.go）。
+	offscreenNote offscreenNote
+	popup         *popupState
 	// popupMark は、最後に拡張機能の操作（command/execute と provider/invoke）を問い合わせた State と、
 	// その時点の command.State.KeysFed の値である（invokeResult）。showPopup が、問い合わせの後に次のキーを解釈したかを調べる。
 	popupMark popupMark

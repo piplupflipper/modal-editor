@@ -59,6 +59,33 @@ func lineRange(b *server.Buffer, line int) ext.Range {
 	return ext.Range{Start: ext.Position{Line: line}, End: ext.Position{Line: line, Byte: len(b.Line(line))}}
 }
 
+// fakeWrite は、path を editor/open（focus が false）で開き、全文を content に置き換えて、skipHooks の buffer/save で書き出させる
+// （ACP の拡張機能の openAsBuffer と同じ手順。fake.write）。
+func fakeWrite(ctx context.Context, s *server.Server, path, content string) error {
+	res, err := s.OpenEditor(ctx, ext.EditorOpenParams{Path: path, Focus: false})
+	if err != nil {
+		return fmt.Errorf("editor/open: %w", err)
+	}
+	b, err := s.WaitBuffer(ctx, res.Buffer, res.Version)
+	if err != nil {
+		return fmt.Errorf("wait: %w", err)
+	}
+	last := b.LineCount() - 1
+	er, err := s.Edit(ctx, ext.BufferEditParams{Buffer: res.Buffer, Transaction: ext.Transaction{
+		BaseVersion: b.Version(),
+		Edits:       []ext.Edit{{Range: ext.Range{End: ext.Position{Line: last, Byte: len(b.Line(last))}}, Text: strings.TrimSuffix(content, "\n")}},
+	}})
+	if err != nil || !er.Applied {
+		return fmt.Errorf("buffer/edit: applied=%v %w", er.Applied, err)
+	}
+	v := er.Version
+	sr, err := s.SaveBuffer(ctx, ext.BufferSaveParams{Buffer: res.Buffer, Version: &v, SkipHooks: true})
+	if err != nil || !sr.Saved {
+		return fmt.Errorf("buffer/save: saved=%v %w", sr.Saved, err)
+	}
+	return nil
+}
+
 func runFakeExt(mode string) int {
 	s := server.New()
 	// hostCtx は、ハンドラーから起こした goroutine が本体へリクエストを送るときの ctx である。
@@ -139,6 +166,24 @@ func runFakeExt(mode string) int {
 			go func() {
 				r, err := s.SaveBuffer(hostCtx, ext.BufferSaveParams{Buffer: id, SkipHooks: true})
 				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("saved=%v err=%v", r.Saved, err))
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
+		// fake.write は、引数の空白で区切ったパスを順に、ACP の fs/write_text_file と同じ手順（editor/open（focus が false）、
+		// buffer/edit、skipHooks の buffer/save）で "written <名前>" にし、終わったら出力の欄 write に結果を書く（FR-109）。
+		s.Command("fake.write", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var args struct{ Text string }
+			if err := json.Unmarshal(p.Args, &args); err != nil {
+				return ext.CommandExecuteResult{}, err
+			}
+			go func() {
+				var errs []string
+				for _, path := range strings.Fields(args.Text) {
+					if err := fakeWrite(hostCtx, s, path, "written "+filepath.Base(path)+"\n"); err != nil {
+						errs = append(errs, err.Error())
+					}
+				}
+				_ = s.AppendOutput("write", fmt.Sprintf("done errs=%q\n", errs))
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
@@ -308,6 +353,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				act(ext.ActivationTextObject, "fake.line"), act(ext.ActivationTextObject, "fake.slow"),
 				act(ext.ActivationTextObject, "fake.hang"), act(ext.ActivationCommand, "fake.upper"),
 				act(ext.ActivationCommand, "fake.echo"), act(ext.ActivationCommand, "fake.openlater"),
+				act(ext.ActivationCommand, "fake.write"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -318,6 +364,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
+					contrib("fake.write", ""),
 				},
 			},
 		},

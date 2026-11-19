@@ -300,11 +300,19 @@ func (e *Editor) editorState() ext.EditorStateResult {
 }
 
 // editorOpenRequest は、editor/open を処理する。
+// focus が false で、まだ開いていないファイルを開いたら、タブにせず、画面に出さないバッファにする（FR-109。offscreen.go）。
+//
+// req: FR-109
 func (e *Editor) editorOpenRequest(ev *exthost.EditorOpenRequest) {
-	bs, moved, err := e.editorOpen(ev.Params)
+	p := ev.Params
+	fresh := p.Buffer == nil && !p.Focus && p.Path != "" && e.findPath(e.absPath(p.Path)) == nil
+	bs, moved, err := e.editorOpen(p)
 	if err != nil {
 		_ = ev.ReplyError(err)
 		return
+	}
+	if fresh && bs.owner == nil {
+		bs.offscreen = true
 	}
 	_ = ev.Reply(ext.EditorOpenResult{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Moved: moved})
 }
@@ -350,6 +358,9 @@ func (e *Editor) editorOpen(p ext.EditorOpenParams) (*bufferState, bool, error) 
 }
 
 // bufferSaveRequest は、buffer/save を処理する。利用者の保存と同じ保存の流れを通る（基本設計 6.7）。
+// 画面に出さないバッファ（FR-109）は、書き出せたら、応答の前に閉じる（closeOffscreen）。
+//
+// req: FR-109
 func (e *Editor) bufferSaveRequest(ev *exthost.BufferSaveRequest) {
 	bs := e.findBuffer(ev.Params.Buffer)
 	if bs == nil {
@@ -370,13 +381,23 @@ func (e *Editor) bufferSaveRequest(ev *exthost.BufferSaveRequest) {
 	if errors.Is(err, errChangedOnDisk) {
 		err = fmt.Errorf("警告: 読み込んだ後にファイル \"%s\" が変更されているので、拡張機能の保存を断りました (:w! で上書きします)", e.shortName(bs))
 	}
+	prev := e.message
 	if err == nil {
 		err = e.save(bs, bs.path, ev.Params.SkipHooks)
 	}
 	if err != nil {
 		e.showError(err)
 	}
-	_ = ev.Reply(ext.BufferSaveResult{Saved: err == nil, Version: ext.Version(bs.buf.Version())})
+	version := ext.Version(bs.buf.Version())
+	// 保存の前の処理（buffer/willSave）を待つ間に、利用者がタブにしたか閉じたかもしれないので、改めて確かめる。
+	if err == nil && bs.offscreen && bs.owner == nil && slices.Contains(e.bufs, bs) {
+		// 書き込みの知らせは、変えたファイルの一覧（closeOffscreen）にまとめるので出さない。保存の前の処理の警告は残す。
+		if e.message.Level == ui.MessageInfo {
+			e.message = prev
+		}
+		e.closeOffscreen(ev.Extension, bs)
+	}
+	_ = ev.Reply(ext.BufferSaveResult{Saved: err == nil, Version: version})
 }
 
 // diagnosticList は、diagnostic/list の結果を作る。位置は編集に合わせてずらした、現在のバージョン番号の位置である。
