@@ -430,6 +430,44 @@ func TestQuestionCancelledWhenAskerGone(t *testing.T) {
 	}
 }
 
+// 問いを取り下げた後は、問いの間に待たせていた他の client のキーを、その client が次のキーを打つのを待たずに処理する
+// （PR #223 の再レビューの必須）。問いに答えて終わった場合も同じく処理する。
+//
+// req: FR-58
+func TestHeldKeysResumeAfterQuestion(t *testing.T) {
+	for _, gone := range []bool{true, false} {
+		dir := writeFiles(t, map[string]string{"a.txt": "a\nb\nc\n", "b.txt": "bb\n"})
+		h := start(t, Config{WorkDir: dir}, "a.txt")
+		b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt")}})
+		h.keys(":2,1d<CR>")
+		h.eventually("問い", func() bool { return h.e.confirm != nil })
+		b.keys("x")
+		time.Sleep(50 * time.Millisecond)
+		if got := h.bufferText("b.txt"); got != "bb" {
+			t.Fatalf("問いの間に B のキーを処理した: b.txt = %q", got)
+		}
+		if gone {
+			h.term.closeInput() // 問いを出した A が終わり、問いを取り下げる
+		} else {
+			h.keys("n")
+		}
+		h.eventually("待たせていた B の x", func() bool {
+			for _, bs := range h.e.bufs {
+				if filepath.Base(bs.path) == "b.txt" {
+					return bs.buf.Text() == "b"
+				}
+			}
+			return false
+		})
+		if s := b.term.screen(); strings.Contains(s, "待っています") {
+			h.e.do(func() { h.e.render() })
+			if s = b.term.screen(); strings.Contains(s, "待っています") {
+				t.Errorf("gone=%v: B の画面が待ったまま:\n%s", gone, s)
+			}
+		}
+	}
+}
+
 // 問いの間に待たせている client には、待たせている理由を出す（PR #223 のレビューの推奨 2）。
 //
 // req: FR-58

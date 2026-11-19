@@ -454,6 +454,12 @@ func (e *Editor) removeClient(c *clientView) {
 	cancelled := asked && (e.asking() || e.activeChoice() != nil)
 	if cancelled {
 		e.cancelQuestions()
+		// 問いの間に待たせていた他の client のキーの処理を再開する（PR #223 の再レビューの必須）。
+		// 問いに答えて終わるときは、答えのキーを取り出した popFor が、列に残りがあれば知らせ直す。
+		// 取り下げはキーを取り出さずに起きるので、ここで知らせ直さないと、その client が次のキーを打つまで止まる。
+		if !e.keys.empty() {
+			signal(e.keys.ready)
+		}
 	}
 	defer func() {
 		if cancelled {
