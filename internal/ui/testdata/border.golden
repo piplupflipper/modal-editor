@@ -56,6 +56,24 @@ fg |cccccccccccccccc|
 fx |SSSSSSSSSSSSSSSS|
    |                |
 
+## 見出しは上の枠線に重ねる
+size 16x10 cursor 0,0 block
+   |line0           |
+   |┌─T─┐           |
+fg |ccccc...........|
+   |│ x │           |
+fg |c...c...........|
+fx | vvv            |
+   |└───┘           |
+fg |ccccc...........|
+   |line4           |
+   |line5           |
+   |line6           |
+   |line7           |
+   | NORMA 1,1  All |
+fx |SSSSSSSSSSSSSSSS|
+   |                |
+
 ## 選択の一覧
 size 16x10 cursor 3,6 block
    |line┌─────┐     |

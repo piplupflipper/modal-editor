@@ -330,10 +330,11 @@ func (e *Editor) extSyncFinished(res extSyncResult) {
 		}
 	}
 	if len(report) > 0 && e.cur != nil {
-		// 1 行に収まらない内訳（失敗の理由、警告、起動し直しの要るもの）は、画面の中央のポップアップに出す。カーソルを動かすと消える。
+		// 1 行に収まらない内訳（失敗の理由、警告、起動し直しの要るもの）は、画面の中央のポップアップに出す。
 		// #179 の裁定の ACP と DAP の出力と同じ扱い（オーケストレータの仮の決定）で、端末多重化ソフトの中ではペインに出すが、
 		// ペインを開く口がまだ無いので、中でも外の規則（client の画面の中央）で出す。
-		e.popup = &popupState{bs: e.cur, cursor: e.cur.state.Cursor(), text: summary + "\n\n" + strings.Join(report, "\n"), center: true}
+		// 段階 3 のポップアップの部品（#236）では、中央のポップアップにフォーカスを入れて出し、<Esc> で閉じる。
+		e.openTextFloat(":ext sync", summary+"\n\n"+strings.Join(report, "\n"), true)
 	}
 	e.log.Info("ext sync finished", "summary", summary, "details", strings.Join(report, "; "))
 }

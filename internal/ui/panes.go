@@ -73,6 +73,10 @@ func (r *Renderer) OutputRows() int { return r.outRows }
 // TextRows は、直前の Render でバッファの表示領域に使った行数を返す。
 func (r *Renderer) TextRows() int { return r.textRows() }
 
+// FloatRenderer は、直前の Render でポップアップ（Frame.Float）の窓の中を描いた子の Renderer を返す。窓が無ければ nil である。
+// 窓の中のバッファのページ単位のスクロール（command.State.Viewport）を、窓の表示領域につなぐのに使う（internal/editor）。
+func (r *Renderer) FloatRenderer() *Renderer { return r.float }
+
 // signsByLine は、表示領域の行ごとに、優先順位の最も高い印を返す。印の無い行はゼロ値である。
 // DAP のブレークポイントと止まった位置（基本設計 6.4）は、この印で見る。
 //

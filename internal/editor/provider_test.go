@@ -14,6 +14,9 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/exthost"
 )
 
+// hoverText は、fakeProvider の hover が popup/show で出す本文である。ポップアップの中で j を打てるように 2 行にする。
+const hoverText = "hover-popup\nsecond"
+
 // stepDelay は、fakeProvider の debug.stepOver が止まるまでの時間である。
 const stepDelay = 150 * time.Millisecond
 
@@ -43,7 +46,7 @@ func registerFakeProvider(s *server.Server) {
 	// hover は、LSP の拡張機能と同じく、本文を問い合わせた位置の popup/show で出す。
 	s.Provider(ext.OpHover, func(_ context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
 		show(p)
-		_ = s.ShowPopup(ext.PopupShowParams{Buffer: p.Buffer, Version: p.Version, Position: p.Cursor, Text: "hover-popup", Format: ext.PopupPlainText})
+		_ = s.ShowPopup(ext.PopupShowParams{Buffer: p.Buffer, Version: p.Version, Position: p.Cursor, Text: hoverText, Format: ext.PopupPlainText})
 		return ext.ProviderInvokeResult{OK: true}, nil
 	})
 	// debug.stepOver は、デバッガーのステップ実行の代役である。stepDelay の後に、カーソルの次の行で止まったことにする。
@@ -86,12 +89,11 @@ func registerFakeProvider(s *server.Server) {
 	})
 	s.Provider(ext.OpDefinition, func(_ context.Context, b *server.Buffer, p *ext.ProviderInvokeParams) (ext.ProviderInvokeResult, error) {
 		show(p)
-		if strings.Contains(string(p.Args), `"peek":true`) {
-			return ext.ProviderInvokeResult{OK: true}, nil
-		}
 		id := b.ID()
 		to := ext.Position{Line: min(p.Cursor.Line+1, b.LineCount()-1)}
-		return ext.ProviderInvokeResult{OK: true, Open: &ext.EditorOpenParams{Buffer: &id, Position: &to}}, nil
+		// peek なら、移らずに移動先の写しをポップアップで見る（editor/open の peek。FR-110）。
+		peek := strings.Contains(string(p.Args), `"peek":true`)
+		return ext.ProviderInvokeResult{OK: true, Open: &ext.EditorOpenParams{Buffer: &id, Position: &to, Peek: peek}}, nil
 	})
 }
 
@@ -223,10 +225,8 @@ func TestReplayProviderWaits(t *testing.T) {
 	// lineOf と popupOf はイベントループの goroutine で呼ぶ（eventually の cond の中か do の中）。
 	lineOf := func() int { return h.e.cur.state.Cursor().Line }
 	popupOf := func() string {
-		if h.e.popup == nil {
-			return ""
-		}
-		return h.e.popup.text
+		h.e.expireFloat() // 描く前と同じく、閉じる条件を確かめる
+		return popupText(h.e)
 	}
 	line := func() int {
 		var l int
@@ -261,7 +261,7 @@ func TestReplayProviderWaits(t *testing.T) {
 
 	// 途中のホバーは再生の後に残らない。
 	h.keys("ggqbK")
-	h.eventually("記録のときのホバー", func() bool { return popupOf() == "hover-popup" })
+	h.eventually("記録のときのホバー", func() bool { return popupOf() == hoverText })
 	h.keys("jq")
 	h.settle()
 	h.keys("gg@b")
@@ -274,7 +274,7 @@ func TestReplayProviderWaits(t *testing.T) {
 	h.keys("qcKq")
 	h.settle()
 	h.keys("jk@c")
-	h.eventually("@c のホバー", func() bool { return popupOf() == "hover-popup" })
+	h.eventually("@c のホバー", func() bool { return popupOf() == hoverText })
 
 	// 移動しないキー（zz）や、動いて戻るキー（jk）が続いても、記録したときと同じく再生の後に残らない（#217 のレビュー）。
 	// 拡張機能の操作（<Space>db）が続いても残らない（#224 のコメント）。
@@ -352,11 +352,7 @@ func TestDiagnosticKeys(t *testing.T) {
 	h.keys("<Space>le")
 	h.settle()
 	var popup string
-	h.e.do(func() {
-		if h.e.popup != nil {
-			popup = h.e.popup.text
-		}
-	})
+	h.e.do(func() { popup = popupText(h.e) })
 	path := h.e.cur.path
 	want := fmt.Sprintf("%s:2:1: warning two\n%s:3:2: error src: bad three", path, path)
 	if popup != want {

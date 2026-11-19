@@ -209,6 +209,13 @@ type Editor struct {
 	fileType map[string]string
 	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
 	fixEOL bool
+	// popupKeys は、拡張機能の ID から、その拡張機能の contributes.popupKeys のキーへの表である（FR-69。popup.go）。
+	popupKeys map[string][]popupKeyBinding
+	// floatSeq は、最後に開いたポップアップの番号である（floatState.id）。
+	floatSeq uint64
+	// noRecord は、feedKey がマクロに記録せずに State へ渡す間であることを表す（キーの一覧で選んだキー。selectKeyRow）。
+	// 選んだ <CR> がもう記録されているので、選んだキーまで記録すると、再生で 2 回動くためである。
+	noRecord bool
 
 	// mcpSocket は、New が決めた MCP のソケットのパスである。Config.MCPSocket を指定したときと、決められなかったときは nil。
 	mcpSocket *exthost.MCPSocket
@@ -360,6 +367,8 @@ type bufferState struct {
 	// 作り直す前の State が返す結果は捨てたバッファのものなので、handleResult はその変更を exthost へ送らず、
 	// 再生の残りを作り直した State で続ける（PR #173 のレビュー）。handleResult が読んで下ろす。
 	replacedInReplay bool
+	// popup は、ポップアップのために作ったバッファ（popup.go の newPopupBuffer）であることを表す。どのタブにもならず、:ls に出さない。
+	popup bool
 	// history は、直近の変更である（基本設計 6.7 の表示のデータ）。
 	history     []buffer.Change
 	decorations map[string]decorationSet
@@ -467,6 +476,9 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	var w1 []error
 	e.keymap, w1 = buildKeymap(cfg.Extensions, leader)
 	warnings = append(warnings, w1...)
+	var w4 []error
+	e.popupKeys, w4 = loadPopupKeys(cfg.Extensions, leader)
+	warnings = append(warnings, w4...)
 	var w3 []error
 	e.exCommands, w3 = buildExCommands(cfg.Extensions)
 	warnings = append(warnings, w3...)
@@ -814,6 +826,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Interrupted = e.interrupt.Load
+	bs.state.KeyHook = func(k editcmd.Key, insert bool) (bool, []editcmd.Key, error) { return e.popupStateKey(bs, k, insert) }
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
 		ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text(),
 		NoFinalNewline: !finalNewline(b),

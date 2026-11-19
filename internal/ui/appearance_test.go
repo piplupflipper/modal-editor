@@ -133,9 +133,10 @@ func TestGoldenBorder(t *testing.T) {
 	theme[StylePopupBorder] = Attr{Fg: Indexed(2)}
 	r := &Renderer{Width: 16, Height: 10, Theme: theme, Symbols: Symbols{SymbolPopupBorder: "┌─┐│┘─└│"}}
 	golden(t, "border", renderSteps(r, []step{
-		{"下に置く", Frame{Text: b, Cursor: pos(0, 2), Popup: "func f()\nok"}},
-		{"下に収まらなければ上に置く", Frame{Text: b, Cursor: pos(6, 0), Popup: "a\nb"}},
-		{"右の端で左へ寄せる", Frame{Text: b, Cursor: pos(1, 4), Popup: "abcdefghijkl"}},
+		{"下に置く", Frame{Text: b, Cursor: pos(0, 2), Float: textFloat("func f()\nok")}},
+		{"下に収まらなければ上に置く", Frame{Text: b, Cursor: pos(6, 0), Float: textFloat("a\nb")}},
+		{"右の端で左へ寄せる", Frame{Text: b, Cursor: pos(1, 4), Float: textFloat("abcdefghijkl")}},
+		{"見出しは上の枠線に重ねる", Frame{Text: b, Cursor: pos(0, 0), Float: &Float{View: &Frame{Text: buffer.New("x")}, Title: "T"}}},
 		{"選択の一覧", Frame{Text: b, Cursor: pos(0, 0), List: &List{Title: "reg", Items: []string{"a", "b"}, Selected: 1}}},
 	}))
 }
@@ -151,7 +152,7 @@ func TestBorderPopupPlacement(t *testing.T) {
 	// カーソルの行から、本文の行（枠線の内側）への対応。下に 3 行（本文と枠線）が入らなければ上に置く。
 	want := map[int]int{0: 2, 4: 6, 5: 3, 6: 4, 7: 5}
 	for line, row := range want {
-		g := r.Render(&Frame{Text: b, Cursor: pos(line, 0), Popup: "hover"}).Grid
+		g := r.Render(&Frame{Text: b, Cursor: pos(line, 0), Float: textFloat("hover")}).Grid
 		if got := g.RowText(row); !strings.Contains(got, "│ hover │") {
 			t.Errorf("カーソルの行 %d: %d 行目 = %q\n%s", line, row, got, g.String())
 		}

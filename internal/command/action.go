@@ -81,7 +81,15 @@ func init() {
 		"diff-prev":          actDiff(ex.DiffPrev),
 		"diff-obtain":        actDiff(ex.DiffObtain),
 		"diff-put":           actDiff(ex.DiffPut),
+		"popup-focus":        actPopupFocus,
 	}
+}
+
+// actPopupFocus は、<C-w>w で、カーソルの近くのポップアップへフォーカスを入れる（入っていれば元のタブへ戻す。FR-68）。
+// ポップアップを持つのは呼び出し側なので、Navigator に頼む。フォーカスを移すとキーを受けるバッファが替わるので、
+// マクロの再生の途中なら、残りのキーは移った先のバッファで続く（:b と同じ。command.ErrBufferSwitched）。
+func actPopupFocus(s *State, _ editcmd.Command) error {
+	return s.navigate(ex.Action{Kind: ex.ActionPopup, Popup: ex.PopupFocus})
 }
 
 // action は、対象を取らない操作を実行する。拡張機能の操作なら問い合わせる（FR-12）。

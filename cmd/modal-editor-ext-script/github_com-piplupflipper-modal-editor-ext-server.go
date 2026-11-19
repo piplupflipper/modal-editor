@@ -18,6 +18,11 @@ func init() {
 		"InheritedSocket":    reflect.ValueOf(server.InheritedSocket),
 		"IsReadOnly":         reflect.ValueOf(server.IsReadOnly),
 		"New":                reflect.ValueOf(server.New),
+		"ViewClosed":         reflect.ValueOf(server.ViewClosed),
+		"ViewExpanded":       reflect.ValueOf(server.ViewExpanded),
+		"ViewInputChanged":   reflect.ValueOf(server.ViewInputChanged),
+		"ViewKey":            reflect.ValueOf(server.ViewKey),
+		"ViewSelected":       reflect.ValueOf(server.ViewSelected),
 
 		// type definitions
 		"AsyncBufferWillSaveHandler": reflect.ValueOf((*server.AsyncBufferWillSaveHandler)(nil)),
@@ -40,5 +45,7 @@ func init() {
 		"Server":                     reflect.ValueOf((*server.Server)(nil)),
 		"ShutdownEvent":              reflect.ValueOf((*server.ShutdownEvent)(nil)),
 		"TextObjectHandler":          reflect.ValueOf((*server.TextObjectHandler)(nil)),
+		"ViewEvent":                  reflect.ValueOf((*server.ViewEvent)(nil)),
+		"ViewEventKind":              reflect.ValueOf((*server.ViewEventKind)(nil)),
 	}
 }

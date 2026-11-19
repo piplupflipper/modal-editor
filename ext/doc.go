@@ -62,4 +62,7 @@ package ext
 // 0.5.0 で、宣言ファイルの contributes.statusline と、部品の中身を送る statusline/set を足した（StatusLineSetParams。#238）。
 // 古い本体は statusline/set を知らない通知として捨て（ログに残すだけ）、contributes.statusline を未知の項目として捨てるので、部品は出ない。
 // また、activation と provides の無い、部品だけを足す宣言ファイルを誤りとして拒む。
-const APIVersion = "0.5.0"
+// 0.6.0 で、ポップアップと表示の部品のメソッド（popup/open、view/update、view/close、view/closed、view/select、input/change、view/key。
+// view.go）と、宣言ファイルの contributes.popupKeys と、editor/open の peek を足した（#236）。
+// 古い本体は popup/open に method not found で応答し、peek を黙って捨てて本物のファイルを開く。
+const APIVersion = "0.6.0"

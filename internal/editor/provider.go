@@ -191,8 +191,7 @@ func (e *Editor) showDiagnosticList(bss []*bufferState) {
 		return
 	}
 	slices.Sort(lines)
-	cur := e.cur
-	e.popup = &popupState{bs: cur, cursor: cur.state.Cursor(), text: strings.Join(lines, "\n")}
+	e.openLinesFloat("診断の一覧", lines, false)
 }
 
 // removedCommands は、段階 2 の LSP と DAP の拡張機能のコマンドの ID から、置き換えた本体の操作の名前と既定のキーへの対応である（#203）。

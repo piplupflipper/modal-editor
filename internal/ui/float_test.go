@@ -7,33 +7,48 @@ import (
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 )
 
-// popup/show の本文は、カーソルの下（収まらなければ上）に浮かべて描き、長い行は折り返し、
-// 収まらない行は最後の行に残りの行数を書く。全角文字の半分に掛かる窓の端は、その文字を空白にする。
+// textFloat は、s をテキストのバッファにした、フォーカスの無いカーソルの近くのポップアップである。
+func textFloat(s string) *Float {
+	return &Float{View: &Frame{Text: buffer.New(s)}}
+}
+
+// ポップアップは、カーソルの下（収まらなければ上）に浮かべて描き、フォーカスが無ければ、収まらない行は最後の行に残りの行数を書く。
+// 全角文字の半分に掛かる窓の端は、その文字を空白にする。
+//
+// req: FR-68
 func TestGoldenPopup(t *testing.T) {
 	b := buffer.New("あいうえおかきくけこ\nline1\nline2\nline3\nline4\nline5\nline6\n")
 	theme := testTheme()
 	theme[StylePopup] = Attr{Reverse: true}
+	theme[StylePopupSelected] = Attr{Underline: true}
 	r := &Renderer{Width: 16, Height: 8, Theme: theme}
+	seven := buffer.New("1\n2\n3\n4\n5\n6\n7\n")
 	golden(t, "popup", renderSteps(r, []step{
-		{"下に置く", Frame{Text: b, Cursor: pos(0, 3), Popup: "func f()\n\nlong line that wraps\n"}},
-		{"下に収まらなければ上に置く", Frame{Text: b, Cursor: pos(5, 2), Popup: "a\nb\nc\nd"}},
-		{"行が収まらなければ残りの行数", Frame{Text: b, Cursor: pos(1, 0), Popup: "1\n2\n3\n4\n5\n6\n7"}},
-		{"右の端で左へ寄せる", Frame{Text: b, Cursor: pos(2, 4), Popup: "abcdefghij"}},
-		{"全角文字の半分に掛かる端", Frame{Text: buffer.New("xyz\nあいうえ\n"), Cursor: pos(0, 1), Popup: "q"}},
-		{"本文が空なら出さない", Frame{Text: b, Cursor: pos(0, 0), Popup: "\n\n"}},
-		// Markdown のコードの囲みの行は出さず、中身は残す。plaintext ではそのまま出す（#151）。
-		{"Markdown の囲みを除く", Frame{Text: b, Cursor: pos(0, 0), Popup: "```go\nfunc f()\n```\n\ndoc", PopupMarkdown: true}},
-		{"plaintext の囲みは残す", Frame{Text: b, Cursor: pos(0, 0), Popup: "```go\nfunc f()\n```"}},
-		// 英語の文は空白の位置で折り返し、単語の途中で切らない（#155）。
-		{"空白の位置で折り返す", Frame{Text: b, Cursor: pos(0, 0), Popup: "writes to standard output"}},
+		{"下に置く", Frame{Text: b, Cursor: pos(0, 3), Float: textFloat("func f()\n\nlong line\n")}},
+		{"下に収まらなければ上に置く", Frame{Text: b, Cursor: pos(5, 2), Float: textFloat("a\nb\nc\nd")}},
+		{"行が収まらなければ残りの行数", Frame{Text: b, Cursor: pos(1, 0), Float: textFloat("1\n2\n3\n4\n5\n6\n7")}},
+		{"右の端で左へ寄せる", Frame{Text: b, Cursor: pos(2, 4), Float: textFloat("abcdefghij")}},
+		{"全角文字の半分に掛かる端", Frame{Text: buffer.New("xyz\nあいうえ\n"), Cursor: pos(0, 1), Float: textFloat("q")}},
+		// フォーカスを入れると、端末のカーソルを窓の中に置き、カーソルの行が見えるまでスクロールする。残りの行数は書かない（FR-68）。
+		{"フォーカスを入れてスクロールする", Frame{Text: b, Cursor: pos(1, 0), Float: &Float{
+			ID: 1, View: &Frame{Text: seven, Cursor: pos(5, 0)}, Focused: true,
+		}}},
+		// 見出しは、枠線が無ければ窓の最初の行に描く。一覧はカーソルの行を選んでいる項目の色で描く。
+		{"見出しと一覧", Frame{Text: b, Cursor: pos(0, 0), Float: &Float{
+			ID: 2, View: &Frame{Text: buffer.New("one\ntwo\n"), Cursor: pos(1, 0)}, Title: "list", CursorLine: true,
+		}}},
 	}))
 }
 
-// PopupCenter なら、カーソルの位置に依らず、バッファの表示領域の縦と横の中央に置く（:ext sync の結果の内訳）。
+// Center なら、カーソルの位置に依らず、バッファの表示領域の縦と横の中央に置く（中央のポップアップ。FR-67 の client が無いとき）。
+//
+// req: FR-68
 func TestPopupCenter(t *testing.T) {
 	b := buffer.New("aaaaaaaaaaaaaaaaaaaa\nb\nc\nd\ne\nf\ng\n")
 	r := &Renderer{Width: 20, Height: 8, Theme: testTheme()}
-	s := r.Render(&Frame{Text: b, Cursor: pos(0, 0), Popup: "xy\nzw", PopupCenter: true})
+	fl := textFloat("xy\nzw")
+	fl.Center = true
+	s := r.Render(&Frame{Text: b, Cursor: pos(0, 0), Float: fl})
 	rows := strings.Split(s.Grid.String(), "\n")
 	// 表示領域は 7 行（ステータス行を除き、コマンドラインの行は無い）なので、2 行の窓は 2 行目と 3 行目（0 から数える）。
 	// 窓の幅は本文の 2 列と余白の 2 列で 4 列なので、左の端は (20-4)/2 = 8 列目。
@@ -62,7 +77,7 @@ func TestGoldenList(t *testing.T) {
 		{"最初の項目", Frame{Text: b, Cursor: pos(0, 0), List: &List{Title: "reg", Items: items[:2]}}},
 		{"選んだ項目", Frame{Text: b, Cursor: pos(0, 0), List: &List{Title: "reg", Items: items[:3], Selected: 1}}},
 		{"収まらなければずらす", Frame{Text: b, Cursor: pos(0, 0), List: &List{Title: "reg", Items: items, Selected: 4}}},
-		{"ポップアップより一覧を出す", Frame{Text: b, Cursor: pos(0, 0), Popup: "hover", List: &List{Title: "reg", Items: items[:1]}}},
+		{"ポップアップより一覧を出す", Frame{Text: b, Cursor: pos(0, 0), Float: textFloat("hover"), List: &List{Title: "reg", Items: items[:1]}}},
 	}))
 }
 
@@ -106,8 +121,8 @@ func TestStripCodeFences(t *testing.T) {
 		{"a ``` b", "a ``` b"},
 		{"", ""},
 	} {
-		if got := stripCodeFences(tc.in); got != tc.want {
-			t.Errorf("stripCodeFences(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := StripCodeFences(tc.in); got != tc.want {
+			t.Errorf("StripCodeFences(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

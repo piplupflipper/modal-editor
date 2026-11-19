@@ -97,7 +97,8 @@ type viewFields struct {
 	extMessage ui.Message
 	// offscreenNote は、メッセージの行に出した、画面に出さないバッファを閉じた知らせである（offscreen.go）。
 	offscreenNote offscreenNote
-	popup         *popupState
+	// float は、出しているポップアップである（popup.go）。nil なら出していない。
+	float *floatState
 	// popupMark は、最後に拡張機能の操作（command/execute と provider/invoke）を問い合わせた State と、
 	// その時点の command.State.KeysFed の値である（invokeResult）。showPopup が、問い合わせの後に次のキーを解釈したかを調べる。
 	popupMark popupMark
@@ -456,6 +457,10 @@ func (e *Editor) cancelQuestions() {
 
 // removeClient は、client c を一覧から外し、他の client を読み込む。c のタイマーを止める。
 func (e *Editor) removeClient(c *clientView) {
+	if e.viewOf(c).float != nil {
+		// ポップアップを出す画面が無くなるので閉じ、拡張機能のポップアップなら持ち主へ知らせる。
+		e.withView(c, func() { e.closeFloat(true) })
+	}
 	if c.keyTimer != nil {
 		c.keyTimer.Stop()
 	}

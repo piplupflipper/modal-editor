@@ -25,21 +25,6 @@ type outputKey struct {
 	ext, channel string
 }
 
-// popupState は、表示中の popup/show である。カーソルを動かすと消す。
-type popupState struct {
-	bs     *bufferState
-	cursor buffer.Position
-	text   string
-	// markdown は、本文の形式が markdown かどうかである（popup/show の format）。整形は ui が行う（ui.Frame.PopupMarkdown）。
-	markdown bool
-	// center は、カーソルの近くでなく画面の中央に出すかである（ui.Frame.PopupCenter。:ext sync の結果の内訳）。
-	center bool
-	// trackKeys が true なら、bs の State が解釈したキーの数（command.State.KeysFed）が keys から進んだら消す（render）。
-	// 利用者のキーは handleKey が消すので、再生のキー（マクロの残り）で消すためのものである（popup/show。showPopup）。
-	keys      uint64
-	trackKeys bool
-}
-
 var noMessage = ui.Message{}
 
 func infoMessage(text string) ui.Message { return ui.Message{Text: text, Level: ui.MessageInfo} }

@@ -531,6 +531,12 @@ type EditorOpenParams struct {
 	Version *Version `json:"version,omitempty"`
 	// Focus は、true ならそのバッファをカーソルのあるバッファにする。false なら開くだけでカーソルを移さない。
 	Focus bool `json:"focus,omitempty"`
+	// Peek は、開かずに「ポップアップで見る」ことを表す（FR-110。基本設計 1.4）。
+	// 本体は、Path か Buffer の Position の周りの行の写しを、編集を禁止したファイルでないバッファとして、
+	// 問い合わせを始めた client のカーソルの近くのポップアップに出す。Position は省けない。Focus は読まない。
+	// 写しのポップアップを :tabopen でタブへ広げると、本物のファイルを開いて Position へ移る。
+	// 応答の Buffer は写しのバッファの番号、Moved は false である。
+	Peek bool `json:"peek,omitempty"`
 }
 
 // Validate は、Path と Buffer のどちらか一方だけを指定していることと、Path が絶対パスであることを検査する。
@@ -545,6 +551,8 @@ func (p *EditorOpenParams) Validate() error {
 		return errors.New("path と buffer の両方を指定している")
 	case p.Path != "" && !strings.HasPrefix(p.Path, "/"):
 		return fmt.Errorf("path %q が絶対パスでない", p.Path)
+	case p.Peek && p.Position == nil:
+		return errors.New("peek では position を省けない")
 	}
 	return nil
 }

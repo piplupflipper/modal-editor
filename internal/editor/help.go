@@ -17,11 +17,10 @@ import (
 
 // ヘルプ（:help。FR-89）とキーの一覧（FR-90）。基本設計 7.2。
 //
-// どちらも、ファイルでないバッファ（bufferState.title を持つ、path の無いバッファ）を、読み込んでいる client のタブに出す。
-// 基本設計 7.2 はヘルプをテキストのバッファの部品のポップアップに、キーの一覧を一覧の部品の中央のポップアップに出すとしているが、
-// ポップアップの部品はまだ無いので、今はタブに出す（仮。#227）。
-// ファイルでないバッファは、編集を禁止した状態で始める（FR-88。基本設計 4.6）。
-// 同じ client に同じ名前のタブがあれば、新しいタブを作らずにそのタブの中身を替えて移る。
+// ヘルプは、テキストのバッファの部品（編集を禁止したファイルでないバッファ。FR-88）で、画面の中央のポップアップに出す（#236）。
+// 長い行は窓の幅で折り返す。:tabopen でタブへ広げられる。
+// キーの一覧は、一覧の部品で画面の中央のポップアップに出し、<CR> で選んだキーを、そのキーを打ったのと同じく実行する（selectKeyRow）。
+// どちらも、端末多重化ソフトのポップアップの部品の client（FR-66、FR-67）ができるまでは、編集の client の画面の中央に描く。
 //
 // :help と :keys は本体のコマンドだが、:ext（extsync.go）と同じく ex パッケージの表には置かず、
 // 拡張機能のコマンド（ex.State.ExtCommand）と同じ口から呼ぶ。コマンドラインの表（exCommands）に helpExtension を入れ、
@@ -64,8 +63,8 @@ func addHelpCommands(cmds map[string]string) []error {
 
 // helpAction は、ref が :help、:keys、キーの一覧のキー（<leader>l? など）なら、それを行い、true と誤りを返す。
 // それ以外の操作なら false を返す。text は、コマンドラインから呼んだときの引数である。
-// bs は、操作を呼んだバッファである。出したタブへ移ったら command.ErrBufferSwitched を返し、
-// マクロの再生の残りを移った先のバッファで続けさせる（navigator.Navigate の <Tab> と同じ）。
+// bs は、操作を呼んだバッファである。出したポップアップへフォーカスが移ったら command.ErrBufferSwitched を返し、
+// マクロの再生の残りをポップアップのバッファで続けさせる（navigator.Navigate の <Tab> と同じ）。
 func (e *Editor) helpAction(bs *bufferState, ref editcmd.Ref, text string) (bool, error) {
 	var err error
 	switch {
@@ -92,31 +91,29 @@ func (e *Editor) helpAction(bs *bufferState, ref editcmd.Ref, text string) (bool
 	return true, err
 }
 
-// openScratch は、ファイルでないバッファ title を、読み込んでいる client のタブに出し、カーソルを line 行目（0 始まり）の先頭に置く。
-// 同じ名前のタブがこの client にあれば、中身を text に替えてそのタブへ移る。
-// バッファは編集を禁止した状態で始める（FR-88）。中身を替えるのは、禁止の判定を通らない読み直し（reload）の入り口で行う（基本設計 4.6）。
+// openHelpFloat は、ヘルプの文書 text を、画面の中央のテキストのポップアップに、フォーカスを入れて出し、
+// カーソルを元の文書の line 行目（0 始まり）を折り返した最初の行の先頭に置く。
+// 長い行は窓の幅で空白の位置で折り返す（ui.WrapText と同じ）。バッファは編集を禁止したファイルでないバッファである（FR-88）。
 //
-// req: FR-88
-func (e *Editor) openScratch(title, text string, line int) {
-	var bs *bufferState
-	for _, t := range e.view.tabs {
-		if t.path == "" && t.title == title {
-			bs = t
-			break
+// req: FR-88, FR-89
+func (e *Editor) openHelpFloat(text string, line int) {
+	width := ui.PopupTextWidth(e.renderer.Width)
+	var lines []string
+	at := 0
+	for i, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		if i == line {
+			at = len(lines)
 		}
+		w := ui.WrapText(l, width, e.renderer.TabStop)
+		if len(w) == 0 {
+			w = []string{""}
+		}
+		lines = append(lines, w...)
 	}
-	if bs == nil {
-		b := buffer.New(text)
-		b.SetFixEndOfLine(e.fixEOL)
-		b.SetReadOnly(true)
-		bs = e.newBuffer(b, "", "")
-		bs.title = title
-	} else {
-		// 中身が同じなら、reload は何も変えない（reloadEdits が空）。
-		e.reload(bs, buffer.New(text))
-	}
-	bs.state.SetCursor(buffer.Position{Line: min(max(line, 0), bs.buf.LineCount()-1)})
-	e.enter(bs)
+	f := &floatState{kind: floatText, title: helpTitle, scratch: true, center: true, focused: true}
+	f.bs = e.newPopupBuffer(helpTitle, strings.Join(lines, "\n"), "", true)
+	f.bs.state.SetCursor(buffer.Position{Line: min(at, f.bs.buf.LineCount()-1)})
+	e.openFloat(f)
 }
 
 // bufferTitle は、ステータス行に出すバッファの名前（パス。無ければファイルでないバッファの名前。どちらも無ければ空）を返す。
@@ -142,7 +139,7 @@ func (e *Editor) openHelp(word string) error {
 		}
 		line = l
 	}
-	e.openScratch(helpTitle, text, line)
+	e.openHelpFloat(text, line)
 	return nil
 }
 
@@ -222,6 +219,19 @@ func helpKeyLines(km *input.Keymap) []string {
 			}
 		}
 	}
+	// Parser が表を引く前に読むキー（q、@、.、" など）も足す。:help q が :q でなくマクロの記録に当たるようにする（#233）。
+	// 引数の名前（{レジスター}）の前までを見出しのキーにし、引数を含む形は説明に添える。
+	for _, k := range input.ParserKeys() {
+		short, _, _ := strings.Cut(k.Keys, "{")
+		if short == "" {
+			short = k.Keys
+		}
+		desc := fmt.Sprintf("%s（%s）", k.Description, modeLetters(k.Modes))
+		if short != k.Keys {
+			desc += fmt.Sprintf("。`%s` と打つ", k.Keys)
+		}
+		descs[short] = append(descs[short], desc)
+	}
 	labels := make([]string, 0, len(descs))
 	for l := range descs {
 		labels = append(labels, l)
@@ -246,7 +256,7 @@ func helpKeyLines(km *input.Keymap) []string {
 // : で始まる語は Ex コマンドとしてだけ引く。
 // 文書の中の `…`（コードの区画の外）を語の候補とし、次の順に探す。各段で、語の形の順に、最初に当たった行を返す（仮。#227）。
 //
-//  1. 定義の行（見出し、表の最初の列、`…` で始まる箇条書き）のうち、`語` が完全に一致する行。
+//  1. 定義の行（見出し、表の最初の列、「- `…`: 」で始まる箇条書き）のうち、`語` が完全に一致する行。
 //     語の後に空白が続く形（`:acp.prompt <プロンプト>`）も完全な一致とみなす
 //  2. `語` が完全に一致する行
 //  3. 設定の例の JSON のキー（"語"）を含む行。点で区切った名前は、最後の部分（"historySize"）でも探す
@@ -282,7 +292,9 @@ func helpLine(lines []string, word string) (int, bool) {
 			if cell, _, ok := strings.Cut(l[1:], " |"); ok && namesOnly(cell) {
 				p.defs = codeSpans(cell)
 			}
-		case strings.HasPrefix(l, "- `") && len(p.spans) > 0:
+		case len(p.spans) > 0 && strings.HasPrefix(l, "- `"+p.spans[0]+"`:"):
+			// 定義の箇条書きは「- `語`: 説明」の形（本体のキーの節）に限る。docs/usage.md の注記の箇条書き
+			// （- `sa` の前の回数は…）を定義として扱わないためである（#233）。
 			p.defs = p.spans[:1]
 		}
 		parsed[i] = p
@@ -383,8 +395,8 @@ const (
 	sourceExtension
 )
 
-// keyRow は、キーの一覧の 1 行である。表示の文字列（keyListText）とは別に、キーの列と操作を持つ。
-// 一覧の部品（基本設計 1.4）で選んだキーを実行するときと、拡張機能が本体のキーの一覧を問い合わせるとき（FR-107）に使う想定である。
+// keyRow は、キーの一覧の 1 行である。表示の文字列（keyListLines）とは別に、キーの列と操作を持つ。
+// 一覧の部品（基本設計 1.4）で選んだキーを実行するとき（selectKeyRow）と、拡張機能が本体のキーの一覧を問い合わせるとき（FR-107）に使う。
 type keyRow struct {
 	// Keys は、キーの列である。Parser が先に読むキー（{回数} など）では nil で、Label だけを持つ。
 	Keys []editcmd.Key
@@ -403,8 +415,10 @@ type keyRow struct {
 	RHS []editcmd.Key
 	// Description は、説明文である。
 	Description string
-	// Overridden は、利用者のキーマップが同じキーの列を同じモードで割り当てていて、この行の操作が効かないことを表す。
-	Overridden bool
+	// Overridden は、利用者のキーマップが、同じキーの列かその手前の部分（s に対する sa など）を割り当てていて、
+	// この行の操作が効かないモードの集合である。0 なら上書きされていない。
+	// キーマップの展開は次のキーを待たないので、手前の部分を割り当てると、続くキーは打てなくなる（docs/usage.md。#233）。
+	Overridden input.MapMode
 }
 
 // openKeyList は、接頭辞 prefix で始まるキーと、分類 group（input.KeyGroupLSP など。空なら無し）の操作のキーの一覧を出す。
@@ -416,8 +430,41 @@ func (e *Editor) openKeyList(group string, prefix []editcmd.Key) error {
 	if len(rows) == 0 {
 		return fmt.Errorf("%s で始まるキーはありません", editcmd.KeysString(prefix))
 	}
-	e.openScratch(keyListTitle, keyListText(group, prefix, rows), 0)
+	head, lines := keyListLines(group, prefix, rows)
+	f := &floatState{kind: floatList, title: head, scratch: true, center: true, focused: true}
+	f.bs = e.newPopupBuffer(keyListTitle, strings.Join(lines, "\n"), "", true)
+	f.rows = make([]floatRow, len(rows))
+	f.onSelect = func(i int) { e.selectKeyRow(rows[i]) }
+	e.openFloat(f)
 	return nil
+}
+
+// selectKeyRow は、キーの一覧で選んだ行 r のキーを、ポップアップを閉じてから、そのキーを打ったのと同じく実行する（FR-90。#236）。
+// 利用者のキーマップを通すので、設定の keymap が上書きした本体の行を選ぶと、上書きした方（打ったときに効く方）を実行する
+// （PR #230 の未確認事項へのこの PR の決定）。ノーマルモードのキーでない行（インサートモードだけのキーなど）と、
+// 操作の表に無い Parser のキー（回数、レジスター、マクロ、ドットリピート、do と dp）は、実行せずに理由を知らせる。
+//
+// req: FR-90
+func (e *Editor) selectKeyRow(r keyRow) {
+	e.closeFloat(true)
+	switch {
+	case len(r.Keys) == 0:
+		e.message = infoMessage(fmt.Sprintf("%s は操作の表に無いキー（回数、レジスター、マクロなど）なので、一覧からは実行できません", r.Label))
+		return
+	case r.CommandLine || r.Modes&input.MapNormal == 0:
+		e.message = infoMessage(fmt.Sprintf("%s はノーマルモードのキーではないので、一覧からは実行できません", r.Label))
+		return
+	}
+	// 選んだ <CR> はマクロに記録されている（popupStateKey）ので、選んだキーは記録せずに渡す。再生では <CR> がもう一度選ぶ。
+	e.noRecord = true
+	defer func() { e.noRecord = false }()
+	for _, k := range r.Keys {
+		e.feedMapped(e.remap.feed(e.mapMode(), k))
+		if e.suspension() != nil {
+			return
+		}
+	}
+	e.feedMapped(e.remap.flush())
 }
 
 // keyRows は、接頭辞 prefix で始まるキーと、分類 group の操作のキーの一覧の行を返す（基本設計 7.2）。
@@ -430,17 +477,17 @@ func (e *Editor) openKeyList(group string, prefix []editcmd.Key) error {
 //   - 利用者のキーマップ（設定の keymap）。説明は展開先のキーの列である。説明文を書く項目は設定に足していない（仮）
 //   - Parser が表を引く前に読むキー（回数、レジスター、マクロ、ドットリピート。input.ParserKeys）。prefix と group が空のときだけ出す
 //
-// 利用者のキーマップが本体か拡張機能のキーと同じキーの列を同じモードで割り当てていれば、その行を Overridden にする（効くのは利用者のキーマップ）。
+// 利用者のキーマップが本体か拡張機能のキーと同じキーの列か、その手前の部分を同じモードで割り当てていれば、その行の Overridden に
+// そのモードを入れる（効くのは利用者のキーマップ。#233）。
 // 並びは、キーの表記を大文字と小文字を区別せずに比べた順（同じなら小文字が先）で、キーの一覧の操作（? の行）は末尾に回す。
 // Parser が先に読むキーは、さらにその後に置く。
 func (e *Editor) keyRows(group string, prefix []editcmd.Key) []keyRow {
 	var rows []keyRow
-	user := map[input.MapMode]map[string]bool{}
+	user := map[input.MapMode][][]editcmd.Key{}
 	if r := e.remap; r != nil {
 		for mode, mm := range map[mapMode]input.MapMode{mapNormal: input.MapNormal, mapVisual: input.MapVisual, mapInsert: input.MapInsert} {
-			user[mm] = map[string]bool{}
 			for _, m := range r.maps[mode] {
-				user[mm][editcmd.KeysString(m.lhs)] = true
+				user[mm] = append(user[mm], m.lhs)
 			}
 		}
 	}
@@ -459,9 +506,9 @@ func (e *Editor) keyRows(group string, prefix []editcmd.Key) []keyRow {
 				row.Description = b.Ref.ID
 			}
 		}
-		for mm, lhs := range user {
-			if b.Modes&mm != 0 && lhs[row.Label] {
-				row.Overridden = true
+		for mm, lhss := range user {
+			if b.Modes&mm != 0 && slices.ContainsFunc(lhss, func(lhs []editcmd.Key) bool { return hasKeyPrefix(b.Keys, lhs) }) {
+				row.Overridden |= mm
 			}
 		}
 		rows = append(rows, row)
@@ -515,9 +562,9 @@ func compareKeyLabels(a, b string) int {
 	return -strings.Compare(a, b)
 }
 
-// keyListText は、キーの一覧の行 rows を、列をそろえた文書にする。
-func keyListText(group string, prefix []editcmd.Key, rows []keyRow) string {
-	var head string
+// keyListLines は、キーの一覧の行 rows を、列をそろえた 1 行ずつの文字列にし、一覧の見出しと一緒に返す。
+// 列はキー、モード（n、v、o、i、c）、出どころ（本体、設定、拡張機能の ID）、説明文の順である。
+func keyListLines(group string, prefix []editcmd.Key, rows []keyRow) (head string, lines []string) {
 	switch {
 	case group != "":
 		head = fmt.Sprintf("%s のキーの一覧（%s で始まるものと %s の操作。%d 件）", strings.ToUpper(group), editcmd.KeysString(prefix), strings.ToUpper(group), len(rows))
@@ -526,12 +573,9 @@ func keyListText(group string, prefix []editcmd.Key, rows []keyRow) string {
 	default:
 		head = fmt.Sprintf("キーの一覧（すべて。%d 件）", len(rows))
 	}
-	cols := [3]string{"キー", "モード", "出どころ"}
+	head += "。<CR> で実行、<Esc> で閉じる"
 	cells := make([][3]string, len(rows))
 	width := [3]int{}
-	for i, c := range cols {
-		width[i] = ui.StringWidth(c, 8)
-	}
 	for i, r := range rows {
 		modes := modeLetters(r.Modes)
 		if r.CommandLine {
@@ -551,18 +595,18 @@ func keyListText(group string, prefix []editcmd.Key, rows []keyRow) string {
 		}
 	}
 	pad := func(s string, w int) string { return s + strings.Repeat(" ", w-ui.StringWidth(s, 8)+2) }
-	var sb strings.Builder
-	sb.WriteString(head + "\n")
-	sb.WriteString("モードは n（ノーマル）、v（ビジュアル）、o（オペレーターの後）、i（インサート）、c（コマンドライン）。接頭辞の後に ? を打つか :keys {接頭辞} で絞る\n\n")
-	sb.WriteString(pad(cols[0], width[0]) + pad(cols[1], width[1]) + pad(cols[2], width[2]) + "説明\n")
+	lines = make([]string, len(rows))
 	for i, r := range rows {
 		desc := r.Description
-		if r.Overridden {
+		if r.Overridden == r.Modes && r.Modes != 0 {
 			desc += "（設定の keymap が優先）"
+		} else if r.Overridden != 0 {
+			// 一部のモードだけを上書きしたとき（{"normal": {"gq": …}} の gq の n）は、上書きしたモードを書く（#233）。
+			desc += fmt.Sprintf("（%s では設定の keymap が優先）", modeLetters(r.Overridden))
 		}
-		sb.WriteString(pad(cells[i][0], width[0]) + pad(cells[i][1], width[1]) + pad(cells[i][2], width[2]) + desc + "\n")
+		lines[i] = strings.TrimRight(pad(cells[i][0], width[0])+pad(cells[i][1], width[1])+pad(cells[i][2], width[2])+desc, " ")
 	}
-	return sb.String()
+	return head, lines
 }
 
 // hasKeyPrefix は、keys が prefix で始まるかを返す。

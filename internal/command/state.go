@@ -130,6 +130,14 @@ type State struct {
 	Viewport Viewport
 	// Navigator は、ジャンプリストとバッファの切り替えの口である。nil なら、ジャンプを記録せず、<C-o>、<C-i>、<C-^> は失敗する。
 	Navigator Navigator
+	// KeyHook は、ノーマルモードでキーの列の途中でないときと、インサートモードのときに、キーを解釈する前に呼ぶ関数である。
+	// done が true のキーは、この State では解釈しない。返した誤りは操作の失敗として結果に入れる（ErrBufferSwitched なら、
+	// マクロの再生の残りは移った先のバッファで続く）。nil なら呼ばない。
+	// 呼び出し側は、キーの列の途中のキーを done で預かってよい。列が当たらなかったら、done を false にして預かったキーを held で返す。
+	// State は held を k より先に、通常のキーとして（KeyHook を通さずに）解釈する。
+	// Feed の記録とマクロの再生の両方を通るので、呼び出し側が引き受けたキーもマクロに記録され、再生で同じく引き受けられる
+	// （ポップアップを閉じる <Esc> と、項目を選ぶ <CR>。internal/editor。PR #242 のレビューの必須 1）。
+	KeyHook func(k editcmd.Key, insert bool) (done bool, held []editcmd.Key, err error)
 
 	buf    *buffer.Buffer
 	cursor buffer.Position
@@ -281,9 +289,36 @@ func (s *State) Feed(k editcmd.Key) Result {
 	return s.take()
 }
 
+// FeedUnrecorded は、Feed と同じくキーを 1 個解釈するが、記録中のマクロに記録しない。
+// 呼び出し側が、記録済みのキーから作ったキーを渡すとき（キーの一覧で選んだキーの実行。internal/editor）に使う。
+func (s *State) FeedUnrecorded(k editcmd.Key) Result {
+	s.res = Result{}
+	s.feed(k)
+	return s.take()
+}
+
 // feed は、キーを 1 個解釈する。マクロの再生もここを通るので、記録はしない。
 func (s *State) feed(k editcmd.Key) {
 	s.keysFed++
+	if h := s.KeyHook; h != nil && (s.mode == ModeInsert || (s.mode == ModeNormal && !s.parser.Pending())) {
+		done, held, err := h(k, s.mode == ModeInsert)
+		if done {
+			if err != nil {
+				s.fail(err)
+			}
+			return
+		}
+		// 呼び出し側が途中まで預かったキーの列が当たらなかった。預かったキーを通常のキーとして解釈してから k を解釈する
+		// （Vim のマッピングの途中で当たらなかったキーの扱いと同じ。PR #242 の再レビューの必須）。
+		for _, hk := range held {
+			s.dispatch(hk)
+		}
+	}
+	s.dispatch(k)
+}
+
+// dispatch は、キー k をモードに応じて解釈する（feed の KeyHook の後の部分）。
+func (s *State) dispatch(k editcmd.Key) {
 	switch s.mode {
 	case ModeInsert:
 		s.insertKey(k)

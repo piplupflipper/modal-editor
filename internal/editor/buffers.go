@@ -188,6 +188,14 @@ func (n navigator) Navigate(a ex.Action, cursor buffer.Position) (buffer.Positio
 		return e.jumpBy(n.bs, cursor, a.Count)
 	case a.Kind == ex.ActionDiff:
 		return e.diffNavigate(n.bs, a, cursor)
+	case a.Kind == ex.ActionPopup:
+		if err := e.floatAction(n.bs, a); err != nil {
+			return buffer.Position{}, false, err
+		}
+		if e.cur != n.bs {
+			return buffer.Position{}, false, command.ErrBufferSwitched
+		}
+		return buffer.Position{}, false, nil
 	case a.Kind == ex.ActionBuffer && (a.Buffer == ex.BufferAlternate || a.Buffer == ex.BufferNext || a.Buffer == ex.BufferPrev):
 		if err := e.bufferAction(n.bs, a); err != nil {
 			return buffer.Position{}, false, err
@@ -310,6 +318,13 @@ func (e *Editor) jumpBy(bs *bufferState, cursor buffer.Position, count int) (buf
 func (e *Editor) enter(bs *bufferState) {
 	if e.cur == bs {
 		return
+	}
+	if f := e.float; f != nil && f.focused {
+		// フォーカスのあるポップアップから別のタブへ移るときは、ポップアップを閉じてから移る（popup.go）。
+		e.closeFloat(true)
+		if e.cur == bs {
+			return
+		}
 	}
 	if bs.owner != nil && bs.owner != e.view {
 		e.focusOwner(bs)
@@ -490,6 +505,10 @@ func (e *Editor) bufferName(bs *bufferState) string {
 func (e *Editor) bufferList() string {
 	lines := make([]string, 0, len(e.bufs))
 	for _, bs := range e.bufs {
+		if bs.popup {
+			// ポップアップのために作ったバッファ（ホバーの説明など。popup.go）は、閉じれば消えるので出さない。
+			continue
+		}
 		cur, active, mod := ' ', 'h', ' '
 		switch bs {
 		case e.cur:

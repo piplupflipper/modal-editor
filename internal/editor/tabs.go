@@ -21,7 +21,7 @@ import (
 // bs の State のページ単位のスクロール（command.State.Viewport）を、この client の描画の部品につなぎ直す。
 func (e *Editor) addTab(bs *bufferState) {
 	c := e.view
-	i := slices.Index(c.tabs, e.cur)
+	i := slices.Index(c.tabs, e.tab())
 	c.tabs = slices.Insert(c.tabs, i+1, bs)
 	bs.owner = c
 	// 画面に出さないバッファを利用者がタブにしたら、保存の後に閉じる扱いを外す（FR-109。基本設計 4.4）。
@@ -89,7 +89,8 @@ func (e *Editor) viewIdle() bool {
 		return true
 	}
 	st := e.cur.state
-	return st.Mode() == command.ModeNormal && !st.Pending() && !e.remap.pendingKeys() && e.regList == nil && !e.hitEnter()
+	focused := e.float != nil && e.float.focused
+	return st.Mode() == command.ModeNormal && !st.Pending() && !e.remap.pendingKeys() && e.regList == nil && !e.hitEnter() && !focused
 }
 
 // removeTab は、読み込んでいる client のタブから bs を外す。bs がカーソルのあるタブなら、裏のタブ、無ければ右の（無ければ左の）タブへ移る。
@@ -126,6 +127,7 @@ func (e *Editor) removeTab(bs *bufferState) {
 //
 // req: FR-64, FR-16
 func (e *Editor) closeBufferState(bs *bufferState) {
+	e.closeFloatsOf(bs)
 	if o := bs.owner; o != nil {
 		e.withView(o, func() { e.removeTab(bs) })
 	}
@@ -165,6 +167,10 @@ func (e *Editor) nextTab(bs *bufferState, step int) *bufferState {
 	n := len(tabs)
 	if n == 0 {
 		return nil
+	}
+	if !slices.Contains(tabs, bs) {
+		// フォーカスのあるポップアップのバッファからは、開いたときのタブから数える。
+		bs = e.tab()
 	}
 	i := max(slices.Index(tabs, bs), 0)
 	return tabs[((i+step)%n+n)%n]
@@ -211,7 +217,7 @@ func (e *Editor) uiTabs() []ui.Tab {
 		if bs.path != "" {
 			name = filepath.Base(bs.path)
 		}
-		tabs[i] = ui.Tab{Name: name, Modified: bs.buf.Modified(), ReadOnly: bs.buf.ReadOnly(), Current: bs == e.cur}
+		tabs[i] = ui.Tab{Name: name, Modified: bs.buf.Modified(), ReadOnly: bs.buf.ReadOnly(), Current: bs == e.tab()}
 	}
 	return tabs
 }

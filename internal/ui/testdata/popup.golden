@@ -1,14 +1,13 @@
 ## 下に置く
 size 16x8 cursor 0,2 block
    |あいうえおかきく|
-   | func f()       |
-fx |vvvvvvvvvvvvvvvv|
-   |                |
-fx |vvvvvvvvvvvvvvvv|
-   | long line that |
-fx |vvvvvvvvvvvvvvvv|
-   | wraps          |
-fx |vvvvvvvvvvvvvvvv|
+   |li func f()     |
+fx |  vvvvvvvvvvv   |
+   |li              |
+fx |  vvvvvvvvvvv   |
+   |li long line    |
+fx |  vvvvvvvvvvv   |
+   |line4           |
    |line5           |
    | NOR 1,4-3  Top |
 fx |SSSSSSSSSSSSSSSS|
@@ -76,57 +75,31 @@ fg |n...............|
 fx |SSSSSSSSSSSSSSSS|
    |                |
 
-## 本文が空なら出さない
-size 16x8 cursor 0,0 block
+## フォーカスを入れてスクロールする
+size 16x8 cursor 5,1 block
    |あいうえおかきく|
    |line1           |
-   |line2           |
-   |line3           |
-   |line4           |
-   |line5           |
-   | NORMA 1,1  Top |
+   | 3 e2           |
+fx |vvv             |
+   | 4 e3           |
+fx |vvv             |
+   | 5 e4           |
+fx |vvv             |
+   | 6 e5           |
+fx |vvv             |
+   | NORMA 6,1  66% |
 fx |SSSSSSSSSSSSSSSS|
    |                |
 
-## Markdown の囲みを除く
+## 見出しと一覧
 size 16x8 cursor 0,0 block
    |あいうえおかきく|
-   | func f()       |
-fx |vvvvvvvvvv      |
-   |                |
-fx |vvvvvvvvvv      |
-   | doc            |
-fx |vvvvvvvvvv      |
-   |line4           |
-   |line5           |
-   | NORMA 1,1  Top |
-fx |SSSSSSSSSSSSSSSS|
-   |                |
-
-## plaintext の囲みは残す
-size 16x8 cursor 0,0 block
-   |あいうえおかきく|
-   | ```go          |
-fx |vvvvvvvvvv      |
-   | func f()       |
-fx |vvvvvvvvvv      |
-   | ```            |
-fx |vvvvvvvvvv      |
-   |line4           |
-   |line5           |
-   | NORMA 1,1  Top |
-fx |SSSSSSSSSSSSSSSS|
-   |                |
-
-## 空白の位置で折り返す
-size 16x8 cursor 0,0 block
-   |あいうえおかきく|
-   | writes to      |
-fx |vvvvvvvvvvvv    |
-   | standard       |
-fx |vvvvvvvvvvvv    |
-   | output         |
-fx |vvvvvvvvvvvv    |
+   | list           |
+fx |vSSSSv          |
+   | one            |
+fx |vvvvvv          |
+   | two            |
+fx |______          |
    |line4           |
    |line5           |
    | NORMA 1,1  Top |

@@ -140,6 +140,7 @@ func (e *Editor) handleKeys() {
 
 // afterKey は、キーの処理の後に、中断の後始末と、曖昧なキーの列の時間切れの準備をする。
 func (e *Editor) afterKey() {
+	e.afterFloatKey()
 	if c := e.op; c.intr.Load() {
 		// このキーで始めた外部のコマンドと再生中の拡張機能の待ちは、知らせ（intrCh）を Run が先に取っていても、ここで中断する。
 		e.interruptShell()
@@ -206,7 +207,7 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		e.op.intr.Store(false)
 		k = editcmd.Esc
 	}
-	e.popup = nil
+	e.dismissFloat(k)
 	if e.confirm != nil {
 		// 答えは、問いを出したバッファの State へ渡す。問いの間は拡張機能のイベントを取っておくので、そのバッファと範囲は変わっていない。
 		cf, bs := e.confirm, e.confirmBS
@@ -264,7 +265,7 @@ func (e *Editor) feedMapped(keys []editcmd.Key) {
 // 貼り付けはキーマップを通さない（Vim と同じ）。キーマップの接頭辞を待っていれば、時間切れと同じく先に確定させて実行する。
 // 確認の問いと choice/ask の問いを出している間の貼り付けは、答えにせずに捨てる。choice/ask の問いでは、捨てたことを数えて出す（#151）。
 func (e *Editor) handlePaste(text string) {
-	e.popup = nil
+	e.dismissFloat(editcmd.Key{})
 	if e.asking() {
 		return
 	}
@@ -301,6 +302,9 @@ func (e *Editor) flushKeys() {
 // マクロの記録はこの Feed が行うので、コマンドラインのキーも記録される。
 func (e *Editor) feedKey(k editcmd.Key) bool {
 	bs := e.cur
+	if e.noRecord {
+		return e.handleResult(bs, bs.state.FeedUnrecorded(k)) == nil
+	}
 	return e.handleResult(bs, bs.state.Feed(k)) == nil
 }
 

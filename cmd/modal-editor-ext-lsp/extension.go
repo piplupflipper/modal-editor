@@ -246,13 +246,12 @@ var (
 // カーソル位置で k.method を送る。
 // sync が false なら、受け付けたことだけを ok で応答し、結果は後から送る。
 // 候補が 1 つなら editor/open でその位置へ移動し、複数なら choice/ask で利用者に選ばせる。候補が無ければ message/show で知らせる。
-// args の peek が true なら、移らずに、移動先の周りの行を popup/show で出す（要件定義 4.11 の「ポップアップで見る」。
-// FR-110 のポップアップの部品ができるまでの仮の形）。
-// sync が true（マクロとドットリピートの再生中）で peek でなければ、結果がそろってから、最初の候補への移動を応答の open で返す。
-// peek なら、最初の候補を popup/show で出してから応答する（hover と同じ）。
+// args の peek が true なら、移らずに、移動先を editor/open の peek で本体に見せる（要件定義 4.11 の「ポップアップで見る」。FR-110）。
+// 本体が、移動先の周りの行の写しを、編集を禁止したバッファとしてカーソルの近くのポップアップに出す。
+// sync が true（マクロとドットリピートの再生中）なら、結果がそろってから、最初の候補への移動（peek なら peek を付けたもの）を応答の open で返す。
 // choice/ask への答えはマクロに記録されないので、再生中は選ばせない。候補が無ければ ok を false にする。
 //
-// req: FR-30, FR-94
+// req: FR-30, FR-94, FR-110
 func (x *extension) locate(k locateKind) server.AsyncProviderHandler {
 	return func(ctx context.Context, _ *server.Buffer, p *ext.ProviderInvokeParams, reply func(ext.ProviderInvokeResult, error)) {
 		r, err := x.sendFor(p, k.what+"へ移動", k.method, k.has, positionParams(p.Cursor))
@@ -261,7 +260,6 @@ func (x *extension) locate(k locateKind) server.AsyncProviderHandler {
 			return
 		}
 		peek := providerArgs(p).Peek
-		cursor := p.Cursor
 		if p.Sync {
 			go func() {
 				targets, err := x.locationTargets(ctx, r)
@@ -272,13 +270,8 @@ func (x *extension) locate(k locateKind) server.AsyncProviderHandler {
 					reply(ext.ProviderInvokeResult{OK: false}, nil)
 					return
 				}
-				if peek {
-					// hover と同じく、popup/show を送り終えてから応答する。
-					x.peek(r, cursor, targets[0])
-					reply(ext.ProviderInvokeResult{OK: true}, nil)
-					return
-				}
 				open := targets[0].open
+				open.Peek = peek
 				reply(ext.ProviderInvokeResult{OK: true, Open: &open}, nil)
 			}()
 			return
@@ -301,10 +294,7 @@ func (x *extension) locate(k locateKind) server.AsyncProviderHandler {
 			if !ok {
 				return
 			}
-			if peek {
-				x.peek(r, cursor, t)
-				return
-			}
+			t.open.Peek = peek
 			x.open(t.open, k.what+"へ移動できない")
 		}()
 	}
@@ -353,27 +343,12 @@ func (x *extension) open(open ext.EditorOpenParams, failText string) {
 	}
 }
 
-// peekLines は、「ポップアップで見る」で出す、移動先の行から下の行の数である（仮）。
-const peekLines = 10
-
-// peek は、移動先 t の行から peekLines 行を、問い合わせた位置 cursor の近くに popup/show で出す。
-// 先頭の行は「パス:行」の見出しにする。移動先の行が読めなければ、見出しだけを出す。
-func (x *extension) peek(r *request, cursor ext.Position, t target) {
-	text := t.label
-	if len(t.lines) > 0 {
-		text += "\n" + strings.Join(t.lines, "\n")
-	}
-	popup := ext.PopupShowParams{Buffer: r.buffer, Version: r.version, Position: cursor, Text: text, Format: ext.PopupPlainText}
-	if err := x.srv.ShowPopup(popup); err != nil {
-		x.logf("popup/show: %v", err)
-	}
-}
-
 // target は、移動の 1 つの候補である。
 type target struct {
 	open  ext.EditorOpenParams
 	label string
-	// lines は、移動先の行から peekLines 行である。ファイルを読めなければ nil。
+	// lines は、移動先の行（1 行）である。参照の一覧のラベルに使う。ファイルを読めなければ nil。
+	// 「ポップアップで見る」の周りの行は、本体が editor/open の peek で写す（FR-110）ので、ここでは持たない。
 	lines []string
 }
 
@@ -444,7 +419,7 @@ func (c *client) resolve(r *request, path string, pos lspPosition) target {
 		t.open.Position = &at
 		t.label = fmt.Sprintf("%s:%d:%d", path, at.Line+1, at.Byte+1)
 		if at.Line < len(ls) {
-			t.lines = slices.Clone(ls[at.Line:min(at.Line+peekLines, len(ls))])
+			t.lines = slices.Clone(ls[at.Line : at.Line+1])
 		}
 	}
 	return t

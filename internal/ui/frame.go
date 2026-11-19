@@ -123,6 +123,27 @@ type List struct {
 	Selected int
 }
 
+// Float は、ポップアップの窓 1 つである（Frame.Float）。中身は、本体の表示の部品をバッファにしたもので（internal/editor）、
+// ui はテキストのバッファとして描く。一覧と木は 1 項目を 1 行にしたバッファで、CursorLine でカーソルの行を選んでいる項目として描く。
+type Float struct {
+	// ID は、窓を見分ける番号である。替わったら窓の中のスクロールの位置を決め直す。0 も 1 つの窓として扱う。
+	ID uint64
+	// View は、窓の中に描くバッファの Frame である。Text、Cursor、Mode、Selection、Decorations、Diagnostics を読み、
+	// Tabs、Output、List、Choice、Float、Diff、Message は読まない。Text が nil なら窓を出さない。
+	View *Frame
+	// Title は、窓の見出しである。空なら出さない。
+	Title string
+	// Center は、窓をカーソルの近くでなく、バッファの表示領域の中央に置くことを表す。
+	Center bool
+	// Focused は、窓にフォーカスがある（キーが窓のバッファへ入る）ことを表す。端末のカーソルを窓の中のカーソルに置く。
+	Focused bool
+	// CursorLine は、カーソルの行を StylePopupSelected で描くことを表す（一覧と木）。
+	CursorLine bool
+	// Wide は、窓の幅を中身に依らず上限の幅にすることを表す（入力の行。打つたびに窓が広がったり、
+	// 行末のカーソルの 1 列が足りずに先頭が横に隠れたりしないため。PR #242 の再レビューの推奨 2）。
+	Wide bool
+}
+
 // SignKind は、行の印の種類である。値は sign/set の kind と同じ文字列である（基本設計 6.7）。
 type SignKind string
 
@@ -198,18 +219,12 @@ type Frame struct {
 	Signs []Sign
 	// Output は、開いている出力の欄である。nil なら欄を開いていない。
 	Output *Output
-	// Popup は、カーソルの近くに浮かべて出すテキスト（popup/show の本文）である。空なら出さない。
-	// カーソルの下の行に、下に収まらなければ上の行に、バッファの表示領域の上に重ねて出す。行は折り返す。
-	Popup string
+	// Float は、バッファの表示領域の上に浮かべて出すポップアップである（基本設計 1.4。FR-68）。nil なら出さない。
+	// 描き方は drawFloat の doc にある。
+	Float *Float
 	// List は、浮かべる窓に出す選択の一覧（:registers の一覧。FR-54）である。nil なら出さない。
-	// 出すときは Popup を出さず、カーソルを選んでいる項目の行に置く。キーの扱いは internal/editor が行う。
+	// 出すときは Float を出さず、カーソルを選んでいる項目の行に置く。キーの扱いは internal/editor が行う。
 	List *List
-	// PopupMarkdown は、Popup の本文が Markdown（popup/show の format が markdown）かどうかである。
-	// true なら、コードの囲みの行（```go など）を描かずに中身の行だけを出す（基本設計 6.7。#151）。他の記法は整形しない。
-	PopupMarkdown bool
-	// PopupCenter は、Popup をカーソルの近くでなく、バッファの表示領域の中央に出すことを表す。
-	// 本体が出す知らせ（:ext sync の結果の内訳。#179 の裁定の、端末多重化ソフトの外の規則）に使う。
-	PopupCenter bool
 	// Tabs は、client のタブの並びである（FR-62）。Renderer.TabLine の場合に、画面の一番上の行にタブの行として出す。
 	Tabs []Tab
 	// Diff は、見比べている間の差分の色と詰め物の行である（FR-99。diff.go）。nil なら見比べていない。
