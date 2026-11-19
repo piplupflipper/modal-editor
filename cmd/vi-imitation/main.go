@@ -430,6 +430,8 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		var errs []error
 		cfg, errs = config.Load(path)
 		errs = append(errs, cfg.CheckAppearance(appearanceCheck)...)
+		// keymap の右辺に書いた操作の ID（FR-126）を本体の操作の表で確かめ、使えない項目を位置付きの誤りにして除く。
+		errs = append(errs, cfg.CheckKeymapActions(editor.KeymapActionCheck(cfg.Leader))...)
 		config.SortErrors(errs)
 		problems = append(problems, errs...)
 		// 配色のファイルの誤りは、設定ファイルの誤りの後に知らせる（最初の 1 件は設定ファイルの誤りにする）。
@@ -462,6 +464,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		AutoRead:         cfg.AutoRead,
 		CheckInterval:    interval,
 		Keymap:           cfg.Keymap,
+		KeymapActions:    cfg.KeymapActions,
 		Leader:           cfg.Leader,
 		SyncTimeout:      cfg.SyncTimeout,
 		StartSyncTimeout: cfg.StartSyncTimeout,

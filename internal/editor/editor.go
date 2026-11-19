@@ -97,6 +97,11 @@ type Config struct {
 	// 展開した列は、もう一度キーマップで展開しない（Vim の noremap と同じ）。
 	// 拡張機能の起動を待たずに反映する（FR-41）。
 	Keymap map[string]map[string]string
+	// KeymapActions は、利用者のキーマップのうち、右辺に本体の操作の ID を書いた割り当て（{ "action": "<ID>" }。FR-126）である。
+	// モードの名前（"normal"、"visual"、"insert"）から、キーの列の表記から操作の ID への対応である。
+	// Keymap と違ってキーの列に展開せず、操作の表（input.Keymap）へ登録し、同じモードの同じキーの列の本体の既定の登録に勝つ
+	// （applyKeymapActions）。使えない項目は捨て、起動後に設定の誤りとして知らせる。
+	KeymapActions map[string]map[string]string
 	// Leader は、キーの表記の <Leader> に当たるキーの列の表記である（基本設計 7.2 の leader。FR-97）。
 	// 空なら editcmd.DefaultLeader（<Space>）を使う。Keymap と、拡張機能の宣言の keys の <Leader> をこの値に置き換える。
 	Leader string
@@ -526,6 +531,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	var remap *remapper
 	remap, w2 = newRemapper(cfg.Keymap, leader)
 	warnings = append(warnings, w2...)
+	warnings = append(warnings, applyKeymapActions(e.keymap, cfg.KeymapActions, leader, remap)...)
 	addKeyListBindings(e.keymap, remap)
 	// 最初の編集の client は term である（server では、最初に繋いだ client。後の client は Attach で足す）。
 	first := e.newClientView(term, remap)

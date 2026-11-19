@@ -23,7 +23,10 @@ type spec struct {
 // 本体の操作の一覧。
 // 一覧は issue #9 の「3.」の案（段階 1）で、裁定待ちである。
 // 追加・削除はこの表の行の変更だけで済み、Parser には手を入れなくてよい。
-// ID は本体の中の名前で、実行の側（internal/command）がこの ID で実装を引く。
+// 実行の側（internal/command）がこの ID で実装を引く。
+// ID は公開のインターフェイスである。利用者は設定の keymap の右辺に { "action": "<ID>" } と書いて、キーに操作を割り当てる
+// （FR-126。UserBinding）。ID の名前を変えると利用者の設定が壊れるので、変えない。消すときは要件定義の ID と同じく欠番にする。
+// ID の一覧は docs/usage.md の「操作の ID の一覧」にあり、テスト（TestActionIDDoc）が表と照合する。
 // desc はキーの一覧（FR-90。基本設計 7.2）に出す説明文で、どの行にも書く（テストが確かめる）。
 //
 // ~ は Vim の既定（tildeop が off）に合わせ、対象を取らない操作にした。大文字と小文字のオペレーターは g~、gu、gU である。
@@ -208,6 +211,26 @@ var (
 		// do と dp は、Vim と同じく d のオペレーターの後の o と p として Parser が読む（Parser.match）ので、表には置かない。
 		{keys: "]c", id: "diff-next", modes: MapNormal, desc: "見比べで、次の差分へ"},
 		{keys: "[c", id: "diff-prev", modes: MapNormal, desc: "見比べで、前の差分へ"},
+	}
+
+	// builtinInsert は、インサートモードのカーソルの移動と削除の操作である（FR-127）。internal/command の State.insertAction が実装を引く。
+	// ID には接頭辞 insert. を付け、ノーマルモードのモーションの ID と分ける（$ と <End> は止まる位置が違うため。#257 の決定）。
+	// keys が空の行は、既定のキーを持たない操作で、設定の keymap で割り当てたときだけ使える。
+	// 文字の入力、<CR>、<Tab>、<Esc> は、1 文字の入力の速さに触れないために表を通さない（要件定義 8.1。checkInsertKeys）。
+	//
+	// req: FR-127
+	builtinInsert = []spec{
+		{keys: "<Left>", id: "insert.left", modes: MapInsert, desc: "左へ"},
+		{keys: "<Right>", id: "insert.right", modes: MapInsert, desc: "右へ"},
+		{keys: "<Up>", id: "insert.up", modes: MapInsert, desc: "上の行へ"},
+		{keys: "<Down>", id: "insert.down", modes: MapInsert, desc: "下の行へ"},
+		{keys: "<Home>", id: "insert.line-start", modes: MapInsert, desc: "行の先頭へ"},
+		{keys: "<End>", id: "insert.line-end", modes: MapInsert, desc: "行末の位置へ"},
+		{keys: "<PageUp>", id: "insert.page-up", modes: MapInsert, desc: "1 画面上へスクロールする"},
+		{keys: "<PageDown>", id: "insert.page-down", modes: MapInsert, desc: "1 画面下へスクロールする"},
+		{keys: "<BS>", id: "insert.delete-prev-char", modes: MapInsert, desc: "前の文字を消す"},
+		{keys: "<Del>", id: "insert.delete-char", modes: MapInsert, desc: "カーソルの文字を消す"},
+		{keys: "", id: "insert.delete-to-line-end", modes: MapInsert, desc: "カーソルから行末まで消す（行末では次の行をつなげる）"},
 	}
 )
 
@@ -431,20 +454,27 @@ func DefaultKeymapLeader(leader []editcmd.Key) (m *Keymap, errs []error) {
 	return m, errs
 }
 
+// builtinTables は、本体の操作の表と、その種類である。順は、ID から操作を引くとき（UserBinding）の優先の順でもある。
+var builtinTables = []struct {
+	kind  BindingKind
+	specs []spec
+}{
+	{BindMotion, builtinMotions},
+	{BindOperator, builtinOperators},
+	{BindTextObject, builtinTextObjects},
+	{BindAction, builtinActions},
+	{BindAction, builtinInsert},
+}
+
 // builtinKeymap は、本体の操作の表（builtinMotions など）だけを登録したキーマップを返す。
+// keys が空の行（既定のキーの無い操作）は登録しない。
 func builtinKeymap() *Keymap {
 	m := NewKeymap()
-	tables := []struct {
-		kind  BindingKind
-		specs []spec
-	}{
-		{BindMotion, builtinMotions},
-		{BindOperator, builtinOperators},
-		{BindTextObject, builtinTextObjects},
-		{BindAction, builtinActions},
-	}
-	for _, t := range tables {
+	for _, t := range builtinTables {
 		for _, s := range t.specs {
+			if s.keys == "" {
+				continue
+			}
 			err := m.Bind(Binding{
 				Kind:            t.kind,
 				Modes:           s.modes,

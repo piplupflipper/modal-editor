@@ -45,8 +45,10 @@ func (k BindingKind) String() string {
 // MapMode は、登録が有効なモードの集合を表すビットの集合である。
 // 基本設計 7 章の設定の keymap がモードごとであることに合わせた軸である。
 //
-// Parser が引くのは MapNormal、MapVisual（Parser.SetVisual の後）、MapOperatorPending である。
-// MapInsert は、インサートモードの解釈を載せるときのための口で、登録はできるが、まだどこからも引かれない。
+// Parser.Feed が引くのは MapNormal、MapVisual（Parser.SetVisual の後）、MapOperatorPending である。
+// MapInsert は、インサートモードのカーソルの移動と削除のキー（1 つのキー）を引く Parser.InsertAction が使う（FR-127）。
+// インサートモードの文字、<CR>、<Tab>、<Esc> は、1 文字の入力の速さに触れないために表を通さないので（要件定義 8.1 の計測の対象）、
+// MapInsert には登録できない（Bind）。
 type MapMode uint8
 
 // 登録が有効なモード。
@@ -94,19 +96,25 @@ type Binding struct {
 	// 本体の操作は表の説明文、拡張機能の操作は宣言ファイルの contributes の description（基本設計 5.1）を入れる。空でもよい。
 	// キーの解釈には使わない。
 	Description string
+	// User は、利用者の設定の keymap に操作の ID で書いた割り当て（UserBinding）であるかを表す。
+	// キーの一覧（FR-90）で出どころを「設定」にするのに使う。キーの解釈には使わない。
+	User bool
 }
 
 // Keymap は、キーの列から操作を引く対応表である。
-// 本体の操作（DefaultKeymap）と、拡張機能が宣言した操作（基本設計 5.1 の contributes）を同じ表に登録する。
+// 本体の操作（DefaultKeymap）と、拡張機能が宣言した操作（基本設計 5.1 の contributes）と、
+// 利用者の設定の keymap に操作の ID で書いた割り当て（基本設計 7 章。UserBinding と Override。FR-126）を同じ表に登録する。
 //
-// 利用者の設定のキーマップ（基本設計 7 章。キーの列を別のキーの列に展開する）は、この表ではなく、
-// Parser の前段の別の層として作る（別 issue）。
+// 利用者の設定の keymap のうち、右辺をキーの列で書いたもの（キーの列を別のキーの列に展開する）は、この表ではなく、
+// Parser の前段の別の層（internal/editor の remapper）が扱う。
 //
 // 並行に呼ばれる前提は置かない（基本設計 2.1）。
 //
 // req: FR-11
 type Keymap struct {
 	bindings []Binding
+	// overridden は、Override が取り除いた登録である（取り除いたモードだけを Modes に持つ）。キーの一覧（FR-90）に出すために残す。
+	overridden []Binding
 }
 
 // NewKeymap は、空のキーマップを返す。
@@ -122,9 +130,58 @@ var ErrConflict = errors.New("キーの列が同じモードの登録に使わ�
 //   - Keys か Ref.ID が空である。Modes に、その種類で登録できないモードが含まれる
 //   - Keys が、Parser が先に読むキーで始まる。ノーマル、ビジュアル、オペレーターの後での 1 から 9 の数字（回数）、
 //     ノーマルとビジュアルでの "（レジスター）、ノーマルでの q、@、.（マクロとドットリピート）
+//   - インサートモード（MapInsert）の登録で、Keys が 1 つのキーでないか、修飾キーの付かない文字、<Esc>、<CR>、<Tab> である
+//     （checkInsertKeys。インサートモードの解釈はこれらのキーで表を引かない）
 //   - 同じキーの列が、モードの重なる登録に使われている（ErrConflict）。
 //     本体の操作と拡張機能の操作の衝突も、拡張機能どうしの衝突も同じく拒む
 func (m *Keymap) Bind(b Binding) error {
+	if err := normalizeBinding(&b); err != nil {
+		return err
+	}
+	for _, old := range m.bindings {
+		if old.Modes&b.Modes != 0 && slices.Equal(old.Keys, b.Keys) {
+			return fmt.Errorf("%w: %q は %v の %s（拡張機能 %q）", ErrConflict,
+				editcmd.KeysString(b.Keys), old.Kind, old.Ref.ID, old.Ref.Extension)
+		}
+	}
+	b.Keys = slices.Clone(b.Keys)
+	m.bindings = append(m.bindings, b)
+	return nil
+}
+
+// Override は、b を登録する。b.Modes のどれかで有効な、キーの列が同じ登録（本体の既定のキー、拡張機能のキー）があれば、
+// そのモードから取り除いてから登録する（利用者の設定が既定に勝つ。FR-126）。取り除いた登録は Overridden で読める。
+// b そのものが Bind の規則（衝突を除く）に反するときは、何も取り除かずにエラーを返す。
+//
+// req: FR-126
+func (m *Keymap) Override(b Binding) error {
+	if err := normalizeBinding(&b); err != nil {
+		return err
+	}
+	for _, old := range m.bindings {
+		if mode := old.Modes & b.Modes; mode != 0 && slices.Equal(old.Keys, b.Keys) {
+			old.Modes = mode
+			old.Keys = slices.Clone(old.Keys)
+			m.overridden = append(m.overridden, old)
+		}
+	}
+	m.Unbind(b.Modes, b.Keys)
+	return m.Bind(b)
+}
+
+// Overridden は、Override が取り除いた登録を、取り除いた順に返す。各登録の Modes は取り除いたモードである。
+// キーの一覧（FR-90）で、効かなくなった既定のキーに印を付けて出すのに使う。返す値は写しである。
+func (m *Keymap) Overridden() []Binding {
+	out := make([]Binding, len(m.overridden))
+	for i, b := range m.overridden {
+		b.Keys = slices.Clone(b.Keys)
+		out[i] = b
+	}
+	return out
+}
+
+// normalizeBinding は、b の Modes を既定で埋め、Bind の規則（衝突を除く）に反していればエラーを返す。
+func normalizeBinding(b *Binding) error {
 	allowed, ok := allowedModes[b.Kind]
 	if !ok {
 		return fmt.Errorf("登録できない操作の種類である: %v", b.Kind)
@@ -144,15 +201,44 @@ func (m *Keymap) Bind(b Binding) error {
 	if reservedFirstKey(b.Keys[0], b.Modes) {
 		return fmt.Errorf("%q は、回数、レジスター、マクロ、ドットリピートとして先に読まれるキーで始まる", editcmd.KeysString(b.Keys))
 	}
-	for _, old := range m.bindings {
-		if old.Modes&b.Modes != 0 && slices.Equal(old.Keys, b.Keys) {
-			return fmt.Errorf("%w: %q は %v の %s（拡張機能 %q）", ErrConflict,
-				editcmd.KeysString(b.Keys), old.Kind, old.Ref.ID, old.Ref.Extension)
+	if b.Modes&MapInsert != 0 {
+		if err := checkInsertKeys(b.Keys); err != nil {
+			return err
 		}
 	}
-	b.Keys = slices.Clone(b.Keys)
-	m.bindings = append(m.bindings, b)
 	return nil
+}
+
+// checkInsertKeys は、keys をインサートモードの登録の左辺に使えるかを確かめる。
+// インサートモードの解釈（internal/command の State.insertKey）は、1 つのキーごとに表を引き、
+// 修飾キーの付かない文字、<Esc>、<CR>、<Tab> では表を引かない（1 文字の入力の速さに触れないため。要件定義 8.1）。
+// このため、2 つ以上のキーの列と、表を引かないキーは登録できない。
+// jk のようなキーの列は、設定の keymap の右辺をキーの列で書く（internal/editor の remapper）。
+//
+// req: FR-127
+func checkInsertKeys(keys []editcmd.Key) error {
+	if len(keys) != 1 {
+		return fmt.Errorf("インサートモードの左辺は 1 つのキーにする: %q", editcmd.KeysString(keys))
+	}
+	if !InsertTableKey(keys[0]) {
+		return fmt.Errorf("インサートモードの %q は文字の入力かモードの切り替えのキーなので、操作を割り当てられない", editcmd.KeysString(keys))
+	}
+	return nil
+}
+
+// InsertTableKey は、インサートモードで k が操作の表を引くキーかを返す。
+// 修飾キーの付かない文字、<Esc>、<CR>、<Tab> は表を引かない（State.insertKey の分岐と同じ規則）。
+func InsertTableKey(k editcmd.Key) bool {
+	if k.Mod != 0 {
+		return true
+	}
+	switch k.Code {
+	case editcmd.CodeRune, editcmd.CodeEsc, editcmd.CodeEnter, editcmd.CodeTab:
+		return false
+	case editcmd.CodeBackspace, editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
+		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1:
+	}
+	return true
 }
 
 // reservedFirstKey は、k が modes のどれかで Parser の先に読むキーかを返す。

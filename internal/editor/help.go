@@ -200,8 +200,10 @@ func (e *Editor) helpText() string {
 func helpKeyLines(km *input.Keymap) []string {
 	descs := map[string][]string{}
 	next := map[string][]string{}
-	for _, b := range km.Bindings() {
-		if !b.Ref.Builtin() && !b.Ref.Provider() || strings.HasPrefix(b.Ref.ID, input.KeyListPrefix) {
+	// 設定の keymap の操作が取り除いた既定のキー（Overridden）も、本体のキーとして出す。
+	for _, b := range append(km.Bindings(), km.Overridden()...) {
+		// 設定の keymap に操作の ID で書いた割り当て（b.User）は、本体のキーではないので出さない。
+		if b.User || !b.Ref.Builtin() && !b.Ref.Provider() || strings.HasPrefix(b.Ref.ID, input.KeyListPrefix) {
 			continue
 		}
 		label := editcmd.KeysString(b.Keys)
@@ -474,7 +476,9 @@ func (e *Editor) selectKeyRow(r keyRow) {
 //   - キーマップ（本体の既定のキー、LSP と DAP の既定のキー、拡張機能の contributes のキー）。説明は input.Binding.Description で、
 //     拡張機能の項目に説明文が無ければ操作の ID を出す。group が空でなければ、その分類の LSP か DAP の操作のキー（K、gq、<C-]> など）も、
 //     接頭辞で始まらなくても出す（input.ProviderGroup。#227 のオーケストレータの決定）
-//   - 利用者のキーマップ（設定の keymap）。説明は展開先のキーの列である。説明文を書く項目は設定に足していない（仮）
+//   - 利用者のキーマップ（設定の keymap）。右辺をキーの列で書いた項目の説明は展開先のキーの列である。説明文を書く項目は設定に足していない（仮）。
+//     右辺に操作の ID を書いた項目（input.Binding.User。FR-126）はキーマップに登録してあり、出どころを「設定」、説明を操作の表の説明文にする。
+//     その項目が取り除いた既定のキー（input.Keymap.Overridden）は、取り除いたモードを Overridden にして出す
 //   - Parser が表を引く前に読むキー（回数、レジスター、マクロ、ドットリピート。input.ParserKeys）。prefix と group が空のときだけ出す
 //
 // 利用者のキーマップが本体か拡張機能のキーと同じキーの列か、その手前の部分を同じモードで割り当てていれば、その行の Overridden に
@@ -491,7 +495,9 @@ func (e *Editor) keyRows(group string, prefix []editcmd.Key) []keyRow {
 			}
 		}
 	}
-	for _, b := range e.keymap.Bindings() {
+	overridden := e.keymap.Overridden()
+	bindings := append(e.keymap.Bindings(), overridden...)
+	for i, b := range bindings {
 		inGroup := group != "" && b.Ref.Provider() && input.ProviderGroup(b.Ref.ID) == group
 		if !hasKeyPrefix(b.Keys, prefix) && !inGroup {
 			continue
@@ -500,11 +506,19 @@ func (e *Editor) keyRows(group string, prefix []editcmd.Key) []keyRow {
 			Keys: b.Keys, Label: editcmd.KeysString(b.Keys), Modes: b.Modes,
 			Kind: b.Kind, Ref: b.Ref, Description: b.Description,
 		}
-		if !b.Ref.Builtin() && !b.Ref.Provider() {
+		switch {
+		case b.User:
+			// 設定の keymap に操作の ID で書いた割り当て（FR-126）。説明文は操作の表の説明文である。
+			row.Source = sourceUser
+		case !b.Ref.Builtin() && !b.Ref.Provider():
 			row.Source, row.Extension = sourceExtension, b.Ref.Extension
 			if row.Description == "" {
 				row.Description = b.Ref.ID
 			}
+		}
+		if i >= len(bindings)-len(overridden) {
+			// 設定の keymap の操作が取り除いた登録（input.Keymap.Overridden）。取り除いたモードでは設定が効く。
+			row.Overridden = b.Modes
 		}
 		for mm, lhss := range user {
 			if b.Modes&mm != 0 && slices.ContainsFunc(lhss, func(lhs []editcmd.Key) bool { return hasKeyPrefix(b.Keys, lhs) }) {
