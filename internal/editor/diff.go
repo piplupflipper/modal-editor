@@ -240,8 +240,13 @@ func (e *Editor) uiDiff(bs *bufferState) *ui.Diff {
 // startDiff は、a と b のバッファの見比べを始める。どちらかが別の組に入っていれば、その組を終える。
 // 差分はその場で計算し、次の描画で両側の最初の行をそろえる。
 func (e *Editor) startDiff(a, b *bufferState) {
-	e.endDiff(a)
-	e.endDiff(b)
+	// 前の組の、a と b でない側の client には、組が終わったことを知らせる（PR #232 のレビューの推奨 4）。
+	const why = "相手のタブが別のタブと見比べ始めました"
+	e.endDiff(a, why)
+	e.endDiff(b, why)
+	if t := e.diff.this; t == a || t == b {
+		e.diff.this = nil
+	}
 	s := &diffSession{bs: [2]*bufferState{a, b}, lastRow: [2]int{-1, -1}, lastCur: [2]int{-1, -1}}
 	e.diff.sessions = append(e.diff.sessions, s)
 	e.freshDiff(s)
@@ -252,19 +257,24 @@ func (e *Editor) startDiff(a, b *bufferState) {
 }
 
 // endDiff は、bs が入っている組を終える。入っていなければ何もしない。終えたかを返す。
-func (e *Editor) endDiff(bs *bufferState) bool {
-	s, _ := e.diffOf(bs)
+// why が空でなければ、組の相手のタブ（bs でない側）の client のメッセージの行に、終わったことと why を出す。
+func (e *Editor) endDiff(bs *bufferState, why string) bool {
+	s, side := e.diffOf(bs)
 	if s == nil {
 		return false
 	}
 	s.gen++
 	e.diff.sessions = slices.DeleteFunc(e.diff.sessions, func(o *diffSession) bool { return o == s })
+	if o := s.bs[side.Other()]; why != "" && o.owner != nil && o.owner.attached() {
+		text := fmt.Sprintf("%s の見比べが終わりました（%s）", e.bufferName(o), why)
+		e.withView(o.owner, func() { e.message = infoMessage(text) })
+	}
 	return true
 }
 
 // diffClosed は、閉じるバッファ bs の見比べを終え、:diffthis と :diffsplit の待ちから外す（closeBufferState）。
 func (e *Editor) diffClosed(bs *bufferState) {
-	e.endDiff(bs)
+	e.endDiff(bs, "相手のタブが閉じました")
 	if e.diff.this == bs {
 		e.diff.this = nil
 	}
@@ -305,7 +315,7 @@ func (e *Editor) diffCommand(bs *bufferState, a ex.Action) error {
 	case ex.DiffThis:
 		return e.diffThis(bs)
 	case ex.DiffOff:
-		if !e.endDiff(bs) && e.diff.this == bs {
+		if !e.endDiff(bs, "相手のタブで :diffoff を打ちました") && e.diff.this == bs {
 			e.diff.this = nil
 		}
 		return nil
@@ -321,6 +331,9 @@ func (e *Editor) diffCommand(bs *bufferState, a ex.Action) error {
 	}
 	return fmt.Errorf("未知の見比べの操作 %d", a.Diff)
 }
+
+// errOutsideMux は、端末多重化ソフトの外で見比べを始めようとしたことを表す（基本設計 6.8、10 章の仮）。
+var errOutsideMux = errors.New("端末多重化ソフト（tmux、herdr）の外では見比べを使えません（見比べには 2 つ目の編集の client が要ります）")
 
 // errNotInDiff は、見比べていないタブで do と dp を打ったことを表す（Vim 9.1 の E99）。
 var errNotInDiff = errors.New("E99: このタブは見比べていません")
@@ -341,7 +354,7 @@ func (e *Editor) diffSplit(bs *bufferState, file string) error {
 	}
 	pane := e.view.info.Pane
 	if e.cfg.SplitPane == nil || pane == "" {
-		return errors.New("端末多重化ソフト（tmux、herdr）の外では :diffsplit を使えません（見比べには 2 つ目の編集の client が要ります）")
+		return errOutsideMux
 	}
 	p := &diffPending{from: bs, path: abs, at: time.Now()}
 	e.diff.pending = p
@@ -372,9 +385,14 @@ func (e *Editor) diffSplit(bs *bufferState, file string) error {
 }
 
 // diffThis は、:diffthis を行う。相手を待っているタブが別の client にあれば、その 2 つを見比べ始める。
+// 既に見比べているタブではそのことを知らせ、端末多重化ソフトの外で client が 1 つのときは、相手が現れないので断る（PR #232 のレビューの推奨 3、4）。
 func (e *Editor) diffThis(bs *bufferState) error {
-	if s, _ := e.diffOf(bs); s != nil {
+	if s, side := e.diffOf(bs); s != nil {
+		e.message = infoMessage(fmt.Sprintf("%s と既に見比べています（終えるには :diffoff）", e.bufferName(s.bs[side.Other()])))
 		return nil
+	}
+	if e.view.info.Pane == "" && len(e.clients) < 2 {
+		return errOutsideMux
 	}
 	t := e.diff.this
 	if t == nil || !slices.Contains(e.bufs, t) || t.owner == nil || t.owner == bs.owner {

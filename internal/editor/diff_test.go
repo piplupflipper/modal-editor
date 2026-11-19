@@ -44,8 +44,8 @@ func (h *harness) diffSessions() int {
 	return n
 }
 
-// cursorLine は、client c（0 から数える）のカーソルの行を返す。
-func (h *harness) cursorLine(c int) int {
+// clientLine は、client c（0 から数える）のカーソルの行を返す。
+func (h *harness) clientLine(c int) int {
 	line := -1
 	h.e.do(func() { line = h.e.viewOf(h.e.clients[c]).cur.state.Cursor().Line })
 	return line
@@ -104,17 +104,17 @@ func TestDiffSplit(t *testing.T) {
 	// ]c と [c。回数が残りの差分より多ければ、最後の差分へ移る（Vim 9.1 と同じ）。
 	h.keys("]c")
 	h.settle()
-	if got := h.cursorLine(0); got != 1 {
+	if got := h.clientLine(0); got != 1 {
 		t.Errorf("]c の後の行 = %d, want 1", got)
 	}
 	h.keys("gg5]c")
 	h.settle()
-	if got := h.cursorLine(0); got != 3 {
+	if got := h.clientLine(0); got != 3 {
 		t.Errorf("5]c の後の行 = %d, want 3", got)
 	}
 	h.keys("[c")
 	h.settle()
-	if got := h.cursorLine(0); got != 1 {
+	if got := h.clientLine(0); got != 1 {
 		t.Errorf("[c の後の行 = %d, want 1", got)
 	}
 
@@ -170,7 +170,7 @@ func TestDiffScrollAndUpdate(t *testing.T) {
 	h.keys("G")
 	h.settle()
 	h.eventually("スクロールのそろえ", func() bool { return h.topRow(0) == h.topRow(1) && h.topRow(0) > 0 })
-	if got := h.cursorLine(1); got != 24 {
+	if got := h.clientLine(1); got != 24 {
 		t.Errorf("B のカーソルの行 = %d, want 24（A の 29 行目に対応する行）", got)
 	}
 
@@ -180,7 +180,7 @@ func TestDiffScrollAndUpdate(t *testing.T) {
 	p.keys("8j")
 	h.settle()
 	h.eventually("B に合わせたそろえ", func() bool { return h.topRow(0) == h.topRow(1) })
-	if got, want := h.cursorLine(0), 13; got != want {
+	if got, want := h.clientLine(0), 13; got != want {
 		t.Errorf("A のカーソルの行 = %d, want %d", got, want)
 	}
 
@@ -200,23 +200,32 @@ func TestDiffErrors(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n"})
 	h := start(t, Config{WorkDir: dir}, "a.txt")
 
-	// 端末多重化ソフトの外（ペインを知らない、SplitPane が無い）では :diffsplit を使えない。
-	h.keys(":diffsplit b.txt<CR>")
-	h.settle()
-	if msg := h.message(); !strings.Contains(msg, "端末多重化ソフト") {
-		t.Errorf(":diffsplit の外のメッセージ = %q", msg)
+	// 端末多重化ソフトの外（ペインを知らない、SplitPane が無い、client が 1 つ）では :diffsplit も :diffthis も使えない。
+	for _, cmd := range []string{":diffsplit b.txt<CR>", ":diffthis<CR>"} {
+		h.keys(cmd)
+		h.settle()
+		if msg := h.message(); !strings.Contains(msg, "端末多重化ソフト") {
+			t.Errorf("%s の外のメッセージ = %q", cmd, msg)
+		}
 	}
 	h.keys(":diffsplit<CR>")
 	h.settle()
 	if msg := h.message(); !strings.HasPrefix(msg, "E471") {
 		t.Errorf("引数の無い :diffsplit = %q", msg)
 	}
-	// 見比べていないタブの do は E99。]c はメッセージを出さない。
-	h.keys("do")
-	h.settle()
-	if msg := h.message(); !strings.HasPrefix(msg, "E99") {
-		t.Errorf("見比べていない do = %q", msg)
+	// 見比べていないタブの do と dp は、Vim 9.1 と同じく E99 で、バッファは変えない。
+	for _, k := range []string{"do", "dp"} {
+		h.keys(k)
+		h.settle()
+		if msg := h.message(); !strings.HasPrefix(msg, "E99") {
+			t.Errorf("見比べていない %s = %q", k, msg)
+		}
 	}
+	if got := h.bufferText("a.txt"); got != "a" {
+		t.Errorf("a.txt = %q", got)
+	}
+
+	p := h.attach(ClientInfo{ID: 2, WorkDir: dir, Files: []string{filepath.Join(dir, "b.txt")}, ReadOnly: true})
 	// 同じ client の 2 つのタブは見比べられない。同じ client で打ち直すと、後のタブが相手を待つ。
 	h.keys(":difft<CR>:e c.txt<CR>:diffthis<CR>")
 	h.settle()
@@ -235,7 +244,6 @@ func TestDiffErrors(t *testing.T) {
 	}
 
 	// 別の client のタブどうしは :diffthis で見比べ始める。相手が編集を禁止していれば dp を断る（E21）。
-	p := h.attach(ClientInfo{ID: 2, WorkDir: dir, Files: []string{filepath.Join(dir, "b.txt")}, ReadOnly: true})
 	p.keys(":diffthis<CR>")
 	h.settle()
 	if n := h.diffSessions(); n != 1 {
@@ -255,10 +263,94 @@ func TestDiffErrors(t *testing.T) {
 	if got := h.bufferText("c.txt"); got != "b" {
 		t.Errorf("do の後の c.txt = %q", got)
 	}
-	// 見比べているバッファを閉じると、見比べも終わる。
+	// 見比べているタブの :diffthis は、そのことを知らせる。
+	h.keys(":diffthis<CR>")
+	h.settle()
+	if msg := h.message(); !strings.Contains(msg, "既に見比べています") {
+		t.Errorf("見比べているタブの :diffthis = %q", msg)
+	}
+	// 見比べているバッファを閉じると、見比べも終わり、相手の client に知らせる。
 	p.keys(":q<CR>")
 	h.settle()
 	h.eventually("組が終わる", func() bool { return len(h.e.diff.sessions) == 0 })
+	if msg := h.message(); !strings.Contains(msg, "見比べが終わりました") {
+		t.Errorf("相手のタブを閉じた後のメッセージ = %q", msg)
+	}
+}
+
+// 3 つ目の client が見比べに加わると、前の組の残る側に組が終わったことを知らせ、:diffthis の待ちを残さない（PR #232 のレビューの推奨 4）。
+//
+// req: FR-99
+func TestDiffThirdClient(t *testing.T) {
+	h, _, dir, _ := startDiffPair(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n", "r.txt": "r\n"})
+	r := h.attach(ClientInfo{ID: 3, Pane: "%3", WorkDir: dir, Files: []string{filepath.Join(dir, "r.txt")}})
+	r.keys(":diffthis<CR>:diffsplit b.txt<CR>")
+	h.settle()
+	h.e.do(func() {
+		if n := len(h.e.diff.sessions); n != 1 {
+			t.Fatalf("組 = %d", n)
+		}
+		s := h.e.diff.sessions[0]
+		if filepath.Base(s.bs[0].path) != "r.txt" || filepath.Base(s.bs[1].path) != "b.txt" {
+			t.Errorf("組 = %s と %s, want r.txt と b.txt", s.bs[0].path, s.bs[1].path)
+		}
+		if h.e.diff.this != nil {
+			t.Errorf(":diffthis の待ちが残った: %s", h.e.diff.this.path)
+		}
+	})
+	var msg string
+	h.e.do(func() { msg = h.e.viewOf(h.e.clients[0]).message.Text })
+	if !strings.Contains(msg, "a.txt の見比べが終わりました") {
+		t.Errorf("前の組の a.txt の client のメッセージ = %q", msg)
+	}
+}
+
+// do と dp は、Vim 9.1 と同じく d のオペレーターの後の o と p として読むので、d の後に時間を置いても do と dp になる（PR #232 のレビューの必須 1）。
+// d の後のモーション（dw、dd、d2j）と、レジスターを付けた "ado も変わらない。
+//
+// req: FR-101
+func TestDiffObtainAfterPause(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a\nb\nc\n", "b.txt": "a\nB\nc\n"})
+	calls := make(chan diffCall, 1)
+	h := start(t, Config{WorkDir: dir, KeyTimeout: 20 * time.Millisecond, SplitPane: func(from, file, d string) error {
+		calls <- diffCall{from, file, d}
+		return nil
+	}}, "a.txt")
+	h.e.do(func() { h.e.clients[0].info = ClientInfo{ID: 1, Pane: "%1"} })
+	h.keys(":diffsplit b.txt<CR>")
+	h.settle()
+	call := <-calls
+	p := h.attach(ClientInfo{ID: 2, Pane: "%2", WorkDir: dir, Files: []string{call.file}})
+
+	// 時間切れ（20 ms）より長く置いてから o を打つ。
+	h.keys("jd")
+	h.settle()
+	time.Sleep(100 * time.Millisecond)
+	h.keys("o")
+	h.settle()
+	if got := h.bufferText("a.txt"); got != "a\nB\nc" {
+		t.Errorf("d、時間を置いて o の後の a.txt = %q", got)
+	}
+	h.keys("u")
+	p.keys("2Gd")
+	h.settle()
+	time.Sleep(100 * time.Millisecond)
+	p.keys("p")
+	h.settle()
+	if got := h.bufferText("a.txt"); got != "a\nB\nc" {
+		t.Errorf("d、時間を置いて p の後の a.txt = %q", got)
+	}
+	// d の後のモーションは、時間を置いても変わらない。
+	h.keys("u")
+	h.settle()
+	h.keys("gg\"ayyd")
+	h.settle()
+	time.Sleep(100 * time.Millisecond)
+	h.keys("j")
+	h.settle()
+	if got := h.bufferText("a.txt"); got != "c" {
+		t.Errorf("d、時間を置いて j の後の a.txt = %q", got)
+	}
 }
 
 // 計算の結果の画面の行（diff.Layout）は、両側で数が等しい。startDiffPair の 2 つのタブで確かめる（computeDiff の組み立ての確認）。

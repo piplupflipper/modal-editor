@@ -216,6 +216,9 @@ var parserKeys = []KeyHelp{
 	{Keys: "q{レジスター}", Modes: MapNormal, Description: "マクロの記録を始める（記録中の q で終える）"},
 	{Keys: "@{レジスター}", Modes: MapNormal, Description: "マクロを再生する（@@ は直前のマクロ）"},
 	{Keys: ".", Modes: MapNormal, Description: "直前の変更を繰り返す"},
+	// do と dp は、d のオペレーターの後の o と p として Parser が読む（Parser.match）。
+	{Keys: "do", Modes: MapNormal, Description: "見比べで、カーソルの差分を相手の内容で置き換える"},
+	{Keys: "dp", Modes: MapNormal, Description: "見比べで、相手の差分をカーソルの差分の内容で置き換える"},
 }
 
 // KeyHelp は、Keymap に登録しないキーの、キーの一覧（FR-90）に出す説明である。
