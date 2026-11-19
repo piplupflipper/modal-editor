@@ -277,7 +277,8 @@ func TestReplayProviderWaits(t *testing.T) {
 	h.eventually("@c のホバー", func() bool { return popupOf() == "hover-popup" })
 
 	// 移動しないキー（zz）や、動いて戻るキー（jk）が続いても、記録したときと同じく再生の後に残らない（#217 のレビュー）。
-	for _, rec := range []string{"qeKzzq", "qfKjkq"} {
+	// 拡張機能の操作（<Space>db）が続いても残らない（#224 のコメント）。
+	for _, rec := range []string{"qeKzzq", "qfKjkq", "qgK<Space>dbq"} {
 		reg := rec[1:2]
 		h.keys("j" + rec)
 		h.settle()

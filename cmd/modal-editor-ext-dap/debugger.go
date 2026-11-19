@@ -904,8 +904,8 @@ func (d *debugger) applyBreakpoints(path string, gen uint64, res []breakpoint) {
 // session の event の goroutine から呼ぶ。
 //
 // 再生中（sync）の操作がこの停止を待っていれば（stopWaiter）、editor/open を送らずに、止まった位置をその操作の応答の open で返す。
-// 本体は応答を待つ間 editor/open を処理しないので、送ると応答の期限まで互いに待つうえ、
-// 移動が再生の次の操作より後になる（基本設計 6 章の冒頭、6.4）。
+// 本体は応答を待つ間も editor/open を処理するが、送ると待つ間にカーソルが移り、本体が再生の続きで操作を実行し直すときに
+// カーソルが変わったとみなして再生を止める（基本設計 5.4、6 章の冒頭、6.4）。
 //
 // req: FR-31, FR-19
 func (d *debugger) showStopped(ctx context.Context, path string, line, column int, reason string) {
@@ -958,7 +958,7 @@ func (d *debugger) showStopped(ctx context.Context, path string, line, column in
 // 開いていなければ、パスと行の先頭で指す（本体が開いてから移る）。
 func (d *debugger) stopOpen(ctx context.Context, path string, line, column int, buf bufState, opened bool) *ext.EditorOpenParams {
 	if opened {
-		// 本体は応答を待つ間バッファを変えないので、複製は buf.version に既にあるはずである。
+		// 本体は応答を待つ間、再生した client のキーを処理しないので、ふつうは複製は buf.version に既にある。
 		b, err := d.srv.WaitBuffer(ctx, buf.id, buf.version)
 		switch {
 		case err != nil:
@@ -991,9 +991,21 @@ func replayStopReason(reason string) bool { return slices.Contains(replayStopRea
 
 // stoppedWithoutSource は、止まった位置（ソースのパス）が分からない停止を知らせる。
 // 再生中の操作がこの停止を待っていれば、カーソルを動かさずに成功を返す。
+// ただし、記録したときと違う止まり方（replayStopReason が false。例外など）なら、showStopped と同じく失敗を返して再生を止める（#224）。
+//
+// req: FR-19
 func (d *debugger) stoppedWithoutSource(reason string) {
-	d.takeStopWaiter().resolve(ext.ProviderInvokeResult{OK: true})
+	w := d.takeStopWaiter()
 	d.showInfo("停止した（" + reason + "）")
+	if w == nil {
+		return
+	}
+	if !replayStopReason(reason) {
+		w.resolve(ext.ProviderInvokeResult{OK: false})
+		d.showError(fmt.Sprintf("再生の途中でデバッグ対象が止まった（%s）ので、再生を止めた", reason))
+		return
+	}
+	w.resolve(ext.ProviderInvokeResult{OK: true})
 }
 
 // clearExecution は、実行位置の印を消し、消す前の位置を返す（基本設計 6.4 の continued と terminated）。

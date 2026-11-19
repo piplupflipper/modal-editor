@@ -52,6 +52,8 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 				c = e.op
 			}
 			e.withView(c, func() { e.applyDeferred(p, ev) })
+		} else if c := e.replayFor(ev.Tag); c != nil {
+			e.replayAnswered(c, ev)
 		}
 		// それ以外は、期限を超えたか取り消した問い合わせの結果なので捨てる（FR-17）。
 	case *exthost.StateChange:
@@ -60,7 +62,7 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.editRequest(ev)
 	case *exthost.MessageShow:
 		e.withView(e.extView(ev.Extension), func() {
-			e.message = ui.Message{Text: ev.Params.Text, Level: messageLevel(ev.Params.Level)}
+			e.showExtMessage(ui.Message{Text: ev.Params.Text, Level: messageLevel(ev.Params.Level)})
 		})
 	case *exthost.DecorationSet:
 		e.setDecorations(ev.Extension, ev.Params)
@@ -130,7 +132,7 @@ func (e *Editor) stateChange(ev *exthost.StateChange) {
 		if ev.Err != nil {
 			text += ": " + ev.Err.Error()
 		}
-		e.message = ui.Message{Text: text, Level: ui.MessageError}
+		e.showError(errors.New(text))
 	case exthost.StateNotStarted:
 		// 起動した後に未起動へ戻るのは、:ext sync が入れ替えの後に止めたとき（exthost.Host.Reload）だけである。
 		e.clearExtension(ev.Extension)
@@ -212,9 +214,10 @@ type popupMark struct {
 // 本文は、ui がカーソルの近くに浮かべて描く（ui.Frame.Popup）。
 //
 // 表示は次のキー入力かカーソルの移動で消す（基本設計 6.7）ので、届いた時点でそのどちらかが起きていれば、既に消えたものとして出さない。
-// マクロの再生の途中のホバー（FR-19。#210）は、再生を終えてからこの関数に届く（待つ間のイベントは hold で取っておく）。
-// 記録したときは次のキー（j、zz など）で消えていたので、再生の後に残さないためである。
-// 再生のキーも command.State.KeysFed が数えるので、移動しないキー（zz）や動いて戻るキー（jk）が続いても出さない（#217 のレビュー）。
+// 出した後も、State が次のキーを解釈したら消す（popupState.keys。render）。
+// マクロの再生の途中のホバー（FR-19。#210）は、再生を止めて結果を待つ間に届いて出る（replayWait）。
+// 再生の残りのキーも command.State.KeysFed が数えるので、記録したときと同じく次のキー（j、zz、jk、<Space>db など）で消え、
+// 再生の後に残らない（#217 のレビュー、#224）。最後の操作のホバーは、続くキーが無いので残る。
 // 段階 3 では、バッファをカーソルのあるタブに持つ client の画面に出す（応答が届くまでに、別の client がキーを打っていてもよい。#215）。
 //
 // req: FR-30, FR-19
@@ -230,7 +233,10 @@ func (e *Editor) showPopup(p ext.PopupShowParams) {
 		if m := e.popupMark; m.state == bs.state && m.keys != bs.state.KeysFed() {
 			return
 		}
-		e.popup = &popupState{bs: bs, cursor: bs.state.Cursor(), text: p.Text, markdown: p.Format == ext.PopupMarkdown}
+		e.popup = &popupState{
+			bs: bs, cursor: bs.state.Cursor(), text: p.Text, markdown: p.Format == ext.PopupMarkdown,
+			keys: bs.state.KeysFed(), trackKeys: true,
+		}
 	})
 }
 

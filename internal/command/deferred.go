@@ -45,34 +45,50 @@ type Deferred struct {
 // req: FR-18
 func (s *State) ApplyDeferred(d Deferred, ext Extensions) Result {
 	s.res = Result{}
-	visualOp := d.mode.visual() && d.Command.Kind == editcmd.KindOperator
-	ok := s.buf.Version() == d.Version && s.cursor == d.Cursor
-	switch {
-	case !ok:
-	case visualOp:
-		ok = s.mode == ModeNormal
-	case d.mode.visual():
-		ok = s.mode == d.mode && s.visual.anchor == d.anchor
-	default:
-		ok = s.mode == ModeNormal
-	}
-	if !ok {
+	if !s.deferredReady(d) {
 		s.fail(ErrStale)
 		return s.take()
 	}
-	if visualOp {
+	saved := s.Extensions
+	s.Extensions = ext
+	defer func() { s.Extensions = saved }()
+	s.rerunDeferred(d)
+	return s.take()
+}
+
+// deferredReady は、保留した操作 d を実行し直せるか（バッファのバージョン番号、カーソル、モードが保留したときと同じか）を返す。
+func (s *State) deferredReady(d Deferred) bool {
+	if s.buf.Version() != d.Version || s.cursor != d.Cursor {
+		return false
+	}
+	switch {
+	case d.visualOperator():
+		// ビジュアルモードのオペレーターは、問い合わせる前に選択を抜けている。
+		return s.mode == ModeNormal
+	case d.mode.visual():
+		return s.mode == d.mode && s.visual.anchor == d.anchor
+	default:
+		return s.mode == ModeNormal
+	}
+}
+
+// visualOperator は、d がビジュアルモードのオペレーターであるかを返す。
+func (d Deferred) visualOperator() bool {
+	return d.mode.visual() && d.Command.Kind == editcmd.KindOperator
+}
+
+// rerunDeferred は、保留した操作 d を、State.Extensions で実行し直す。deferredReady を確かめてから呼ぶ。
+// ビジュアルモードのオペレーターは、選択を戻してから実行する。
+func (s *State) rerunDeferred(d Deferred) {
+	if d.visualOperator() {
 		s.mode = d.mode
 		s.visual.anchor = d.anchor
 		s.want = d.want
 		s.parser.SetVisual(true)
 	}
-	saved := s.Extensions
-	s.Extensions = ext
-	defer func() { s.Extensions = saved }()
 	if d.exCommand != nil {
 		s.runExtCommand(*d.exCommand)
 	} else {
 		s.run(d.Command)
 	}
-	return s.take()
 }

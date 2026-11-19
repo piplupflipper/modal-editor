@@ -36,6 +36,8 @@ const (
 	fakeSlowInit = "slowinit"
 	// fakeProvider は、本体の操作の提供者（provides）である拡張機能である（provider_test.go）。
 	fakeProvider = "provider"
+	// fakeChatty は、バッファを開くたびに message/show を続けて送る拡張機能である（gopls の進み具合の知らせの代役。messages_test.go）。
+	fakeChatty = "chatty"
 )
 
 const (
@@ -271,6 +273,12 @@ func runFakeExt(mode string) int {
 		})
 	case fakeProvider:
 		registerFakeProvider(s)
+	case fakeChatty:
+		s.OnBufferOpen(func(context.Context, *server.BufferOpenEvent) {
+			for i := range 3 {
+				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("chatty: loading %d", i+1))
+			}
+		})
 	case fakeSlowInit:
 		s.OnInitialize(func(context.Context, *server.InitializeEvent) error {
 			time.Sleep(slowInitDelay)
@@ -469,9 +477,12 @@ func (h *harness) eventually(what string, cond func() bool) {
 }
 
 // settle は、端末から送ったキーを、イベントループがすべて処理し終えるまで待つ。
+// 再生中の拡張機能の結果を待っている（replayWait）間は、キーの処理が終わっていないものとして待つ。
 func (h *harness) settle() {
 	h.t.Helper()
-	h.eventually("キーの処理", func() bool { return h.e.forwarded.Load() == h.sent && h.e.keys.empty() })
+	h.eventually("キーの処理", func() bool {
+		return h.e.forwarded.Load() == h.sent && h.e.keys.empty() && !h.e.replayPending()
+	})
 }
 
 func (h *harness) text() string {

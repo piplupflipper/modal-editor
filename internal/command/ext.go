@@ -19,6 +19,13 @@ var ErrNoExtensions = errors.New("command: no extension host")
 // マクロとドットリピートの再生中（QueryInfo.Replaying）は返さない。返した場合は失敗として扱う（FR-19）。
 var ErrDeferred = errors.New("command: extension result deferred")
 
+// ErrQueryPending は、マクロとドットリピートの再生中（QueryInfo.Replaying）に、Extensions の実装が問い合わせを送って、
+// 結果を待たずに返したことを表す（FR-19。基本設計 5.4）。誤りではない。
+// State は、その操作を Result.Deferred に、再生の残りを ErrBufferSwitched と同じく Result.Remaining に入れて止まる。
+// 呼び出し側は、結果が届いたら、Result.Deferred と Result.Remaining を State.ResumeReplay へ渡して再生を続ける。
+// 呼び出し側は、待つ間もイベントループを止めずに済む（外部のコマンドの ErrShellPending と同じ形）。
+var ErrQueryPending = errors.New("command: replay waits for an extension result")
+
 // Extensions は、拡張機能が提供する操作（提供元が拡張機能の editcmd.Ref）を問い合わせる口である（基本設計 3 章、5.4）。
 //
 // 問い合わせの実装（exthost への RPC、期限の扱い、拡張機能の状態）は、呼び出し側（internal/editor）が差し込む。
@@ -29,7 +36,8 @@ var ErrDeferred = errors.New("command: extension result deferred")
 //
 //   - 期限が正の値（FR-17）: 期限まで待ち、超えたらエラーを返す
 //   - 期限が 0（FR-18）: 問い合わせを送って、待たずに ErrDeferred を返す。結果が届いたら State.ApplyDeferred で適用する
-//   - info.Replaying が true（FR-19）: 期限の設定に関わらず、結果が届くまで待つ
+//   - info.Replaying が true（FR-19）: 期限の設定に関わらず、結果が届くまで待つ。
+//     待たずに ErrQueryPending を返し、結果が届いてから State.ResumeReplay で続けてもよい（internal/editor はこちら）
 //
 // ドットリピートとマクロの再生では、記録した Ref と引数で、同じ拡張機能へその都度問い合わせ直す（FR-12）。
 // このため、拡張機能の側に繰り返しのための処理は要らない。
@@ -123,6 +131,8 @@ func (s *State) runExtCommand(a ex.Action) {
 	case errors.Is(err, ErrDeferred) && !s.Replaying() && s.res.Deferred == nil:
 		s.cursor, s.want = d.Cursor, d.want
 		s.res.Deferred = &d
+	case errors.Is(err, ErrQueryPending):
+		s.suspendQuery(d, err)
 	default:
 		s.fail(err)
 	}
