@@ -135,7 +135,10 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 
 同じ名前なら 1 のファイルを使うので、同梱の配色を同じ名前のファイルで置き換えられる。
 同梱しているのは `iceberg`（[iceberg.vim](https://github.com/cocopon/iceberg.vim) の暗い背景の色）だけで、値と写した元は `internal/config/colors/iceberg.jsonc` にある。
-iceberg.vim に元の色が無い名前（`message.info`、`popup.border`、`statusline.mode`、`statusline.filetype`、`statusline.recording`、`statusline.ext`、`statusline.mode.commandline`、`sign.executionPoint`、`sign.breakpoint`、`sign.breakpointUnverified`）は、同梱の iceberg に無いので本体の既定の色になる。
+同梱の iceberg は、iceberg.vim の配色そのもの（`colors/iceberg.vim`）の色だけを持つ。
+`colors/iceberg.vim` に対応するハイライトグループが無い名前（`message.info`、`popup.border`、`statusline.` で始まる部品の色、`sign.executionPoint`、`sign.breakpoint`、`sign.breakpointUnverified`）は、同梱の iceberg に無いので本体の既定の色になる。
+ステータス行は Vim の iceberg と同じく `StatusLine` の反転（明るい灰色の帯）になる。
+`config.example.jsonc` は、iceberg.vim のリポジトリの lightline のテーマの色を `colors` に書き、ステータス行を lightline に近い見た目にしている。
 色は 24 ビットの `#rrggbb` で書いてあるので、24 ビットの色を出せる端末で使う。
 
 配色のファイルは、`colors` の値と同じ形（色を付ける対象の名前から属性のオブジェクトへの対応）を最上位に書いた JSONC である。
