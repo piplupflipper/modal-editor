@@ -9,12 +9,14 @@ import (
 	"testing"
 
 	"github.com/piplupflipper/vi-imitation/internal/config"
+	"github.com/piplupflipper/vi-imitation/internal/editor"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // 同梱する設定の例（config.example.jsonc）は、誤り無く読め、見た目の項目がすべて描画に渡る。
+// keymap.insert の Emacs 風の 9 個のキーは、本体の操作の ID として使える。
 //
-// req: FR-91, FR-92, FR-93
+// req: FR-91, FR-92, FR-93, FR-126
 func TestConfigExample(t *testing.T) {
 	data, err := os.ReadFile("../../config.example.jsonc")
 	if err != nil {
@@ -23,8 +25,18 @@ func TestConfigExample(t *testing.T) {
 	cfg, errs := config.Parse("config.example.jsonc", data)
 	errs = append(errs, cfg.CheckAppearance(appearanceCheck)...)
 	errs = append(errs, cfg.LoadColorScheme(t.TempDir(), appearanceCheck)...)
+	errs = append(errs, cfg.CheckKeymapActions(editor.KeymapActionCheck(cfg.Leader))...)
 	if len(errs) != 0 {
 		t.Fatalf("設定の例の誤り: %v", errs)
+	}
+	// インサートモードの Emacs 風の 9 個のキー（#257）。
+	wantInsert := map[string]string{
+		"<C-a>": "insert.line-start", "<C-e>": "insert.line-end", "<C-f>": "insert.right", "<C-b>": "insert.left",
+		"<C-n>": "insert.down", "<C-p>": "insert.up",
+		"<C-h>": "insert.delete-prev-char", "<C-d>": "insert.delete-char", "<C-k>": "insert.delete-to-line-end",
+	}
+	if !reflect.DeepEqual(cfg.KeymapActions, map[string]map[string]string{"insert": wantInsert}) {
+		t.Errorf("keymap の操作 = %v", cfg.KeymapActions)
 	}
 	if cfg.ColorScheme != "iceberg" || len(cfg.SchemeColors) == 0 {
 		t.Errorf("colorscheme %q, 配色 %d 件", cfg.ColorScheme, len(cfg.SchemeColors))
