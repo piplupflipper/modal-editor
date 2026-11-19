@@ -24,7 +24,7 @@
 // 段階 2 のコマンド（lsp.definition、lsp.hover、lsp.format）は、この操作に置き換えた（#203）。
 //
 //   - definition、implementation、typeDefinition: textDocument/definition、implementation、typeDefinition の結果へ editor/open で移動する。
-//     候補が複数なら choice/ask で選ばせる。args の peek が true なら、移らずに移動先の行を popup/show で出す
+//     候補が複数なら choice/ask で選ばせる。args の peek が true なら、editor/open の peek で移動先の写しを本体のポップアップに出させる
 //   - hover: textDocument/hover の結果を popup/show で表示させる
 //   - references、documentSymbols、workspaceSymbols: 結果の一覧を choice/ask で選ばせ、選んだ場所へ移る（一覧の部品ができるまでの仮の形）
 //   - format: textDocument/formatting（範囲があり言語サーバーが対応すれば textDocument/rangeFormatting）の結果をトランザクションにする

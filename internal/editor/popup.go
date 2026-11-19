@@ -190,6 +190,9 @@ func (e *Editor) switchFocus(to *bufferState) {
 }
 
 // focusFloat は、読み込んでいる client のポップアップへフォーカスを入れる（FR-68）。
+// 以後のキーはポップアップのバッファの State へ入るので、通常のノーマルモードとインサートモードのキーが効く（FR-71）。
+//
+// req: FR-68, FR-71
 func (e *Editor) focusFloat() {
 	f := e.float
 	if f == nil || f.focused {
@@ -323,6 +326,8 @@ var ctrlW = editcmd.MustParseKeys("<C-w>")[0]
 //   - 入力の行のノーマルモードかインサートモードの <CR>: 中身を選んだものとして知らせる
 //
 // どれもキーの列の途中（State.Pending、キーマップの途中）では扱わない。
+//
+// req: FR-68
 func (e *Editor) floatKey(k editcmd.Key) bool {
 	f := e.float
 	if f == nil || !f.focused {

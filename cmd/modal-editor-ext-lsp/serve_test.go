@@ -708,37 +708,36 @@ func TestDefinition(t *testing.T) {
 	}
 }
 
-// TestDefinitionPeek は、args の peek が true なら、移らずに、移動先の行から下を見出しと一緒に popup/show で出すことを確かめる。
-// sync が true なら、popup/show を送ってから応答する（hover と同じ。#210）。
+// TestDefinitionPeek は、args の peek が true なら、移らずに、移動先を editor/open の peek で本体に見せることを確かめる（FR-110）。
+// sync が true なら、peek を付けた移動先を応答の open で返す（#210 と同じく、再生の次の操作の前に本体が行う）。
 //
-// req: FR-94
+// req: FR-94, FR-110
 func TestDefinitionPeek(t *testing.T) {
 	h := startHost(t, hostOptions{maxRestarts: -1})
 	text := "日𝄞 use TARGET\nnext line"
-	path := h.open(1, "a.go", text)
+	h.open(1, "a.go", text)
 	h.diagnosticsAt(1, 1)
-	for _, sync := range []bool{false, true} {
-		res := h.invoke(ext.ProviderInvokeParams{
-			Operation: ext.OpDefinition, Buffer: 1, Version: h.vers[1], Cursor: pos(1, 2),
-			Args: json.RawMessage(`{"peek":true}`), Sync: sync,
-		})
-		if !res.OK || res.Open != nil {
-			t.Fatalf("sync %v: peek = %+v", sync, res)
-		}
-		if sync && len(h.popups) == 0 {
-			t.Error("sync: replied before popup/show")
-		}
-		p := receive(t, h.popups, "popup/show")
-		at := positionOf(text, "TARGET", 0)
-		want := fmt.Sprintf("%s:%d:%d\n日𝄞 use TARGET\nnext line", path, at.Line+1, at.Byte+1)
-		if p.Buffer != 1 || p.Version != h.vers[1] || p.Position != pos(1, 2) || p.Text != want || p.Format != ext.PopupPlainText {
-			t.Errorf("sync %v: popup/show = %+v, want text %q", sync, p, want)
+	at := positionOf(text, "TARGET", 0)
+	check := func(what string, o *ext.EditorOpenParams) {
+		t.Helper()
+		if o == nil || !o.Peek || o.Buffer == nil || *o.Buffer != 1 || o.Position == nil || *o.Position != at {
+			t.Errorf("%s: open = %+v, want peek at %v", what, o, at)
 		}
 	}
-	select {
-	case o := <-h.opens:
-		t.Errorf("peek moved: editor/open = %+v", o)
-	default:
+	res := h.invoke(ext.ProviderInvokeParams{
+		Operation: ext.OpDefinition, Buffer: 1, Version: h.vers[1], Cursor: pos(1, 2), Args: json.RawMessage(`{"peek":true}`),
+	})
+	if !res.OK || res.Open != nil {
+		t.Fatalf("peek = %+v", res)
+	}
+	o := receive(t, h.opens, "editor/open")
+	check("editor/open", &o)
+	res = h.invoke(ext.ProviderInvokeParams{
+		Operation: ext.OpDefinition, Buffer: 1, Version: h.vers[1], Cursor: pos(1, 2), Args: json.RawMessage(`{"peek":true}`), Sync: true,
+	})
+	check("sync", res.Open)
+	if len(h.popups) != 0 {
+		t.Errorf("peek sent popup/show")
 	}
 }
 
