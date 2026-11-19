@@ -85,9 +85,11 @@ type Terminal struct {
 	noScreen bool
 	// prevFg は、Reacquire が端末の前面のプロセスグループを自分へ移す前の前面のプロセスグループである。0 なら移していない。
 	// Release で、そのプロセスグループへ返す（基本設計 4.9 の端末の取り合い）。
-	prevFg  int
-	painter Painter
-	buf     bytes.Buffer
+	prevFg int
+	// awayEnded は、最後に Reacquire で away を抜けた時刻である（HandedOverWithin）。
+	awayEnded time.Time
+	painter   Painter
+	buf       bytes.Buffer
 
 	events chan Event
 	stop   chan struct{}

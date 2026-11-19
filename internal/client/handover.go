@@ -159,14 +159,16 @@ func (h *handover) ask(ho Handover, out io.Writer, status int, errText string) {
 		fmt.Fprintf(&b, "\r\nシェルが %d を返しました", status)
 	}
 	fmt.Fprintf(&b, "\r\n%s", promptText)
-	_, _ = out.Write(b.Bytes()) // 出せなくてもキーは待つ
 	ch := make(chan struct{})
 	h.mu.Lock()
 	h.prompt = ch
 	h.mu.Unlock()
+	// 問いを出す前に raw モードにする。問いが見えてから打ったキーが、cooked のモードの端末で行の編集と ICRNL（<CR> を <C-j> にする）を
+	// 受けないためである（PR #234 の CI で、問いを見てすぐ打った "\r:q\r" が "\n:q\n" として届き、問いにも :q にもならなかった）。
 	if err := ho.Reacquire(false); err != nil {
 		h.logger.Error("端末を raw モードにできない", "err", err)
 	}
+	_, _ = out.Write(b.Bytes()) // 出せなくてもキーは待つ。raw モードなので改行は "\r\n" で書く
 	select {
 	case <-ch:
 	case <-h.closed:

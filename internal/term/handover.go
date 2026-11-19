@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 	xterm "golang.org/x/term"
@@ -80,6 +81,7 @@ func (t *Terminal) Reacquire(screen bool) error {
 			err = fmt.Errorf("term: make raw: %w", rerr)
 		}
 		t.away, t.noScreen = false, true
+		t.awayEnded = time.Now()
 	}
 	if screen && t.noScreen {
 		if _, werr := t.out.WriteString(seqEnter); werr != nil && err == nil {
@@ -94,11 +96,22 @@ func (t *Terminal) Reacquire(screen bool) error {
 }
 
 // HandedOver は、端末を子プロセスへ渡しているか（Release の後、Reacquire の前）を返す。
-// 呼び出し側は、渡している間に端末から届いた SIGINT と SIGQUIT（子プロセスへの <C-c> と <C-\>）で終わらないために使う。
 func (t *Terminal) HandedOver() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.away
+}
+
+// HandedOverWithin は、端末を子プロセスへ渡しているか、取り戻してから d の間かを返す。
+//
+// 呼び出し側は、渡している間に端末から届いた SIGINT と SIGQUIT（子プロセスへの <C-c> と <C-\>）で終わらないために使う。
+// シグナルは、端末が起こしてから受け手の goroutine が読むまでに遅れがある。子プロセスが <C-c> で終わると、本体はすぐに端末を取り戻すので、
+// 負荷の高いときは、受け手が読んだ時点で HandedOver が既に false になっている（PR #234 の CI で、1 CPU に絞った実行で再現した）。
+// raw モードの間は端末が SIGINT を起こさないので、取り戻した直後に届いた SIGINT は、渡していた間に起きたものとみなせる。
+func (t *Terminal) HandedOverWithin(d time.Duration) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.away || (!t.awayEnded.IsZero() && time.Since(t.awayEnded) < d)
 }
 
 // screenOn は、Draw と SetClipboard が端末へ書いてよいかを返す。呼び出し側が mu を持つ。
