@@ -69,4 +69,9 @@ package ext
 // 古い本体はどちらにも method not found で応答する。
 // 0.8.0 で、端末多重化ソフトのペインに部品を開く pane/open を足した（PaneOpenParams。#244）。
 // 古い本体は pane/open に method not found で応答するので、拡張機能は popup/open の PopupCenter に代えられる。
-const APIVersion = "0.8.0"
+// 0.9.0 で、入力の行と一覧を組にした部品 finder（ViewFinder）、input/change と view/update の seq、view/select と view/key の input、
+// view/select の selection、本体が持つ一覧を問い合わせる editor/list と、選んだキーとコマンドを実行させる editor/execute（list.go）、
+// editor/state の workDir を足した（#246。FR-106、FR-107）。
+// 古い本体は finder の popup/open を知らない部品として誤りで断り、editor/list と editor/execute に method not found で応答する。
+// #248 が先に 0.8.0 でマージされたので、0.9.0 にした。
+const APIVersion = "0.9.0"

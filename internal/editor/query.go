@@ -529,6 +529,11 @@ func (x *extQuery) invokeResult(ref editcmd.Ref, method string, params any, b *b
 	if r.Transaction != nil {
 		tx = fromExtTx(*r.Transaction)
 	}
+	if r.Open == nil && r.Transaction == nil && info.Replaying && x.e.popupOpenedBy(ref.Extension, x.bs) {
+		// 再生中に、拡張機能が応答の前に popup/open でフォーカスを入れるポップアップを開いた（ファインダー。#246）。
+		// 再生の残りは、記録したときと同じくポップアップのバッファで続ける（PR #249 のレビューの必須 2）。
+		return buffer.Transaction{}, command.ErrBufferSwitched
+	}
 	if r.Open == nil {
 		return tx, nil
 	}

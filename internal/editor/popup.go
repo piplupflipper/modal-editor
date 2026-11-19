@@ -64,6 +64,8 @@ const (
 	floatList
 	floatTree
 	floatInput
+	// floatFinder は、入力の行と一覧の組（ext.ViewFinder。FR-106）である。bs は入力の行、list は一覧のバッファである。
+	floatFinder
 )
 
 // floatRow は、一覧と木のポップアップの 1 行の項目である。
@@ -115,6 +117,14 @@ type floatState struct {
 	// remote は、この部品を描いている部品の client（端末多重化ソフトのポップアップかペインの中）である。
 	// nil なら、まだ繋いでいないか、編集の client の画面の中に描く（component.go）。
 	remote *component
+	// inputSeq は、最後に送った input/change の番号（ext.InputChangeParams.Seq）である。開いたときは 0 である。
+	inputSeq uint64
+	// list は、ファインダー（floatFinder）の一覧のバッファである（編集を禁止したファイルでないバッファ。1 項目を 1 行）。
+	// rows は、この一覧の行ごとの項目である。listSeq は、いま出している一覧が答えた入力の番号（ext.ViewUpdateParams.Seq）である。
+	list    *bufferState
+	listSeq uint64
+	// pendingSelect は、今の入力に答えた一覧が届く前に <CR> を打ったので、届いたら選ぶことを表す（finderKey）。
+	pendingSelect bool
 }
 
 // popupDecorationOwner は、ポップアップの部品の色を付ける範囲を、バッファの構文の色に入れるときの持ち主の名前である。
@@ -216,6 +226,13 @@ func (e *Editor) inFocusedPopup() bool {
 	return e.float != nil && e.float.focused
 }
 
+// popupOpenedBy は、読み込んでいる client が、拡張機能 extID が開いたフォーカスのあるポップアップを、バッファ bs の上に出しているかを返す。
+// 再生中の command/execute の応答を待つ間に、拡張機能がポップアップを開いたかを見分ける（invokeResult）。
+func (e *Editor) popupOpenedBy(extID string, bs *bufferState) bool {
+	f := e.float
+	return f != nil && f.focused && f.ext == extID && f.base == bs && e.cur == f.bs
+}
+
 // switchFocus は、キーを受けるバッファを to にする。マクロの記録、レジスター、直前の検索などを、:b でバッファを移るときと同じく引き継ぐ。
 // タブの行とスクロールの位置は変えない。
 func (e *Editor) switchFocus(to *bufferState) {
@@ -266,6 +283,10 @@ func (e *Editor) closeFloat(notify bool) {
 		return
 	}
 	e.float = nil
+	if notify {
+		// 利用者か本体が閉じた（拡張機能の view/close でない）ら、この client の選択への editor/execute を無効にする（revokeExecute）。
+		e.revokeExecute(e.view)
+	}
 	if f == e.paneActive {
 		e.float = e.paneSaved
 		e.paneActive, e.paneSaved = nil, nil
@@ -294,6 +315,9 @@ func (e *Editor) closeFloat(notify bool) {
 		e.restoreTab(f.bs, f.tabIndex)
 	case f.scratch && slices.Contains(e.bufs, f.bs):
 		e.closeBufferState(f.bs)
+	}
+	if f.list != nil && slices.Contains(e.bufs, f.list) {
+		e.closeBufferState(f.list)
 	}
 	if notify && f.ext != "" {
 		e.noteViewClient(f, false)
@@ -330,7 +354,7 @@ func (e *Editor) closeFloatsOf(bs *bufferState) {
 		if c.detached {
 			continue
 		}
-		if f := e.viewOf(c).float; f != nil && (f.bs == bs || f.base == bs) {
+		if f := e.viewOf(c).float; f != nil && (f.bs == bs || f.base == bs || (f.list != nil && f.list == bs)) {
 			e.withView(c, func() { e.closeFloat(true) })
 		}
 		for _, p := range slices.Clone(e.viewOf(c).panes) {
@@ -415,6 +439,11 @@ func (e *Editor) popupStateKey(bs *bufferState, k editcmd.Key, insert bool) (boo
 //
 // req: FR-68
 func (e *Editor) floatKey(f *floatState, k editcmd.Key, insert bool) (bool, []editcmd.Key) {
+	if f.kind == floatFinder && len(f.pending) == 0 {
+		if done := e.finderKey(f, k, insert); done {
+			return true, nil
+		}
+	}
 	if insert {
 		if f.kind == floatInput && k == editcmd.Special(editcmd.CodeEnter) {
 			e.selectFloat(f)
@@ -440,6 +469,65 @@ func (e *Editor) floatKey(f *floatState, k editcmd.Key, insert bool) (bool, []ed
 	return false, nil
 }
 
+// ファインダーの一覧のカーソルを動かすキー（fzf の既定の割り当てに合わせた。仮）。
+var (
+	finderNextKeys = editcmd.MustParseKeys("<C-n><C-j><Down>")
+	finderPrevKeys = editcmd.MustParseKeys("<C-p><C-k><Up>")
+)
+
+// finderKey は、ファインダー f のキー k を、ノーマルモードとインサートモードのどちらでも次のとおりに扱い、扱ったら true を返す（FR-106）。
+// キーを受けるのは入力の行のバッファで、一覧のカーソルはこのキーだけで動かす（入力の行の編集を妨げないため）。
+//
+//   - <C-n>、<C-j>、<Down>: 一覧の次の項目へ。<C-p>、<C-k>、<Up>: 前の項目へ（端で止まる）
+//   - <CR>: 一覧のカーソルの項目を選ぶ（view/select）
+//   - インサートモードの <Esc>: 閉じる（fzf と同じく 1 回で閉じる。ノーマルモードの <Esc> は floatKey が閉じる）
+//
+// req: FR-106
+func (e *Editor) finderKey(f *floatState, k editcmd.Key, insert bool) bool {
+	switch {
+	case slices.Contains(finderNextKeys, k):
+		e.moveFinderCursor(f, 1)
+	case slices.Contains(finderPrevKeys, k):
+		e.moveFinderCursor(f, -1)
+	case k == editcmd.Special(editcmd.CodeEnter):
+		// 一覧がまだ今の入力に答えていなければ（打ってすぐの <CR>、マクロの再生）、答えた一覧が届いてから選ぶ（finderUpdate）。
+		// 届く前の一覧の項目を選ぶと、記録したときと違う項目を選ぶためである（PR #249 のレビューの必須 2）。
+		e.notifyInputChange(f)
+		if f.listSeq < f.inputSeq {
+			f.pendingSelect = true
+			break
+		}
+		e.selectFloat(f)
+	case k == editcmd.Esc && insert:
+		e.closeFloat(true)
+	default:
+		return false
+	}
+	return true
+}
+
+// moveFinderCursor は、ファインダー f の一覧のカーソルを d 行動かす。一覧の範囲で止める。
+func (e *Editor) moveFinderCursor(f *floatState, d int) {
+	n := len(f.rows)
+	if n == 0 {
+		return
+	}
+	line := min(max(f.list.state.Cursor().Line+d, 0), n-1)
+	f.list.state.SetCursor(buffer.Position{Line: line})
+}
+
+// floatItem は、一覧、木、ファインダーのポップアップ f のカーソルの行の項目の ID を返す。項目が無ければ空である。
+func floatItem(f *floatState) string {
+	src := f.bs
+	if f.kind == floatFinder {
+		src = f.list
+	}
+	if row := src.state.Cursor().Line; row < len(f.rows) {
+		return f.rows[row].id
+	}
+	return ""
+}
+
 // popupKey は、拡張機能のポップアップ f で、k までのキーの列が持ち主の contributes.popupKeys のキーに当たれば view/key を送る（FR-69）。
 // キーの列の途中なら覚えて true を返す。当たらなければ、覚えていたキーを held で返す。State は held を通常のキーとして解釈してから
 // k を解釈する（command.State.KeyHook。Vim のマッピングの途中で当たらなかったキーと同じ扱い。PR #242 の再レビューの必須）。
@@ -457,13 +545,16 @@ func (e *Editor) popupKey(f *floatState, k editcmd.Key) (bool, []editcmd.Key) {
 		switch {
 		case slices.Equal(pk.keys, seq):
 			f.pending = nil
-			item := ""
-			if f.kind == floatInput {
-				item = f.bs.buf.Line(0)
-			} else if row := f.bs.state.Cursor().Line; row < len(f.rows) {
-				item = f.rows[row].id
+			p := ext.ViewKeyParams{View: ext.ViewID(f.id), ID: pk.id}
+			switch f.kind {
+			case floatInput:
+				p.Item = f.bs.buf.Line(0)
+			case floatFinder:
+				p.Item, p.Input = floatItem(f), f.bs.buf.Line(0)
+			case floatText, floatList, floatTree:
+				p.Item = floatItem(f)
 			}
-			e.notifyView(f, ext.MethodViewKey, ext.ViewKeyParams{View: ext.ViewID(f.id), ID: pk.id, Item: item})
+			e.notifyView(f, ext.MethodViewKey, p)
 			return true, nil
 		case hasKeyPrefix(pk.keys, seq):
 			prefix = true
@@ -513,6 +604,13 @@ func (e *Editor) selectFloat(f *floatState) {
 		e.notifyView(f, ext.MethodViewSelect, ext.ViewSelectParams{View: ext.ViewID(f.id), Item: f.bs.buf.Line(0)})
 		return
 	}
+	if f.kind == floatFinder {
+		// 一覧が空でも送る（Item は空）。入力の中身で何かをする拡張機能（入力をそのまま検索に使うなど）のためである。
+		e.notifyView(f, ext.MethodViewSelect, ext.ViewSelectParams{
+			View: ext.ViewID(f.id), Item: floatItem(f), Input: f.bs.buf.Line(0), Selection: e.selectionFor(f),
+		})
+		return
+	}
 	row := f.bs.state.Cursor().Line
 	if row >= len(f.rows) {
 		return
@@ -530,7 +628,16 @@ func (e *Editor) selectFloat(f *floatState) {
 		f.onSelect(row)
 		return
 	}
-	e.notifyView(f, ext.MethodViewSelect, ext.ViewSelectParams{View: ext.ViewID(f.id), Item: r.id})
+	e.notifyView(f, ext.MethodViewSelect, ext.ViewSelectParams{View: ext.ViewID(f.id), Item: r.id, Selection: e.selectionFor(f)})
+}
+
+// selectionFor は、拡張機能のポップアップ f で利用者が一覧か木かファインダーの項目を選んだときに、view/select に付ける選択の番号を返す。
+// 拡張機能は、この番号を付けた editor/execute を 1 回だけ送れる（grantExecute）。本体のポップアップでは 0 である。
+func (e *Editor) selectionFor(f *floatState) uint64 {
+	if f.ext == "" {
+		return 0
+	}
+	return e.grantExecute(f.ext)
 }
 
 // notifyView は、拡張機能のポップアップ f の持ち主へ通知を送る。持ち主がいなければ送らない。
@@ -544,10 +651,14 @@ func (e *Editor) notifyView(f *floatState, method string, params any) {
 	}
 }
 
-// afterFloatKey は、キーを処理した後に、入力の行の中身が変わっていれば input/change で知らせる（FR-72）。
+// afterFloatKey は、キーを処理した後に、入力の行（ファインダーの入力の行を含む）の中身が変わっていれば、
+// 番号（floatState.inputSeq）を 1 つ進めて input/change で知らせる（FR-72、FR-106）。
+// ファインダーの一覧は後から view/update で届くので、ここでは待たない（FR-17 の期限の対象にしない）。
+//
+// req: FR-106
 func (e *Editor) afterFloatKey() {
 	f := e.float
-	if f == nil || f.kind != floatInput || !slices.Contains(e.bufs, f.bs) {
+	if f == nil || (f.kind != floatInput && f.kind != floatFinder) || !slices.Contains(e.bufs, f.bs) {
 		return
 	}
 	if f.bs.buf.LineCount() > 1 {
@@ -557,9 +668,15 @@ func (e *Editor) afterFloatKey() {
 		f.bs.state.SetCursor(buffer.Position{Byte: len(f.bs.buf.Line(0))})
 		e.message = infoMessage("入力の行は 1 行だけです")
 	}
+	e.notifyInputChange(f)
+}
+
+// notifyInputChange は、入力の行の中身が最後に知らせたものから変わっていれば、番号を進めて input/change で知らせる。
+func (e *Editor) notifyInputChange(f *floatState) {
 	if text := f.bs.buf.Line(0); text != f.input {
 		f.input = text
-		e.notifyView(f, ext.MethodInputChange, ext.InputChangeParams{View: ext.ViewID(f.id), Text: text})
+		f.inputSeq++
+		e.notifyView(f, ext.MethodInputChange, ext.InputChangeParams{View: ext.ViewID(f.id), Text: text, Seq: f.inputSeq})
 	}
 }
 
@@ -575,7 +692,7 @@ func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, 
 		return strings.Split(strings.TrimRight(c.Text, "\n"), "\n"), nil, c.Highlights
 	case ext.ViewInput:
 		return []string{c.Text}, nil, nil
-	case ext.ViewList, ext.ViewTree:
+	case ext.ViewList, ext.ViewTree, ext.ViewFinder:
 	}
 	var walk func(items []ext.ViewItem, depth int)
 	walk = func(items []ext.ViewItem, depth int) {
@@ -719,6 +836,8 @@ func (e *Editor) newComponentFloat(c ext.ViewComponent, extID string) *floatStat
 	case ext.ViewInput:
 		f.kind = floatInput
 		f.input = c.Text
+	case ext.ViewFinder:
+		return e.newFinderFloat(c, extID)
 	case ext.ViewText:
 	}
 	lines, rows, decs := floatLines(c, f.expanded)
@@ -737,6 +856,67 @@ func (e *Editor) newComponentFloat(c ext.ViewComponent, extID string) *floatStat
 	return f
 }
 
+// finderBufferName は、ファインダーの入力の行と一覧のバッファの名前である（仮）。
+const finderBufferName = "[ファインダー]"
+
+// newFinderFloat は、ファインダーの部品 c（ext.ViewFinder）を中身にしたポップアップを作る（FR-106）。
+// 入力の行のバッファ（bs。編集できる）と一覧のバッファ（list。編集を禁止したファイルでないバッファ）の 2 つを作る。
+// キーを受けるのは入力の行で、一覧のカーソルは finderKey が動かす。置き場所は常に中央で、開いた時点でフォーカスを入れる（popupOpenRequest）。
+func (e *Editor) newFinderFloat(c ext.ViewComponent, extID string) *floatState {
+	f := &floatState{kind: floatFinder, ext: extID, title: c.Title, scratch: true, input: c.Text}
+	// バッファの名前（ステータス行に出る）は、件数を含みうる見出しにせず、決まった名前にする（見出しは view/update で変わるため。
+	// PR #249 のレビューの推奨 7）。
+	f.bs = e.newPopupBuffer(finderBufferName, c.Text, "", false)
+	f.bs.state.SetCursor(buffer.Position{Byte: len(c.Text)})
+	f.list = e.newPopupBuffer(finderBufferName, "", "", true)
+	e.setFinderList(f, c.Items, true)
+	return f
+}
+
+// setFinderList は、ファインダー f の一覧を items にする。top なら一覧のカーソルを先頭の項目へ置き、
+// そうでなければカーソルのあった項目の ID が items にもあればその行へ、無ければ行の番号を行数に収まる範囲で保つ。
+func (e *Editor) setFinderList(f *floatState, items []ext.ViewItem, top bool) {
+	curID := floatItem(f)
+	line := f.list.state.Cursor().Line
+	lines, rows, decs := floatLines(ext.ViewComponent{Kind: ext.ViewFinder, Items: items}, nil)
+	f.rows = rows
+	e.reload(f.list, buffer.New(strings.Join(lines, "\n")))
+	switch {
+	case top:
+		line = 0
+	case curID != "":
+		if i := slices.IndexFunc(rows, func(r floatRow) bool { return r.id == curID }); i >= 0 {
+			line = i
+		}
+	}
+	f.list.state.SetCursor(buffer.Position{Line: min(line, max(len(rows)-1, 0))})
+	e.setPopupDecorations(f.list, decs)
+}
+
+// finderUpdate は、ファインダー f への view/update を処理する（FR-106）。
+// p.Seq が最後に送った input/change の番号より小さければ、古い入力への一覧なので捨てる（基本設計 6.9）。
+// 前の一覧より新しい入力への一覧なら一覧のカーソルを先頭へ置き、同じ入力への一覧（候補を読みながらの送り直し）なら項目の ID で保つ。
+// 入力の行の中身は替えない（利用者が打ち続けているため）。
+//
+// req: FR-106
+func (e *Editor) finderUpdate(f *floatState, p ext.ViewUpdateParams) {
+	if p.Seq < f.inputSeq {
+		return
+	}
+	top := p.Seq > f.listSeq
+	f.listSeq = p.Seq
+	if p.Component.Title != "" {
+		f.title = p.Component.Title
+	}
+	e.setFinderList(f, p.Component.Items, top)
+	// 空の一覧では選ばずに待ち続ける。拡張機能が候補を読みながら同じ番号の一覧を送り直す（ファイルの読み込み中）ので、
+	// 読み終える前の空の一覧で選ぶと、記録したときと違って何も選ばないためである。
+	if f.pendingSelect && f.listSeq >= f.inputSeq && len(f.rows) > 0 {
+		f.pendingSelect = false
+		e.selectFloat(f)
+	}
+}
+
 // popupOpenRequest は、拡張機能の popup/open を処理する（FR-68、FR-72、FR-115）。
 // その拡張機能へ最後に問い合わせを始めた client（呼び出し側が読み込む）の画面に出し、ポップアップの番号を応答する。
 //
@@ -752,11 +932,24 @@ func (e *Editor) popupOpenRequest(ev *exthost.PopupOpenRequest) {
 		return
 	}
 	f := e.newComponentFloat(p.Component, ev.Extension)
-	f.center = p.Placement == ext.PopupCenter
+	// ファインダーは、置き場所の指定に依らず中央に出し、フォーカスを入れる（基本設計 6.9）。
+	f.center = p.Placement == ext.PopupCenter || f.kind == floatFinder
 	f.focused = f.center || p.Focus
 	f.transient = !f.focused
 	e.openFloat(f)
+	if f.kind == floatFinder {
+		e.startFinderInsert(f)
+	}
 	_ = ev.Reply(ext.PopupOpenResult{View: ext.ViewID(f.id)})
+}
+
+// startFinderInsert は、開いたファインダー f の入力の行を、行末から打てるインサートモードにする（fzf と同じく開いてすぐ打てるように）。
+// 利用者のキーではないので、マクロに記録しない（command.State.FeedUnrecorded）。
+func (e *Editor) startFinderInsert(f *floatState) {
+	if e.cur != f.bs {
+		return
+	}
+	_ = e.handleResult(f.bs, f.bs.state.FeedUnrecorded(editcmd.Rune('A'))) // 失敗は handleResult が知らせる
 }
 
 // findViewFloat は、拡張機能 extID が開いたポップアップ id を出している client と、そのポップアップを返す。無ければ nil である。
@@ -781,6 +974,10 @@ func (e *Editor) findViewFloat(extID string, id ext.ViewID) (*clientView, *float
 func (e *Editor) viewUpdate(ev *exthost.ViewUpdate) {
 	c, f := e.findViewFloat(ev.Extension, ev.Params.View)
 	if f == nil || componentKind(ev.Params.Component.Kind) != f.kind {
+		return
+	}
+	if f.kind == floatFinder {
+		e.withView(c, func() { e.finderUpdate(f, ev.Params) })
 		return
 	}
 	e.withView(c, func() {
@@ -809,6 +1006,8 @@ func componentKind(k ext.ViewKind) floatKind {
 		return floatTree
 	case ext.ViewInput:
 		return floatInput
+	case ext.ViewFinder:
+		return floatFinder
 	case ext.ViewText:
 	}
 	return floatText
@@ -1056,9 +1255,14 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 			view.Selection = ui.Selection{Active: true, Start: start, End: end, Linewise: linewise}
 		}
 	}
-	return &ui.Float{
+	fl := &ui.Float{
 		ID: f.id, View: view, Title: f.title, Center: f.center, Focused: f.focused,
 		CursorLine: f.kind == floatList || f.kind == floatTree,
-		Wide:       f.kind == floatInput,
+		Wide:       f.kind == floatInput || f.kind == floatFinder,
 	}
+	if f.kind == floatFinder {
+		fl.List = &ui.Frame{Text: f.list.buf, Cursor: f.list.state.Cursor(), Decorations: f.list.decoView}
+		fl.ListCount = len(f.rows)
+	}
+	return fl
 }

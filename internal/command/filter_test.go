@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
@@ -214,6 +215,34 @@ func TestFilterInMacro(t *testing.T) {
 	// ドットリピートの対象は、いちばん外側の再生（@b）である（FR-57）。. で @b をもう一度再生すると、また外部のコマンドを求める。
 	if res := feedKeys(s, "."); res[len(res)-1].Shell == nil {
 		t.Errorf(". が @b を再生しなかった")
+	}
+}
+
+// 外部のコマンドを挟む再帰のマクロ（a = :.!cat<CR>@a）も、待ちを挟まない再帰と同じく入れ子の上限で止まる。
+// 続き（ContinueReplay）が入れ子の深さを引き継ぐためである（PR #249 の 4 回目の確認の必須。引き継がないと終わらなかった）。
+//
+// req: FR-05, FR-81
+func TestFilterRecursiveMacroStops(t *testing.T) {
+	s := setup(t, "|ab")
+	s.registers.named[0] = Register{Text: ":.!cat\r@a", keys: editcmd.MustParseKeys(":.!cat<CR>@a"), filled: true}
+	res := feedKeys(s, "@a")
+	last := res[len(res)-1]
+	steps := 0
+	for ; last.Shell != nil; steps++ {
+		if steps > maxPlayDepth+5 {
+			t.Fatalf("再生が %d 回の外部のコマンドで終わらない", steps)
+		}
+		out, status, err := shCommand(last.Shell.Cmd, last.Shell.Input)
+		if fin := s.FinishShell(last.Shell, out, status, err); fin.Err != nil {
+			t.Fatalf("FinishShell: %v", fin.Err)
+		}
+		last = s.ContinueReplay(last.Remaining)
+	}
+	if last.Err == nil || !strings.Contains(last.Err.Error(), "nested too deeply") {
+		t.Errorf("err = %v after %d steps, want the nesting limit", last.Err, steps)
+	}
+	if steps < maxPlayDepth-1 || steps > maxPlayDepth {
+		t.Errorf("steps = %d, want about %d", steps, maxPlayDepth)
 	}
 }
 

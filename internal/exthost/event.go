@@ -14,7 +14,7 @@ import (
 //
 //   - 拡張機能からのリクエスト: [EditRequest]、[EditorStateRequest]、[EditorOpenRequest]、[BufferSaveRequest]、
 //     [DiagnosticListRequest]、[ChoiceAskRequest]、[PopupOpenRequest]、[BufferCreateRequest]、[BufferUpdateRequest]、
-//     [BufferDisposeRequest]、[DiffStartRequest]、[PaneOpenRequest]
+//     [BufferDisposeRequest]、[DiffStartRequest]、[PaneOpenRequest]、[EditorListRequest]、[EditorExecuteRequest]
 //   - 拡張機能からの通知: [DecorationSet]、[MessageShow]、[DiagnosticSet]、[SignSet]、[PopupShow]、[OutputAppend]、
 //     [ViewUpdate]、[ViewClose]
 //   - Host が作るもの: [StateChange]、[QueryResult]
@@ -286,6 +286,32 @@ func (r *PaneOpenRequest) Reply(result ext.PaneOpenResult) error {
 	return r.reply(result, nil)
 }
 
+// EditorListRequest は、拡張機能からの editor/list のリクエストである（基本設計 6.9。FR-107）。
+// Params は ext.EditorListParams.Validate を通したものである。
+type EditorListRequest struct {
+	Extension string
+	Params    ext.EditorListParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ editor/list の結果を返す。
+func (r *EditorListRequest) Reply(result ext.EditorListResult) error {
+	return r.reply(result, nil)
+}
+
+// EditorExecuteRequest は、拡張機能からの editor/execute のリクエストである（基本設計 6.9）。
+// Params は ext.EditorExecuteParams.Validate を通したものである。
+type EditorExecuteRequest struct {
+	Extension string
+	Params    ext.EditorExecuteParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ editor/execute の結果を返す。
+func (r *EditorExecuteRequest) Reply() error {
+	return r.reply(ext.EditorExecuteResult{}, nil)
+}
+
 // ViewUpdate は、拡張機能からの view/update の通知である。読めない部品（ext.ViewComponent.Validate の誤り）は Host が捨てる。
 type ViewUpdate struct {
 	Extension string
@@ -351,6 +377,8 @@ func (*DiffStartRequest) isEvent()      {}
 func (*BufferUpdateRequest) isEvent()   {}
 func (*BufferDisposeRequest) isEvent()  {}
 func (*PaneOpenRequest) isEvent()       {}
+func (*EditorListRequest) isEvent()     {}
+func (*EditorExecuteRequest) isEvent()  {}
 func (*ViewUpdate) isEvent()            {}
 func (*ViewClose) isEvent()             {}
 func (*StateChange) isEvent()           {}

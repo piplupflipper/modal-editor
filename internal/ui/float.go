@@ -99,6 +99,9 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	if fl.View == nil || fl.View.Text == nil {
 		return Cursor{}, false
 	}
+	if fl.List != nil {
+		return r.drawFinder(g, theme, fl)
+	}
 	chars, bordered := r.border()
 	if fl.Fill {
 		bordered = false

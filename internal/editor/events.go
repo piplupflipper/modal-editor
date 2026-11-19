@@ -91,6 +91,10 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.diffStartRequest(ev)
 	case *exthost.PaneOpenRequest:
 		e.withView(e.extView(ev.Extension), func() { e.paneOpenRequest(ev) })
+	case *exthost.EditorListRequest:
+		e.withView(e.extView(ev.Extension), func() { _ = ev.Reply(e.editorList(ev.Params.List)) })
+	case *exthost.EditorExecuteRequest:
+		e.editorExecuteRequest(ev)
 	case *exthost.ViewUpdate:
 		e.viewUpdate(ev)
 	case *exthost.ViewClose:
@@ -297,6 +301,7 @@ func (e *Editor) editorState() ext.EditorStateResult {
 		c = o
 	}
 	res.CanSplit = e.canSplit(c)
+	res.WorkDir = e.workDir()
 	return res
 }
 

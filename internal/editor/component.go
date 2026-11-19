@@ -362,6 +362,13 @@ func (e *Editor) requestPopup(f *floatState) {
 		}
 		e.log.Warn("端末多重化ソフトのポップアップを開けない", "view", id, "err", err)
 		e.later(func() {
+			if c.attached() && c.replay != nil {
+				// マクロの再生の途中で開けなかった（端末多重化ソフトが消えたなど）。再生を続けると、開けないポップアップを開き直し続けるので、
+				// <C-c> と同じく再生を止める（PR #249 の 4 回目の確認の必須）。
+				e.interrupt.Store(true)
+				c.intr.Store(true)
+				e.interruptReplay()
+			}
 			if c.attached() && e.viewOf(c).float == f && f.remote == nil {
 				e.withView(c, func() {
 					e.showError(fmt.Errorf("端末多重化ソフトのポップアップを開けないので、この画面の中に出します: %w", err))

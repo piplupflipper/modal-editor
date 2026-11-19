@@ -74,6 +74,35 @@ type ViewEvent struct {
 	Key string
 	// Expanded は、ViewExpanded のときの、項目を開いたかどうかである。
 	Expanded bool
+	// Seq は、ViewInputChanged のときの input/change の番号である（ext.InputChangeParams.Seq）。
+	// ファインダー（ext.ViewFinder）の一覧を返す view/update の Seq に入れる。
+	Seq uint64
+	// Input は、ファインダーの ViewSelected と ViewKey のときの、入力の行の中身である。
+	Input string
+	// Selection は、ViewSelected のときの選択の番号である（ext.ViewSelectParams.Selection）。Execute に渡す。
+	Selection uint64
+}
+
+// ListEditor は、本体へ editor/list を送り、本体が持つ一覧（タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリスト）の 1 つを
+// 問い合わせる（FR-107）。応答は、問い合わせた list の欄だけを埋めたものである。
+// list が知らない種類なら、送らずにその誤りを返す。Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す。
+func (s *Server) ListEditor(ctx context.Context, list ext.EditorListKind) (ext.EditorListResult, error) {
+	p := ext.EditorListParams{List: list}
+	if err := p.Validate(); err != nil {
+		return ext.EditorListResult{}, err
+	}
+	return call[ext.EditorListResult](ctx, s, ext.MethodEditorList, p)
+}
+
+// Execute は、本体へ editor/execute を送り、キーの一覧のキーかコマンドを、利用者が打ったのと同じく実行させる。
+// 本体は実行の前に応答する。p が ext.EditorExecuteParams.Validate を通らなければ、送らずにその誤りを返す。
+// Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す。
+func (s *Server) Execute(ctx context.Context, p ext.EditorExecuteParams) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	_, err := call[ext.EditorExecuteResult](ctx, s, ext.MethodEditorExecute, p)
+	return err
 }
 
 // OnView は、ポップアップの利用者の操作の知らせを受け取ったときに呼ぶ関数を登録する。Serve の後に呼ぶと panic する。
@@ -96,15 +125,15 @@ func (s *Server) viewNotification(ctx context.Context, n *rpc.Notification) {
 	case ext.MethodViewSelect:
 		var p ext.ViewSelectParams
 		err = decodeParams(n, &p)
-		e = ViewEvent{Kind: ViewSelected, View: p.View, Item: p.Item}
+		e = ViewEvent{Kind: ViewSelected, View: p.View, Item: p.Item, Input: p.Input, Selection: p.Selection}
 	case ext.MethodInputChange:
 		var p ext.InputChangeParams
 		err = decodeParams(n, &p)
-		e = ViewEvent{Kind: ViewInputChanged, View: p.View, Item: p.Text}
+		e = ViewEvent{Kind: ViewInputChanged, View: p.View, Item: p.Text, Seq: p.Seq}
 	case ext.MethodViewKey:
 		var p ext.ViewKeyParams
 		err = decodeParams(n, &p)
-		e = ViewEvent{Kind: ViewKey, View: p.View, Item: p.Item, Key: p.ID}
+		e = ViewEvent{Kind: ViewKey, View: p.View, Item: p.Item, Key: p.ID, Input: p.Input}
 	case ext.MethodViewExpand:
 		var p ext.ViewExpandParams
 		err = decodeParams(n, &p)

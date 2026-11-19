@@ -146,6 +146,12 @@ type Float struct {
 	// 端末多重化ソフトのポップアップとペインの中の部品の client（基本設計 1.2）の画面に使う。
 	// 端末多重化ソフトが枠線を描くので、二重にしないためである。Center と幅と行数の上限は読まない。
 	Fill bool
+	// List は、入力の行と一覧の組（ファインダー。FR-106）の一覧のバッファの Frame である。nil でなければ、View を入力の行として
+	// 窓の最初の行に、List を区切りの行の下に描く（drawFinder）。Text、Cursor、Decorations を読む。
+	// 一覧のカーソルの行は StylePopupSelected で描き、端末のカーソルは入力の行に置く。
+	List *Frame
+	// ListCount は、List の項目の数である。0 なら一覧の場所に空であることを書く。
+	ListCount int
 }
 
 // SignKind は、行の印の種類である。値は sign/set の kind と同じ文字列である（基本設計 6.7）。
