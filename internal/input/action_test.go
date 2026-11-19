@@ -2,6 +2,7 @@ package input
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -191,6 +192,43 @@ func TestActionIDUnique(t *testing.T) {
 	for _, s := range providerKeys {
 		check(s.id, attr{kind: s.kind, provider: true})
 	}
+
+	// 複数の行（キー）を持ってよい ID と、そのキーの全部。同じ種類の別の操作が同じ ID を使うと
+	// （P の ID を put-after に、インサートモードの <Del> の ID を delete-char にするなど）、ここに無い ID が 2 行を持つので落ちる
+	// （PR #258 の再レビューの推奨 1）。同じ操作を別のキーにも載せるときは、ここに足す。
+	multi := map[string][]string{
+		"left": {"h", "<Left>"}, "down": {"j", "<Down>"}, "up": {"k", "<Up>"}, "right": {"l", "<Right>"},
+		"line-start": {"0", "<Home>"}, "line-end": {"$", "<End>"},
+		"delete": {"d", "x"}, "change": {"c", "s"}, "toggle-case": {"g~", "~"}, "lowercase": {"gu", "u"}, "uppercase": {"gU", "U"},
+		"change-lines": {"C", "S"},
+		"inner-paren":  {"i(", "i)", "ib"}, "a-paren": {"a(", "a)", "ab"}, "inner-bracket": {"i[", "i]"}, "a-bracket": {"a[", "a]"},
+		"inner-brace": {"i{", "i}", "iB"}, "a-brace": {"a{", "a}", "aB"},
+		"hover": {"<Leader>lh", "K"}, "definition": {"<Leader>lD", "<C-]>"},
+	}
+	rows := map[string][]string{}
+	for _, tb := range builtinTables {
+		for _, s := range tb.specs {
+			rows[s.id] = append(rows[s.id], s.keys)
+		}
+	}
+	for _, s := range providerKeys {
+		rows[s.id] = append(rows[s.id], s.keys)
+	}
+	for id, keys := range rows {
+		want, ok := multi[id]
+		switch {
+		case ok && !slices.Equal(keys, want):
+			t.Errorf("ID %s の行のキー = %q, want %q", id, keys, want)
+		case !ok && len(keys) > 1:
+			t.Errorf("ID %s が %d 行（%q）にある。同じ操作を別のキーにも載せるなら multi に足す", id, len(keys), keys)
+		}
+	}
+	for id := range multi {
+		if _, ok := rows[id]; !ok {
+			t.Errorf("multi の ID %s が表に無い", id)
+		}
+	}
+
 	ids := map[string]bool{}
 	for _, a := range Actions() {
 		if ids[a.ID] {

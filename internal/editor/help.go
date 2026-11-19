@@ -266,7 +266,12 @@ func helpKeyLines(km *input.Keymap) []string {
 //  5. 語が 2 文字以上なら、語を含む見出し
 //  6. 操作の ID の一覧（docs/usage.md の action-ids の印の間）の行のうち、最初の列の `語` が完全に一致する行。
 //     一覧の行は 1〜5 の候補にしない。rename や hover のように説明の節がある語は、その節に当てる（#257 のレビューの推奨 2）。
-//     ただし、点で区切った名前（insert.left）は、3 の最後の部分（"left"）で探す前に、この段で探す
+//     点で区切った名前（insert.right）は、3 の最後の部分（"right"）で探す前に、この段で探す
+//
+// 語が操作の ID（一覧の行の ID と完全に一致する語）なら、操作の ID の節の本文（actionIDsSection の見出しから一覧の終わりまで。
+// 書き方の規則の箇条書きや tmux の prefix の注記）と、設定の例で ID を値に書いた行（"action": "語"）は、1〜5 の候補にしない。
+// このため ID の語は、その節の本文の言及より先に一覧の行に当たる。ただし、それより前の段で節の外の行に当たる語
+// （rename、hover、delete、left など、main で説明の行に当たっていた語）は、その行に当てる（PR #258 の再レビューの推奨 2）。
 //
 // 語の一部だけを含む見出し（:help w が「同じ window の…」）には当てない（PR #230 のレビュー）。
 func helpLine(lines []string, word string) (int, bool) {
@@ -283,7 +288,9 @@ func helpLine(lines []string, word string) (int, bool) {
 	// idRows は、操作の ID の一覧（docs/usage.md の action-ids の印の間）の行の、最初の列の `…` である。
 	// 一覧の行は、他の段で当たる所が無い語のときだけ当てる（下の 6。#257 のレビューの推奨 2）。
 	idRows := map[int][]string{}
-	inCode, inIDs := false, false
+	// idSection は、操作の ID の節（actionIDsSection の見出しの次から一覧の終わりの印まで）の、見出しでない行である。
+	idSection := map[int]bool{}
+	inCode, inIDs, inSection := false, false, false
 	for i, l := range lines {
 		if strings.HasPrefix(l, "```") {
 			inCode = !inCode
@@ -293,12 +300,17 @@ func helpLine(lines []string, word string) (int, bool) {
 			continue
 		}
 		switch l {
+		case actionIDsSection:
+			inSection = true
 		case actionIDsBegin:
 			inIDs = true
 			continue
 		case actionIDsEnd:
-			inIDs = false
+			inIDs, inSection = false, false
 			continue
+		}
+		if inSection && !strings.HasPrefix(l, "#") {
+			idSection[i] = true
 		}
 		if inIDs {
 			if cell, _, ok := strings.Cut(strings.TrimPrefix(l, "|"), " |"); ok {
@@ -320,6 +332,22 @@ func helpLine(lines []string, word string) (int, bool) {
 			p.defs = p.spans[:1]
 		}
 		parsed[i] = p
+	}
+	// 語が操作の ID（一覧の行の ID と完全に一致する）なら、操作の ID の節の本文（書き方の規則の箇条書きなど）と、
+	// 設定の例で ID を値に書いた行（"action": "語"）を 2〜5 の候補にしない。その語は、節の本文より一覧の行に当てる。
+	isID := false
+	for _, ids := range idRows {
+		if slices.Contains(ids, word) {
+			isID = true
+			break
+		}
+	}
+	actionValue := `"action": "` + word + `"`
+	skip := func(i int) bool { return isID && (idSection[i] || strings.Contains(lines[i], actionValue)) }
+	for i := range parsed {
+		if skip(i) {
+			parsed[i] = mdLine{}
+		}
 	}
 	exact := func(span, f string) bool { return span == f || strings.HasPrefix(span, f+" ") }
 	find := func(pick func(mdLine) []string, match func(string, string) bool) (int, bool) {
@@ -360,7 +388,7 @@ func helpLine(lines []string, word string) (int, bool) {
 			}
 		}
 		for i, l := range lines {
-			if strings.Contains(l, k) {
+			if !skip(i) && strings.Contains(l, k) {
 				return i, true
 			}
 		}
@@ -382,6 +410,8 @@ func helpLine(lines []string, word string) (int, bool) {
 const (
 	actionIDsBegin = "<!-- action-ids:begin -->"
 	actionIDsEnd   = "<!-- action-ids:end -->"
+	// actionIDsSection は、操作の ID の節の見出しである。この見出しから actionIDsEnd までの本文を、操作の ID の語の候補から外す（helpLine）。
+	actionIDsSection = "### 操作の ID"
 )
 
 // namesOnly は、表の列 cell が `…` の名前を並べただけ（`:w`、`:write`（`:w`）、`<C-]>` か `<leader>lD`）かを返す。
