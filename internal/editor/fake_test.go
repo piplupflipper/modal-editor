@@ -187,6 +187,16 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.pane は、引数（list、tree、input、text）の部品を pane/open でペインに開く（#244）。
+		s.Command("fake.pane", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var a struct{ Text string }
+			_ = json.Unmarshal(p.Args, &a)
+			go func() {
+				r, err := s.OpenPane(hostCtx, ext.PaneOpenParams{Component: fakePopup(a.Text).Component, Direction: ext.PaneDown, Size: 30})
+				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("pane %d err=%v", r.View, err))
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.OnView(func(_ context.Context, e *server.ViewEvent) {
 			msg := fmt.Sprintf("view %d kind=%d item=%s key=%s", e.View, e.Kind, e.Item, e.Key)
 			if e.Kind == server.ViewExpanded {
@@ -496,6 +506,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				act(ext.ActivationCommand, "fake.echo"), act(ext.ActivationCommand, "fake.openlater"),
 				act(ext.ActivationCommand, "fake.write"), act(ext.ActivationCommand, "fake.touch"),
 				act(ext.ActivationCommand, "fake.popup"), act(ext.ActivationCommand, "fake.headdiff"),
+				act(ext.ActivationCommand, "fake.pane"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -507,7 +518,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
 					contrib("fake.write", ""), contrib("fake.touch", ""),
-					contrib("fake.popup", ""), contrib("fake.headdiff", ""),
+					contrib("fake.popup", ""), contrib("fake.headdiff", ""), contrib("fake.pane", ""),
 				},
 				// ポップアップの中だけで効くキー（FR-69）。x は本体では文字を消すキーで、ポップアップの中ではこちらが先に効く。
 				// gx は g で始まるので、gg はキーの列が当たらずに本体の gg として動く。

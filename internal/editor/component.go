@@ -270,7 +270,7 @@ func (e *Editor) requestPopup(f *floatState) {
 		e.later(func() {
 			if c.attached() && e.viewOf(c).float == f && f.remote == nil {
 				e.withView(c, func() {
-					e.message = ui.Message{Text: fmt.Sprintf("端末多重化ソフトのポップアップを開けないので、この画面の中に出します: %v", err), Level: ui.MessageWarning}
+					e.showError(fmt.Errorf("端末多重化ソフトのポップアップを開けないので、この画面の中に出します: %w", err))
 				})
 			}
 		})
@@ -331,7 +331,7 @@ func (e *Editor) paneOpenRequest(ev *exthost.PaneOpenRequest) {
 				f.pane = false
 				f.center, f.focused = true, true
 				e.openFloat(f)
-				e.message = ui.Message{Text: fmt.Sprintf("ペインを開けないので、中央のポップアップに出します: %v", err), Level: ui.MessageWarning}
+				e.showError(fmt.Errorf("ペインを開けないので、中央のポップアップに出します: %w", err))
 			})
 		})
 	}()

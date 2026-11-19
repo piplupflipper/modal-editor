@@ -62,6 +62,34 @@ func TestPopupCenter(t *testing.T) {
 	}
 }
 
+// Fill の窓（部品の client の画面）は、枠線の記号があっても枠線を描かず、見出しを最初の行に描き、
+// 中身が短くても表示領域の全体を窓の色で埋める（バッファの行の後ろは、バッファの表示領域と同じく ~ の行）。
+func TestPopupFill(t *testing.T) {
+	theme := testTheme()
+	theme[StylePopup] = Attr{Underline: true}
+	r := &Renderer{Width: 12, Height: 6, Theme: theme, Symbols: Symbols{SymbolPopupBorder: "┌─┐│┘─└│"}}
+	fl := textFloat("xy\nzw")
+	fl.Title, fl.Fill, fl.Focused = "t", true, true
+	s := r.Render(&Frame{Float: fl})
+	rows := strings.Split(s.Grid.String(), "\n")
+	for i, want := range []string{" t", " xy", " zw", " ~"} {
+		if got := strings.TrimRight(rows[i], " "); got != want {
+			t.Errorf("行 %d = %q, want %q（画面:\n%s）", i, got, want, s.Grid.String())
+		}
+	}
+	if strings.Contains(s.Grid.String(), "┌") {
+		t.Errorf("枠線を描いた:\n%s", s.Grid.String())
+	}
+	for i := range 4 {
+		if a := s.Grid.At(i, 11).Attr; !a.Underline {
+			t.Errorf("行 %d の右の端が窓の色でない: %+v", i, a)
+		}
+	}
+	if !s.Cursor.Visible || s.Cursor.Row != 1 || s.Cursor.Col != 1 {
+		t.Errorf("cursor = %+v, want row 1 col 1", s.Cursor)
+	}
+}
+
 // 選択の一覧（:registers）は、表示領域の上の端の横の中央に浮かべ、選んでいる項目の行を別の色で描いてカーソルを置く。
 // 項目が収まらなければ、選んでいる項目が見えるまでずらす。長い項目は右の端で切る。
 //

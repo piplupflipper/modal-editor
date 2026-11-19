@@ -564,9 +564,9 @@ func TestServeOverSocket(t *testing.T) {
 		{protocol.Hello{Kind: protocol.KindPopup, Width: 20, Height: 5, View: 99}, protocol.Exit{}},
 		{protocol.Hello{Kind: protocol.KindPane, Width: 20, Height: 5, View: 99}, protocol.Exit{}},
 	} {
-		other, err := protocol.Dial(sock)
-		if err != nil {
-			t.Fatal(err)
+		other, derr := protocol.Dial(sock)
+		if derr != nil {
+			t.Fatal(derr)
 		}
 		if err = other.Send(tc.hello); err != nil {
 			t.Fatal(err)

@@ -30,7 +30,8 @@ const HerdrCommandEnv = "MODAL_EDITOR_MUX_COMMAND"
 
 // HerdrPluginManifest は、本体が同梱する herdr のプラグインの宣言ファイル（herdr-plugin.toml）の中身である（雛形）。
 // herdr でポップアップと分割したペインを開くには、この宣言ファイルを置いたディレクトリを herdr plugin link で登録しておく。
-// 登録する手順と置き場所は、配布物の作り方と合わせて決める（仮）。
+// make dist が配布物の herdr-plugin/ に置き、利用者が herdr plugin link <配布物>/herdr-plugin で 1 回登録する（基本設計 1.3。#244）。
+// 登録していなければ、plugin.pane.open は HerdrPluginNotFound の誤りを返す。
 //
 //go:embed herdr-plugin/herdr-plugin.toml
 var HerdrPluginManifest []byte
