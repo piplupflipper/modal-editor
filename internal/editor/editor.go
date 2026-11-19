@@ -251,8 +251,9 @@ type Editor struct {
 	// extClient は、拡張機能の ID から、その拡張機能へ最後に問い合わせ（command/execute、provider/invoke など）を始めた client への表である。
 	// 拡張機能が後から届ける editor/open、message/show、choice/ask を、その client に出すのに使う（extView。基本設計 1.2）。
 	extClient map[string]*clientView
-	// extFromPane は、拡張機能の ID のうち、最後の操作がペインの部品の client のキーだったものの集合である（noteViewClient、focusAfterPane）。
-	extFromPane map[string]bool
+	// extFromPane は、拡張機能の ID のうち、最後の操作がペインの部品の client のキーだったものから、そのキーを処理した時刻への表である
+	// （noteViewClient、focusAfterPane）。
+	extFromPane map[string]time.Time
 	// attachCh は、Attach が渡す新しい client を、イベントループへ送る。
 	attachCh chan attachRequest
 	// goneCh は、端末の入力が閉じた client を、イベントループへ送る（forwardInput）。
@@ -474,7 +475,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		goneCh:      make(chan *clientView),
 		keyFireCh:   make(chan keyFire),
 		extClient:   map[string]*clientView{},
-		extFromPane: map[string]bool{},
+		extFromPane: map[string]time.Time{},
 		finished:    make(chan struct{}),
 		diff:        newDiffState(),
 		outputs:     map[outputKey][]string{},

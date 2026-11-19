@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -289,9 +289,11 @@ func TestComponentPane(t *testing.T) {
 func TestPaneSelectionGoesToOpener(t *testing.T) {
 	var calls muxCalls
 	cfg := Config{Extensions: fakeSpecs(t)}
-	if err := os.WriteFile(filepath.Join(cfg.Extensions[0].Dir, "opened.txt"), []byte("x\n"), 0o600); err != nil {
+	opened := fakeOpenedPath(os.Getpid())
+	if err := os.WriteFile(opened, []byte("x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Remove(opened) })
 	calls.config(&cfg)
 	var mu sync.Mutex
 	var focused [][2]string
@@ -329,11 +331,11 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 		}
 	})
 	h.eventually("ペインを開いた client のタブ", func() bool {
-		return strings.HasSuffix(h.e.viewOf(h.clientOf(a.term)).cur.path, "opened.txt")
+		return h.e.viewOf(h.clientOf(a.term)).cur.path == opened
 	})
 	var firstPath string
 	h.e.do(func() { firstPath = h.e.viewOf(h.clientOf(h.term)).cur.path })
-	if strings.HasSuffix(firstPath, "opened.txt") {
+	if firstPath == opened {
 		t.Errorf("the file opened in the client that used the extension last")
 	}
 	h.eventually("フォーカスの移動", func() bool {
@@ -341,6 +343,50 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 		defer mu.Unlock()
 		return len(focused) == 1 && focused[0] == [2]string{"%9", "%9"}
 	})
+
+	// フォーカスを戻すのは、ペインで選んだ後の最初の editor/open だけで、その後に利用者がどれかの client でキーを打っていれば戻さない。
+	// 選んでから上限（paneFocusWindow）を過ぎて届いた editor/open（別の window へ移った後など）でも戻さない。
+	// どちらでも、ペインを開いた client のタブは開いたファイルにする（PR #248 の再レビューの必須）。
+	focusCount := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(focused)
+	}
+	picked := func() int {
+		n := 0
+		for _, m := range h.e.msgHistory {
+			if strings.HasPrefix(m.Text, "picked ") {
+				n++
+			}
+		}
+		return n
+	}
+	pick := func(row string, between func()) {
+		t.Helper()
+		var before int
+		h.e.do(func() { before = picked() })
+		comp.keys("gg" + row + "<CR>")
+		between()
+		h.eventually("選んだファイルを開いた知らせ", func() bool { return picked() == before+1 })
+		h.settle()
+		var path string
+		h.e.do(func() { path = h.e.viewOf(h.clientOf(a.term)).cur.path })
+		if path != opened {
+			t.Errorf("tab of the client that opened the pane = %q", path)
+		}
+	}
+	pick("j", func() { // slow: 選んだ後、届く前に別の client でキーを打つ
+		h.eventually("選んだ知らせ", func() bool { return strings.HasSuffix(h.e.msgHistory[len(h.e.msgHistory)-1].Text, "item=slow key=") })
+		h.keys("ixy<Esc>")
+	})
+	pick("jj", func() {})                    // late: 上限を過ぎて届く
+	time.Sleep(100 * time.Millisecond)
+	if n := focusCount(); n != 1 {
+		t.Errorf("FocusPane calls = %d, want 1 (only the first selection)", n)
+	}
+	// 遅れずに届けば、また戻す（印は選ぶたびに立つ）。
+	pick("", func() {})
+	h.eventually("2 回目のフォーカスの移動", func() bool { return focusCount() == 2 })
 
 	// ペインで :q を打ったときの view/closed の後のメッセージも、ペインを開いた client に出る。
 	comp.keys(":q<CR>")

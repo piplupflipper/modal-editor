@@ -315,9 +315,7 @@ func (e *Editor) editorOpenRequest(ev *exthost.EditorOpenRequest) {
 	if fresh && bs.owner == nil {
 		bs.offscreen = true
 	}
-	if p.Focus && bs.owner == e.view {
-		e.focusAfterPane(ev.Extension)
-	}
+	e.focusAfterPane(ev.Extension, p.Focus && bs.owner == e.view)
 	_ = ev.Reply(ext.EditorOpenResult{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Moved: moved})
 }
 

@@ -222,14 +222,18 @@ func runFakeExt(mode string) int {
 				_ = s.UpdateView(ext.ViewUpdateParams{View: e.View, Component: ext.ViewComponent{
 					Kind: ext.ViewList, Items: []ext.ViewItem{{ID: "new", Label: "updated"}},
 				}})
-			case e.Kind == server.ViewSelected && e.Item == "open":
+			case e.Kind == server.ViewSelected && (e.Item == "open" || e.Item == "slow" || e.Item == "late"):
 				// ファイラと同じく、選んだファイルを editor/open で開く（#244 の PR #248 のレビューの必須）。フックの中では応答を待てない。
-				// 開くのは、拡張機能の作業ディレクトリ（宣言ファイルのディレクトリ）の opened.txt である。
+				// 開くのは fakeOpenedPath のファイルで、開いたら "picked <項目>" を出す。
+				// slow は 300 ms 後に、late は 1.5 秒後（フォーカスを戻す上限の後）に開く（PR #248 の再レビューの必須）。
+				delay := map[string]time.Duration{"slow": 300 * time.Millisecond, "late": 1500 * time.Millisecond}[e.Item]
 				go func() {
-					wd, _ := os.Getwd()
-					if _, err := s.OpenEditor(hostCtx, ext.EditorOpenParams{Path: filepath.Join(wd, "opened.txt"), Focus: true}); err != nil {
+					time.Sleep(delay)
+					if _, err := s.OpenEditor(hostCtx, ext.EditorOpenParams{Path: fakeOpenedPath(os.Getppid()), Focus: true}); err != nil {
 						_ = s.ShowMessage(ext.MessageError, "open: "+err.Error())
+						return
 					}
+					_ = s.ShowMessage(ext.MessageInfo, "picked "+e.Item)
 				}()
 			}
 		})
@@ -473,6 +477,12 @@ func runFakeExt(mode string) int {
 	return 0
 }
 
+// fakeOpenedPath は、fake.pane files の項目を選んだときに偽の拡張機能が開くファイルのパスである。pid はテストのプロセスの ID である
+// （偽の拡張機能はテストのプロセスの子なので、os.Getppid で同じパスを作れる）。
+func fakeOpenedPath(pid int) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("modal-editor-fake-%d-opened.txt", pid))
+}
+
 // fakePopup は、fake.popup の引数 kind の部品のポップアップの params を返す。
 func fakePopup(kind string) ext.PopupOpenParams {
 	switch kind {
@@ -486,7 +496,7 @@ func fakePopup(kind string) ext.PopupOpenParams {
 		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewInput, Title: "name", Text: "old"}}
 	case "files":
 		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewList, Title: "files", Items: []ext.ViewItem{
-			{ID: "open", Label: "opened.txt"},
+			{ID: "open", Label: "opened.txt"}, {ID: "slow", Label: "slow"}, {ID: "late", Label: "late"},
 		}}}
 	case "text":
 		return ext.PopupOpenParams{Component: ext.ViewComponent{

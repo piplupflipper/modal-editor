@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 	"github.com/piplupflipper/modal-editor/internal/buffer"
@@ -264,22 +265,36 @@ func (e *Editor) noteViewClient(f *floatState) {
 	}
 	e.extClient[f.ext] = e.view
 	if f.pane && f == e.paneActive {
-		e.extFromPane[f.ext] = true
+		e.extFromPane[f.ext] = time.Now()
 	} else {
 		delete(e.extFromPane, f.ext)
 	}
 }
 
-// focusAfterPane は、拡張機能 extID の editor/open（focus が true）を、読み込んでいる client のタブに開いた後に呼ぶ。
-// その拡張機能への最後の操作がペインの部品の client のキー（ファイラで選んだなど）なら、端末多重化ソフトのフォーカスを
-// そのペインから、開いたタブの client のペインへ移す（FR-105。PR #248 のレビューの推奨 1）。拡張機能は端末多重化ソフトを触れないためである（FR-115）。
+// paneFocusWindow は、ペインで選んでから、その応答の editor/open でフォーカスを戻すまでの上限である（仮。focusAfterPane）。
+// ファイラが選んだファイルを開くのは、ふつうこれより早い。遅れたときはフォーカスを動かさずにタブだけを替える。
+const paneFocusWindow = time.Second
+
+// focusAfterPane は、拡張機能 extID の editor/open を開いた後に呼ぶ。move は、focus が true で、読み込んでいる client のタブに開いたことを表す。
+// その拡張機能への最後の操作がペインの部品の client のキー（ファイラで選んだなど）で、その後に利用者がどの client でもキーを打っていなければ、
+// 端末多重化ソフトのフォーカスをそのペインから、開いたタブの client のペインへ移す（FR-105。PR #248 のレビューの推奨 1）。
+// 拡張機能は端末多重化ソフトを触れないためである（FR-115）。
+//
+// 印（extFromPane）は、ペインで選んだ後の最初の editor/open 1 回だけに使い、move に依らず下ろす。利用者がキーを打っても下ろす（handleKeys）。
+// 遅れて届いた editor/open（DAP の止まった位置など）が、別のペインや別の window へ移った利用者を引き戻さないためである（PR #248 の再レビューの必須）。
+// 印の無い editor/open は、端末多重化ソフトのフォーカスを動かさない（その client のタブを替えるだけ）。
+// キーを打たずに別の window へ移った利用者を引き戻さないよう、選んでから paneFocusWindow を過ぎて届いた editor/open でも移さない（仮）。
 //
 // req: FR-115
-func (e *Editor) focusAfterPane(extID string) {
-	if !e.extFromPane[extID] {
+func (e *Editor) focusAfterPane(extID string, move bool) {
+	at, ok := e.extFromPane[extID]
+	if !ok {
 		return
 	}
 	delete(e.extFromPane, extID)
+	if !move || time.Since(at) > paneFocusWindow {
+		return
+	}
 	to := e.view.info.Pane
 	if e.cfg.FocusPane == nil || to == "" {
 		return
