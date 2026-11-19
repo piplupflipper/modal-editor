@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/piplupflipper/modal-editor/internal/command"
 )
 
 // waitShell は、送ったキーを処理し、外部のコマンドが終わって結果を入れ終えるまで待つ。
@@ -195,6 +197,62 @@ func TestShellInMacro(t *testing.T) {
 	h.waitShell()
 	if got := h.text(); got != "AB\nCD\nEF\nGH\nIJ" {
 		t.Errorf(".: text = %q", got)
+	}
+}
+
+// 外部のコマンド（:{range}!）を挟むマクロの再生の後の u は、再生の全体を戻す（#235）。
+// 期待値は Vim 9.1 で、本文 a1/b2/c3/d4 の 1 行目でレジスター a に各マクロを入れ、2@a の後に u を打った結果である
+// （vim -Nu NONE -n --not-a-term で確かめた。2026-11-19）。外部のコマンドの前だけ、後だけ、前後の両方で変える場合を試す。
+//
+// req: FR-07, FR-81
+func TestShellInMacroUndo(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	for _, tt := range []struct{ macro, played string }{
+		{"x:.!tr a-z A-Z\rj", "1\n2\nc3\nd4"},
+		{":.!tr a-z A-Z\rxj", "1\n2\nc3\nd4"},
+		{"x:.!tr a-z A-Z\rxj", "\n\nc3\nd4"},
+	} {
+		t.Run(tt.macro, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": "a1\nb2\nc3\nd4\n"})
+			h := start(t, Config{WorkDir: dir}, "a.txt")
+			h.e.do(func() { h.e.cur.state.Registers().Set('a', command.Register{Text: tt.macro}) })
+			h.keys("2@a")
+			h.waitShell()
+			if got := h.text(); got != tt.played {
+				t.Fatalf("2@a: text = %q, want %q", got, tt.played)
+			}
+			h.keys("u")
+			h.waitShell()
+			if got := h.text(); got != "a1\nb2\nc3\nd4" {
+				t.Errorf("u: text = %q, want the whole 2@a undone", got)
+			}
+		})
+	}
+}
+
+// 外部のコマンドを挟むマクロの再生の続きは、実行中に別の client が打った変更ではなく、止めたときのドットリピートの値で続ける
+// （#235。再生中の拡張機能の待ちの TestReplayWaitKeepsDot と同じ扱い）。
+//
+// req: FR-58, FR-81
+func TestShellInMacroKeepsDot(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\nb2\nc3\n", "b.txt": "x\ny\nz\n"})
+	h := start(t, Config{WorkDir: dir}, "a.txt")
+	started := filepath.Join(dir, "started")
+	h.e.do(func() {
+		h.e.cur.state.Registers().Set('a', command.Register{Text: "x:.!touch " + started + "; sleep 0.3; tr a-z A-Z\rj."})
+	})
+	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt")}})
+	h.keys("@a")
+	waitFile(t, started)
+	b.keys("dd")
+	h.eventually("実行中の B の dd", func() bool {
+		bs := h.e.findPath(filepath.Join(dir, "b.txt"))
+		return bs != nil && bs.buf.Text() == "y\nz"
+	})
+	h.waitShell()
+	if got := h.bufferText("a.txt"); got != "1\n2\nc3" {
+		t.Errorf("a.txt = %q, want %q（再生の中の . は x を繰り返す）", got, "1\n2\nc3")
 	}
 }
 

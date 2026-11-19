@@ -168,6 +168,12 @@ type State struct {
 	// playUndoStart は、いちばん外側の再生（play、ContinueReplay、ResumeReplay）を始めたときのアンドゥの履歴の末尾の識別子である
 	// （buffer.Buffer.UndoTip）。止めたときの末尾と違えば、止める前の再生が単位を作っている（suspendQuery、ResumeReplay）。
 	playUndoStart uint64
+	// shellWait は、再生の途中の :{range}! と :r ! で外部のコマンドを待つために止めた（ErrShellPending）ときの控えである。
+	// FinishShell が使って下ろす。再生の外で外部のコマンドを求めたら nil にする（applyExResult）。
+	shellWait *shellSuspend
+	// shellJoin は、FinishShell が再生の途中の外部のコマンドの出力を入れた後の、アンドゥの単位である。
+	// 続く ContinueReplay が、再生の残りの変更をこの単位へつなぐ。Feed は下ろす。
+	shellJoin *undoJoin
 	// lastPut は、直前に実行した値が貼り付けなら、その記録である（FR-55）。execute が値を実行するたびに prevPut へ移して消すので、
 	// 別の操作を挟むと無くなる。prevPut は、実行中の値の直前の貼り付けの記録で、<C-p> と <C-n>（actPutCycle）が読む。
 	lastPut, prevPut *putRecord
@@ -267,6 +273,7 @@ func (s *State) take() Result {
 // req: FR-01, FR-05
 func (s *State) Feed(k editcmd.Key) Result {
 	s.res = Result{}
+	s.shellJoin = nil
 	if s.recording != 0 {
 		s.recorded = append(s.recorded, k)
 	}
