@@ -200,6 +200,13 @@ func (r *Result) anchor(i int, side Side) int {
 	return s.Start
 }
 
+// Start は、i 番目の塊の、side の側で塊が始まる行（]c と [c でカーソルを置く行）を返す。
+// 範囲が空でなければその最初の行、空なら、もう片側にだけある行の位置の次の行（末尾なら最後の行）である。
+// i は 0 以上 len(r.Hunks) 未満でなければ panic する。
+func (r *Result) Start(i int, side Side) int {
+	return r.anchor(i, side)
+}
+
 // Next は、side の側の行 line より後ろで始まる、最初の塊の番号を返す（Vim の ]c）。
 // 塊が始まる行は、範囲が空でなければその最初の行、空ならもう片側にだけある行の位置の次の行である。
 // 無ければ false を返す。

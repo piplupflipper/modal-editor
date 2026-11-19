@@ -26,6 +26,10 @@ var keepsTextActions = map[string]bool{
 	"alternate-buffer":   true,
 	"tab-next":           true,
 	"tab-prev":           true,
+	// dp はこのバッファでなく相手のバッファを変える。相手が編集を禁止していれば、呼び出し側が断る（基本設計 6.8）。
+	"diff-next": true,
+	"diff-prev": true,
+	"diff-put":  true,
 }
 
 // checkReadOnly は、編集を禁止したバッファで、cmd がテキストを変える操作かインサートモードへ移る操作なら、

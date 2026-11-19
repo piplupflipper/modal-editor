@@ -201,6 +201,10 @@ var (
 		// Vim のノーマルモードの CTRL-P と CTRL-N は k と j と同じ移動で、ここでは移動に割り当てていない。
 		{keys: "<C-p>", id: "put-older", modes: MapNormal, desc: "貼った直後に、履歴の古い項目に貼り直す"},
 		{keys: "<C-n>", id: "put-newer", modes: MapNormal, desc: "貼った直後に、履歴の新しい項目に貼り直す"},
+		// 見比べ（基本設計 6.8。FR-101）。Vim と同じキーで、次と前の差分へ移る。
+		// do と dp は、Vim と同じく d のオペレーターの後の o と p として Parser が読む（Parser.match）ので、表には置かない。
+		{keys: "]c", id: "diff-next", modes: MapNormal, desc: "見比べで、次の差分へ"},
+		{keys: "[c", id: "diff-prev", modes: MapNormal, desc: "見比べで、前の差分へ"},
 	}
 )
 

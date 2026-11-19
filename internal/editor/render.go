@@ -48,6 +48,7 @@ func (e *Editor) frame() *ui.Frame {
 		Signs:           bs.uiSigns(),
 		Output:          e.uiOutput(),
 		Tabs:            e.uiTabs(),
+		Diff:            e.uiDiff(bs),
 	}
 	f.HitEnter = e.hitEnter()
 	f.OperatorPending = st.Mode() == command.ModeNormal && st.Pending()
@@ -114,9 +115,12 @@ func (v viewport) SetTop(top int) { v.r.SetScroll(top, v.r.Left()) }
 
 // render は、繋いでいるすべての client の画面を描いて、それぞれの端末へ出す。
 // 描き終えたら、読み込む client を描く前のものに戻す。
+// 見比べている組は、描く前に差分の計算し直しを始め、描いた後に両側のスクロールをそろえる（diff.go）。
 func (e *Editor) render() {
 	e.syncAsker()
+	e.refreshDiffs()
 	e.eachView(func(*clientView) { e.renderView() })
+	e.syncDiffScroll()
 }
 
 // renderView は、読み込んでいる client の画面を描いて端末へ出す。

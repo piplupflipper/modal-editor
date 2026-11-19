@@ -97,6 +97,40 @@ func init() {
 		{name: "xall", min: 2, bang: true, rng: rangeNone, run: runAll(true, true)},
 		{name: "bdelete", min: 2, bang: true, rng: rangeNone, run: runBufferDelete},
 		{name: "tabmove", min: 4, rng: rangeNone, run: runTabMove},
+		// 見比べ（基本設計 6.8）。省略形は Vim 9.1 と同じ。
+		{name: "diffsplit", min: 5, rng: rangeNone, run: runDiffSplit},
+		{name: "diffthis", min: 5, rng: rangeNone, run: runDiff(DiffThis)},
+		{name: "diffoff", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffOff)},
+		{name: "diffupdate", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffUpdate)},
+	}
+}
+
+// runDiffSplit は :diffs[plit] {file} を実行する。file が無ければ、Vim 9.1 と同じく E471 にする。
+//
+// req: FR-99
+func runDiffSplit(c *execCtx, inv *invocation) error {
+	file, err := fileArg(inv)
+	if err != nil {
+		return err
+	}
+	if file == "" {
+		return errAt(inv.argPos, codeArgRequired, "引数が必要です")
+	}
+	c.actions = append(c.actions, Action{Kind: ActionDiff, Diff: DiffSplit, File: file})
+	return nil
+}
+
+// runDiff は、引数を取らない見比べのコマンド（:diffthis、:diffoff、:diffupdate）を実行する関数を返す。
+// :diffoff! と :diffupdate! の ! は受け付けて無視する（見比べは 2 つのタブの組で、:diffoff はその組を終えるため）。
+//
+// req: FR-99
+func runDiff(op DiffOp) func(c *execCtx, inv *invocation) error {
+	return func(c *execCtx, inv *invocation) error {
+		if err := noArg(inv); err != nil {
+			return err
+		}
+		c.actions = append(c.actions, Action{Kind: ActionDiff, Diff: op})
+		return nil
 	}
 }
 

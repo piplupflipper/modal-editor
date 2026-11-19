@@ -81,6 +81,8 @@ type Server struct {
 	mu sync.Mutex
 	// terms は、繋いだ編集の client のすべてである。Serve の終わりに、まだ終わっていない client へ終わりの知らせを送る。
 	terms []*clientTerm
+	// sock は、Serve が待ち受けるソケットのパス（string）である。:diffsplit で開くペインの client に渡す（diffsplit.go）。
+	sock atomic.Value
 }
 
 // New は、cfg でイベントループ（editor.Editor）を作り、Server を返す。
@@ -91,6 +93,9 @@ func New(cfg editor.Config) (*Server, error) {
 		logger = slog.Default()
 	}
 	s := &Server{onPanic: cfg.OnPanic, log: logger}
+	if cfg.SplitPane == nil {
+		cfg.SplitPane = s.splitPane
+	}
 	s.client = s.newTerm()
 	ed, err := editor.New(s.client, cfg)
 	if err != nil {
@@ -163,6 +168,7 @@ func (s *Server) Run(ctx context.Context, conn protocol.ServerConn) error {
 func (s *Server) Serve(ctx context.Context, ln net.Listener, first protocol.ServerConn) error {
 	var a *acceptor
 	if ln != nil {
+		s.sock.Store(ln.Addr().String())
 		a = s.startAccept(ln)
 		defer a.stop()
 	}

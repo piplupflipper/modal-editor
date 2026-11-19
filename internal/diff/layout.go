@@ -99,6 +99,17 @@ func (l Layout) Fill(line int) int {
 	return l.fillCum[i] - l.fillCum[i-1]
 }
 
+// Fills は、詰め物を描く行の番号から、その行の上に描く詰め物の行の数への対応を返す（Fill の全部）。
+func (l Layout) Fills() map[int]int {
+	out := make(map[int]int, len(l.fillAt))
+	prev := 0
+	for i, line := range l.fillAt {
+		out[line] = l.fillCum[i] - prev
+		prev = l.fillCum[i]
+	}
+	return out
+}
+
 // fillThrough は、行 line まで（line の上の分を含む）の詰め物の数の合計を返す。
 func (l Layout) fillThrough(line int) int {
 	i := sort.Search(len(l.fillAt), func(i int) bool { return l.fillAt[i] > line })
