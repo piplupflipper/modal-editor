@@ -379,7 +379,7 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 		h.eventually("選んだ知らせ", func() bool { return strings.HasSuffix(h.e.msgHistory[len(h.e.msgHistory)-1].Text, "item=slow key=") })
 		h.keys("ixy<Esc>")
 	})
-	pick("jj", func() {})                    // late: 上限を過ぎて届く
+	pick("jj", func() {}) // late: 上限を過ぎて届く
 	time.Sleep(100 * time.Millisecond)
 	if n := focusCount(); n != 1 {
 		t.Errorf("FocusPane calls = %d, want 1 (only the first selection)", n)

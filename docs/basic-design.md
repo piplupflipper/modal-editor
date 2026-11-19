@@ -281,7 +281,7 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 #244 で、部品の client を次のとおりに実装した（`internal/editor` の `component.go`、`internal/server` の `component.go`、`cmd/modal-editor` の `component.go`。どれも仮）。
 
 - 部品（1.4 の `floatState`）は、開いた元の client の画面の状態に置いたままにする。中央のポップアップは元の client のポップアップ、ペインは元の client のペインの部品の並び（`viewFields.panes`）である。部品の client は、描く場所だけを替える。元の client は「部品がどの client の画面の状態にあるか」で決まるので、`client/hello` に元の client を載せない。部品の client は `client/hello` の `view` に部品の ID を載せ、server はその ID の部品を探す（`editor.Editor.AttachComponent`）
-- 起動のオプションは `-popup <部品の ID>` と `-pane <部品の ID>` にし、server のソケットは `MODAL_EDITOR_SOCKET` で渡す（1.3）。部品の ID は、ポップアップの ID（`ext.ViewID`）と同じ番号である
+- 起動のオプションは `-popup <部品の ID>` と `-pane <部品の ID>` にし、server のソケットは `-connect <パス>` で渡す（#245 の `:diffsplit` と同じ。`MODAL_EDITOR_SOCKET` で渡すと、その環境変数のもとで起動したものが待つだけの client になるため）。部品の ID は、ポップアップの ID（`ext.ViewID`）と同じ番号である
 - 中央のポップアップを開いた元の client がペインを知っていれば（tmux と herdr の中）、端末多重化ソフトのポップアップを開くよう頼み（`editor.Config.OpenPopup`）、部品の client が繋ぐまでは元の client の画面の中央に描く。繋いだら元の client の画面には描かず、部品の client の画面に、枠線を描かずに表示領域の全体へ広げて描く（`ui.Float.Fill`。端末多重化ソフトが枠線を描くため）。ステータス行、コマンドライン、メッセージ、問いは、元の client の画面と同じものを部品の client にも出す（元の client のペインは、端末多重化ソフトのポップアップの下に隠れるため）
 - 端末多重化ソフトのポップアップを開けなければ（herdr のプラグインを登録していない、利用者の他のポップアップが開いている）、誤りを元の client のメッセージの行に出し、元の client の画面の中央に描いたままにする。前のポップアップの部品の client を終わらせた直後は、端末多重化ソフトのポップアップがまだ閉じていないことがあるので、`mux.ErrPopupBusy` なら 1.5 秒まで 50 ms ごとに開き直す
 - `pane/open` は、元の client のペインを分割し（`editor.Config.OpenPane`）、その中で部品の client を起動する。応答の ID は、ペインを開き終える前に返す。開けなければ、同じ ID のまま中央のポップアップへ移し、理由をメッセージの行に出す
@@ -367,7 +367,7 @@ server が自動で登録する形は採らなかった。利用者の herdr の
 
 拡張機能は、この層を直接触らず、本体へのリクエスト（5.3 で足す `pane/open` と `popup/open`。仮）で頼む（FR-115）。
 本体は、開いたペインかポップアップの中で、表示の部品を描く client（1.4）を起動する。
-ペインとポップアップの中のプロセスは、server のソケットのパスを環境変数 `MODAL_EDITOR_SOCKET`（仮）で受け取り、どの部品を描くかを起動の引数で受け取る（仮）。
+ペインとポップアップの中のプロセスは、server のソケットのパスとどの部品を描くかを、起動の引数（`-connect <パス>` と `-popup <部品の ID>` か `-pane <部品の ID>`）で受け取る（仮。#244）。
 
 ### 1.4 ポップアップとペインの表示の部品
 
@@ -1331,7 +1331,7 @@ Ex コマンドの確認の問い（逆順の範囲の E493）を出している
 
 #236 で、`popup/open`、`view/update`、`view/close`、`view/closed`、`view/select`、`input/change` を実装し、次を足した（`ext/view.go`。拡張機能 API の版は 0.6.0）。
 `editor/list`、`buffer/create`、`diff/start` は、それぞれを使う issue で足す。
-`pane/open` は #244 で足した（`ext.PaneOpenParams`。拡張機能 API の版は 0.7.0）。params は、部品（`component`）、分割の向き（`direction`。`right` か `down`）、大きさの百分率（`size`。herdr では使わない）、新しいペインへフォーカスを移すか（`focus`）である。
+`pane/open` は #244 で足した（`ext.PaneOpenParams`。拡張機能 API の版は 0.8.0）。params は、部品（`component`）、分割の向き（`direction`。`right` か `down`）、大きさの百分率（`size`。herdr では使わない）、新しいペインへフォーカスを移すか（`focus`）である。
 応答の `view` は、ペインでも、外で代わりに出す中央のポップアップでも、同じく `view/update`、`view/close`、`view/closed` などで使う。
 
 | 向き | メソッド（仮） | 種類 | 内容 | 関係する要件 |
@@ -2844,7 +2844,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-| 拡張機能 API のバージョンの付け方（いまは 0.7.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
+| 拡張機能 API のバージョンの付け方（いまは 0.8.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
 | 不正な UTF-8 を含むファイルのパスを拡張機能へ送るときの扱い（JSON の文字列では U+FFFD に置き換わる） | 4.1、5.3 |
 | 未保存のバッファを本体の panic から守る仕組み | 8 |
 | 補完の候補の表示と、インサートモードの入力ごとに言語サーバーへ問い合わせる契機 | 6.3 |
