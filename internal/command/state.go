@@ -203,6 +203,8 @@ type KeyParser interface {
 	Pending() bool
 	SetRecording(on bool)
 	SetVisual(on bool)
+	// InsertAction は、インサートモードのキー k に割り当てた操作を返す（FR-127）。insertKey が、文字、<CR>、<Tab>、<Esc> の他のキーで呼ぶ。
+	InsertAction(k editcmd.Key) (editcmd.Ref, bool)
 }
 
 // New は、バッファ b を編集する State を、ノーマルモード、カーソルは先頭で作る。

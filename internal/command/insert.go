@@ -10,7 +10,8 @@ import (
 type insertState struct {
 	// cmd は、インサートモードへ移った編集コマンドの値である。抜けるときに Text を埋めてドットリピートに記録する。
 	cmd editcmd.Command
-	// text は、入力した文字の列である。<CR> は '\n'、<BS> は '\b' として記録する。
+	// text は、入力した文字の列である。<CR> は '\n'、<BS>（insert.delete-prev-char）は '\b'、
+	// insert.delete-char は runeDeleteChar、insert.delete-to-line-end は runeDeleteToLineEnd として記録する。
 	text []rune
 	// repeat は、入力したテキストを入れる回数である（3ix<Esc> なら 3）。c では 1 である。
 	repeat int
@@ -34,33 +35,88 @@ func (s *State) startInsert(cmd editcmd.Command, repeat int) {
 	}
 }
 
-// insertKey は、インサートモードのキーを 1 個処理する。
-// 文字、<CR>、<Tab>、<BS>、<Esc> と、カーソルキー（insertMove）を扱い、それ以外のキー（<Del>、Ctrl つきの文字など）は無視する。
+// insertKey は、インサートモードのキーを 1 個処理する。キーは次の 2 つの経路に分ける（#257 の決定）。
 //
-// req: FR-01
+//   - 1 文字の入力の経路: 修飾キーの付かない文字、<CR>、<Tab>、<Esc>。下の switch の各 case で直接処理し、操作の表を引かない。
+//     1 文字の入力の速さ（要件定義 8.1 の計測の対象）に、表を引く処理を足さないためである
+//   - 操作の経路: それ以外のキー（<BS>、<Del>、カーソルキー、修飾キーの付いたキーなど）。switch を抜けた後で、操作の表の
+//     インサートモードの登録（KeyParser.InsertAction）を引き、割り当てた操作を insertAction で実行する（FR-127）。
+//     割り当ての無いキーは何もしない
+//
+// 2 つの経路の分け方は、internal/input の InsertTableKey（インサートモードの登録の左辺の検査）と同じにする。
+//
+// req: FR-01, FR-127
 func (s *State) insertKey(k editcmd.Key) {
-	if k.Mod != 0 {
+	if k.Mod == 0 {
+		switch k.Code {
+		case editcmd.CodeEsc:
+			s.finishInsert()
+			return
+		case editcmd.CodeEnter:
+			s.insertRune('\n')
+			return
+		case editcmd.CodeTab:
+			s.insertRune('\t')
+			return
+		case editcmd.CodeRune:
+			s.insertRune(k.Rune)
+			return
+		case editcmd.CodeBackspace, editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
+			editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1:
+			// 操作の経路へ進む。
+		}
+	}
+	ref, ok := s.parser.InsertAction(k)
+	if !ok || !ref.Builtin() {
+		// 拡張機能の操作は、インサートモードには登録されない（internal/editor の buildKeymap は既定のモードで登録する）。
 		return
 	}
-	switch k.Code {
-	case editcmd.CodeEsc:
-		s.finishInsert()
-	case editcmd.CodeEnter:
-		s.insertRune('\n')
-	case editcmd.CodeTab:
-		s.insertRune('\t')
-	case editcmd.CodeBackspace:
-		s.insertRune('\b')
-	case editcmd.CodeRune:
-		s.insertRune(k.Rune)
-	case editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
-		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown:
-		s.insertMove(k.Code)
-	case editcmd.CodeDelete, editcmd.CodeInsert, editcmd.CodeF1:
+	if f, ok := insertActions[ref.ID]; ok {
+		f(s)
 	}
 }
 
+// insertActions は、インサートモードの操作の ID（internal/input の builtinInsert の表）から実装への対応である（FR-127）。
+// 移動は insertMove、削除は insertRune に、削除を表す文字（'\b'、runeDeleteChar、runeDeleteToLineEnd）を渡す。
+// 削除を文字として入力の記録（insertState.text）に入れるので、アンドゥの単位、ドットリピート、回数による繰り返し（3i）、
+// カーソルキーで区切った後の入力の始め直し（resumeInsert）は、<BS> と同じ扱いになる。
+//
+// req: FR-127
+var insertActions = map[string]func(*State){
+	"insert.left":               func(s *State) { s.insertMove(editcmd.CodeLeft) },
+	"insert.right":              func(s *State) { s.insertMove(editcmd.CodeRight) },
+	"insert.up":                 func(s *State) { s.insertMove(editcmd.CodeUp) },
+	"insert.down":               func(s *State) { s.insertMove(editcmd.CodeDown) },
+	"insert.line-start":         func(s *State) { s.insertMove(editcmd.CodeHome) },
+	"insert.line-end":           func(s *State) { s.insertMove(editcmd.CodeEnd) },
+	"insert.page-up":            func(s *State) { s.insertMove(editcmd.CodePageUp) },
+	"insert.page-down":          func(s *State) { s.insertMove(editcmd.CodePageDown) },
+	"insert.delete-prev-char":   func(s *State) { s.insertRune('\b') },
+	"insert.delete-char":        func(s *State) { s.insertRune(runeDeleteChar) },
+	"insert.delete-to-line-end": func(s *State) { s.insertRune(runeDeleteToLineEnd) },
+}
+
+// InsertActionIDs は、実装のあるインサートモードの操作の ID を返す（順は決まらない）。
+// internal/editor のテストが、internal/input の操作の表と照合する（同じ層のパッケージどうしはテストからも import しないため）。
+func InsertActionIDs() []string {
+	ids := make([]string, 0, len(insertActions))
+	for id := range insertActions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// 入力の記録（insertState.text）の中で、削除の操作を表す文字。'\b'（<BS>、insert.delete-prev-char）と同じく、
+// 入力した文字としては現れない制御文字を使う（端末からの貼り付けは制御文字を捨てる。pasteable）。
+const (
+	// runeDeleteChar は、カーソルの文字を消す操作（<Del>、insert.delete-char）である。DEL の文字にした。
+	runeDeleteChar = '\x7f'
+	// runeDeleteToLineEnd は、カーソルから行末まで消す操作（insert.delete-to-line-end）である。Emacs の C-k に合わせ、^K の文字にした。
+	runeDeleteToLineEnd = '\x0b'
+)
+
 // insertMove は、インサートモードのカーソルキーでカーソルを動かす（Vim 9.1 の ins_left() などに当たる）。
+// c は既定のキー（<Left> など）で、操作の ID（insert.left など）から insertActions が渡す。設定で別のキーに割り当てても同じく動く。
 //
 //   - <Left> と <Right> は 1 文字動く。行の先頭と行末の位置を越えない（'whichwrap' の既定）
 //   - <Up> と <Down> は、望みの列を保って 1 行動く。行の幅が望みの列に届かなければ行末の位置へ移る
@@ -174,9 +230,34 @@ func (s *State) insertRune(r rune) {
 
 // typeRune は、文字 1 つをカーソルの位置に入れる。'\n' は行を分け、'\b' はカーソルの前の文字を消す。
 // '\b' は行の先頭では前の行とつなぎ、バッファの先頭では何もしない（'backspace' が "indent,eol,start" の動き）。
+//
+// runeDeleteChar はカーソルの文字を消し、runeDeleteToLineEnd はカーソルから行末までを消す。どちらもカーソルは動かない。
+// 行末の位置では、どちらも次の行をつなげる（次の行の先頭の空白は残す）。最後の行の行末と空のバッファでは何もしない。
+// runeDeleteChar は Vim 9.1 のインサートモードの <Del>（'backspace' が "indent,eol,start"）と同じ動きである。
+// runeDeleteToLineEnd は Vim に対応するキーが無く、行末の位置で次の行をつなげるのは Emacs の C-k に合わせた（#257 の決定）。
+// 消したテキストは、<BS> と同じくレジスターにも履歴にも入れない。
+//
+// req: FR-127
 func (s *State) typeRune(r rune) error {
 	c := s.cursor
 	switch r {
+	case runeDeleteChar, runeDeleteToLineEnd:
+		line := s.line(c.Line)
+		var to buffer.Position
+		switch {
+		case c.Byte < len(line) && r == runeDeleteChar:
+			to = pos(c.Line, nextChar(line, c.Byte))
+		case c.Byte < len(line):
+			to = pos(c.Line, len(line))
+		case c.Line < s.lastLine():
+			to = pos(c.Line+1, 0)
+		default:
+			return nil
+		}
+		if err := s.apply(buffer.Edit{Range: buffer.Range{Start: c, End: to}}); err != nil {
+			return err
+		}
+		s.cursor = c
 	case '\b':
 		var from buffer.Position
 		switch {
