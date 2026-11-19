@@ -5,6 +5,7 @@ import (
 
 	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/command/ex"
+	"github.com/piplupflipper/modal-editor/internal/command/target"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 )
 
@@ -29,6 +30,45 @@ type Deferred struct {
 	want   int
 	// exCommand は、コマンドラインから呼んだ拡張機能のコマンドを保留したときの動作である。このとき Command は使わない。
 	exCommand *ex.Action
+	// replay は、再生中の問い合わせの結果を待つために止めた（ErrQueryPending）ときの、続けるための控えである（ResumeReplay）。
+	replay *replaySnapshot
+}
+
+// replaySnapshot は、再生を止めたときの控えである（suspendQuery が作り、ResumeReplay が使う）。
+type replaySnapshot struct {
+	// undoTip は、止めたときのアンドゥの履歴の末尾の識別子である。止める前の再生が単位を作っていなければ 0 で、つながない。
+	// undoStart は、その再生を始めたときの末尾の識別子である（State.playUndoStart）。
+	undoTip, undoStart uint64
+	// repeat は、止めたときのドットリピートの値などである。
+	repeat repeatState
+}
+
+// repeatState は、client の間で引き継ぐ状態（TakeOverShared）のうち、レジスターを除いたものである。
+// 再生を止めている間に別の client の操作で替わっても、再生の続きは止めたときの値で続ける（ResumeReplay）。
+// レジスターは、client の間で共有するもの（FR-58）として引き継いだ値のまま使う。
+type repeatState struct {
+	lastPattern    string
+	searchBackward bool
+	lastSubstitute *ex.Substitution
+	lastFind       target.Find
+	dot            *editcmd.Command
+	lastChange     *editcmd.Command
+	dotVisual      visualExtent
+	lastPlayed     rune
+}
+
+// repeatState は、s の repeatState を返す。
+func (s *State) repeatState() repeatState {
+	return repeatState{
+		lastPattern: s.Ex.LastPattern, searchBackward: s.searchBackward, lastSubstitute: s.Ex.LastSubstitute,
+		lastFind: s.lastFind, dot: s.dot, lastChange: s.lastChange, dotVisual: s.dotVisual, lastPlayed: s.lastPlayed,
+	}
+}
+
+// setRepeatState は、r を s に戻す。
+func (s *State) setRepeatState(r repeatState) {
+	s.Ex.LastPattern, s.searchBackward, s.Ex.LastSubstitute = r.lastPattern, r.searchBackward, r.lastSubstitute
+	s.lastFind, s.dot, s.lastChange, s.dotVisual, s.lastPlayed = r.lastFind, r.dot, r.lastChange, r.dotVisual, r.lastPlayed
 }
 
 // ApplyDeferred は、保留した操作 d を、届いた結果で実行し直す（FR-18、基本設計 5.4 の「期限が 0」）。

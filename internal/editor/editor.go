@@ -461,9 +461,10 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	}
 	if len(warnings) > 0 {
 		text := warnings[0].Error()
-		if n := len(warnings) - 1; n > 0 {
+		if n := len(warnings); n > 1 {
 			// 他にも誤りがあることを知らせる。全件は :messages とログ（Config.Logger）にある。
-			text = fmt.Sprintf("%s（他 %d 件。:messages で全件を見られます）", text, n)
+			// 件数と案内は、1 件目の文が長くても端末の幅で切れないように前に置く（#229 のレビューの推奨 5）。
+			text = fmt.Sprintf("設定の誤り %d 件（:messages）: %s", n, text)
 		}
 		// 拡張機能の message/show は、利用者が次のキーを打つまでこれを上書きしない（showExtMessage。#211）。
 		e.message = ui.Message{Text: text, Level: ui.MessageError}

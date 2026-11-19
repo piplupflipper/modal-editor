@@ -305,7 +305,7 @@ func TestRemovedCommandWarnings(t *testing.T) {
 		t.Errorf("宣言された古いコマンド: errs = %v", errs)
 	}
 	h := start(t, Config{Keymap: km})
-	if msg := h.message(); !strings.Contains(msg, ":dap.toggleBreakpoint は無くなったコマンド") || !strings.Contains(msg, "他 1 件") {
+	if msg := h.message(); !strings.Contains(msg, ":dap.toggleBreakpoint は無くなったコマンド") || !strings.HasPrefix(msg, "設定の誤り 2 件（:messages）: ") {
 		t.Errorf("起動時のメッセージ = %q", msg)
 	}
 }

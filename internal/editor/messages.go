@@ -61,10 +61,16 @@ func (e *Editor) showExtMessage(m ui.Message) {
 // showMessages は、:messages で、メッセージの履歴を古い順に 1 件 1 行で出す（Vim の :messages）。
 // 2 件以上なら複数の行なので hit-enter の問いになる（render の hitEnter）。履歴が空なら何も出さない。
 // 1 件の中の改行は空白にし、1 件を 1 行に収める。
+// メッセージの行は画面の半分までしか広がらない（ui の drawMessageLines）ので、収まらなければ新しい側を残し、
+// 古い側を「（前の N 件は略）」の 1 行にする。誤りは新しい側に溜まるので、見せたいものほど新しい（#229 のレビューの推奨 3）。
 func (e *Editor) showMessages() {
 	lines := make([]string, len(e.msgHistory))
 	for i, m := range e.msgHistory {
 		lines[i] = strings.ReplaceAll(m.Text, "\n", " ")
+	}
+	if limit := max(e.renderer.Height/2, 2); len(lines) > limit {
+		skip := len(lines) - (limit - 1)
+		lines = append([]string{fmt.Sprintf("（前の %d 件は略）", skip)}, lines[skip:]...)
 	}
 	e.message = infoMessage(strings.Join(lines, "\n"))
 }

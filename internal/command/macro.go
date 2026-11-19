@@ -85,6 +85,10 @@ func (s *State) play(cmd editcmd.Command) error {
 		return failf("macro nested too deeply")
 	}
 	n := max(cmd.Count, 1)
+	if s.playDepth == 0 {
+		// 拡張機能の結果を待つために止めたときに、止める前の再生が単位を作ったかを見分けるために控える（suspendQuery）。
+		s.playUndoStart = s.buf.UndoTip()
+	}
 	s.buf.BeginUndoGroup()
 	defer s.endPlayGroup()
 	s.lastPlayed = name
@@ -212,6 +216,7 @@ var ErrBufferSwitched = errors.New("command: replay continues in another buffer"
 // req: FR-05, FR-57
 func (s *State) ContinueReplay(segs []ReplaySegment) Result {
 	s.res = Result{}
+	s.playUndoStart = s.buf.UndoTip()
 	s.buf.BeginUndoGroup()
 	s.playDepth++
 	s.playSegments(segs)
@@ -266,12 +271,28 @@ func (s *State) stopSegments(segs []ReplaySegment) {
 // 止めたときは、segs の Dot の印のうち最後のものをドットリピートの対象にする（ContinueReplay の失敗と同じ）。
 // 実行し直した操作か segs の中でまた止まれば、ErrQueryPending などと残りが Result に入る。
 //
-// 止める前と後の変更は、別のアンドゥの単位になる（外部のコマンドの ErrShellPending と同じ。docs/vim-differences.md）。
+// 止める前の再生が作ったアンドゥの単位が履歴の末尾のままなら、続きの変更をそこへつなぎ（buffer.Buffer.JoinUndoGroup）、
+// 再生の全体を 1 回の u で戻せるようにする（Vim の @a と同じ）。
+// 待つ間に別の client の操作でドットリピートの値、直前の検索、直前の :s、直前の f、@@ のレジスターが替わっていても、
+// 止めたときの値に戻してから続ける。レジスターは client の間で共有するもの（FR-58）なので戻さない。
 //
-// req: FR-19
+// req: FR-07, FR-19
 func (s *State) ResumeReplay(d Deferred, ext Extensions, segs []ReplaySegment, err error) Result {
 	s.res = Result{}
-	s.buf.BeginUndoGroup()
+	if r := d.replay; r != nil {
+		// 待つ間に別の client の操作でドットリピートの値などが替わっていても、止めたときの値で続ける（#229 のレビュー）。
+		s.setRepeatState(r.repeat)
+	}
+	// 止める前の再生が作ったアンドゥの単位が末尾のまま（待つ間に誰もこのバッファを変えていない）なら、そこへつなぐ。
+	// 待つ間に変わっていれば、バージョン番号が変わっているので deferredReady が ErrStale で止める。
+	if r := d.replay; r != nil && r.undoTip != 0 && s.buf.JoinUndoGroup(r.undoTip) {
+		s.playUndoStart = r.undoStart
+	} else {
+		if r == nil || r.undoTip == 0 {
+			s.buf.BeginUndoGroup()
+		}
+		s.playUndoStart = s.buf.UndoTip()
+	}
 	s.playDepth++
 	switch {
 	case err != nil:

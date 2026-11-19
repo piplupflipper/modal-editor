@@ -165,6 +165,9 @@ type State struct {
 	recorded       []editcmd.Key
 	lastPlayed     rune // @@ が再生するレジスター
 	playDepth      int
+	// playUndoStart は、いちばん外側の再生（play、ContinueReplay、ResumeReplay）を始めたときのアンドゥの履歴の末尾の識別子である
+	// （buffer.Buffer.UndoTip）。止めたときの末尾と違えば、止める前の再生が単位を作っている（suspendQuery、ResumeReplay）。
+	playUndoStart uint64
 	// lastPut は、直前に実行した値が貼り付けなら、その記録である（FR-55）。execute が値を実行するたびに prevPut へ移して消すので、
 	// 別の操作を挟むと無くなる。prevPut は、実行中の値の直前の貼り付けの記録で、<C-p> と <C-n>（actPutCycle）が読む。
 	lastPut, prevPut *putRecord
@@ -350,6 +353,11 @@ func (s *State) run(cmd editcmd.Command) {
 func (s *State) suspendQuery(d Deferred, err error) {
 	if s.res.Deferred == nil {
 		s.cursor, s.want = d.Cursor, d.want
+		// 続けるときに、止める前の再生の単位へつなぎ、ドットリピートの値などを止めたときのものに戻す（ResumeReplay）。
+		d.replay = &replaySnapshot{repeat: s.repeatState()}
+		if s.playDepth > 0 && s.buf.UndoTip() != s.playUndoStart {
+			d.replay.undoTip, d.replay.undoStart = s.buf.UndoTip(), s.playUndoStart
+		}
 		s.res.Deferred = &d
 	}
 	s.fail(err)

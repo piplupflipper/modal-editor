@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/internal/command"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
@@ -116,6 +117,17 @@ func (e *Editor) dropOrphanReplay() {
 	}
 }
 
+// replayTimeout は、再生中の問い合わせの期限を返す（Config.ReplayTimeout。0 以下なら exthost の Config.SendTimeout）。
+func (e *Editor) replayTimeout() time.Duration {
+	switch {
+	case e.cfg.ReplayTimeout > 0:
+		return e.cfg.ReplayTimeout
+	case e.cfg.Host.SendTimeout > 0:
+		return e.cfg.Host.SendTimeout
+	}
+	return exthost.DefaultSendTimeout
+}
+
 // replayFor は、Tag が tag の問い合わせを待っている client を返す。無ければ nil。
 func (e *Editor) replayFor(tag any) *clientView {
 	for _, c := range e.clients {
@@ -171,6 +183,9 @@ func (e *Editor) replayAnswered(c *clientView, r *exthost.QueryResult) {
 		err = command.ErrInterrupted
 	case e.host.Withheld(bs.id):
 		err = errWithheld(w.ref)
+	case errors.Is(r.Err, exthost.ErrTimeout):
+		// 操作の失敗と見分けられるように、再生の期限（Config.ReplayTimeout）で待つのをやめたことを書く（#229 のレビューの推奨 4）。
+		err = fmt.Errorf("再生の途中で拡張機能 %s の %s の結果を %s 待ったので、再生を止めました", w.ref.Extension, w.ref.ID, e.replayTimeout())
 	default:
 		err = errExtension(w.ref, r.Err)
 	}

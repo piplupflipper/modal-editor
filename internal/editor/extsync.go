@@ -322,6 +322,13 @@ func (e *Editor) extSyncFinished(res extSyncResult) {
 		}
 	}
 	e.message = ui.Message{Text: summary, Level: level}
+	if level == ui.MessageError {
+		// 本体の誤りは、:messages で読み直せるように履歴に残す（messages.go。#229 のレビューの推奨 6）。内訳も 1 行ずつ残す。
+		e.noteMessage(e.message)
+		for _, r := range report {
+			e.noteMessage(ui.Message{Text: r, Level: level})
+		}
+	}
 	if len(report) > 0 && e.cur != nil {
 		// 1 行に収まらない内訳（失敗の理由、警告、起動し直しの要るもの）は、画面の中央のポップアップに出す。カーソルを動かすと消える。
 		// #179 の裁定の ACP と DAP の出力と同じ扱い（オーケストレータの仮の決定）で、端末多重化ソフトの中ではペインに出すが、

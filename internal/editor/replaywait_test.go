@@ -48,7 +48,9 @@ func TestReplayWaitKeepsOtherClients(t *testing.T) {
 	h.settle()
 	var timedOut bool
 	h.e.do(func() {
-		timedOut = slices.ContainsFunc(h.e.msgHistory, func(m ui.Message) bool { return strings.Contains(m.Text, "fake.hang") })
+		timedOut = slices.ContainsFunc(h.e.msgHistory, func(m ui.Message) bool {
+			return strings.Contains(m.Text, "再生の途中で拡張機能 fake の fake.hang の結果を 2s 待ったので、再生を止めました")
+		})
 	})
 	if !timedOut {
 		t.Errorf("期限で止まった誤りが履歴に無い")
@@ -64,6 +66,52 @@ func TestReplayWaitKeepsOtherClients(t *testing.T) {
 	}
 	if msg := h.message(); msg != "中断しました" {
 		t.Errorf("<C-c> の後: message = %q", msg)
+	}
+}
+
+// 拡張機能の結果を待つ前と後の変更は、1 つのアンドゥの単位になり、再生の後の 1 回の u で全体を戻す（Vim 9.1 と同じ。#229 のレビューの必須 1）。
+//
+// req: FR-07, FR-19
+func TestReplayWaitUndo(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\nb2\nc3\nd4\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	// fake.slow（is）は slowDelay の後に応答する。
+	h.e.do(func() { h.e.cur.state.Registers().Set('a', command.Register{Text: "xjdisjx"}) })
+	h.keys("@a")
+	h.settle()
+	if got := h.text(); got != "1\n\n3\nd4" {
+		t.Fatalf("@a: text = %q", got)
+	}
+	h.keys("u")
+	h.settle()
+	if got := h.text(); got != "a1\nb2\nc3\nd4" {
+		t.Errorf("u: text = %q, want the whole @a undone", got)
+	}
+}
+
+// 再生の続きは、待つ間に別の client が打った変更ではなく、止めたときのドットリピートの値で続ける（#229 のレビューの必須 2）。
+//
+// req: FR-19, FR-58
+func TestReplayWaitKeepsDot(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\nb2\nc3\n", "b.txt": "x\ny\nz\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+	h.e.do(func() { h.e.cur.state.Registers().Set('a', command.Register{Text: "xyisj."}) })
+	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt")}})
+	textOf := func(name string) string {
+		for _, bs := range h.e.bufs {
+			if filepath.Base(bs.path) == name {
+				return bs.buf.Text()
+			}
+		}
+		return "<none>"
+	}
+	h.keys("@a")
+	h.eventually("A の待ち", func() bool { return h.e.replayPending() })
+	b.keys("dd")
+	h.eventually("待つ間の B の dd", func() bool { return textOf("b.txt") == "y\nz" })
+	h.settle()
+	if got := h.bufferText("a.txt"); got != "1\n2\nc3" {
+		t.Errorf("a.txt = %q, want %q（再生の中の . は x を繰り返す）", got, "1\n2\nc3")
 	}
 }
 

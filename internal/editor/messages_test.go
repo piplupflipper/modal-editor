@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -53,6 +55,8 @@ func TestConfigErrorSurvivesExtMessages(t *testing.T) {
 		t.Errorf("キーの後の知らせ: message = %q", msg)
 	}
 
+	// 偽の端末は小さいので、履歴の全件が画面の半分に収まる高さにする（収まらないときは TestMessagesKeepsNewest）。
+	h.e.do(func() { h.e.renderer.Height = 40 })
 	h.keys(":messages<CR>")
 	h.settle()
 	want := []string{"keymap.normal の <Space>d の右辺の :dap.toggleBreakpoint は無くなったコマンド", "chatty: loading 1", "chatty: loading 3", "chatty: ready"}
@@ -69,6 +73,28 @@ func TestConfigErrorSurvivesExtMessages(t *testing.T) {
 	h.settle()
 	if got := h.message(); got != msg {
 		t.Errorf(":mes = %q, want %q", got, msg)
+	}
+}
+
+// :messages は、画面の半分に収まらなければ新しい側を残し、古い側を 1 行にまとめる（#229 のレビューの推奨 3）。
+// :ext sync の失敗も履歴に残る（推奨 6）。
+func TestMessagesKeepsNewest(t *testing.T) {
+	h := start(t, Config{})
+	h.e.do(func() {
+		for i := range 40 {
+			h.e.noteMessage(ui.Message{Text: fmt.Sprintf("m%d", i+1), Level: ui.MessageError})
+		}
+		h.e.extSyncFinished(extSyncResult{err: errors.New("boom")})
+	})
+	h.keys("<CR>:messages<CR>")
+	h.settle()
+	msg := h.message()
+	lines := strings.Split(msg, "\n")
+	var height int
+	h.e.do(func() { height = h.e.renderer.Height })
+	if len(lines) > max(height/2, 2) || !strings.HasPrefix(lines[0], "（前の ") ||
+		lines[len(lines)-1] != "拡張機能の取得に失敗しました: boom" || lines[len(lines)-2] != "m40" {
+		t.Errorf("height = %d, :messages =\n%s", height, msg)
 	}
 }
 

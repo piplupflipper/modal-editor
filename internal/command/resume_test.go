@@ -95,6 +95,7 @@ func TestResumeReplay(t *testing.T) {
 		{"入れ子の再生", "ab\ncd\nef\ngh", "qagDjjq", "qb@aq@b", 2},
 		{"再生のドットリピート", "ab\ncd\nef\ngh", "qagDjjq", "@a.", 2},
 		{"ドットリピート", "ab cd", "ysiw)W", ".", 1},
+		{"待ちの前の変更", "a1\nb2\nc3\nd4", "qaxjysil)jxq", "@a", 2},
 	}
 	for _, tt := range tests {
 		// 問い合わせのたびに待つ実装での結果を、期待値にする。
@@ -131,6 +132,13 @@ func TestResumeReplay(t *testing.T) {
 		}
 		if total != tt.resumes {
 			t.Errorf("%s: ResumeReplay = %d 回, want %d", tt.name, total, tt.resumes)
+		}
+		// 待ちの前と後の変更は 1 つのアンドゥの単位になり、1 回の u で再生の全体を戻す（Vim の @a と同じ。#229 のレビュー）。
+		s.Extensions = inner
+		feedKeys(sync, "u")
+		feedKeys(s, "u")
+		if got, want := s.buf.Text(), sync.buf.Text(); got != want {
+			t.Errorf("%s: u の後の text = %q, want %q", tt.name, got, want)
 		}
 	}
 }
