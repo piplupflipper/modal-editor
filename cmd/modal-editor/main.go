@@ -44,10 +44,6 @@ import (
 // closeTimeout は、終了のときに拡張機能が止まるのを待つ上限である。超えたら残りを SIGKILL で終わらせる（editor.Editor.Close）。
 const closeTimeout = 5 * time.Second
 
-// signalGrace は、端末を子プロセスから取り戻した後も、届いた SIGINT と SIGQUIT を子プロセスへの <C-c> とみなして無視する時間である（仮）。
-// シグナルが受け手の goroutine に届くまでの遅れを見込む（term.Terminal.HandedOverWithin）。
-const signalGrace = time.Second
-
 // wrapLogHandler は、テストだけが設定する。nil でなければ、edit はロガーの Handler をこれで包む。
 // pty の結合のテストが、拡張機能の goroutine（標準エラー出力の記録）の中で panic を起こし、端末が戻ることを確かめるのに使う。
 var wrapLogHandler func(slog.Handler) slog.Handler
@@ -169,7 +165,7 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 	var handedOver atomic.Pointer[term.Terminal]
 	ctx, stop := signalContext(func() bool {
 		t := handedOver.Load()
-		return t != nil && t.HandedOverWithin(signalGrace)
+		return t != nil && t.HandedOver()
 	})
 	defer stop()
 	tm, err := term.Open(in, out, term.Options{})

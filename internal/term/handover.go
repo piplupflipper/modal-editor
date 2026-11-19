@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
 	"golang.org/x/sys/unix"
 	xterm "golang.org/x/term"
@@ -20,9 +19,10 @@ import (
 //
 // # 前面のプロセスグループ
 //
-// :! の子プロセスは、Vim と同じく本体と同じプロセスグループで動かす（端末の <C-c> が子プロセスに届くように）。
-// ただし、子プロセスが対話のシェル（:!sh）なら、シェルは自分のプロセスグループを作り、端末の前面をそれへ移す。
-// その中で起動した modal-editor（待つだけの client。FR-83）のために端末を取り戻すとき（FR-117）、本体は背面のプロセスグループにいて、
+// :! の子プロセスは、シェルのジョブ制御と同じく自分のプロセスグループで起動し、端末の前面をそれにする（internal/client の runCommands）。
+// 端末の <C-c> の SIGINT は子プロセスのプロセスグループにだけ届き、本体には届かない。
+// 子プロセスが自分で前面を変えることもある（:!sh の中のジョブ制御）。
+// どちらの場合も、その間に起動した modal-editor（待つだけの client。FR-83）のために端末を取り戻すとき（FR-117）、本体は背面のプロセスグループにいて、
 // 端末の設定を変えると SIGTTOU で止まり、読むと SIGTTIN で止まる。
 // そのため Reacquire は、前面が自分のプロセスグループでなければ、SIGTTOU を無視して前面を自分へ移し、元の前面を覚える。
 // 次の Release で、覚えた前面へ返す（待つだけの client の終わりを待つ git などのプロセスグループ）。
@@ -81,7 +81,11 @@ func (t *Terminal) Reacquire(screen bool) error {
 			err = fmt.Errorf("term: make raw: %w", rerr)
 		}
 		t.away, t.noScreen = false, true
-		t.awayEnded = time.Now()
+		// 渡している間の端末の大きさの変化（SIGWINCH）は、前面の子プロセスのプロセスグループにだけ届くので、取り戻したら大きさを読み直させる。
+		select {
+		case t.winch <- syscall.SIGWINCH:
+		default:
+		}
 	}
 	if screen && t.noScreen {
 		if _, werr := t.out.WriteString(seqEnter); werr != nil && err == nil {
@@ -100,18 +104,6 @@ func (t *Terminal) HandedOver() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.away
-}
-
-// HandedOverWithin は、端末を子プロセスへ渡しているか、取り戻してから d の間かを返す。
-//
-// 呼び出し側は、渡している間に端末から届いた SIGINT と SIGQUIT（子プロセスへの <C-c> と <C-\>）で終わらないために使う。
-// シグナルは、端末が起こしてから受け手の goroutine が読むまでに遅れがある。子プロセスが <C-c> で終わると、本体はすぐに端末を取り戻すので、
-// 負荷の高いときは、受け手が読んだ時点で HandedOver が既に false になっている（PR #234 の CI で、1 CPU に絞った実行で再現した）。
-// raw モードの間は端末が SIGINT を起こさないので、取り戻した直後に届いた SIGINT は、渡していた間に起きたものとみなせる。
-func (t *Terminal) HandedOverWithin(d time.Duration) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.away || (!t.awayEnded.IsZero() && time.Since(t.awayEnded) < d)
 }
 
 // screenOn は、Draw と SetClipboard が端末へ書いてよいかを返す。呼び出し側が mu を持つ。

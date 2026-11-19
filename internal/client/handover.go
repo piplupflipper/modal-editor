@@ -8,7 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sync"
+	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/protocol"
@@ -26,8 +30,11 @@ import (
 //  3. コマンドが終わったら、Prompt なら「続けるには ENTER を押してください」を出してキーを 1 つ待ち、端末を取り戻して protocol.TerminalDone を返す。
 //     取り戻してあれば（2 の途中で終わった）、問わずに返す
 //
-// 子プロセスは、Vim と同じく本体と同じプロセスグループで動かす。端末の <C-c> は子プロセスにも本体にも届くので、
-// 本体（cmd/modal-editor）は、端末を渡している間の SIGINT と SIGQUIT で終わらない（term.Terminal.HandedOver）。
+// 子プロセスは、シェルのジョブ制御と同じく自分のプロセスグループで起動し、端末の前面をそのプロセスグループにする（runCommands）。
+// 端末の <C-c> と <C-\> の SIGINT と SIGQUIT は子プロセスにだけ届き、本体には届かない（PR #234 の CI で、本体と同じプロセスグループに
+// 置いていたときに、本体が端末を取り戻した後に遅れて読んだ SIGINT で終わったため）。
+// 子プロセスが <C-z> で止まったら、本体も前面を取り戻してから止まり、再開されたら前面を子プロセスへ返して続けさせる（waitStopped）。
+// 子プロセスが終わったら、本体が前面を取り戻す（Handover.EnsureForeground）。
 
 // Handover は、端末を子プロセスへ渡せる端末の口である。*term.Terminal が満たす。
 // Terminal がこれを満たさなければ、client は TerminalRun を断る（TerminalDone の Err）。
@@ -288,7 +295,17 @@ func runCommands(req protocol.TerminalRun, in, out *os.File) (status int, errTex
 		if c.DiscardOutput {
 			cmd.Stdout = nil // /dev/null
 		}
-		err := cmd.Run()
+		// 自分のプロセスグループで起動し、in が本体の制御端末なら、その前面にする（ファイルの doc）。
+		// 前面にするのは子プロセスが exec の前に行う（os/exec の Foreground。子プロセスはシグナルを止めた状態で行うので SIGTTOU で止まらない）。
+		ctty := controllingFd(in)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Foreground: ctty >= 0, Ctty: max(ctty, 0)}
+		err := cmd.Start()
+		if err == nil {
+			if ctty >= 0 {
+				waitStopped(cmd.Process.Pid, ctty)
+			}
+			err = cmd.Wait()
+		}
 		var ee *exec.ExitError
 		switch {
 		case err == nil:
@@ -303,4 +320,54 @@ func runCommands(req protocol.TerminalRun, in, out *os.File) (status int, errTex
 		}
 	}
 	return status, ""
+}
+
+// controllingFd は、f が本体の制御端末なら、そのファイル記述子を返す。そうでなければ（テストの /dev/null、制御端末でない pty）-1 を返す。
+func controllingFd(f *os.File) int {
+	rc, err := f.SyscallConn()
+	if err != nil {
+		return -1
+	}
+	fd := -1
+	_ = rc.Control(func(p uintptr) { fd = int(p) }) // 取れなければ -1 のまま
+	if fd < 0 {
+		return -1
+	}
+	if _, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP); err != nil {
+		return -1
+	}
+	return fd
+}
+
+// cldStopped は、waitid(2) の siginfo の si_code のうち、子プロセスが止まったこと（CLD_STOPPED）を表す値である。
+const cldStopped = 5
+
+// waitStopped は、端末の前面で動く子プロセス pid が終わるまで待つ（刈り取りは呼び出し側の cmd.Wait が行う）。
+// その間に子プロセスが止まったら（<C-z> の SIGTSTP）、シェルのジョブ制御と同じく、端末の前面を本体へ戻してから本体も止まり、
+// 本体を起動したシェルに端末を返す。fg などで本体が再開されたら、前面を子プロセスのプロセスグループへ戻し、SIGCONT で続けさせる。
+// 本体と子プロセスが同じプロセスグループだったときは、<C-z> で両方が一緒に止まっていたので、その動きを保つ。
+func waitStopped(pid, ctty int) {
+	for {
+		var info unix.Siginfo
+		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WSTOPPED|unix.WNOWAIT, nil)
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if err != nil || info.Code != cldStopped {
+			return // 終わった（刈り取らずに残してある）か、待てない
+		}
+		// 止まった知らせを読み捨てる（WNOWAIT のままだと、同じ知らせが何度も返る）。
+		_ = unix.Waitid(unix.P_PID, pid, &info, unix.WSTOPPED, nil) // 読めなくても次の waitid で分かる
+		setForeground(ctty, unix.Getpgrp())
+		_ = unix.Kill(os.Getpid(), unix.SIGSTOP) // 止まれなければ、そのまま子プロセスを続けさせる
+		setForeground(ctty, pid)
+		_ = unix.Kill(-pid, unix.SIGCONT) // 子プロセスが既に終わっていれば届かない
+	}
+}
+
+// setForeground は、端末 fd の前面のプロセスグループを pg にする。背面から移すと SIGTTOU が届くので、その間は SIGTTOU を無視する。
+func setForeground(fd, pg int) {
+	signal.Ignore(syscall.SIGTTOU)
+	defer signal.Reset(syscall.SIGTTOU)
+	_ = unix.IoctlSetPointerInt(fd, unix.TIOCSPGRP, pg) // 移せなければ、端末を使うときに分かる
 }

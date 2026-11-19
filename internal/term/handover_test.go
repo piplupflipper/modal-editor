@@ -76,6 +76,10 @@ func TestReleaseReacquire(t *testing.T) {
 	if raw := ptytest.Termios(t, tty); raw.Lflag&(unix.ICANON|unix.ECHO) != 0 {
 		t.Errorf("Reacquire(false) の後に raw モードでない: lflag=%#x", raw.Lflag)
 	}
+	// 渡している間の大きさの変化は子プロセスにだけ届くので、取り戻したら大きさを読み直させる。
+	if ev := nextEvent(t, tm); !ev.Resize || ev.Width != 80 || ev.Height != 24 {
+		t.Errorf("取り戻した後のイベント = %+v, want 80x24 のリサイズ", ev)
+	}
 	write("\r")
 	wantKeys(t, tm, "<CR>")
 	if err := tm.Reacquire(true); err != nil {
