@@ -130,7 +130,7 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 
 配色は、次の順に探す。
 
-1. 設定ファイルと同じディレクトリの `colors/<名前>.jsonc`（`~/.config/vi-imitation/colors/<名前>.jsonc` など）
+1. 設定ファイルと同じディレクトリの `colors/<名前>.jsonc`（`$XDG_CONFIG_HOME/vi-imitation/colors/<名前>.jsonc`。未設定なら `~/.config/vi-imitation/colors/<名前>.jsonc`）。設定ファイルが symlink でも、symlink の先ではなく symlink を置いた側のディレクトリを探す
 2. 本体に同梱した配色
 
 同じ名前なら 1 のファイルを使うので、同梱の配色を同じ名前のファイルで置き換えられる。

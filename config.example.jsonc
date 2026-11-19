@@ -13,10 +13,12 @@
     // 端末の背景を透過させる前提の調整
     // iceberg の NonText（#242940）は透過した背景では見えないので、LineNr の文字の色（#444b71）を使う
     "nontext": { "fg": "#444b71" },
-    // 浮かべる窓と、メッセージと印の列には背景の色を付けない（iceberg の背景の色が、透過した背景の上で帯に見えるため）
+    // 浮かべる窓、メッセージ、印の列、タブの行のいまのタブには背景の色を付けない
+    // （iceberg の背景の色が、透過した背景の上で帯に見えるため）。文字の色は iceberg と同じにする
     "popup": { "fg": "#c6c8d1" },
-    "message.warning": { "fg": "#e2a478" },
-    "message.error": { "fg": "#e27878", "bold": true },
+    "message.warning": { "fg": "#e27878" },
+    "message.error": { "fg": "#e27878" },
+    "tabline.selected": { "fg": "#9a9ca5" },
     "sign.diagnostic.error": { "fg": "#e27878" },
     "sign.diagnostic.warning": { "fg": "#e2a478" },
     "sign.diagnostic.info": { "fg": "#89b8c2" },
