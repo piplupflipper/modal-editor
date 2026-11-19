@@ -296,6 +296,7 @@ func (e *Editor) closeFloat(notify bool) {
 		e.closeBufferState(f.bs)
 	}
 	if notify && f.ext != "" {
+		e.noteViewClient(f)
 		if err := e.host.Notify(f.ext, ext.MethodViewClosed, ext.ViewClosedParams{View: ext.ViewID(f.id)}); err != nil {
 			e.log.Warn("view/closed を送れない", "extension", f.ext, "err", err)
 		}
@@ -537,6 +538,7 @@ func (e *Editor) notifyView(f *floatState, method string, params any) {
 	if f.ext == "" {
 		return
 	}
+	e.noteViewClient(f)
 	if err := e.host.Notify(f.ext, method, params); err != nil {
 		e.log.Warn("ポップアップの知らせを送れない", "extension", f.ext, "method", method, "err", err)
 	}
@@ -662,6 +664,7 @@ func initExpanded(items []ext.ViewItem, prev, m map[string]bool) {
 // setFloatContent は、ポップアップ f のバッファの中身を部品 c にする。
 // 一覧と木では、カーソルのあった項目の ID が c にもあればその行へカーソルを置き、無ければ行の番号を行数に収まる範囲で保つ。
 // 木の開閉の状態は、前の木にあった ID の項目はそのまま保ち、新しい ID の項目は c の Expanded にする（PR #242 のレビューの必須 2）。
+// テキストでは、カーソルが最後の行にあれば新しい中身の最後の行へ置く（末尾を追う）。
 // 中身を替えるのは、編集の禁止の判定を通らない読み直しの入り口で行う（基本設計 4.6 の「ファイルでないバッファの中身の更新」）。
 func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent) {
 	if c.Kind == ext.ViewTree {
@@ -675,10 +678,16 @@ func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent) {
 	if cursor.Line < len(f.rows) {
 		curID = f.rows[cursor.Line].id
 	}
+	// テキストで、カーソルが最後の行にあれば（末尾を見ていれば）、書き足した後も最後の行へ置き、表示が末尾を追うようにする
+	// （デバッグ対象の出力と ACP の返答のペイン。FR-108、FR-111。PR #248 のレビューの推奨 2）。
+	follow := f.kind == floatText && cursor.Line >= f.bs.buf.LineCount()-1
 	lines, rows, decs := floatLines(c, f.expanded)
 	f.rows = rows
 	e.reload(f.bs, buffer.New(strings.Join(lines, "\n")))
 	line := min(cursor.Line, f.bs.buf.LineCount()-1)
+	if follow {
+		line = f.bs.buf.LineCount() - 1
+	}
 	if i := slices.IndexFunc(rows, func(r floatRow) bool { return r.id == curID }); curID != "" && i >= 0 {
 		// 一覧と木では、カーソルのあった項目の行へカーソルを置く（行が増減しても同じ項目を指す）。
 		line = i

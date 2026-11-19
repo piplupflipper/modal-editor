@@ -251,6 +251,8 @@ type Editor struct {
 	// extClient は、拡張機能の ID から、その拡張機能へ最後に問い合わせ（command/execute、provider/invoke など）を始めた client への表である。
 	// 拡張機能が後から届ける editor/open、message/show、choice/ask を、その client に出すのに使う（extView。基本設計 1.2）。
 	extClient map[string]*clientView
+	// extFromPane は、拡張機能の ID のうち、最後の操作がペインの部品の client のキーだったものの集合である（noteViewClient、focusAfterPane）。
+	extFromPane map[string]bool
 	// attachCh は、Attach が渡す新しい client を、イベントループへ送る。
 	attachCh chan attachRequest
 	// goneCh は、端末の入力が閉じた client を、イベントループへ送る（forwardInput）。
@@ -454,29 +456,30 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		return nil, err
 	}
 	e := &Editor{
-		cfg:        cfg,
-		log:        lg,
-		host:       host,
-		mcpSocket:  sock,
-		keys:       newKeyQueue(),
-		intrCh:     make(chan struct{}, 1),
-		shellDone:  make(chan shellOutcome, 1),
-		termCh:     make(chan termResult),
-		waitCh:     make(chan waitRequest),
-		waitGoneCh: make(chan *waiter),
-		resizeCh:   make(chan struct{}, 1),
-		inspect:    make(chan func()),
-		decoDone:   make(chan decoBuilt),
-		checkDone:  make(chan []fileResult),
-		attachCh:   make(chan attachRequest),
-		goneCh:     make(chan *clientView),
-		keyFireCh:  make(chan keyFire),
-		extClient:  map[string]*clientView{},
-		finished:   make(chan struct{}),
-		diff:       newDiffState(),
-		outputs:    map[outputKey][]string{},
-		nextID:     1,
-		extParts:   map[string]ui.ExtPart{},
+		cfg:         cfg,
+		log:         lg,
+		host:        host,
+		mcpSocket:   sock,
+		keys:        newKeyQueue(),
+		intrCh:      make(chan struct{}, 1),
+		shellDone:   make(chan shellOutcome, 1),
+		termCh:      make(chan termResult),
+		waitCh:      make(chan waitRequest),
+		waitGoneCh:  make(chan *waiter),
+		resizeCh:    make(chan struct{}, 1),
+		inspect:     make(chan func()),
+		decoDone:    make(chan decoBuilt),
+		checkDone:   make(chan []fileResult),
+		attachCh:    make(chan attachRequest),
+		goneCh:      make(chan *clientView),
+		keyFireCh:   make(chan keyFire),
+		extClient:   map[string]*clientView{},
+		extFromPane: map[string]bool{},
+		finished:    make(chan struct{}),
+		diff:        newDiffState(),
+		outputs:     map[outputKey][]string{},
+		nextID:      1,
+		extParts:    map[string]ui.ExtPart{},
 	}
 	e.statusOwners = buildStatusOwners(cfg.Extensions)
 	e.fileType = defaultFileTypes()

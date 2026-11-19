@@ -222,6 +222,15 @@ func runFakeExt(mode string) int {
 				_ = s.UpdateView(ext.ViewUpdateParams{View: e.View, Component: ext.ViewComponent{
 					Kind: ext.ViewList, Items: []ext.ViewItem{{ID: "new", Label: "updated"}},
 				}})
+			case e.Kind == server.ViewSelected && e.Item == "open":
+				// ファイラと同じく、選んだファイルを editor/open で開く（#244 の PR #248 のレビューの必須）。フックの中では応答を待てない。
+				// 開くのは、拡張機能の作業ディレクトリ（宣言ファイルのディレクトリ）の opened.txt である。
+				go func() {
+					wd, _ := os.Getwd()
+					if _, err := s.OpenEditor(hostCtx, ext.EditorOpenParams{Path: filepath.Join(wd, "opened.txt"), Focus: true}); err != nil {
+						_ = s.ShowMessage(ext.MessageError, "open: "+err.Error())
+					}
+				}()
 			}
 		})
 		s.Command("fake.jump", func(_ context.Context, b *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
@@ -475,6 +484,10 @@ func fakePopup(kind string) ext.PopupOpenParams {
 		}}}
 	case "input":
 		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewInput, Title: "name", Text: "old"}}
+	case "files":
+		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewList, Title: "files", Items: []ext.ViewItem{
+			{ID: "open", Label: "opened.txt"},
+		}}}
 	case "text":
 		return ext.PopupOpenParams{Component: ext.ViewComponent{
 			Kind: ext.ViewText, Text: "alpha beta\ngamma",

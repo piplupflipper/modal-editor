@@ -93,13 +93,16 @@ var ErrUnknownView = errors.New("editor: unknown view for a component client")
 // AttachComponent は、部品 view を描く部品の client の端末 term を繋ぐ（基本設計 1.2。FR-67、FR-115）。
 // Run を動かしている間に、他の goroutine から呼ぶ。イベントループが、部品を開いた元の client を探し、以後 term のキーを
 // 元の client の操作として処理し、部品を term の画面に描く。
-// 部品が無いか、既に繋いでいれば ErrUnknownView を、Run が終わっていれば ErrStopped を返す。
+// pane は、term がペインの部品の client（protocol.KindPane）であることを表す。ペインの部品にはペインの部品の client だけを、
+// 中央のポップアップにはポップアップの部品の client だけを繋ぐ（PR #248 のレビューの推奨 3。ペインを開けずに中央のポップアップへ移した後に、
+// 遅れて開いたペインの部品の client が繋がないため）。
+// 部品が無いか、種類が合わないか、既に繋いでいれば ErrUnknownView を、Run が終わっていれば ErrStopped を返す。
 // term は、部品が閉じるか（ClientExiter で終わりを知らせる）、term の入力が閉じるか、Run が戻るまで使う。
 //
 // req: FR-67, FR-115
-func (e *Editor) AttachComponent(term Terminal, view uint64) error {
+func (e *Editor) AttachComponent(term Terminal, view uint64, pane bool) error {
 	done := make(chan error, 1)
-	f := func() { done <- e.attachComponent(term, view) }
+	f := func() { done <- e.attachComponent(term, view, pane) }
 	select {
 	case e.inspect <- f:
 	case <-e.finished:
@@ -114,16 +117,16 @@ func (e *Editor) AttachComponent(term Terminal, view uint64) error {
 }
 
 // attachComponent は、イベントループで、AttachComponent の部品の client を繋ぐ。
-func (e *Editor) attachComponent(term Terminal, view uint64) error {
+func (e *Editor) attachComponent(term Terminal, view uint64, pane bool) error {
 	for _, c := range e.clients {
 		if c.detached {
 			continue
 		}
 		v := e.viewOf(c)
 		var f *floatState
-		if g := v.float; g != nil && g.center && g.id == view {
+		if g := v.float; !pane && g != nil && g.center && g.id == view {
 			f = g
-		} else if i := slices.IndexFunc(v.panes, func(p *floatState) bool { return p.id == view }); i >= 0 {
+		} else if i := slices.IndexFunc(v.panes, func(p *floatState) bool { return p.id == view }); pane && i >= 0 {
 			f = v.panes[i]
 		}
 		if f == nil {
@@ -248,6 +251,46 @@ func (e *Editor) leavePane() {
 	if base != nil {
 		e.switchFocus(base)
 	}
+}
+
+// noteViewClient は、部品 f の持ち主の拡張機能へ利用者の操作の知らせ（view/select、view/key、view/expand、input/change、view/closed）を
+// 送る前に、その拡張機能が後から届けるもの（editor/open、message/show など）の届け先を、部品を開いた client（読み込んでいる client）にする
+// （extView。基本設計 1.2 の「部品の client の中の選択の結果は、元の client の操作として扱う」。PR #248 のレビューの必須）。
+// ペインを開いた後に別の client がその拡張機能を使っても、ペインで選んだファイルはペインを開いた client のタブに開く。
+// ペインの部品の client のキーで送るときは、続く editor/open の focus でそのペインへ端末多重化ソフトのフォーカスを戻す印を立てる（focusAfterPane）。
+func (e *Editor) noteViewClient(f *floatState) {
+	if f.ext == "" || e.view == nil {
+		return
+	}
+	e.extClient[f.ext] = e.view
+	if f.pane && f == e.paneActive {
+		e.extFromPane[f.ext] = true
+	} else {
+		delete(e.extFromPane, f.ext)
+	}
+}
+
+// focusAfterPane は、拡張機能 extID の editor/open（focus が true）を、読み込んでいる client のタブに開いた後に呼ぶ。
+// その拡張機能への最後の操作がペインの部品の client のキー（ファイラで選んだなど）なら、端末多重化ソフトのフォーカスを
+// そのペインから、開いたタブの client のペインへ移す（FR-105。PR #248 のレビューの推奨 1）。拡張機能は端末多重化ソフトを触れないためである（FR-115）。
+//
+// req: FR-115
+func (e *Editor) focusAfterPane(extID string) {
+	if !e.extFromPane[extID] {
+		return
+	}
+	delete(e.extFromPane, extID)
+	to := e.view.info.Pane
+	if e.cfg.FocusPane == nil || to == "" {
+		return
+	}
+	focus, log := e.cfg.FocusPane, e.log
+	go func() {
+		defer e.recoverPanic()
+		if err := focus(to, to); err != nil {
+			log.Warn("ペインの部品から元の client のペインへフォーカスを移せない", "pane", to, "err", err)
+		}
+	}()
 }
 
 // requestPopup は、読み込んでいる client に開いた中央のポップアップ f を、端末多重化ソフトのポップアップに出すよう頼む（FR-67）。

@@ -2,11 +2,16 @@ package editor
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/piplupflipper/modal-editor/ext"
+	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/editcmd"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
@@ -61,11 +66,12 @@ type compPeer struct {
 }
 
 // attachComponent は、部品 view を描く部品の client を繋ぐ。
-func (h *harness) attachComponent(view uint64) *compPeer {
+// pane なら、ペインの部品の client として繋ぐ。
+func (h *harness) attachComponent(view uint64, pane bool) *compPeer {
 	h.t.Helper()
 	term := &exitTerm{fakeTerm: newFakeTerm()}
 	h.peers = append(h.peers, term.fakeTerm)
-	if err := h.e.AttachComponent(term, view); err != nil {
+	if err := h.e.AttachComponent(term, view, pane); err != nil {
 		h.t.Fatalf("AttachComponent(%d) = %v", view, err)
 	}
 	return &compPeer{h: h, term: term}
@@ -118,8 +124,12 @@ func TestComponentPopup(t *testing.T) {
 	// 部品の client が繋ぐまでは、元の client の画面の中央に描く。
 	h.eventually("元の client の画面のポップアップ", func() bool { return strings.Contains(peer.term.screen(), "close me") })
 
-	comp := h.attachComponent(call.view)
-	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, call.view); !errors.Is(err, ErrUnknownView) {
+	// ペインの部品の client は、中央のポップアップに繋がない（PR #248 のレビューの推奨 3）。
+	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, call.view, true); !errors.Is(err, ErrUnknownView) {
+		t.Errorf("pane AttachComponent to a popup = %v, want ErrUnknownView", err)
+	}
+	comp := h.attachComponent(call.view, false)
+	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, call.view, false); !errors.Is(err, ErrUnknownView) {
 		t.Errorf("second AttachComponent = %v, want ErrUnknownView", err)
 	}
 	comp.waitScreen("close me")
@@ -146,7 +156,7 @@ func TestComponentPopup(t *testing.T) {
 	peer.keys(":fake.popup list<CR>")
 	h.eventually("2 つ目の OpenPopup", func() bool { c, _ := calls.last(false); return c.view != call.view })
 	call, _ = calls.last(false)
-	comp = h.attachComponent(call.view)
+	comp = h.attachComponent(call.view, false)
 	comp.waitScreen("close me")
 	comp.term.closeInput()
 	h.waitMessage("kind=0 item= key=")
@@ -199,7 +209,10 @@ func TestComponentPane(t *testing.T) {
 	if floating {
 		t.Errorf("pane/open opened a popup on the client")
 	}
-	comp := h.attachComponent(call.view)
+	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, call.view, false); !errors.Is(err, ErrUnknownView) {
+		t.Errorf("popup AttachComponent to a pane = %v, want ErrUnknownView", err)
+	}
+	comp := h.attachComponent(call.view, true)
 	comp.waitScreen("▸ dir")
 
 	// ペインで開いた木の <CR> は開閉する（view/expand）。<Esc> では閉じない。
@@ -249,7 +262,7 @@ func TestComponentPane(t *testing.T) {
 	peer.keys(":fake.pane list<CR>")
 	h.eventually("2 つ目の OpenPane", func() bool { c, _ := calls.last(true); return c.view != call.view })
 	call, _ = calls.last(true)
-	comp = h.attachComponent(call.view)
+	comp = h.attachComponent(call.view, true)
 	comp.waitScreen("close me")
 	comp.term.closeInput()
 	h.waitMessage("kind=0 item= key=")
@@ -262,10 +275,104 @@ func TestComponentPane(t *testing.T) {
 	peer.keys(":fake.pane list<CR>")
 	h.eventually("3 つ目の OpenPane", func() bool { c, _ := calls.last(true); return c.view != call.view })
 	call, _ = calls.last(true)
-	comp = h.attachComponent(call.view)
+	comp = h.attachComponent(call.view, true)
 	comp.waitScreen("close me")
 	peer.keys(":q!<CR>")
 	h.eventually("元の client が終わったときの部品の client の終わり", func() bool { return len(comp.term.exits()) == 1 })
+}
+
+// ペインで選んだ後に拡張機能が送る editor/open は、その拡張機能を後から別の client が使っていても、ペインを開いた client のタブに開く
+// （基本設計 1.2。FR-105。PR #248 のレビューの必須）。ペインの部品の client のキーで選んで開いたら、
+// 端末多重化ソフトのフォーカスをペインからその client のペインへ移す（推奨 1）。
+//
+// req: FR-115
+func TestPaneSelectionGoesToOpener(t *testing.T) {
+	var calls muxCalls
+	cfg := Config{Extensions: fakeSpecs(t)}
+	if err := os.WriteFile(filepath.Join(cfg.Extensions[0].Dir, "opened.txt"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls.config(&cfg)
+	var mu sync.Mutex
+	var focused [][2]string
+	cfg.FocusPane = func(from, pane string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		focused = append(focused, [2]string{from, pane})
+		return nil
+	}
+	h := start(t, cfg)
+	a := h.attach(ClientInfo{ID: 2, Pane: "%9"})
+	a.keys(":fake.pane files<CR>")
+	h.eventually("OpenPane", func() bool { _, ok := calls.last(true); return ok })
+	call, _ := calls.last(true)
+	comp := h.attachComponent(call.view, true)
+	comp.waitScreen("opened.txt")
+
+	// 最初の client（端末多重化ソフトの外）で同じ拡張機能を使い、拡張機能へ最後に問い合わせた client にする。
+	h.keys(":fake.popup list<CR>")
+	h.eventually("最初の client のポップアップ", func() bool { return h.e.viewOf(h.clientOf(h.term)).float != nil })
+	h.keys("<Esc>")
+	h.settle()
+
+	comp.keys("<CR>")
+	t.Cleanup(func() {
+		if t.Failed() {
+			h.e.do(func() {
+				for _, m := range h.e.msgHistory {
+					t.Logf("history: %s", m.Text)
+				}
+				for _, b := range h.e.bufs {
+					t.Logf("buf %d %q owner=%v", b.id, b.path, b.owner != nil)
+				}
+			})
+		}
+	})
+	h.eventually("ペインを開いた client のタブ", func() bool {
+		return strings.HasSuffix(h.e.viewOf(h.clientOf(a.term)).cur.path, "opened.txt")
+	})
+	var firstPath string
+	h.e.do(func() { firstPath = h.e.viewOf(h.clientOf(h.term)).cur.path })
+	if strings.HasSuffix(firstPath, "opened.txt") {
+		t.Errorf("the file opened in the client that used the extension last")
+	}
+	h.eventually("フォーカスの移動", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(focused) == 1 && focused[0] == [2]string{"%9", "%9"}
+	})
+
+	// ペインで :q を打ったときの view/closed の後のメッセージも、ペインを開いた client に出る。
+	comp.keys(":q<CR>")
+	h.eventually("ペインを開いた client の view/closed", func() bool {
+		return strings.Contains(h.e.viewOf(h.clientOf(a.term)).message.Text, "kind=0")
+	})
+}
+
+// テキストの部品は、カーソルが最後の行にあれば、view/update で書き足した後も最後の行へカーソルを置き、表示が末尾を追う
+// （PR #248 のレビューの推奨 2）。最後の行より上を見ていれば、行の番号を保つ。
+func TestTextFollowsTail(t *testing.T) {
+	h := start(t, Config{})
+	text := func(n int) ext.ViewComponent {
+		lines := make([]string, n)
+		for i := range lines {
+			lines[i] = fmt.Sprintf("line %d", i+1)
+		}
+		return ext.ViewComponent{Kind: ext.ViewText, Text: strings.Join(lines, "\n")}
+	}
+	var got []int
+	h.e.do(func() {
+		f := h.e.newComponentFloat(text(1), "")
+		h.e.setFloatContent(f, text(3))
+		got = append(got, f.bs.state.Cursor().Line)
+		f.bs.state.SetCursor(buffer.Position{Line: 1})
+		h.e.setFloatContent(f, text(5))
+		got = append(got, f.bs.state.Cursor().Line)
+		h.e.closeBufferState(f.bs)
+	})
+	if !slices.Equal(got, []int{2, 1}) {
+		t.Errorf("cursor lines = %v, want [2 1]", got)
+	}
 }
 
 // 端末多重化ソフトの外（client のペインを知らない）と、ペインを開けなかったときは、pane/open の部品を、

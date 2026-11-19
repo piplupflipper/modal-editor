@@ -277,7 +277,8 @@ type PaneOpenResult struct {
 // ViewUpdateParams は、view/update の params である。
 // 本体は、部品の種類が開いたときと同じ場合だけ置き換える。
 // 一覧と木では、カーソルのあった項目の ID が新しい中身にもあれば、その項目の行へカーソルを置く。無ければ、行の番号を行数に収まる範囲で保つ。
-// テキストと入力の行では、行の番号を保つ。木の開閉の状態は、項目の ID ごとに保つ（ViewItem.Expanded）。
+// テキストと入力の行では、行の番号を保つ。ただしテキストでカーソルが最後の行にあれば、新しい中身の最後の行へ置く
+// （書き足した出力の末尾を追う。#244）。木の開閉の状態は、項目の ID ごとに保つ（ViewItem.Expanded）。
 type ViewUpdateParams struct {
 	View      ViewID        `json:"view"`
 	Component ViewComponent `json:"component"`

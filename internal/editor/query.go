@@ -130,6 +130,7 @@ func (e *Editor) query(bs *bufferState, ref editcmd.Ref, method string, params a
 	}
 	// この拡張機能が後から届ける editor/open などは、問い合わせを始めた client に出す（extView。基本設計 1.2）。
 	e.extClient[ref.Extension] = e.view
+	delete(e.extFromPane, ref.Extension)
 	e.tagSeq++
 	tag := queryTag(e.tagSeq)
 	timeout := e.syncTimeout()

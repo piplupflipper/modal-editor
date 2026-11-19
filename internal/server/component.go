@@ -124,7 +124,7 @@ func (s *Server) serveComponent(a *acceptor, conn protocol.ServerConn, h protoco
 	t := s.newTerm()
 	t.attach(editor.ClientID(s.nextID.Add(1)), conn, h)
 	s.track(t)
-	if err := s.ed.AttachComponent(t, h.View); err != nil {
+	if err := s.ed.AttachComponent(t, h.View, h.Kind == protocol.KindPane); err != nil {
 		s.log.Info("部品の client を断った", "kind", h.Kind, "view", h.View, "err", err)
 		t.end("")
 		return
