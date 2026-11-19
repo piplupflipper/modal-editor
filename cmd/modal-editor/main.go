@@ -376,6 +376,8 @@ func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, re
 	}
 	w, h := tm.Size()
 	hello := clientHello(os.Getenv, abs, readOnly, w, h)
+	// 見比べの待ちの印は Hello で知らせたら要らない。この client が端末を渡して起動する子プロセス（:! のシェル）に残さない（PR #247 の再レビューの推奨 2）。
+	_ = os.Unsetenv(editor.EnvSplit) // 外せなくても、印は server が照らし合わせ済みの値なので害は無い
 	hello.Features = client.Features(tm)
 	first, err := client.Start(conn, hello)
 	if err != nil {

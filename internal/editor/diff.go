@@ -75,6 +75,8 @@ type diffPending struct {
 	buf *bufferState
 	// swap は、見比べの左の側（diff.A）を buf にすることを表す（diff/start の A がタブでなかった）。
 	swap bool
+	// ext は、diff/start を送った拡張機能の ID である。:diffsplit では空。待ちを捨てるときは、この拡張機能が作った buf だけを閉じる。
+	ext string
 	// token は、新しい client を見分ける印である。server は、新しい client を環境変数 EnvSplit にこの値を入れて起動し、
 	// client は Hello の Env でそれを知らせる（ClientInfo.Env。attach が取り出して外す）。
 	token string
@@ -301,7 +303,7 @@ func (e *Editor) dropPending(p *diffPending) {
 	if e.diff.pending == p {
 		e.diff.pending = nil
 	}
-	e.discardCreated(p.buf)
+	e.discardCreated(p.buf, p.ext)
 }
 
 // diffAttached は、繋いだ client c が、:diffsplit か diff/start で分割したペインの client（印 token が待ちのものと同じ）なら、
@@ -327,7 +329,7 @@ func (e *Editor) diffAttached(c *clientView, token string) {
 		}
 	}
 	if other == nil || p.from.owner == nil || p.from.owner == c || !slices.Contains(e.bufs, p.from) {
-		e.discardCreated(p.buf)
+		e.discardCreated(p.buf, p.ext)
 		return
 	}
 	if p.swap {

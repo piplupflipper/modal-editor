@@ -97,21 +97,22 @@ func (e *Editor) bufferDisposeRequest(ev *exthost.BufferDisposeRequest) {
 	_ = ev.Reply()
 }
 
-// discardCreated は、bs が buffer/create で作ったバッファで、まだどのタブでもなければ閉じる（FR-64）。nil なら何もしない。
+// discardCreated は、bs が拡張機能 extID の buffer/create で作ったバッファで、まだどのタブでもなければ閉じる（FR-64）。
+// nil か、他の拡張機能が作ったバッファなら何もしない（diff/start に他の拡張機能のバッファを渡しても、そのバッファは閉じない）。
 //
 // req: FR-64
-func (e *Editor) discardCreated(bs *bufferState) {
-	if bs != nil && bs.creator != "" && bs.owner == nil && slices.Contains(e.bufs, bs) {
+func (e *Editor) discardCreated(bs *bufferState, extID string) {
+	if bs != nil && extID != "" && bs.creator == extID && bs.owner == nil && slices.Contains(e.bufs, bs) {
 		e.closeBufferState(bs)
 	}
 }
 
 // diffStartRequest は、diff/start を処理する。始められなければ、まだタブでない作ったバッファを閉じ、画面に出せる日本語の誤りで応答する。
 func (e *Editor) diffStartRequest(ev *exthost.DiffStartRequest) {
-	res, err := e.diffStart(ev.Params)
+	res, err := e.diffStart(ev.Extension, ev.Params)
 	if err != nil {
-		e.discardCreated(e.findBuffer(ev.Params.A))
-		e.discardCreated(e.findBuffer(ev.Params.B))
+		e.discardCreated(e.findBuffer(ev.Params.A), ev.Extension)
+		e.discardCreated(e.findBuffer(ev.Params.B), ev.Extension)
 		_ = ev.ReplyError(err)
 		return
 	}
@@ -124,7 +125,8 @@ var errNoTab = errors.New("見比べる 2 つのバッファのどちらもタ�
 // diffStart は、diff/start の params の 2 つのバッファの見比べを始める（ext.DiffStartParams の doc の場合分け）。
 //
 // req: FR-99
-func (e *Editor) diffStart(p ext.DiffStartParams) (ext.DiffStartResult, error) {
+// extID は diff/start を送った拡張機能で、待ちを捨てるときに閉じてよいのは、その拡張機能が作ったバッファだけである。
+func (e *Editor) diffStart(extID string, p ext.DiffStartParams) (ext.DiffStartResult, error) {
 	a, b := e.findBuffer(p.A), e.findBuffer(p.B)
 	for i, bs := range []*bufferState{a, b} {
 		id := []ext.BufferID{p.A, p.B}[i]
@@ -150,7 +152,7 @@ func (e *Editor) diffStart(p ext.DiffStartParams) (ext.DiffStartResult, error) {
 		from, other, swap = b, a, true
 	}
 	c := from.owner
-	if err := e.splitForDiff(c, "", &diffPending{from: from, buf: other, swap: swap}); err != nil {
+	if err := e.splitForDiff(c, "", &diffPending{from: from, buf: other, swap: swap, ext: extID}); err != nil {
 		return ext.DiffStartResult{}, err
 	}
 	text := fmt.Sprintf("%s を別のペインで開いて見比べます", e.bufferName(other))

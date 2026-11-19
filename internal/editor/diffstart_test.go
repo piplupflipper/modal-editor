@@ -225,6 +225,19 @@ func TestDiffStartOutsideMux(t *testing.T) {
 	if n := h.diffSessions(); n != 0 {
 		t.Errorf("組 = %d", n)
 	}
+
+	// 他の拡張機能が作ったバッファを diff/start に渡して断られても、そのバッファは閉じない（PR #247 の再レビューの推奨 1）。
+	var id uint64
+	h.e.do(func() {
+		bs := h.e.newBuffer(buffer.New("x"), "", "")
+		bs.title, bs.creator = "others", "another"
+		id = uint64(bs.id)
+	})
+	h.keys(fmt.Sprintf(":fake.headdiff %d<CR>", id))
+	h.waitMessage("端末多重化ソフト")
+	if _, _, n := h.createdBuffer("others"); n != 1 {
+		t.Errorf("他の拡張機能が作ったバッファを閉じた（残りは %d 個）", n)
+	}
 }
 
 // ペインを分割できなかったら、待ちを捨て、作ったバッファを閉じる（FR-64）。
