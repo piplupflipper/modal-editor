@@ -1,0 +1,71 @@
+// 同梱の配色 iceberg（https://github.com/cocopon/iceberg.vim。MIT License、Copyright (c) 2014 cocopon）。
+// 設定ファイルに "colorscheme": "iceberg" と書くと使う（FR-125）。書式は設定の colors の値と同じである。
+//
+// 値は iceberg.vim のコミット 23835d5ed696436f716cbfdb56a93a7850fe3b18 の次のファイルから写した。
+// - colors/iceberg.vim の dark の側（&background が light でない側）のハイライトグループの guifg、guibg、guisp と gui の飾り
+// - ステータス行の部品の色は、autoload/lightline/colorscheme/iceberg.vim の dark の側のパレット
+// 端末の背景を透過させる前提の調整は入れていない。本体には本文の文字と背景の色を指す名前が無いので、Normal の色は写していない。
+// iceberg.vim に元の色が無い名前（message.info、popup.border、statusline.mode、statusline.filetype、statusline.recording、
+// statusline.ext、statusline.mode.commandline、sign.executionPoint、sign.breakpoint、sign.breakpointUnverified）は書いていない。
+// 書いていない名前は本体の既定の色になる。
+{
+  // 構文の色。本体の名前は tree-sitter の捕捉の名前に当たるので、Neovim の tree-sitter のグループ（TS...）から写した
+  "comment": { "fg": "#6b7089" }, // TSComment → Comment
+  "keyword": { "fg": "#84a0c6" }, // TSKeyword → Statement
+  "string": { "fg": "#89b8c2" }, // TSString → String
+  "number": { "fg": "#a093c7" }, // TSNumber → Constant
+  "constant": { "fg": "#a093c7" }, // TSConstant → Constant
+  "function": { "fg": "#a3adcb" }, // TSFunction
+  "type": { "fg": "#84a0c6" }, // TSType → Type
+  "variable": { "fg": "#c6c8d1" }, // TSVariable → icebergNormalFg
+  "operator": { "fg": "#c6c8d1" }, // TSOperator → icebergNormalFg
+  "punctuation": { "fg": "#c6c8d1" }, // TSPunctDelimiter、TSPunctBracket → icebergNormalFg
+
+  // 画面の部品
+  "visual": { "bg": "#272c42" }, // Visual
+  "nontext": { "fg": "#242940" }, // NonText
+  "specialkey": { "fg": "#515e97" }, // SpecialKey（Neovim の側。Vim では Whitespace へのリンク）
+  "message.warning": { "fg": "#e27878", "bg": "#161821" }, // WarningMsg
+  "message.error": { "fg": "#e27878", "bg": "#161821" }, // ErrorMsg
+  "popup": { "fg": "#c6c8d1", "bg": "#3d425b" }, // Pmenu
+  "popup.selected": { "fg": "#eff0f4", "bg": "#5b6389" }, // PmenuSel
+  "finder.match": { "fg": "#e2a478" }, // CtrlPMatch、deniteMatchedChar → Title
+
+  // ステータス行
+  "statusline": { "fg": "#818596", "bg": "#17171b", "reverse": true }, // StatusLine
+  "statuslinenc": { "fg": "#0f1117", "bg": "#3e445e", "reverse": true }, // StatusLineNC
+  // 部品の色は lightline のパレットの dark の側。本体の既定の並び（左は mode、name、modified、readonly、
+  // 右は recording、ruler、position）を lightline の区画に当てた。左の 1 つ目と右の端は col_normal と col_edge、
+  // その内側は col_gradient、モードごとの左の 1 つ目は col_insert と col_visual である
+  "statusline.mode.normal": { "fg": "#17171b", "bg": "#818596" }, // p.normal.left[0]（col_normal）
+  "statusline.mode.insert": { "fg": "#161821", "bg": "#84a0c6" }, // p.insert.left[0]（col_insert）
+  "statusline.mode.visual": { "fg": "#161821", "bg": "#b4be82" }, // p.visual.left[0]（col_visual）
+  "statusline.name": { "fg": "#6b7089", "bg": "#2e313f" }, // p.normal.left[1]（col_gradient）
+  "statusline.modified": { "fg": "#6b7089", "bg": "#2e313f" }, // p.normal.left[1]（col_gradient）
+  "statusline.readonly": { "fg": "#6b7089", "bg": "#2e313f" }, // p.normal.left[1]（col_gradient）
+  "statusline.ruler": { "fg": "#6b7089", "bg": "#2e313f" }, // p.normal.right[1]（col_gradient）
+  "statusline.position": { "fg": "#17171b", "bg": "#818596" }, // p.normal.right[0]（col_edge）
+
+  // タブの行
+  "tabline": { "fg": "#3e445e", "bg": "#0f1117" }, // TabLine
+  "tabline.selected": { "fg": "#9a9ca5", "bg": "#161821" }, // TabLineSel
+  "tabline.fill": { "fg": "#0f1117", "bg": "#3e445e", "reverse": true }, // TabLineFill
+
+  // 診断
+  "diagnostic.error": { "sp": "#e27878", "underline": true }, // DiagnosticUnderlineError
+  "diagnostic.warning": { "sp": "#e2a478", "underline": true }, // DiagnosticUnderlineWarn
+  "diagnostic.info": { "sp": "#89b8c2", "underline": true }, // DiagnosticUnderlineInfo
+  "diagnostic.hint": { "sp": "#6b7089", "underline": true }, // DiagnosticUnderlineHint
+
+  // 印の列
+  "sign.diagnostic.error": { "fg": "#e27878", "bg": "#1e2132" }, // DiagnosticSignError
+  "sign.diagnostic.warning": { "fg": "#e2a478", "bg": "#1e2132" }, // DiagnosticSignWarn
+  "sign.diagnostic.info": { "fg": "#89b8c2", "bg": "#1e2132" }, // DiagnosticSignInfo
+  "sign.diagnostic.hint": { "fg": "#6b7089", "bg": "#1e2132" }, // DiagnosticSignHint
+
+  // 見比べ
+  "diff.add": { "fg": "#c0c5b9", "bg": "#45493e" }, // DiffAdd
+  "diff.change": { "fg": "#b3c3cc", "bg": "#384851" }, // DiffChange
+  "diff.delete": { "fg": "#ceb0b6", "bg": "#53343b" }, // DiffDelete
+  "diff.text": { "fg": "#c6c8d1", "bg": "#5b7881" }, // DiffText
+}

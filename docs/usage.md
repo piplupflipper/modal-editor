@@ -100,17 +100,17 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 
 ## 見た目の設定
 
-設定ファイルの `colors`、`symbols`、`statusline` で、配色、記号、ステータス行の並びを変えられる（要件定義 FR-91〜FR-93、基本設計 7.1）。
-iceberg に近い配色の例を、リポジトリの直下と配布物に `config.example.jsonc` として同梱している。
+設定ファイルの `colorscheme`、`colors`、`symbols`、`statusline` で、配色、記号、ステータス行の並びを変えられる（要件定義 FR-91〜FR-93、FR-125、基本設計 7.1）。
+同梱の配色 iceberg を選び、その上に `colors` を重ねる例を、リポジトリの直下と配布物に `config.example.jsonc` として同梱している。
 例をそのまま使うときは、`config.example.jsonc` を設定ファイルの場所へ写す。
 
 ```jsonc
 {
+  "colorscheme": "iceberg",
   "colors": {
-    "keyword": { "fg": "#84a0c6" },
+    "nontext": { "fg": "#444b71" },
     "diagnostic.error": { "sp": "#e27878", "undercurl": true },
-    "statusline": { "fg": "#c6c8d1", "bg": "#0f1117" },
-    "statusline.mode.insert": { "fg": "#161821", "bg": "#84a0c6", "bold": true },
+    "statusline.mode": { "bold": true },
   },
   "symbols": { "readonly": "[読]", "sign.breakpoint": "●", "popup.border": "╭─╮│╯─╰│" },
   "statusline": {
@@ -121,6 +121,37 @@ iceberg に近い配色の例を、リポジトリの直下と配布物に `conf
 ```
 
 設定に誤り（知らない名前、読めない色、使えない記号）があると、起動後にコマンドラインの行へ位置と内容を出し、その項目だけを使わない。
+
+### 配色の選択
+
+`colorscheme` は、配色の名前の文字列である。
+選んだ配色は本体の既定の色を名前ごとに置き換え、`colors` に書いた名前はその上でさらに置き換わる。
+`colorscheme` を書かなければ、本体の既定の色（端末の 16 色の番号）に `colors` を重ねるだけである。
+
+配色は、次の順に探す。
+
+1. 設定ファイルと同じディレクトリの `colors/<名前>.jsonc`（`~/.config/vi-imitation/colors/<名前>.jsonc` など）
+2. 本体に同梱した配色
+
+同じ名前なら 1 のファイルを使うので、同梱の配色を同じ名前のファイルで置き換えられる。
+同梱しているのは `iceberg`（[iceberg.vim](https://github.com/cocopon/iceberg.vim) の暗い背景の色）だけで、値と写した元は `internal/config/colors/iceberg.jsonc` にある。
+iceberg.vim に元の色が無い名前（`message.info`、`popup.border`、`statusline.mode`、`statusline.filetype`、`statusline.recording`、`statusline.ext`、`statusline.mode.commandline`、`sign.executionPoint`、`sign.breakpoint`、`sign.breakpointUnverified`）は、同梱の iceberg に無いので本体の既定の色になる。
+色は 24 ビットの `#rrggbb` で書いてあるので、24 ビットの色を出せる端末で使う。
+
+配色のファイルは、`colors` の値と同じ形（色を付ける対象の名前から属性のオブジェクトへの対応）を最上位に書いた JSONC である。
+
+```jsonc
+// ~/.config/vi-imitation/colors/mine.jsonc
+{
+  "keyword": { "fg": "#84a0c6" },
+  "statusline": { "fg": "#c6c8d1", "bg": "#0f1117" },
+}
+```
+
+名前に使えるのは英数字と `_` と `-` だけである。
+見つからない名前と使えない名前は、起動後に `colorscheme` の位置の誤りとして知らせ、配色を使わずに起動する。
+配色のファイルの中の誤り（知らない名前、読めない色）は、配色のファイルの位置で知らせ、その名前だけを使わない。
+`:colorscheme` に当たるコマンドは無く、配色を変えたら起動し直す。
 
 ### 配色
 

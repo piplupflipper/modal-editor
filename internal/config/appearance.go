@@ -69,10 +69,12 @@ type AppearanceCheck struct {
 	TabLinePart func(id string) bool
 }
 
-// appearancePos は、見た目の設定の項目を書いた位置である。CheckAppearance が誤りの位置に使う。
+// appearancePos は、見た目の設定の項目を書いた位置である。CheckAppearance と LoadColorScheme が誤りの位置に使う。
 type appearancePos struct {
 	colors, symbols map[string]*Error
 	parts           []partPos
+	// colorScheme は、colorscheme の値を書いた位置である。
+	colorScheme *Error
 }
 
 // partPos は、statusline か tabline の 1 つの部品の ID と、それを書いた位置の誤りの雛形である。
@@ -148,18 +150,24 @@ func (s *source) colors(v *hujson.Value, cfg *Config) map[string]Style {
 	if !ok {
 		return nil
 	}
+	if cfg.pos.colors == nil {
+		cfg.pos.colors = map[string]*Error{}
+	}
+	return s.styles(obj, "colors", cfg.pos.colors)
+}
+
+// styles は、色の名前から属性のオブジェクトへの対応 obj を読む。誤りのある名前は除く。
+// 設定の colors の値と、配色のファイルの最上位（LoadColorScheme）で使う。
+// path は誤りの文言に出す obj の位置（配色のファイルの最上位なら空）で、pos には名前を書いた位置を入れる。
+func (s *source) styles(obj *hujson.Object, path string, pos map[string]*Error) map[string]Style {
 	out := map[string]Style{}
-	for _, e := range s.members(obj, "colors") {
-		path := join("colors", e.name)
-		st, ok := s.style(e.value, path)
+	for _, e := range s.members(obj, path) {
+		st, ok := s.style(e.value, join(path, e.name))
 		if !ok {
 			continue
 		}
 		out[e.name] = st
-		if cfg.pos.colors == nil {
-			cfg.pos.colors = map[string]*Error{}
-		}
-		cfg.pos.colors[e.name] = s.at(e.nameOff, "")
+		pos[e.name] = s.at(e.nameOff, "")
 	}
 	return out
 }

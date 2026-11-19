@@ -129,7 +129,7 @@ func (t Theme) WithColors(colors map[string]Attr) Theme {
 }
 
 // DefaultTheme は、既定の対応（仮）を返す。色は端末の 16 色の番号で、Vim の暗い背景の既定の色に近いものを選んだ。
-// 設定の colors は WithColors で名前ごとに上書きする（FR-91）。
+// 設定の colorscheme で選んだ配色（FR-125）と設定の colors（FR-91）は、この順に WithColors で名前ごとに上書きする。
 func DefaultTheme() Theme {
 	return Theme{
 		StyleComment:  {Fg: Indexed(14)},

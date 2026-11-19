@@ -432,6 +432,8 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		errs = append(errs, cfg.CheckAppearance(appearanceCheck)...)
 		config.SortErrors(errs)
 		problems = append(problems, errs...)
+		// 配色のファイルの誤りは、設定ファイルの誤りの後に知らせる（最初の 1 件は設定ファイルの誤りにする）。
+		problems = append(problems, cfg.LoadColorScheme(filepath.Dir(path), appearanceCheck)...)
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -466,6 +468,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		FileTypes:        cfg.FileTypes,
 		FixEndOfLine:     cfg.FixEndOfLine,
 		ReadOnlyPaths:    cfg.ReadOnlyPaths,
+		ColorScheme:      uiColors(cfg.SchemeColors),
 		Colors:           uiColors(cfg.Colors),
 		Symbols:          cfg.Symbols,
 		StatusLine:       uiStatusLine(cfg.StatusLine),
@@ -486,7 +489,8 @@ func loadConfig(logger *slog.Logger) editor.Config {
 }
 
 // shortProblem は、画面の 1 行に出す設定の誤りの、ファイルのパスを短くする。
-// 設定ファイルはファイル名だけ（config.jsonc）、宣言ファイルは拡張機能のディレクトリの名前とファイル名（line/manifest.json）にする。
+// 設定ファイルはファイル名だけ（config.jsonc）、宣言ファイルは拡張機能のディレクトリの名前とファイル名（line/manifest.json）、
+// 配色のファイルは配色のディレクトリの名前とファイル名（colors/iceberg.jsonc）にする。
 // 絶対パスのままだと、80 桁の端末では位置と内容がコマンドラインの行の幅で切れて見えない。
 // 置き場所は config.DefaultPath と config.ExtensionDirs で決まるので、名前だけで利用者が辿れる。
 func shortProblem(err error) error {
@@ -496,7 +500,7 @@ func shortProblem(err error) error {
 	}
 	short := *ce
 	short.Path = filepath.Base(ce.Path)
-	if short.Path == config.ManifestFileName {
+	if short.Path == config.ManifestFileName || filepath.Base(filepath.Dir(ce.Path)) == config.ColorSchemeDir {
 		short.Path = filepath.Join(filepath.Base(filepath.Dir(ce.Path)), short.Path)
 	}
 	return &short

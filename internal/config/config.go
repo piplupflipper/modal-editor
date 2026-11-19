@@ -20,6 +20,8 @@
 //   - 拡張機能: $XDG_DATA_HOME/vi-imitation/extensions/<名前>/（利用者）と、本体の実行ファイルの隣の extensions/<名前>/（同梱）。
 //     XDG_DATA_HOME が空か相対パスなら ~/.local/share を使う（ExtensionDirs）。各ディレクトリの manifest.json を宣言ファイルとして読み、
 //     同じ ID なら利用者のものを使う
+//   - 配色: 設定ファイルと同じディレクトリの colors/<名前>.jsonc（利用者）と、本体に埋め込んだ colors/<名前>.jsonc（同梱）。
+//     同じ名前なら利用者のものを使う（LoadColorScheme。#253）
 package config
 
 import (
@@ -58,6 +60,7 @@ import (
 //	    "activation": { "lsp": [{ "on": "filetype", "pattern": "python" }] }
 //	  },
 //	  "registers": { "historySize": 100, "maxEntryBytes": 1048576, "deleteToHistory": true, "clipboard": "osc52" },
+//	  "colorscheme": "iceberg",
 //	  "colors": { "diagnostic.error": { "sp": "#e27878", "undercurl": true }, "statusline": { "fg": 7, "bg": 0 } },
 //	  "symbols": { "sign.breakpoint": "●", "popup.border": "┌─┐│┘─└│" },
 //	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] },
@@ -129,6 +132,13 @@ type Config struct {
 	// Colors は colors の値で、色の名前から属性への対応である（基本設計 7.1。FR-91）。本体の既定の対応を名前ごとに置き換える。
 	// 誤りのある項目は除いてある。名前が本体の知るものかは CheckAppearance で確かめる。
 	Colors map[string]Style
+	// ColorScheme は colorscheme の値で、選んだ配色の名前である（基本設計 7.1。FR-125）。
+	// 項目が無いか誤り（使えない文字を含む名前を含む）なら空で、配色を選ばない（本体の既定の対応だけを使う）。
+	ColorScheme string
+	// SchemeColors は、ColorScheme の配色のファイルから LoadColorScheme が読んだ、色の名前から属性への対応である（FR-125）。
+	// 本体の既定の対応を名前ごとに置き換え、Colors はその上にさらに名前ごとに置き換える。
+	// 誤りのある項目と、本体の知らない名前は除いてある。LoadColorScheme を呼ぶまでは nil である。
+	SchemeColors map[string]Style
 	// Symbols は symbols の値で、記号の名前から描く文字列への対応である（基本設計 7.1。FR-93）。
 	// 名前と文字列が使えるかは CheckAppearance で確かめる。
 	Symbols map[string]string
@@ -236,6 +246,8 @@ func Parse(path string, data []byte) (Config, []error) {
 			cfg.ReadOnlyPaths = s.readOnlyPaths(m.value)
 		case "colors":
 			cfg.Colors = s.colors(m.value, &cfg)
+		case "colorscheme":
+			cfg.ColorScheme = s.colorScheme(m.value, &cfg)
 		case "symbols":
 			cfg.Symbols = s.symbols(m.value, &cfg)
 		case "statusline":
