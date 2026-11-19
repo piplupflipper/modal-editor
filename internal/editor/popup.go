@@ -296,7 +296,7 @@ func (e *Editor) closeFloat(notify bool) {
 		e.closeBufferState(f.bs)
 	}
 	if notify && f.ext != "" {
-		e.noteViewClient(f)
+		e.noteViewClient(f, false)
 		if err := e.host.Notify(f.ext, ext.MethodViewClosed, ext.ViewClosedParams{View: ext.ViewID(f.id)}); err != nil {
 			e.log.Warn("view/closed を送れない", "extension", f.ext, "err", err)
 		}
@@ -538,7 +538,7 @@ func (e *Editor) notifyView(f *floatState, method string, params any) {
 	if f.ext == "" {
 		return
 	}
-	e.noteViewClient(f)
+	e.noteViewClient(f, method == ext.MethodViewSelect)
 	if err := e.host.Notify(f.ext, method, params); err != nil {
 		e.log.Warn("ポップアップの知らせを送れない", "extension", f.ext, "method", method, "err", err)
 	}

@@ -71,7 +71,11 @@ func (h *harness) attachComponent(view uint64, pane bool) *compPeer {
 	h.t.Helper()
 	term := &exitTerm{fakeTerm: newFakeTerm()}
 	h.peers = append(h.peers, term.fakeTerm)
-	if err := h.e.AttachComponent(term, view, pane); err != nil {
+	info := ComponentInfo{View: view, Pane: pane}
+	if pane {
+		info.MuxPane = fmt.Sprintf("%%p%d", view)
+	}
+	if err := h.e.AttachComponent(term, info); err != nil {
 		h.t.Fatalf("AttachComponent(%d) = %v", view, err)
 	}
 	return &compPeer{h: h, term: term}
@@ -125,11 +129,11 @@ func TestComponentPopup(t *testing.T) {
 	h.eventually("元の client の画面のポップアップ", func() bool { return strings.Contains(peer.term.screen(), "close me") })
 
 	// ペインの部品の client は、中央のポップアップに繋がない（PR #248 のレビューの推奨 3）。
-	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, call.view, true); !errors.Is(err, ErrUnknownView) {
+	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, ComponentInfo{View: call.view, Pane: true}); !errors.Is(err, ErrUnknownView) {
 		t.Errorf("pane AttachComponent to a popup = %v, want ErrUnknownView", err)
 	}
 	comp := h.attachComponent(call.view, false)
-	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, call.view, false); !errors.Is(err, ErrUnknownView) {
+	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, ComponentInfo{View: call.view}); !errors.Is(err, ErrUnknownView) {
 		t.Errorf("second AttachComponent = %v, want ErrUnknownView", err)
 	}
 	comp.waitScreen("close me")
@@ -209,7 +213,7 @@ func TestComponentPane(t *testing.T) {
 	if floating {
 		t.Errorf("pane/open opened a popup on the client")
 	}
-	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, call.view, false); !errors.Is(err, ErrUnknownView) {
+	if err := h.e.AttachComponent(&exitTerm{fakeTerm: newFakeTerm()}, ComponentInfo{View: call.view}); !errors.Is(err, ErrUnknownView) {
 		t.Errorf("popup AttachComponent to a pane = %v, want ErrUnknownView", err)
 	}
 	comp := h.attachComponent(call.view, true)
@@ -303,6 +307,15 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 		focused = append(focused, [2]string{from, pane})
 		return nil
 	}
+	// active は、偽の端末多重化ソフトで部品のペインがアクティブかである。asked は PaneFocused に渡されたペインである。
+	active := true
+	var asked []string
+	cfg.PaneFocused = func(pane string) (bool, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, pane)
+		return active, nil
+	}
 	h := start(t, cfg)
 	a := h.attach(ClientInfo{ID: 2, Pane: "%9"})
 	a.keys(":fake.pane files<CR>")
@@ -387,6 +400,35 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 	// 遅れずに届けば、また戻す（印は選ぶたびに立つ）。
 	pick("", func() {})
 	h.eventually("2 回目のフォーカスの移動", func() bool { return focusCount() == 2 })
+	mu.Lock()
+	if want := fmt.Sprintf("%%p%d", call.view); len(asked) == 0 || asked[len(asked)-1] != want {
+		t.Errorf("PaneFocused asked %q, want the pane of the component client %q", asked, want)
+	}
+	mu.Unlock()
+
+	// 利用者がキーを打たずに部品のペインから離れていれば（別の window へ移った）、1 秒以内に届いても戻さない（3 回目の確認の推奨 1）。
+	mu.Lock()
+	active = false
+	mu.Unlock()
+	pick("", func() {})
+	time.Sleep(100 * time.Millisecond)
+	if n := focusCount(); n != 2 {
+		t.Errorf("FocusPane calls after leaving the pane = %d, want 2", n)
+	}
+	mu.Lock()
+	active = true
+	mu.Unlock()
+
+	// ペインの中だけのキー（view/key）の後の editor/open では戻さない（オーケストレータの決定。DAP のペインのステップ実行など）。
+	var before int
+	h.e.do(func() { before = picked() })
+	comp.keys("ggx")
+	h.eventually("view/key の後に開いた知らせ", func() bool { return picked() == before+1 })
+	h.settle()
+	time.Sleep(100 * time.Millisecond)
+	if n := focusCount(); n != 2 {
+		t.Errorf("FocusPane calls after view/key = %d, want 2", n)
+	}
 
 	// ペインで :q を打ったときの view/closed の後のメッセージも、ペインを開いた client に出る。
 	comp.keys(":q<CR>")

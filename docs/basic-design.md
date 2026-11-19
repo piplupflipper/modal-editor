@@ -288,7 +288,7 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 - 部品の client で受けたキーは、元の client が受けたキーとして列に積む。中央のポップアップは元の client のフォーカスのあるポップアップなので、そのまま処理する。ペインのキーは、処理する間だけペインの部品を元の client のフォーカスのあるポップアップにし（元の client のポップアップは退避する）、処理し終えたら元のタブへ戻す。マクロの記録とレジスターは、`:b` と同じく引き継ぐ。ペインの中の `<Esc>` はペインを閉じない。`:q` で閉じる
 - 部品を閉じたら、部品の client に理由の無い `server/exit` を送る。部品の client が終わると、端末多重化ソフトのポップアップとペインも閉じる（tmux の `display-popup -E` と `split-window`、herdr の `plugin.pane.open`）。部品の client の接続が先に切れたら（利用者が端末多重化ソフトで閉じた）、部品を閉じて `view/closed` を送る。外から閉じる `mux.Mux.ClosePopup` と `ClosePane` は使わない
 - 部品の操作の知らせ（`view/select`、`view/key`、`view/expand`、`input/change`、`view/closed`）を送るときは、その拡張機能が後から届けるもの（`editor/open`、`message/show` など）の届け先を、部品を開いた元の client にする（`editor` の `noteViewClient`。上の「問い合わせを始めた client に出す」と同じ考え方。PR #248 のレビューの必須）。ペインを開いた後に別の client がその拡張機能を使っても、ペインで選んだファイルはペインを開いた client のタブに開く
-- ペインの部品の client のキーで選んだ後に、その拡張機能の `focus` が true の `editor/open` を元の client のタブに開いたら、端末多重化ソフトのフォーカスをペインから元の client のペインへ移す（`Config.FocusPane`。FR-105 のファイラで、選んだファイルをすぐ編集するため。PR #248 のレビューの推奨 1。仮）。移すのは、ペインで選んだ後の最初の `editor/open` 1 回だけで、選んでから利用者がどれかの client でキーを打ったか、1 秒（`paneFocusWindow`）を過ぎて届いたときは移さない（PR #248 の再レビューの必須とオーケストレータの決定）。遅れて届いた `editor/open`（DAP の止まった位置など）が、別のペインや別の window へ移った利用者を引き戻さないためである。それ以外の `editor/open` は、端末多重化ソフトのフォーカスを動かさず、その client のタブを替えるだけである
+- ペインの部品の client のキーで選んだ後に、その拡張機能の `focus` が true の `editor/open` を元の client のタブに開いたら、端末多重化ソフトのフォーカスをペインから元の client のペインへ移す（`Config.FocusPane`。FR-105 のファイラで、選んだファイルをすぐ編集するため。PR #248 のレビューの推奨 1。仮）。移すのは、ペインで選んだ後の最初の `editor/open` 1 回だけで、選んでから利用者がどれかの client でキーを打ったか、1 秒（`paneFocusWindow`）を過ぎて届いたときは移さない（PR #248 の再レビューの必須とオーケストレータの決定）。遅れて届いた `editor/open`（DAP の止まった位置など）が、別のペインや別の window へ移った利用者を引き戻さないためである。それ以外の `editor/open` は、端末多重化ソフトのフォーカスを動かさず、その client のタブを替えるだけである。印を立てるのは、一覧や木で項目を選んだとき（`view/select`）だけで、ペインの中だけのキー（`view/key`）、開閉（`view/expand`）、入力の行の中身（`input/change`）では立てない（オーケストレータの決定。DAP のペインでステップ実行のキーを打つたびにフォーカスがペインから出ないため）。移す前に、端末多重化ソフトのアクティブなペインがまだ部品のペイン（部品の client が `client/hello` の `pane` で知らせたもの）かを `mux.Mux.PaneFocused` で確かめ、違えば移さない（PR #248 の 3 回目の確認の推奨 1。キーを打たずに別の window へ移った利用者を、1 秒以内の応答でも引き戻さないため）。tmux では、そのペインが window のアクティブなペインで、その window をどれかの tmux の client が表示していること、herdr では `pane.get` の `focused` である
 - テキストの部品の `view/update` は、カーソルが最後の行にあれば、新しい中身の最後の行へカーソルを置く（末尾を追う。FR-108、FR-111 の出力のペイン。PR #248 のレビューの推奨 2。仮）。拡張機能 API の形は変えていない
 - ペインの部品にはペインの部品の client だけを、中央のポップアップにはポップアップの部品の client だけを繋ぐ（`client/hello` の種類と部品の種類を照らす。PR #248 のレビューの推奨 3）
 - 部品の client が繋ぐ前に部品が閉じていれば、server は理由の無い `server/exit` で断り、部品の client は黙って終わる
@@ -312,6 +312,7 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 | ポップアップを閉じる | 中の client が終わると閉じる（`-E`）。外から閉じるときは、層が開いたものがまだ開いているときだけ `display-popup -C -c <tmux の client>` | 中の client が終わると閉じる。外から閉じるときは `popup.close`（誰が開いたものかを問わず閉じる） |
 | フォーカスを移す | 元の client のペインの window を表示している tmux の client が、移る先のペインの window を表示していれば `select-pane`、そうでなければ `switch-client -c <tmux の client> -t <ペイン>` | `pane.focus`。ペインが別のタブにあれば、そのタブへ移る |
 | ペインを閉じる | `kill-pane` | `pane.close` |
+| ペインがアクティブか（#244） | `list-panes -a` の `pane_active` と、その window を表示している tmux の client があること | `pane.get` の `focused` |
 | 自分のペイン | `TMUX_PANE` | `HERDR_PANE_ID` を `pane.get` で引いた今の ID |
 | server の単位の識別子 | `display -p -t "$TMUX_PANE" '#{socket_path}:#{window_id}'` | `HERDR_SOCKET_PATH` と、`pane.get` で引いた自分のペインの `tab_id` |
 

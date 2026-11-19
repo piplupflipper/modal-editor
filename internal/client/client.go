@@ -61,9 +61,10 @@ func Run(tm Terminal, conn protocol.ClientConn, logger *slog.Logger) error {
 // Run と同じく、server が接続を閉じるか、端末の入力が終わるまで動かす（基本設計 1.2。FR-67、FR-115）。
 // 端末の受け渡し（protocol.FeatureTerminal）は宣言しない（server は部品の client に :! を頼まない）。
 // server が部品を閉じたら理由の無い終わりの知らせが届き、nil を返す。呼び出し側はそのまま終わり、端末多重化ソフトのポップアップかペインが閉じる。
-func RunComponent(tm Terminal, conn protocol.ClientConn, kind protocol.ClientKind, view uint64, logger *slog.Logger) error {
+// pane は、部品の client のいる端末多重化ソフトのペインの識別子（TMUX_PANE、HERDR_PANE_ID。知らなければ空）で、Hello の Pane に載せる。
+func RunComponent(tm Terminal, conn protocol.ClientConn, kind protocol.ClientKind, view uint64, pane string, logger *slog.Logger) error {
 	w, h := tm.Size()
-	sent := conn.Send(protocol.Hello{Kind: kind, Width: w, Height: h, View: view}) == nil
+	sent := conn.Send(protocol.Hello{Kind: kind, Width: w, Height: h, View: view, Pane: pane}) == nil
 	return run(tm, conn, logger, sent, nil)
 }
 

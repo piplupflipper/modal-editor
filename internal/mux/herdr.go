@@ -185,8 +185,18 @@ func (h *Herdr) ClosePane(ctx context.Context, pane string) error {
 
 // herdrPane は、socket API の PaneInfo のうち、この層が使う項目である。
 type herdrPane struct {
-	PaneID string `json:"pane_id"`
-	TabID  string `json:"tab_id"`
+	PaneID  string `json:"pane_id"`
+	TabID   string `json:"tab_id"`
+	Focused bool   `json:"focused"`
+}
+
+// PaneFocused は、pane.get の focused を返す（herdr 0.9.0 の pane.get と pane.split の応答の PaneInfo にある項目）。
+func (h *Herdr) PaneFocused(ctx context.Context, pane string) (bool, error) {
+	p, err := h.pane(ctx, pane)
+	if err != nil {
+		return false, err
+	}
+	return p.Focused, nil
 }
 
 // pane は、pane.get でペインを引く。

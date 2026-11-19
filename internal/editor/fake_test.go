@@ -222,10 +222,11 @@ func runFakeExt(mode string) int {
 				_ = s.UpdateView(ext.ViewUpdateParams{View: e.View, Component: ext.ViewComponent{
 					Kind: ext.ViewList, Items: []ext.ViewItem{{ID: "new", Label: "updated"}},
 				}})
-			case e.Kind == server.ViewSelected && (e.Item == "open" || e.Item == "slow" || e.Item == "late"):
+			case (e.Kind == server.ViewSelected || e.Kind == server.ViewKey) && (e.Item == "open" || e.Item == "slow" || e.Item == "late"):
 				// ファイラと同じく、選んだファイルを editor/open で開く（#244 の PR #248 のレビューの必須）。フックの中では応答を待てない。
 				// 開くのは fakeOpenedPath のファイルで、開いたら "picked <項目>" を出す。
 				// slow は 300 ms 後に、late は 1.5 秒後（フォーカスを戻す上限の後）に開く（PR #248 の再レビューの必須）。
+				// popupKeys のキー（view/key）でも同じく開く（view/key の後はフォーカスを戻さないことを確かめるため）。
 				delay := map[string]time.Duration{"slow": 300 * time.Millisecond, "late": 1500 * time.Millisecond}[e.Item]
 				go func() {
 					time.Sleep(delay)

@@ -165,6 +165,10 @@ type Config struct {
 	// フォーカスを移す関数である（FR-63。internal/mux の Mux.FocusPane を包んだもの）。ペインは ClientInfo.Pane である。
 	// イベントループを止めないよう、別の goroutine で呼ぶ。nil なら移さず、メッセージだけを出す。
 	FocusPane func(from, pane string) error
+	// PaneFocused は、ペイン pane が利用者の見ているアクティブなペインかを返す関数である（internal/mux の Mux.PaneFocused を包んだもの）。
+	// ペインの部品で選んだ後に元の client のペインへフォーカスを戻す前に、利用者がまだ部品のペインにいるかを確かめる（component.go）。
+	// 別の goroutine で呼ぶ。nil なら戻さない。
+	PaneFocused func(pane string) (bool, error)
 	// OpenPopup は、中央のポップアップ（基本設計 1.4。FR-67）を、端末多重化ソフトのポップアップとして開き、その中で部品 view を描く
 	// ポップアップの部品の client を、このエディタの server に繋ぐ形で起動する関数である（internal/mux の Mux.OpenPopup を包んだもの。component.go）。
 	// from は元の client のペイン、dir は起動するディレクトリである。部品の client が繋いだら、server が AttachComponent を呼ぶ。
@@ -253,7 +257,7 @@ type Editor struct {
 	extClient map[string]*clientView
 	// extFromPane は、拡張機能の ID のうち、最後の操作がペインの部品の client のキーだったものから、そのキーを処理した時刻への表である
 	// （noteViewClient、focusAfterPane）。
-	extFromPane map[string]time.Time
+	extFromPane map[string]paneMark
 	// attachCh は、Attach が渡す新しい client を、イベントループへ送る。
 	attachCh chan attachRequest
 	// goneCh は、端末の入力が閉じた client を、イベントループへ送る（forwardInput）。
@@ -475,7 +479,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		goneCh:      make(chan *clientView),
 		keyFireCh:   make(chan keyFire),
 		extClient:   map[string]*clientView{},
-		extFromPane: map[string]time.Time{},
+		extFromPane: map[string]paneMark{},
 		finished:    make(chan struct{}),
 		diff:        newDiffState(),
 		outputs:     map[outputKey][]string{},

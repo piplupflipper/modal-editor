@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -42,6 +43,9 @@ func component(kind protocol.ClientKind, view uint64, in, out *os.File, logPath,
 	tm.SetInterruptRestore(renotify)
 	defer func() { _ = tm.Close() }() // Close は誤りを返さない
 	return guard(tm.Restore, func() error {
-		return clientUntil(ctx, conn, func() error { return client.RunComponent(tm, conn, kind, view, logger) })
+		// 部品の client のペイン（tmux の分割したペインには TMUX_PANE が、herdr のプラグインのペインには HERDR_PANE_ID が入る）。
+		// herdr のポップアップの中には入らない（#177 の「参考」）が、ポップアップではフォーカスを戻さないので要らない。
+		pane := cmp.Or(os.Getenv("TMUX_PANE"), os.Getenv("HERDR_PANE_ID"))
+		return clientUntil(ctx, conn, func() error { return client.RunComponent(tm, conn, kind, view, pane, logger) })
 	})
 }

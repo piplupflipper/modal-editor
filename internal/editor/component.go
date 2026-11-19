@@ -76,7 +76,9 @@ type component struct {
 	// f は、この client が描く部品である。イベントループだけが読む。
 	f    *floatState
 	term Terminal
-	r    *ui.Renderer
+	// muxPane は、部品の client のいる端末多重化ソフトのペインの識別子（Hello の Pane）である。知らなければ空である。
+	muxPane string
+	r       *ui.Renderer
 	// size は、部品の client の端末から届いた最新の大きさ（[2]int）である。入力を読む goroutine が置き、イベントループが読む。
 	size atomic.Value
 }
@@ -91,19 +93,29 @@ func (c *component) exit() {
 // ErrUnknownView は、AttachComponent の部品が無い（もう閉じた）か、既に別の部品の client が描いていることを表す。
 var ErrUnknownView = errors.New("editor: unknown view for a component client")
 
-// AttachComponent は、部品 view を描く部品の client の端末 term を繋ぐ（基本設計 1.2。FR-67、FR-115）。
+// ComponentInfo は、部品の client が server に知らせる情報である（protocol.Hello の View、Kind、Pane）。
+type ComponentInfo struct {
+	// View は、描く部品の ID である。
+	View uint64
+	// Pane は、ペインの部品の client（protocol.KindPane）であることを表す。false ならポップアップの部品の client である。
+	// ペインの部品にはペインの部品の client だけを、中央のポップアップにはポップアップの部品の client だけを繋ぐ（PR #248 のレビューの推奨 3。
+	// ペインを開けずに中央のポップアップへ移した後に、遅れて開いたペインの部品の client が繋がないため）。
+	Pane bool
+	// MuxPane は、部品の client のいる端末多重化ソフトのペインの識別子（TMUX_PANE、HERDR_PANE_ID）である。知らなければ空である。
+	// ペインで選んだ後にフォーカスを戻す前に、利用者がまだそのペインにいるかを確かめるのに使う（focusAfterPane）。
+	MuxPane string
+}
+
+// AttachComponent は、部品 info.View を描く部品の client の端末 term を繋ぐ（基本設計 1.2。FR-67、FR-115）。
 // Run を動かしている間に、他の goroutine から呼ぶ。イベントループが、部品を開いた元の client を探し、以後 term のキーを
 // 元の client の操作として処理し、部品を term の画面に描く。
-// pane は、term がペインの部品の client（protocol.KindPane）であることを表す。ペインの部品にはペインの部品の client だけを、
-// 中央のポップアップにはポップアップの部品の client だけを繋ぐ（PR #248 のレビューの推奨 3。ペインを開けずに中央のポップアップへ移した後に、
-// 遅れて開いたペインの部品の client が繋がないため）。
 // 部品が無いか、種類が合わないか、既に繋いでいれば ErrUnknownView を、Run が終わっていれば ErrStopped を返す。
 // term は、部品が閉じるか（ClientExiter で終わりを知らせる）、term の入力が閉じるか、Run が戻るまで使う。
 //
 // req: FR-67, FR-115
-func (e *Editor) AttachComponent(term Terminal, view uint64, pane bool) error {
+func (e *Editor) AttachComponent(term Terminal, info ComponentInfo) error {
 	done := make(chan error, 1)
-	f := func() { done <- e.attachComponent(term, view, pane) }
+	f := func() { done <- e.attachComponent(term, info) }
 	select {
 	case e.inspect <- f:
 	case <-e.finished:
@@ -118,7 +130,8 @@ func (e *Editor) AttachComponent(term Terminal, view uint64, pane bool) error {
 }
 
 // attachComponent は、イベントループで、AttachComponent の部品の client を繋ぐ。
-func (e *Editor) attachComponent(term Terminal, view uint64, pane bool) error {
+func (e *Editor) attachComponent(term Terminal, info ComponentInfo) error {
+	view, pane := info.View, info.Pane
 	for _, c := range e.clients {
 		if c.detached {
 			continue
@@ -136,7 +149,7 @@ func (e *Editor) attachComponent(term Terminal, view uint64, pane bool) error {
 		if f.remote != nil {
 			return ErrUnknownView
 		}
-		comp := &component{f: f, term: term, r: e.newRenderer()}
+		comp := &component{f: f, term: term, r: e.newRenderer(), muxPane: info.MuxPane}
 		w, h := term.Size()
 		comp.r.Width, comp.r.Height = max(w, 0), max(h, 0)
 		f.remote = comp
@@ -258,17 +271,32 @@ func (e *Editor) leavePane() {
 // 送る前に、その拡張機能が後から届けるもの（editor/open、message/show など）の届け先を、部品を開いた client（読み込んでいる client）にする
 // （extView。基本設計 1.2 の「部品の client の中の選択の結果は、元の client の操作として扱う」。PR #248 のレビューの必須）。
 // ペインを開いた後に別の client がその拡張機能を使っても、ペインで選んだファイルはペインを開いた client のタブに開く。
-// ペインの部品の client のキーで送るときは、続く editor/open の focus でそのペインへ端末多重化ソフトのフォーカスを戻す印を立てる（focusAfterPane）。
-func (e *Editor) noteViewClient(f *floatState) {
+// selected は、知らせが一覧か木の項目を選んだこと（view/select）であることを表す。ペインの部品の client のキーで項目を選んだときだけ、
+// 続く editor/open でペインから端末多重化ソフトのフォーカスを戻す印を立てる（focusAfterPane）。
+// ペインの中だけのキー（view/key。DAP のペインのステップ実行など）、開閉（view/expand）、入力の行の中身（input/change）では立てない
+// （オーケストレータの決定。キーを打つたびにフォーカスがペインから出ないため）。
+func (e *Editor) noteViewClient(f *floatState, selected bool) {
 	if f.ext == "" || e.view == nil {
 		return
 	}
 	e.extClient[f.ext] = e.view
-	if f.pane && f == e.paneActive {
-		e.extFromPane[f.ext] = time.Now()
+	if selected && f.pane && f == e.paneActive {
+		mp := ""
+		if f.remote != nil {
+			mp = f.remote.muxPane
+		}
+		e.extFromPane[f.ext] = paneMark{at: time.Now(), pane: mp}
 	} else {
 		delete(e.extFromPane, f.ext)
 	}
+}
+
+// paneMark は、ペインの部品の client のキーで項目を選んだ印である（noteViewClient、focusAfterPane）。
+type paneMark struct {
+	// at は、選んだキーを処理した時刻である。
+	at time.Time
+	// pane は、その部品の client のペインの識別子（component.muxPane）である。空なら知らない（フォーカスを移さない）。
+	pane string
 }
 
 // paneFocusWindow は、ペインで選んでから、その応答の editor/open でフォーカスを戻すまでの上限である（仮。focusAfterPane）。
@@ -287,21 +315,29 @@ const paneFocusWindow = time.Second
 //
 // req: FR-115
 func (e *Editor) focusAfterPane(extID string, move bool) {
-	at, ok := e.extFromPane[extID]
+	m, ok := e.extFromPane[extID]
 	if !ok {
 		return
 	}
 	delete(e.extFromPane, extID)
-	if !move || time.Since(at) > paneFocusWindow {
+	if !move || time.Since(m.at) > paneFocusWindow {
 		return
 	}
 	to := e.view.info.Pane
-	if e.cfg.FocusPane == nil || to == "" {
+	if e.cfg.FocusPane == nil || e.cfg.PaneFocused == nil || to == "" || m.pane == "" {
 		return
 	}
-	focus, log := e.cfg.FocusPane, e.log
+	focus, focused, log := e.cfg.FocusPane, e.cfg.PaneFocused, e.log
 	go func() {
 		defer e.recoverPanic()
+		// 利用者がまだ部品のペインにいるときだけ移す。キーを打たずに別のペインや window へ移った利用者を引き戻さない
+		// （PR #248 の 3 回目の確認の推奨 1）。確かめられなければ移さない。
+		if ok, err := focused(m.pane); err != nil || !ok {
+			if err != nil {
+				log.Warn("部品のペインがアクティブかを確かめられない", "pane", m.pane, "err", err)
+			}
+			return
+		}
 		if err := focus(to, to); err != nil {
 			log.Warn("ペインの部品から元の client のペインへフォーカスを移せない", "pane", to, "err", err)
 		}

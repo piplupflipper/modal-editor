@@ -332,6 +332,34 @@ func (*Tmux) commandArgs(dirFlag string, c Command) []string {
 	return append(args, "--", shellJoin(c.Args))
 }
 
+// PaneFocused は、ペインが window のアクティブなペインで、その window をどれかの tmux の client が表示しているかを返す。
+// tmux の client が 1 つも無ければ、利用者は見ていないので false である。
+func (t *Tmux) PaneFocused(ctx context.Context, pane string) (bool, error) {
+	out, err := t.run(ctx, "list-panes", "-a", "-F", "#{pane_id}\t#{window_id}\t#{pane_active}")
+	if err != nil {
+		return false, err
+	}
+	window, active, found := "", false, false
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) == 3 && f[0] == pane {
+			window, active, found = f[1], f[2] == "1", true
+			break
+		}
+	}
+	if !found {
+		return false, fmt.Errorf("%w: %s", errNoPane, pane)
+	}
+	if !active {
+		return false, nil
+	}
+	clients, err := t.clients(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(clients, func(c tmuxClient) bool { return c.window == window }), nil
+}
+
 // errNoPane は、ペインが見つからないことを表す。
 var errNoPane = errors.New("tmux: no such pane")
 

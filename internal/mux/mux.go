@@ -159,6 +159,12 @@ type Mux interface {
 
 	// ClosePane は、ペインを閉じる。
 	ClosePane(ctx context.Context, pane string) error
+
+	// PaneFocused は、ペインが利用者の見ているアクティブなペインかを返す（#244）。
+	// tmux では、そのペインが window のアクティブなペインで、その window をどれかの tmux の client が表示していることである。
+	// herdr では、pane.get の focused である。ペインが無ければ誤りを返す。
+	// ペインの部品で選んだ後に元の client のペインへフォーカスを戻す前に、利用者がまだそのペインにいるかを確かめるのに使う。
+	PaneFocused(ctx context.Context, pane string) (bool, error)
 }
 
 // Detect は、環境変数から端末多重化ソフトを判定し、その実装を返す。
@@ -208,6 +214,9 @@ func (None) FocusPane(context.Context, string, string) error { return ErrUnsuppo
 
 // ClosePane は ErrUnsupported を返す。
 func (None) ClosePane(context.Context, string) error { return ErrUnsupported }
+
+// PaneFocused は ErrUnsupported を返す。
+func (None) PaneFocused(context.Context, string) (bool, error) { return false, ErrUnsupported }
 
 // shellJoin は、args の各要素を POSIX のシェルの単一引用で囲み、空白でつないだ 1 つのコマンドの文字列にする。
 // 引用の要らない文字だけの要素は囲まない。
