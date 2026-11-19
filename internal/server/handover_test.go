@@ -127,8 +127,8 @@ func TestServeWaitClientAndTerminal(t *testing.T) {
 	if ex, _ := recvType[protocol.Exit](t, w2); ex.Reason != "" {
 		t.Errorf("待つだけの client の終わり = %+v, want 理由なし", ex)
 	}
-	if b, err := os.ReadFile(msg); err != nil || string(b) != "fix\n# edit me\n" {
-		t.Errorf("MSG = %q, %v", b, err)
+	if b, rerr := os.ReadFile(msg); rerr != nil || string(b) != "fix\n# edit me\n" {
+		t.Errorf("MSG = %q, %v", b, rerr)
 	}
 	if err = c.Send(protocol.TerminalDone{ID: run.ID}); err != nil {
 		t.Fatal(err)

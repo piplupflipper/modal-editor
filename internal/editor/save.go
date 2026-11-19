@@ -194,7 +194,7 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 				return forBuffer(err, bs, false)
 			}
 			if err := bs.buf.WriteFile(path); err != nil {
-				if pe := permissionError(path, err); pe != nil {
+				if pe := asPermissionError(path, err); pe != nil {
 					return forBuffer(pe, bs, false)
 				}
 				return writeError(path, made, err)
@@ -255,7 +255,7 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 	}
 	if err := bs.buf.WriteFile(path); err != nil {
 		// 権限の不足なら、呼び出し側（runActions）が権限を上げて書くかを問う（FR-79）。
-		if pe := permissionError(path, err); pe != nil {
+		if pe := asPermissionError(path, err); pe != nil {
 			return forBuffer(pe, bs, true)
 		}
 		return writeError(path, made, err)
@@ -282,11 +282,11 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 // 作ったら、path の親のディレクトリを返す（途中のディレクトリも作ったときでも、最も深いもの。:w a/b/c/f で a から作っても a/b/c）。
 // あれば何もせずに空を返す。
 // 権限は os.MkdirAll に 0o777 を渡して umask に任せる（シェルの mkdir -p と同じ）。
-// 作れなければ E212 の誤りを返す。権限の不足（EACCES）で作れないときは errPermission を返し、
+// 作れなければ E212 の誤りを返す。権限の不足（EACCES）で作れないときは permissionError を返し、
 // 呼び出し側が権限を上げて mkdir -p してから tee するかを問う（FR-116。handover.go）。
 // 親が無いか分からない（stat が ENOENT 以外の誤りを返した。途中がファイルなど）ときは作らず、書き出しの誤りに任せる。
 // 途中のディレクトリに検索の権限が無いと stat は EACCES を返し、親が無くても作らずに書き出しが EACCES で失敗する。
-// その EACCES は permissionError が「親のディレクトリがあるか分からない」として扱い、権限を上げて mkdir -p してから tee する。
+// その EACCES は asPermissionError が「親のディレクトリがあるか分からない」として扱い、権限を上げて mkdir -p してから tee する。
 //
 // req: FR-78, FR-116
 func makeParentDir(path string) (string, error) {
@@ -295,7 +295,7 @@ func makeParentDir(path string) (string, error) {
 		return "", nil
 	}
 	if err := os.MkdirAll(dir, 0o777); err != nil { //nolint:gosec // 基本設計 4.7 で、mkdir -p と同じく umask に任せると決めている
-		if pe := permissionError(path, err); pe != nil {
+		if pe := asPermissionError(path, err); pe != nil {
 			return "", pe
 		}
 		return "", fmt.Errorf("E212: ディレクトリ %s を作れません: %w", dir, err)

@@ -85,7 +85,7 @@ func (e *Editor) promptKey(k editcmd.Key) {
 func (e *Editor) runActions(bs *bufferState, acts []ex.Action) bool {
 	for i, a := range acts {
 		err := e.doAction(bs, a)
-		var pe *errPermission
+		var pe *permissionError
 		switch {
 		case err == nil:
 			continue

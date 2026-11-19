@@ -172,9 +172,9 @@ func (ss *serverSocket) Send(m ServerMessage) error {
 	case TerminalRun:
 		return ss.s.send(methodTerminalRun, toWireRun(m))
 	case TerminalReclaim:
-		return ss.s.send(methodTerminalReclaim, wireID{ID: m.ID})
+		return ss.s.send(methodTerminalReclaim, wireID(m))
 	case TerminalRelease:
-		return ss.s.send(methodTerminalRelease, wireID{ID: m.ID})
+		return ss.s.send(methodTerminalRelease, wireID(m))
 	}
 	return fmt.Errorf("protocol: unknown server message %T", m)
 }
@@ -211,7 +211,7 @@ func (ss *serverSocket) Recv() (ClientMessage, error) {
 			if err := decodeParams(m, &d); err != nil {
 				return nil, err
 			}
-			return TerminalReleased{ID: d.ID}, nil
+			return TerminalReleased(d), nil
 		}
 		// 知らないメソッドの通知は読み飛ばす（JSON-RPC 2.0 の通知と同じく応答しない）。
 		// 新しい client が古い server に繋いでも、接続を切らずに編集を続けられるようにする。
@@ -236,7 +236,7 @@ func (cs *clientSocket) Send(m ClientMessage) error {
 	case TerminalDone:
 		return cs.s.send(methodTerminalDone, wireDone(m))
 	case TerminalReleased:
-		return cs.s.send(methodTerminalReleased, wireID{ID: m.ID})
+		return cs.s.send(methodTerminalReleased, wireID(m))
 	}
 	return fmt.Errorf("protocol: unknown client message %T", m)
 }
@@ -283,13 +283,13 @@ func (cs *clientSocket) Recv() (ServerMessage, error) {
 			if err := decodeParams(m, &d); err != nil {
 				return nil, err
 			}
-			return TerminalReclaim{ID: d.ID}, nil
+			return TerminalReclaim(d), nil
 		case methodTerminalRelease:
 			var d wireID
 			if err := decodeParams(m, &d); err != nil {
 				return nil, err
 			}
-			return TerminalRelease{ID: d.ID}, nil
+			return TerminalRelease(d), nil
 		}
 		// 知らないメソッドの通知は読み飛ばす（serverSocket.Recv と同じ）。
 	}

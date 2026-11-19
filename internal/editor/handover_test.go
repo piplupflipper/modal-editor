@@ -54,18 +54,26 @@ func (h *handoverTerm) lastJob() (TerminalJob, bool) {
 	return h.jobs[len(h.jobs)-1], true
 }
 
+// setMode は、テストの一時ディレクトリ dir の許可属性を mode にする（書き込みを外して権限の不足を起こし、書く前に戻す）。
+func setMode(t *testing.T, dir string, mode os.FileMode) {
+	t.Helper()
+	if err := os.Chmod(dir, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // handoverPeer は、端末を子プロセスへ渡せる client を足したものである。
 type handoverPeer struct {
 	*peer
 	ho *handoverTerm
 }
 
-// attachHandover は、端末を子プロセスへ渡せる client（識別子 id、作業ディレクトリ dir、ファイル files）を h のエディタに足す。
-func (h *harness) attachHandover(id ClientID, dir string, files ...string) *handoverPeer {
+// attachHandover は、端末を子プロセスへ渡せる client（識別子 2、作業ディレクトリ dir、ファイル files）を h のエディタに足す。
+func (h *harness) attachHandover(dir string, files ...string) *handoverPeer {
 	h.t.Helper()
 	ho := &handoverTerm{exitTerm: &exitTerm{fakeTerm: newFakeTerm()}}
 	h.peers = append(h.peers, ho.fakeTerm)
-	if err := h.e.Attach(ho, ClientInfo{ID: id, WorkDir: dir, Files: files}); err != nil {
+	if err := h.e.Attach(ho, ClientInfo{ID: 2, WorkDir: dir, Files: files}); err != nil {
 		h.t.Fatalf("Attach = %v", err)
 	}
 	return &handoverPeer{peer: &peer{h: h, term: ho.exitTerm}, ho: ho}
@@ -102,7 +110,7 @@ func TestTerminalShell(t *testing.T) {
 		t.Errorf("端末を渡せない client の :! = %q, want E319", msg)
 	}
 
-	b := h.attachHandover(2, dir, filepath.Join(dir, "b.txt"))
+	b := h.attachHandover(dir, filepath.Join(dir, "b.txt"))
 	b.keys(":!git commit | cat<CR>")
 	j := b.job()
 	if len(j.Commands) != 1 || j.Commands[0].Shell != "git commit | cat" || !j.Prompt {
@@ -140,7 +148,7 @@ func TestTerminalShell(t *testing.T) {
 func TestWaiterReclaimsTerminal(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "abc\n", "MSG": "# comment\n"})
 	h := start(t, Config{WorkDir: dir}, "a.txt")
-	b := h.attachHandover(2, dir)
+	b := h.attachHandover(dir)
 	b.keys(":!git commit<CR>")
 	j := b.job()
 
@@ -198,7 +206,7 @@ func TestWaiterReclaimsTerminal(t *testing.T) {
 func TestWaiterWithoutParent(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": "abc\n", "x.txt": "x\n"})
 	h := start(t, Config{WorkDir: dir}, "a.txt")
-	b := h.attachHandover(2, dir)
+	b := h.attachHandover(dir)
 	b.keys("j")
 	h.settle()
 	done := make(chan string, 1)
@@ -246,12 +254,10 @@ func TestElevatedSave(t *testing.T) {
 	if err := os.WriteFile(f, []byte("old\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(ro, 0o500); err != nil {
-		t.Fatal(err)
-	}
+	setMode(t, ro, 0o500)
 	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) }) //nolint:gosec // 一時ディレクトリを消せるように書き込みを戻すだけである
 	h := start(t, Config{WorkDir: dir, ElevateCommand: []string{"/fake/doas", "-n"}}, "a.txt")
-	b := h.attachHandover(2, dir, f, filepath.Join(ro, "new", "g.txt"))
+	b := h.attachHandover(dir, f, filepath.Join(ro, "new", "g.txt"))
 
 	// 失敗: E212 を出し、未保存のまま残す。
 	b.keys("ccnew<Esc>:w<CR>")
@@ -283,9 +289,7 @@ func TestElevatedSave(t *testing.T) {
 	h.eventually("2 回目の頼み", func() bool { j2, _ := b.ho.lastJob(); return j2.ID != j.ID })
 	j, _ = b.ho.lastJob()
 	// テストが tee の代わりに書く。
-	if err := os.Chmod(ro, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	setMode(t, ro, 0o700)
 	if err := os.WriteFile(f, j.Commands[0].Input, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -296,9 +300,7 @@ func TestElevatedSave(t *testing.T) {
 	}
 
 	// ディレクトリが無ければ、先に mkdir -p を動かす（FR-116）。
-	if err := os.Chmod(ro, 0o500); err != nil {
-		t.Fatal(err)
-	}
+	setMode(t, ro, 0o500)
 	b.keys("ig<Esc>:w<CR>")
 	h.eventually("ディレクトリの問い", func() bool { return h.e.prompt != nil && strings.Contains(h.e.prompt.text, "ディレクトリ") })
 	b.keys("y")
@@ -309,9 +311,7 @@ func TestElevatedSave(t *testing.T) {
 		!slices.Equal(j.Commands[1].Argv, []string{"/fake/doas", "-n", "tee", g}) {
 		t.Fatalf("頼み = %+v", j)
 	}
-	if err := os.Chmod(ro, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	setMode(t, ro, 0o700)
 	if err := os.MkdirAll(filepath.Dir(g), 0o700); err != nil {
 		t.Fatal(err)
 	}

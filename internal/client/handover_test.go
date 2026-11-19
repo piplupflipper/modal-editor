@@ -104,7 +104,7 @@ func recvUntil[T protocol.ClientMessage](t *testing.T, s protocol.ServerConn) (T
 	}
 }
 
-func startHandoverClient(t *testing.T) (*handoverTerm, protocol.ServerConn, <-chan error) {
+func startHandoverClient(t *testing.T) (*handoverTerm, protocol.ServerConn) {
 	t.Helper()
 	tm := newHandoverTerm(t)
 	c, s := protocol.Pipe()
@@ -116,9 +116,11 @@ func startHandoverClient(t *testing.T) (*handoverTerm, protocol.ServerConn, <-ch
 		_ = s.Send(protocol.Exit{})
 		_ = s.Close()
 		close(tm.in)
-		<-done
+		if err := <-done; err != nil {
+			t.Errorf("Run = %v", err)
+		}
 	})
-	return tm, s, done
+	return tm, s
 }
 
 // :! は、端末を子プロセスへ渡してシェルでコマンドを動かし、終わったら終了コードと「続けるには ENTER」を出してキーを待ち、
@@ -126,7 +128,7 @@ func startHandoverClient(t *testing.T) (*handoverTerm, protocol.ServerConn, <-ch
 //
 // req: FR-80, FR-82
 func TestTerminalRunShellPrompt(t *testing.T) {
-	tm, s, _ := startHandoverClient(t)
+	tm, s := startHandoverClient(t)
 	if err := s.Send(protocol.TerminalRun{
 		ID: 4, Commands: []protocol.TerminalCommand{{Shell: `printf 'out %s\n' "$MODAL_EDITOR_CLIENT"; exit 3`}},
 		Env: []string{"MODAL_EDITOR_CLIENT=9"}, Prompt: true,
@@ -160,7 +162,7 @@ func TestTerminalRunShellPrompt(t *testing.T) {
 //
 // req: FR-80
 func TestTerminalRunPromptEnter(t *testing.T) {
-	tm, s, _ := startHandoverClient(t)
+	tm, s := startHandoverClient(t)
 	if err := s.Send(protocol.TerminalRun{ID: 1, Commands: []protocol.TerminalCommand{{Shell: "true"}}, Prompt: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +185,7 @@ func TestTerminalRunPromptEnter(t *testing.T) {
 //
 // req: FR-79, FR-116
 func TestTerminalRunArgvInput(t *testing.T) {
-	tm, s, _ := startHandoverClient(t)
+	tm, s := startHandoverClient(t)
 	dir := t.TempDir()
 	target := filepath.Join(dir, "sub", "f.txt")
 	if err := s.Send(protocol.TerminalRun{ID: 2, Commands: []protocol.TerminalCommand{
@@ -232,7 +234,7 @@ func TestTerminalRunArgvInput(t *testing.T) {
 //
 // req: FR-117
 func TestTerminalReclaimRelease(t *testing.T) {
-	tm, s, _ := startHandoverClient(t)
+	tm, s := startHandoverClient(t)
 	dir := t.TempDir()
 	stop1, stop2 := filepath.Join(dir, "stop1"), filepath.Join(dir, "stop2")
 	wait := `while [ ! -e "$1" ]; do sleep 0.01; done`

@@ -262,6 +262,7 @@ func (e *Editor) findClient(id ClientID) *clientView {
 // req: FR-83, FR-117
 func (e *Editor) addWaiter(req waitRequest) {
 	target := e.findClient(req.info.Parent)
+	explicit := target != nil
 	if target == nil {
 		target = e.op
 	}
@@ -282,7 +283,7 @@ func (e *Editor) addWaiter(req waitRequest) {
 		return
 	}
 	e.waiters = append(e.waiters, w)
-	e.reclaim(target)
+	e.reclaim(target, explicit)
 	req.reply <- waitReply{w: w}
 }
 
@@ -330,9 +331,11 @@ func (e *Editor) openWaiterFiles(w *waiter, info WaitInfo) error {
 }
 
 // reclaim は、client c が外部のコマンドを実行中なら、c のキーを処理するようにし、端末を渡した実行なら端末を取り戻させる（FR-117）。
-func (e *Editor) reclaim(c *clientView) {
+// 端末を取り戻させるのは、待つだけの client が c の :! の子孫であること（環境変数 EnvClient が c を指す。explicit）が分かるときだけである。
+// :! の外（拡張機能の子プロセスなど）で起動した待つだけの client のために、:! のコマンドが使っている端末を取り上げないためである。
+func (e *Editor) reclaim(c *clientView, explicit bool) {
 	job := e.shell
-	if job == nil || job.client != c || job.reclaimed || job.save != nil {
+	if job == nil || job.client != c || job.reclaimed || job.save != nil || (job.terminal && !explicit) {
 		return
 	}
 	job.reclaimed = true
@@ -404,9 +407,9 @@ func (e *Editor) waiterGone(w *waiter) {
 	e.finishWaiter(w, "")
 }
 
-// errPermission は、保存が権限の不足（EACCES）で失敗したことを表す（FR-79、FR-116）。Error は E212 の文である。
+// permissionError は、保存が権限の不足（EACCES）で失敗したことを表す（FR-79、FR-116）。Error は E212 の文である。
 // runActions は、これを受けたら、権限を上げて書くかを問う（askElevate）。
-type errPermission struct {
+type permissionError struct {
 	path string
 	// dir は、書く先の親のディレクトリで、無いか、あるか分からない（検索の権限が無い）ときに入る。権限を上げて mkdir -p で作る（FR-116）。
 	dir string
@@ -417,31 +420,31 @@ type errPermission struct {
 	own bool
 }
 
-// forBuffer は、err が errPermission なら、書こうとしたバッファ bs と、保存の流れか（own）を入れて返す。そうでなければ err を返す。
+// forBuffer は、err が permissionError なら、書こうとしたバッファ bs と、保存の流れか（own）を入れて返す。そうでなければ err を返す。
 func forBuffer(err error, bs *bufferState, own bool) error {
-	var pe *errPermission
+	var pe *permissionError
 	if errors.As(err, &pe) {
 		pe.buf, pe.own = bs, own
 	}
 	return err
 }
 
-func (p *errPermission) Error() string {
+func (p *permissionError) Error() string {
 	if p.dir != "" {
 		return fmt.Sprintf("E212: ディレクトリ %s を作れません: %v", p.dir, p.err)
 	}
 	return fmt.Sprintf("E212: %s を書けません: %v", p.path, p.err)
 }
 
-func (p *errPermission) Unwrap() error { return p.err }
+func (p *permissionError) Unwrap() error { return p.err }
 
-// permissionError は、path への書き出しかディレクトリの作成の誤り err が権限の不足なら、errPermission にして返す。そうでなければ nil を返す。
+// asPermissionError は、path への書き出しかディレクトリの作成の誤り err が権限の不足なら、permissionError にして返す。そうでなければ nil を返す。
 // path の親のディレクトリが無いか分からなければ、権限を上げて作るよう dir に入れる。
-func permissionError(path string, err error) *errPermission {
+func asPermissionError(path string, err error) *permissionError {
 	if !errors.Is(err, syscall.EACCES) {
 		return nil
 	}
-	pe := &errPermission{path: path, err: err}
+	pe := &permissionError{path: path, err: err}
 	if _, serr := os.Stat(filepath.Dir(path)); serr != nil {
 		pe.dir = filepath.Dir(path)
 	}
@@ -461,13 +464,14 @@ func (e *Editor) elevateCommand() []string {
 // n か <Esc> なら、E212 を出して何もしない。
 //
 // req: FR-79, FR-116
-func (e *Editor) askElevate(bs *bufferState, a ex.Action, rest []ex.Action, pe *errPermission) {
+func (e *Editor) askElevate(bs *bufferState, a ex.Action, rest []ex.Action, pe *permissionError) {
 	what := fmt.Sprintf("\"%s\" を書けません", pe.path)
 	if pe.dir != "" {
 		what = fmt.Sprintf("ディレクトリ \"%s\" を作れません", pe.dir)
 	}
+	// パスが長くても問いの部分が画面の幅で切れないよう、問いを先に置く。
 	e.prompt = &prompt{
-		text: fmt.Sprintf("権限が足りないので%s。%s で書き込みますか (y/n)?", what, strings.Join(e.elevateCommand(), " ")),
+		text: fmt.Sprintf("%s で書き込みますか (y/n)? 権限が足りないので%s", strings.Join(e.elevateCommand(), " "), what),
 		answer: func(k editcmd.Key) bool {
 			switch k {
 			case editcmd.Rune('y'):
@@ -503,7 +507,7 @@ type elevatedSave struct {
 // 終わったら elevatedDone が、外での変更の確認の記録を取り直し、buffer/didSave を送る。
 //
 // req: FR-79, FR-116
-func (e *Editor) startElevatedSave(bs *bufferState, a ex.Action, rest []ex.Action, pe *errPermission) {
+func (e *Editor) startElevatedSave(bs *bufferState, a ex.Action, rest []ex.Action, pe *permissionError) {
 	target := pe.buf
 	if target == nil || !slices.Contains(e.bufs, target) {
 		target = bs
