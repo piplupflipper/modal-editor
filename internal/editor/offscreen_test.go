@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/modal-editor/ext"
 )
@@ -199,6 +200,63 @@ func TestOffscreenBufferReadOnlyPath(t *testing.T) {
 	h.e.do(func() {
 		if h.e.findPath(x) != nil {
 			t.Error("編集を断った x.txt のバッファが残った")
+		}
+	})
+}
+
+// 中身がファイルと同じ画面に出さないバッファへの buffer/save は、書き出さずに閉じ、変えたファイルの一覧にも入れない
+// （LSP の名前の変更を取り消したとき。#237）。editor/state は、編集の禁止と外での変更をバッファごとに答える。
+//
+// req: FR-109
+func TestOffscreenBufferUnchanged(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n", "x.txt": "x\n", "ro/y.txt": "y\n"})
+	x := filepath.Join(dir, "x.txt")
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(x, old, old); err != nil {
+		t.Fatal(err)
+	}
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), ReadOnlyPaths: []string{"ro"}}, "a.txt")
+	h.keys(":fake.touch " + x + "<CR>")
+	if out := h.waitWrite(); !strings.Contains(out, "err=<nil>") {
+		t.Fatalf("fake.touch = %s", out)
+	}
+	h.settle()
+	h.e.do(func() {
+		if h.e.findPath(x) != nil {
+			t.Error("x.txt のバッファが残った")
+		}
+	})
+	if st, err := os.Stat(x); err != nil || !st.ModTime().Equal(old) {
+		t.Errorf("x.txt を書き出した: %v, %v", st.ModTime(), err)
+	}
+	if got := h.message(); strings.Contains(got, "ファイルを変えました") {
+		t.Errorf("message = %q, want 一覧を出さない", got)
+	}
+
+	y := filepath.Join(dir, "ro", "y.txt")
+	h.e.do(func() {
+		if _, err := h.e.openFile(y, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.e.openFile(x, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := os.WriteFile(x, []byte("changed outside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.e.do(func() {
+		for _, b := range h.e.editorState().Buffers {
+			switch b.Path {
+			case y:
+				if !b.ReadOnly || b.ChangedOnDisk {
+					t.Errorf("y.txt = %+v, want readOnly", b)
+				}
+			case x:
+				if b.ReadOnly || !b.ChangedOnDisk {
+					t.Errorf("x.txt = %+v, want changedOnDisk", b)
+				}
+			}
 		}
 	})
 }

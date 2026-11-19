@@ -301,6 +301,7 @@ func (e *Editor) editorState() ext.EditorStateResult {
 		res.Buffers = append(res.Buffers, ext.BufferInfo{
 			Buffer: bs.id, Path: bs.path, FileType: bs.fileType,
 			Version: ext.Version(bs.buf.Version()), Modified: bs.buf.Modified(),
+			ReadOnly: bs.buf.ReadOnly(), ChangedOnDisk: bs.path != "" && writeConflict(bs) != nil,
 		})
 	}
 	return res
@@ -394,6 +395,14 @@ func (e *Editor) bufferSaveRequest(ev *exthost.BufferSaveRequest) {
 			how = fmt.Sprintf(":b %d で開いてから :w! で上書きします", bs.id)
 		}
 		err = fmt.Errorf("警告: 読み込んだ後にファイル \"%s\" が変更されているので、拡張機能の保存を断りました (%s)", e.shortName(bs), how)
+	}
+	if err == nil && offscreen && sameAsFile(bs) {
+		// 画面に出さないバッファの中身がファイルと同じ（拡張機能が編集を元に戻した。LSP の名前の変更の取り消し）なら、
+		// 書き出さずに閉じ、変えたファイルの一覧にも入れない。
+		version := ext.Version(bs.buf.Version())
+		e.closeBufferState(bs)
+		_ = ev.Reply(ext.BufferSaveResult{Saved: true, Version: version})
+		return
 	}
 	prev := e.message
 	// 保存がディレクトリを作るか（FR-78）を、作る前に調べる（makeParentDir は path の親が無ければそれを作る）。

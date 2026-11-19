@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,10 +60,16 @@ type host struct {
 	choices chan ext.ChoiceAskParams
 	saves   chan ext.BufferSaveParams
 
-	// mu は、本体の役が editor/open（focus が false）で開いたファイルの記録（offscreen）を守る。
-	// 開いたファイルの番号は offscreenBase から振る。
+	// mu は、本体の役が editor/open（focus が false）で開いたファイルの記録（offscreen）と、editor/state で答える
+	// バッファの状態（bufs）を守る。開いたファイルの番号は offscreenBase から振る。
 	mu        sync.Mutex
 	offscreen map[string]ext.BufferID
+	bufs      map[ext.BufferID]*simBuffer
+	// sim は、buffer/edit を本体の役のバッファ（bufs）に適用し、buffer/change を拡張機能へ送るかである（hostOptions.sim）。
+	sim bool
+	// readOnly と failEdit は、hostOptions の同じ名前の項目である。
+	readOnly map[string]bool
+	failEdit map[string]bool
 
 	// choose は、choice/ask に答える選択肢の ID である。
 	choose string
@@ -82,6 +89,21 @@ type hostOptions struct {
 	choose      string
 	// resetAfter は、正なら client の resetAfter を置き換える。
 	resetAfter time.Duration
+	// sim は、本体の役が buffer/edit を自分のバッファに適用してバージョン番号を進め、buffer/change を送るかである。
+	// 名前の変更を元に戻す流れ（バッファの複製の版を待つ）を試すのに使う。
+	sim bool
+	// readOnly は、編集を禁止したバッファにするファイルの名前（パスの最後の要素）である。
+	// editor/state の readOnly で答え、buffer/edit を E21 で断る。
+	readOnly []string
+	// failEdit は、buffer/edit を断るファイルの名前である（editor/state では編集できると答える）。
+	failEdit []string
+}
+
+// simBuffer は、本体の役が持つバッファの状態である（editor/state、sim の buffer/edit）。
+type simBuffer struct {
+	path    string
+	text    string
+	version ext.Version
 }
 
 // startHost は、拡張機能を io.Pipe の上で動かし、fakels を go の言語サーバーにする設定で initialize する。
@@ -98,7 +120,14 @@ func startHost(t *testing.T, o hostOptions) *host {
 		msgs: make(chan ext.MessageShowParams, 100), opens: make(chan ext.EditorOpenParams, 100),
 		edits: make(chan ext.BufferEditParams, 100), choices: make(chan ext.ChoiceAskParams, 100),
 		saves: make(chan ext.BufferSaveParams, 100), offscreen: map[string]ext.BufferID{},
+		bufs: map[ext.BufferID]*simBuffer{}, sim: o.sim, readOnly: map[string]bool{}, failEdit: map[string]bool{},
 		choose: o.choose, texts: map[ext.BufferID]string{}, vers: map[ext.BufferID]ext.Version{},
+	}
+	for _, n := range o.readOnly {
+		h.readOnly[n] = true
+	}
+	for _, n := range o.failEdit {
+		h.failEdit[n] = true
 	}
 	gocfg := map[string]any{
 		"command":  fakeLS,
@@ -179,8 +208,17 @@ func (h *host) request(_ context.Context, req *rpc.Request, reply rpc.Replier) {
 		}
 		_ = reply(ext.EditorOpenResult{Moved: true}, nil)
 	case ext.MethodEditorState:
-		// 本体の役が開いたバッファは、テストの open で開いたものだけとして答える（画面に出さないバッファは数えない）。
-		_ = reply(ext.EditorStateResult{Buffers: []ext.BufferInfo{}}, nil)
+		// 本体の役が開いたバッファ（テストの open と、editor/open で開いたもの）を答える。
+		res := ext.EditorStateResult{Buffers: []ext.BufferInfo{}}
+		h.mu.Lock()
+		for _, id := range slices.Sorted(maps.Keys(h.bufs)) {
+			b := h.bufs[id]
+			res.Buffers = append(res.Buffers, ext.BufferInfo{
+				Buffer: id, Path: b.path, FileType: "go", Version: b.version, ReadOnly: h.readOnly[filepath.Base(b.path)],
+			})
+		}
+		h.mu.Unlock()
+		_ = reply(res, nil)
 	case ext.MethodBufferSave:
 		p := decode[ext.BufferSaveParams](h.t, req.Params)
 		h.saves <- p
@@ -192,7 +230,8 @@ func (h *host) request(_ context.Context, req *rpc.Request, reply rpc.Replier) {
 	case ext.MethodBufferEdit:
 		p := decode[ext.BufferEditParams](h.t, req.Params)
 		h.edits <- p
-		_ = reply(ext.BufferEditResult{Applied: true, Version: p.Transaction.BaseVersion + 1}, nil)
+		res, err := h.simEdit(p)
+		_ = reply(res, err)
 	case ext.MethodChoiceAsk:
 		p := decode[ext.ChoiceAskParams](h.t, req.Params)
 		h.choices <- p
@@ -233,6 +272,9 @@ func (h *host) open(id ext.BufferID, name, text string) string {
 		h.t.Fatal(err)
 	}
 	h.texts[id], h.vers[id] = text, 1
+	h.mu.Lock()
+	h.bufs[id] = &simBuffer{path: path, text: text, version: 1}
+	h.mu.Unlock()
 	if err := h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: id, Path: path, FileType: "go", Version: 1, Text: text}); err != nil {
 		h.t.Fatal(err)
 	}
@@ -249,15 +291,16 @@ func (h *host) openOffscreen(path string) (ext.BufferID, error) {
 	if err != nil {
 		return 0, &rpc.Error{Code: rpc.CodeInvalidParams, Message: err.Error()}
 	}
+	text := strings.TrimSuffix(string(data), "\n")
 	h.mu.Lock()
 	id, ok := h.offscreen[path]
 	if !ok {
 		id = offscreenBase + ext.BufferID(len(h.offscreen))
 		h.offscreen[path] = id
+		h.bufs[id] = &simBuffer{path: path, text: text, version: 1}
 	}
 	h.mu.Unlock()
 	if !ok {
-		text := strings.TrimSuffix(string(data), "\n")
 		if err := h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: id, Path: path, FileType: "go", Version: 1, Text: text}); err != nil {
 			return 0, err
 		}
@@ -271,9 +314,61 @@ func (h *host) change(id ext.BufferID, edits ...ext.Edit) {
 	from := h.vers[id]
 	h.texts[id] = applyEdits(h.texts[id], edits)
 	h.vers[id] = from + 1
+	h.mu.Lock()
+	if b := h.bufs[id]; b != nil {
+		b.text, b.version = h.texts[id], from+1
+	}
+	h.mu.Unlock()
 	if err := h.conn.Notify(ext.MethodBufferChange, ext.BufferChangeParams{Buffer: id, FromVersion: from, ToVersion: from + 1, Edits: edits}); err != nil {
 		h.t.Fatal(err)
 	}
+}
+
+// simEdit は、本体の役の buffer/edit の応答を作る。readOnly のファイルは E21 で、failEdit のファイルは誤りで断る。
+// sim なら、バッファの状態に適用してバージョン番号を進め、buffer/change を拡張機能へ送る。
+// sim でなければ、適用したものとして BaseVersion の次の版を答える（状態のバージョン番号だけを進める）。
+func (h *host) simEdit(p ext.BufferEditParams) (ext.BufferEditResult, error) {
+	h.mu.Lock()
+	b := h.bufs[p.Buffer]
+	if b == nil {
+		h.mu.Unlock()
+		return ext.BufferEditResult{Applied: true, Version: p.Transaction.BaseVersion + 1}, nil
+	}
+	name := filepath.Base(b.path)
+	switch {
+	case h.readOnly[name]:
+		h.mu.Unlock()
+		return ext.BufferEditResult{}, &rpc.Error{Code: -32001, Message: "E21: 編集を禁止したバッファは変更できません"}
+	case h.failEdit[name]:
+		h.mu.Unlock()
+		return ext.BufferEditResult{}, &rpc.Error{Code: rpc.CodeInvalidParams, Message: "rejected by the test"}
+	case !h.sim:
+		h.mu.Unlock()
+		return ext.BufferEditResult{Applied: true, Version: p.Transaction.BaseVersion + 1}, nil
+	case p.Transaction.BaseVersion != b.version:
+		v := b.version
+		h.mu.Unlock()
+		return ext.BufferEditResult{Applied: false, Version: v}, nil
+	}
+	from := b.version
+	b.version++
+	b.text = applyEdits(b.text, p.Transaction.Edits)
+	to := b.version
+	h.mu.Unlock()
+	if err := h.conn.Notify(ext.MethodBufferChange, ext.BufferChangeParams{Buffer: p.Buffer, FromVersion: from, ToVersion: to, Edits: p.Transaction.Edits}); err != nil {
+		return ext.BufferEditResult{}, err
+	}
+	return ext.BufferEditResult{Applied: true, Version: to}, nil
+}
+
+// simText は、本体の役のバッファ id の全文を返す（sim のとき、適用した buffer/edit を含む）。
+func (h *host) simText(id ext.BufferID) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if b := h.bufs[id]; b != nil {
+		return b.text
+	}
+	return ""
 }
 
 // テストで問い合わせる本体の操作。段階 2 のコマンド（lsp.definition など）を置き換えたもの（#203）。
@@ -843,6 +938,104 @@ func TestRenameUnopened(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRenameAllOrNothing は、名前の変更を、全部のファイルを変えるか何も変えないかにすることを確かめる（#237。PR #240 の再レビュー）。
+// 編集を禁止したファイル（ro/q.go）に及ぶときは、編集を始める前に確かめて何も変えず、理由のファイルを知らせ、開いたファイルを閉じさせる。
+// 確かめた後の適用の途中で断られたら、それまでに変えたバッファを元の全文に戻し、開いたファイルを閉じさせる。
+//
+// req: FR-109
+func TestRenameAllOrNothing(t *testing.T) {
+	newFiles := func(t *testing.T, files map[string]string) []string {
+		t.Helper()
+		dir := t.TempDir()
+		var paths []string
+		for _, name := range slices.Sorted(maps.Keys(files)) {
+			p := filepath.Join(dir, name)
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(files[name]), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			paths = append(paths, p)
+		}
+		return paths
+	}
+	// noEdits は、届いた buffer/edit が無いことを確かめる。
+	noEdits := func(t *testing.T, h *host) {
+		t.Helper()
+		select {
+		case e := <-h.edits:
+			t.Errorf("buffer/edit = %+v, want none", e)
+		default:
+		}
+	}
+	// closes は、開いたファイルのすべてに buffer/save が届くことを確かめる（本体は、ファイルと同じ中身のバッファを書かずに閉じる）。
+	closes := func(t *testing.T, h *host, n int) {
+		t.Helper()
+		got := map[ext.BufferID]bool{}
+		for range n {
+			got[receive(t, h.saves, "buffer/save").Buffer] = true
+		}
+		for i := range n {
+			if !got[offscreenBase+ext.BufferID(i)] {
+				t.Errorf("buffer/save = %v, want buffers %d..%d", got, offscreenBase, offscreenBase+ext.BufferID(n-1))
+			}
+		}
+	}
+
+	t.Run("readonly", func(t *testing.T) {
+		paths := newFiles(t, map[string]string{"other.go": "var _ = TARGET\n", "ro/q.go": "func TARGET() {}\n"})
+		h := startHost(t, hostOptions{
+			args: []string{"-renamepaths", strings.Join(paths, ",")}, maxRestarts: -1, sim: true, readOnly: []string{"q.go"},
+		})
+		h.open(1, "a.go", "var TARGET = 1")
+		h.diagnosticsAt(1, 1)
+		res := h.invoke(ext.ProviderInvokeParams{
+			Operation: ext.OpRename, Buffer: 1, Version: h.vers[1], Cursor: pos(0, 4), Args: json.RawMessage(`{"text":"renamed"}`),
+		})
+		if !res.OK {
+			t.Fatalf("rename = %+v", res)
+		}
+		m := receive(t, h.msgs, "message/show")
+		if !strings.HasPrefix(m.Text, "名前の変更を適用しなかった（どのファイルも変えていない）: ") || !strings.Contains(m.Text, "q.go（編集の禁止）") || strings.Contains(m.Text, "other.go") {
+			t.Errorf("message/show = %q", m.Text)
+		}
+		closes(t, h, 2)
+		noEdits(t, h)
+		if got := h.simText(1); got != "var TARGET = 1" {
+			t.Errorf("a.go = %q, want unchanged", got)
+		}
+	})
+
+	t.Run("rejected while applying", func(t *testing.T) {
+		paths := newFiles(t, map[string]string{"other.go": "var _ = TARGET\n"})
+		h := startHost(t, hostOptions{
+			args: []string{"-renamepaths", strings.Join(paths, ",")}, maxRestarts: -1, sim: true, failEdit: []string{"b.go"},
+		})
+		h.open(1, "a.go", "var TARGET = 1")
+		h.diagnosticsAt(1, 1)
+		h.open(2, "b.go", "x := TARGET")
+		h.diagnosticsAt(2, 1)
+		res := h.invoke(ext.ProviderInvokeParams{
+			Operation: ext.OpRename, Buffer: 1, Version: h.vers[1], Cursor: pos(0, 4), Args: json.RawMessage(`{"text":"renamed"}`),
+		})
+		if !res.OK {
+			t.Fatalf("rename = %+v", res)
+		}
+		m := receive(t, h.msgs, "message/show")
+		if !strings.Contains(m.Text, "b.go を変えられなかった") || !strings.Contains(m.Text, "変えた 1 個のファイルを元に戻した") {
+			t.Errorf("message/show = %q", m.Text)
+		}
+		closes(t, h, 1)
+		if got := h.simText(1); got != "var TARGET = 1" {
+			t.Errorf("a.go = %q, want restored", got)
+		}
+		if got := h.simText(offscreenBase); got != "var _ = TARGET" {
+			t.Errorf("other.go = %q, want unchanged", got)
+		}
+	})
 }
 
 // TestFormat は、textDocument/formatting の TextEdit の列を、同じ開始の位置の挿入を含めて逐次の数え方のトランザクションにし、

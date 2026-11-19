@@ -503,6 +503,11 @@ type BufferInfo struct {
 	Version Version `json:"version"`
 	// Modified は、保存していない変更があるかどうかである。
 	Modified bool `json:"modified"`
+	// ReadOnly は、編集を禁止したバッファ（buffer/edit を断る）かどうかである。
+	// 複数のバッファへの編集を、全部か何もしないかで適用する拡張機能（LSP の名前の変更）が、前もって確かめるのに使う。
+	ReadOnly bool `json:"readOnly,omitempty"`
+	// ChangedOnDisk は、読み込んだ後にファイルが外で変わった（buffer/save が断られる）かどうかである。
+	ChangedOnDisk bool `json:"changedOnDisk,omitempty"`
 }
 
 // EditorOpenParams は、editor/open の params である。

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/piplupflipper/modal-editor/internal/buffer"
 	"github.com/piplupflipper/modal-editor/internal/ui"
 )
 
@@ -25,6 +26,16 @@ type offscreenNote struct {
 	// dirs は、書き出すときに作ったディレクトリの数である（FR-78）。
 	dirs int
 	msg  ui.Message
+}
+
+// sameAsFile は、bs の中身が、ファイル bs.path の今の中身と同じかを返す。ファイルが無いか読めなければ false を返す。
+// 画面に出さないバッファへの buffer/save で、拡張機能が編集を元に戻したバッファを書き出さずに閉じるのに使う（bufferSaveRequest）。
+func sameAsFile(bs *bufferState) bool {
+	if !bs.disk.exists {
+		return false
+	}
+	b, err := buffer.ReadFile(bs.path)
+	return err == nil && sameContent(bs.buf, b)
 }
 
 // closeOffscreen は、拡張機能 extID の buffer/save で書き出した画面に出さないバッファ bs を閉じ、

@@ -187,6 +187,26 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.touch は、引数のパスを editor/open（focus が false）で開き、編集せずに buffer/save を送り、結果を出力の欄 write に書く。
+		// 名前の変更を取り消した LSP の拡張機能と同じく、変えていない画面に出さないバッファを閉じさせる（#237）。
+		s.Command("fake.touch", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var args struct{ Text string }
+			if err := json.Unmarshal(p.Args, &args); err != nil {
+				return ext.CommandExecuteResult{}, err
+			}
+			go func() {
+				res, err := s.OpenEditor(hostCtx, ext.EditorOpenParams{Path: args.Text, Focus: false})
+				if err == nil {
+					var sr ext.BufferSaveResult
+					sr, err = s.SaveBuffer(hostCtx, ext.BufferSaveParams{Buffer: res.Buffer, SkipHooks: true})
+					if err == nil && !sr.Saved {
+						err = errors.New("not saved")
+					}
+				}
+				_ = s.AppendOutput("write", fmt.Sprintf("done err=%v\n", err))
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		// fake.echo は、受け取った command/execute の args をそのまま表示する。
 		s.Command("fake.openlater", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			// 引数のパスを、応答の 300ms 後に editor/open（focus）で開き、開いたことを message/show で知らせる（#215 の client の振り分け）。
@@ -353,7 +373,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				act(ext.ActivationTextObject, "fake.line"), act(ext.ActivationTextObject, "fake.slow"),
 				act(ext.ActivationTextObject, "fake.hang"), act(ext.ActivationCommand, "fake.upper"),
 				act(ext.ActivationCommand, "fake.echo"), act(ext.ActivationCommand, "fake.openlater"),
-				act(ext.ActivationCommand, "fake.write"),
+				act(ext.ActivationCommand, "fake.write"), act(ext.ActivationCommand, "fake.touch"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -364,7 +384,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
-					contrib("fake.write", ""),
+					contrib("fake.write", ""), contrib("fake.touch", ""),
 				},
 			},
 		},

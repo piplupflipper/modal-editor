@@ -88,9 +88,16 @@ func TestRenameEdits(t *testing.T) {
 	}
 	w := parse(`{"changes": {"file:///m/a.go": [{"range": ` + rg(0, 4, 7) + `, "newText": "bar"}, {"range": ` + rg(1, 4, 7) + `, "newText": "bar"}]},
   "documentChanges": [{"textDocument": {"uri": "file:///m/b.go", "version": 20}, "edits": [{"range": ` + rg(0, 5, 8) + `, "newText": "bar"}]}]}`)
-	got, _, err := c.renameEdits(w, encUTF8)
+	targets, _, err := c.renameEdits(w, encUTF8)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var got []ext.BufferEditParams
+	for _, tg := range targets {
+		got = append(got, tg.params)
+		if tg.opened || len(tg.before) == 0 {
+			t.Errorf("target %d: opened %v, before %q", tg.params.Buffer, tg.opened, tg.before)
+		}
 	}
 	want := []ext.BufferEditParams{
 		{Buffer: 1, Transaction: ext.Transaction{BaseVersion: 10, Edits: []ext.Edit{

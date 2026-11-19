@@ -36,6 +36,7 @@ var (
 	syncFlag     = flag.Int("sync", 2, "TextDocumentSyncKind")
 	logFlag      = flag.String("log", "", "受け取ったメッセージを書き足すファイル")
 	defPath      = flag.String("defpath", "", "定義の候補に足すファイル")
+	renamePaths  = flag.String("renamepaths", "", "名前の変更で、開いていなくても数えるファイル（, で区切る）")
 	links        = flag.Bool("links", false, "定義を LocationLink の配列で返す")
 	fmtWhole     = flag.Bool("fmt-whole", false, "整形を全体の置き換えで返す")
 	fmtDelay     = flag.Duration("fmt-delay", 0, "整形の応答を遅らせる時間")
@@ -205,10 +206,16 @@ func request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 			add(u, text)
 		}
 		mu.Unlock()
-		// -defpath のファイルは、開いていなければ、ファイルの中身で数える（開いていない文書に及ぶ名前の変更。FR-109）。
-		if u := "file://" + *defPath; *defPath != "" && changes[u] == nil {
-			if data, err := os.ReadFile(*defPath); err == nil {
-				add(u, string(data))
+		// -defpath と -renamepaths のファイルは、開いていなければ、ファイルの中身で数える（開いていない文書に及ぶ名前の変更。FR-109）。
+		extra := []string{*defPath}
+		if *renamePaths != "" {
+			extra = append(extra, strings.Split(*renamePaths, ",")...)
+		}
+		for _, path := range extra {
+			if u := "file://" + path; path != "" && changes[u] == nil {
+				if data, err := os.ReadFile(path); err == nil {
+					add(u, string(data))
+				}
 			}
 		}
 		if len(changes) == 0 {
