@@ -2,6 +2,7 @@ package command
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
@@ -66,7 +67,7 @@ func resumeAll(t *testing.T, s *State, inner Extensions, r Result) (Result, int)
 		if r.Deferred == nil {
 			t.Fatalf("Deferred が無い: %+v", r)
 		}
-		if prev != nil && r.Deferred.Command == prev.Command && r.Deferred.Cursor == prev.Cursor && r.Deferred.Version == prev.Version {
+		if prev != nil && reflect.DeepEqual(r.Deferred.Command, prev.Command) && r.Deferred.Cursor == prev.Cursor && r.Deferred.Version == prev.Version {
 			allow++
 		} else {
 			allow = 1

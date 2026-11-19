@@ -546,9 +546,14 @@ func TestKeymapBind(t *testing.T) {
 			t.Errorf("Bind(%+v): err = %v, want 衝突以外のエラー", b, err)
 		}
 	}
-	// インサートモードの q は先に読まれないので登録できる。
-	if err := km.Bind(Binding{Kind: BindAction, Modes: MapInsert, Keys: keys("qq"), Ref: ext}); err != nil {
-		t.Errorf("インサートモードの qq: %v", err)
+	// インサートモードの左辺は、表を引く 1 つのキーに限る（FR-127）。文字の列、修飾キーの付かない文字、<Esc>、<CR>、<Tab> は登録できない。
+	for _, k := range []string{"qq", "q", "<Esc>", "<CR>", "<Tab>", "<C-w>x"} {
+		if err := km.Bind(Binding{Kind: BindAction, Modes: MapInsert, Keys: keys(k), Ref: ext}); err == nil || errors.Is(err, ErrConflict) {
+			t.Errorf("インサートモードの %s: err = %v, want 衝突以外のエラー", k, err)
+		}
+	}
+	if err := km.Bind(Binding{Kind: BindAction, Modes: MapInsert, Keys: keys("<S-Tab>"), Ref: ext}); err != nil {
+		t.Errorf("インサートモードの <S-Tab>: %v", err)
 	}
 
 	// 置き換えは Unbind してから Bind する（利用者の設定による上書き）。

@@ -95,6 +95,30 @@ func TestHelp(t *testing.T) {
 		{"sa", "- `sa`: "},
 		{":!", "`:!`"},
 		{":wqall", "`:wqall`"},
+		// 操作の ID と同じ語は、説明の節があればそこに当たり、操作の ID の一覧の行には他に当たる所が無いときだけ当たる（#257 のレビューの推奨 2）。
+		{"rename", "| `:rename 新しい名前` |"},
+		{"references", "| `<leader>lr` | `references` |"},
+		{"definition", "| `definition` |"},
+		{"hover", "`hover` を打って"},
+		{"undo", "| `undo` | 操作 |"},
+		// 点で区切った ID は、最後の部分の JSON のキー（statusline の "right"）より一覧の行を先に当てる。
+		{"insert.right", "| `insert.right` | 操作 |"},
+		// ID の語は、操作の ID の節の本文（tmux の prefix の注記、書き方の規則）と、"action": "語" の行より一覧の行を先に当てる
+		// （PR #258 の再レビューの推奨 2）。
+		{"insert.left", "| `insert.left` | 操作 |"},
+		{"toggle-case", "| `toggle-case` | オペレーター |"},
+		{"toggle-case-char", "| `toggle-case-char` | 操作 |"},
+		{"line-start", "| `line-start` | モーション |"},
+		{"page-down", "| `page-down` | 操作 |"},
+		{"line-end", "| `line-end` | モーション |"},
+		// main と同じ行に当たる語（再レビューで main と比べた 11 語。rename、references、definition、hover は上にある）。
+		{"delete", "| `:d`、`:delete`（`:d`） |"},
+		{"insert", "モードの名前は `normal`、`visual`、`insert`"},
+		{"visual", "| `visual` | ビジュアルモードの選択の範囲 |"},
+		{"format", "| `gq{モーション}` | `format` |"},
+		{"debug.continue", "| `<leader>dc` | `debug.continue` |"},
+		{"codeAction", "| `<leader>la` | `codeAction` |"},
+		{"left", "`statusline` は、`left` と `right`"},
 	} {
 		h.keys(":h " + tt.word + "<CR>")
 		h.settle()

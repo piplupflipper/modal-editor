@@ -200,8 +200,10 @@ func (e *Editor) helpText() string {
 func helpKeyLines(km *input.Keymap) []string {
 	descs := map[string][]string{}
 	next := map[string][]string{}
-	for _, b := range km.Bindings() {
-		if !b.Ref.Builtin() && !b.Ref.Provider() || strings.HasPrefix(b.Ref.ID, input.KeyListPrefix) {
+	// 設定の keymap の操作が取り除いた既定のキー（Overridden）も、本体のキーとして出す。
+	for _, b := range append(km.Bindings(), km.Overridden()...) {
+		// 設定の keymap に操作の ID で書いた割り当て（b.User）は、本体のキーではないので出さない。
+		if b.User || !b.Ref.Builtin() && !b.Ref.Provider() || strings.HasPrefix(b.Ref.ID, input.KeyListPrefix) {
 			continue
 		}
 		label := editcmd.KeysString(b.Keys)
@@ -262,6 +264,14 @@ func helpKeyLines(km *input.Keymap) []string {
 //  3. 設定の例の JSON のキー（"語"）を含む行。点で区切った名前は、最後の部分（"historySize"）でも探す
 //  4. 定義の行のうち、語で始まる `…` を含む行（:help reg で `:registers`）
 //  5. 語が 2 文字以上なら、語を含む見出し
+//  6. 操作の ID の一覧（docs/usage.md の action-ids の印の間）の行のうち、最初の列の `語` が完全に一致する行。
+//     一覧の行は 1〜5 の候補にしない。rename や hover のように説明の節がある語は、その節に当てる（#257 のレビューの推奨 2）。
+//     点で区切った名前（insert.right）は、3 の最後の部分（"right"）で探す前に、この段で探す
+//
+// 語が操作の ID（一覧の行の ID と完全に一致する語）なら、操作の ID の節の本文（actionIDsSection の見出しから一覧の終わりまで。
+// 書き方の規則の箇条書きや tmux の prefix の注記）と、設定の例で ID を値に書いた行（"action": "語"）は、1〜5 の候補にしない。
+// このため ID の語は、その節の本文の言及より先に一覧の行に当たる。ただし、それより前の段で節の外の行に当たる語
+// （rename、hover、delete、left など、main で説明の行に当たっていた語）は、その行に当てる（PR #258 の再レビューの推奨 2）。
 //
 // 語の一部だけを含む見出し（:help w が「同じ window の…」）には当てない（PR #230 のレビュー）。
 func helpLine(lines []string, word string) (int, bool) {
@@ -275,13 +285,37 @@ func helpLine(lines []string, word string) (int, bool) {
 		heading bool
 	}
 	parsed := make([]mdLine, len(lines))
-	inCode := false
+	// idRows は、操作の ID の一覧（docs/usage.md の action-ids の印の間）の行の、最初の列の `…` である。
+	// 一覧の行は、他の段で当たる所が無い語のときだけ当てる（下の 6。#257 のレビューの推奨 2）。
+	idRows := map[int][]string{}
+	// idSection は、操作の ID の節（actionIDsSection の見出しの次から一覧の終わりの印まで）の、見出しでない行である。
+	idSection := map[int]bool{}
+	inCode, inIDs, inSection := false, false, false
 	for i, l := range lines {
 		if strings.HasPrefix(l, "```") {
 			inCode = !inCode
 			continue
 		}
 		if inCode {
+			continue
+		}
+		switch l {
+		case actionIDsSection:
+			inSection = true
+		case actionIDsBegin:
+			inIDs = true
+			continue
+		case actionIDsEnd:
+			inIDs, inSection = false, false
+			continue
+		}
+		if inSection && !strings.HasPrefix(l, "#") {
+			idSection[i] = true
+		}
+		if inIDs {
+			if cell, _, ok := strings.Cut(strings.TrimPrefix(l, "|"), " |"); ok {
+				idRows[i] = codeSpans(cell)
+			}
 			continue
 		}
 		p := mdLine{spans: codeSpans(l), heading: strings.HasPrefix(l, "#")}
@@ -298,6 +332,22 @@ func helpLine(lines []string, word string) (int, bool) {
 			p.defs = p.spans[:1]
 		}
 		parsed[i] = p
+	}
+	// 語が操作の ID（一覧の行の ID と完全に一致する）なら、操作の ID の節の本文（書き方の規則の箇条書きなど）と、
+	// 設定の例で ID を値に書いた行（"action": "語"）を 2〜5 の候補にしない。その語は、節の本文より一覧の行に当てる。
+	isID := false
+	for _, ids := range idRows {
+		if slices.Contains(ids, word) {
+			isID = true
+			break
+		}
+	}
+	actionValue := `"action": "` + word + `"`
+	skip := func(i int) bool { return isID && (idSection[i] || strings.Contains(lines[i], actionValue)) }
+	for i := range parsed {
+		if skip(i) {
+			parsed[i] = mdLine{}
+		}
 	}
 	exact := func(span, f string) bool { return span == f || strings.HasPrefix(span, f+" ") }
 	find := func(pick func(mdLine) []string, match func(string, string) bool) (int, bool) {
@@ -322,9 +372,23 @@ func helpLine(lines []string, word string) (int, bool) {
 	if j := strings.LastIndexByte(word, '.'); j >= 0 && j+1 < len(word) {
 		keys = append(keys, `"`+word[j+1:]+`"`)
 	}
-	for _, k := range keys {
+	idRow := func() (int, bool) {
+		for i := range lines {
+			if slices.Contains(idRows[i], word) {
+				return i, true
+			}
+		}
+		return 0, false
+	}
+	for n, k := range keys {
+		if n == 1 {
+			// 点で区切った名前の最後の部分（"left"）より、操作の ID の一覧の行（insert.left）を先に当てる。
+			if i, ok := idRow(); ok {
+				return i, true
+			}
+		}
 		for i, l := range lines {
-			if strings.Contains(l, k) {
+			if !skip(i) && strings.Contains(l, k) {
 				return i, true
 			}
 		}
@@ -339,8 +403,16 @@ func helpLine(lines []string, word string) (int, bool) {
 			}
 		}
 	}
-	return 0, false
+	return idRow()
 }
+
+// 操作の ID の一覧の印（docs/usage.md。internal/input の TestActionIDDoc が同じ印で表を照合する）。
+const (
+	actionIDsBegin = "<!-- action-ids:begin -->"
+	actionIDsEnd   = "<!-- action-ids:end -->"
+	// actionIDsSection は、操作の ID の節の見出しである。この見出しから actionIDsEnd までの本文を、操作の ID の語の候補から外す（helpLine）。
+	actionIDsSection = "### 操作の ID"
+)
 
 // namesOnly は、表の列 cell が `…` の名前を並べただけ（`:w`、`:write`（`:w`）、`<C-]>` か `<leader>lD`）かを返す。
 // 名前の外に文が書かれた列（`dw`、`x` など、名前を省略した削除）は、その名前の定義の行として扱わない。
@@ -474,7 +546,9 @@ func (e *Editor) selectKeyRow(r keyRow) {
 //   - キーマップ（本体の既定のキー、LSP と DAP の既定のキー、拡張機能の contributes のキー）。説明は input.Binding.Description で、
 //     拡張機能の項目に説明文が無ければ操作の ID を出す。group が空でなければ、その分類の LSP か DAP の操作のキー（K、gq、<C-]> など）も、
 //     接頭辞で始まらなくても出す（input.ProviderGroup。#227 のオーケストレータの決定）
-//   - 利用者のキーマップ（設定の keymap）。説明は展開先のキーの列である。説明文を書く項目は設定に足していない（仮）
+//   - 利用者のキーマップ（設定の keymap）。右辺をキーの列で書いた項目の説明は展開先のキーの列である。説明文を書く項目は設定に足していない（仮）。
+//     右辺に操作の ID を書いた項目（input.Binding.User。FR-126）はキーマップに登録してあり、出どころを「設定」、説明を操作の表の説明文にする。
+//     その項目が取り除いた既定のキー（input.Keymap.Overridden）は、取り除いたモードを Overridden にして出す
 //   - Parser が表を引く前に読むキー（回数、レジスター、マクロ、ドットリピート。input.ParserKeys）。prefix と group が空のときだけ出す
 //
 // 利用者のキーマップが本体か拡張機能のキーと同じキーの列か、その手前の部分を同じモードで割り当てていれば、その行の Overridden に
@@ -491,7 +565,9 @@ func (e *Editor) keyRows(group string, prefix []editcmd.Key) []keyRow {
 			}
 		}
 	}
-	for _, b := range e.keymap.Bindings() {
+	overridden := e.keymap.Overridden()
+	bindings := append(e.keymap.Bindings(), overridden...)
+	for i, b := range bindings {
 		inGroup := group != "" && b.Ref.Provider() && input.ProviderGroup(b.Ref.ID) == group
 		if !hasKeyPrefix(b.Keys, prefix) && !inGroup {
 			continue
@@ -500,11 +576,19 @@ func (e *Editor) keyRows(group string, prefix []editcmd.Key) []keyRow {
 			Keys: b.Keys, Label: editcmd.KeysString(b.Keys), Modes: b.Modes,
 			Kind: b.Kind, Ref: b.Ref, Description: b.Description,
 		}
-		if !b.Ref.Builtin() && !b.Ref.Provider() {
+		switch {
+		case b.User:
+			// 設定の keymap に操作の ID で書いた割り当て（FR-126）。説明文は操作の表の説明文である。
+			row.Source = sourceUser
+		case !b.Ref.Builtin() && !b.Ref.Provider():
 			row.Source, row.Extension = sourceExtension, b.Ref.Extension
 			if row.Description == "" {
 				row.Description = b.Ref.ID
 			}
+		}
+		if i >= len(bindings)-len(overridden) {
+			// 設定の keymap の操作が取り除いた登録（input.Keymap.Overridden）。取り除いたモードでは設定が効く。
+			row.Overridden = b.Modes
 		}
 		for mm, lhss := range user {
 			if b.Modes&mm != 0 && slices.ContainsFunc(lhss, func(lhs []editcmd.Key) bool { return hasKeyPrefix(b.Keys, lhs) }) {

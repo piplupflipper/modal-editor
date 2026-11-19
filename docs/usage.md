@@ -38,6 +38,12 @@ LSP と DAP の操作には既定のキー（[LSP と DAP の既定のキー](#l
     "normal": {
       "<Space>h": ":hover<CR>",
       "<Space>c": ":debug.continue<CR>",
+      // 右辺をオブジェクトにすると、キーの列ではなく本体の操作を ID で割り当てる
+      "<Space>H": { "action": "hover" },
+    },
+    "insert": {
+      "<C-a>": { "action": "insert.line-start" },
+      "<C-e>": { "action": "insert.line-end" },
     },
   },
   "extensions": {
@@ -50,10 +56,205 @@ LSP と DAP の操作には既定のキー（[LSP と DAP の既定のキー](#l
 }
 ```
 
-`keymap` は、モードの名前から、キーの列とその展開先の対応である。
-モードの名前は `normal`、`visual`、`insert`、`commandLine` で、この文書が確かめたのは `normal` だけである。
-展開先には、Vim の `:map` の右辺と同じくキーの列を書く。
+`keymap` は、モードの名前から、キーの列とその割り当ての対応である。
+モードの名前は `normal`、`visual`、`insert`、`commandLine` で、この文書が確かめたのは `normal` と `insert` である（`insert` は 2026-11-19 に同梱の `config.example.jsonc` の Emacs 風のキーで確かめた）。
+右辺には、キーの列か、本体の操作（[操作の ID](#操作の-id)）を書く。
+キーの列は、Vim の `:map` の右辺と同じく展開先のキーの列である。
+展開した列は、もう一度 `keymap` の文字列の項目で展開しない（Vim の `noremap` と同じ）。
+ただし、展開した列は、`keymap` で操作を割り当てた後のキーとして解釈する。`"x": { "action": "line-end" }` と `"<C-x>": "x"` を書くと、`<C-x>` は行末へ移る（Vim の `nnoremap <C-x> x` は本体の `x` を使うので、この点が違う）。
 `":hover<CR>"` は、`:` でコマンドラインに入り、`hover` を打って `<CR>` で実行するキーの列である。
+`{ "action": "hover" }` は、ホバーの操作そのものを割り当てる（FR-126）。
+
+### 操作の ID
+
+`keymap` の右辺に `{ "action": "<ID>" }` と書くと、キーの列に展開せずに、本体の操作をそのキーに割り当てる（FR-126）。
+同じモードの同じキーに本体の既定の割り当てがあれば、設定の割り当てが勝つ（`"insert": { "<BS>": { "action": "insert.delete-char" } }` と書くと、`<BS>` はカーソルの文字を消す）。
+書ける ID は、下の[操作の ID の一覧](#操作の-id-の一覧)にあるものだけである。
+拡張機能が宣言したコマンドの ID は書けない。拡張機能のコマンドは、キーの列（`":acp.prompt<CR>"`）で割り当てる。
+オブジェクトに書ける項目は `action` だけで、他の項目を書くと誤りになる。
+
+ID は、名前を変えずに保つ（利用者の設定が壊れるため）。
+回数、レジスター、マクロ、ドットリピート（`3`、`"a`、`q`、`@`、`.`）には ID が無く、割り当てられない。
+
+割り当てられるモードは、一覧の「モード」の列にあるものである。
+`commandLine` には操作を書けない。
+`normal` に割り当てたモーションは、オペレーターの後（`d` の後など）には効かない（Vim の `nmap` と同じ）。
+
+インサートモードの割り当ての左辺は、1 つのキーにする。
+修飾キーの付かない文字、`<Esc>`、`<CR>`、`<Tab>` は左辺に書けない。
+これらのキーは、1 文字の入力を速く保つために操作の表を通さず、今までどおり文字の入力とモードの切り替えに使う。
+`jk` で抜けるようなキーの列は、右辺をキーの列で書く（`"insert": { "jk": "<Esc>" }`）。
+同梱の `config.example.jsonc` には、インサートモードの Emacs 風のキー（`<C-a>`、`<C-e>`、`<C-f>`、`<C-b>`、`<C-n>`、`<C-p>`、`<C-d>`、`<C-k>`）の例がある。
+Ctrl-H は、端末からも tmux の中でも `^H`（0x08）で届き、本体は `<BS>` と読む（本体は、Ctrl-H を区別して送る端末の機能を有効にしない）。
+このため `<C-h>` に操作を割り当てても効かず、Ctrl-H は `<BS>` の割り当てのとおりに働く。既定では `insert.delete-prev-char` で前の文字を消す。
+`<BS>` を別の操作に割り当てると（`"<BS>": { "action": "insert.delete-char" }`）、Ctrl-H も同じ操作に変わる。
+tmux の prefix が既定の `C-b` のままなら、Ctrl-B は tmux が受け取るので、例の `<C-b>`（`insert.left`）は本体に届かない。
+
+左辺の表記が違っても同じキーになる項目（`<Leader>w` と `<Space>w`）を、キーの列と操作の両方に書くと、キーの列の項目を使い、誤りとして知らせる。
+知らない ID、そのモードで使えない操作、書けない左辺も、誤りとして位置と内容を知らせ、その項目だけを使わない。
+
+### 操作の ID の一覧
+
+次の表は、本体の操作の表から作る（`internal/input` のテストが照合する）。
+ID は一意で、1 つの ID は 1 つの操作を指す（`0` と `<Home>` のように、同じ操作を複数のキーに載せているものはある）。
+「モード」は、`keymap` のどのモードに割り当てられるかである。
+
+ID の書き方は、今は次のとおりである。
+
+- 本体の操作は、小文字の英単語を `-` でつなぐ（`line-start`、`page-down`）
+- LSP と DAP の操作は、Ex コマンドの名前と同じ（`typeDefinition`、`debug.stepOver`）。語のつなぎは `-` ではなく大文字（camelCase）である
+- `.` は、前の部分で分類を表す。`peek.`（ポップアップで見る）、`diagnostic.`（診断）、`debug.` と `breakpoint.`（DAP）、`insert.`（インサートモードの操作）がある
+- `insert.` で始まる ID はインサートモードの操作である。ID `insert`（`.` が無いもの）は、ノーマルモードの `i`（カーソルの前から入力を始める）で、インサートモードの操作ではない
+- ノーマルモードの `~`（カーソルの文字を入れ替える）は `toggle-case-char`、オペレーターの `g~` は `toggle-case` である
+インサートモードの操作（`insert.` で始まるもの）の既定のキーは、一覧の順に `<Left>`、`<Right>`、`<Up>`、`<Down>`、`<Home>`、`<End>`、`<PageUp>`、`<PageDown>`、`<BS>`、`<Del>` である。
+`insert.delete-to-line-end` は既定のキーが無く、行末の位置で使うと次の行をつなげる（Emacs の `C-k`）。
+インサートモードで消した文字は、`<BS>` と同じくレジスターにも履歴にも入らない。
+
+<!-- action-ids:begin -->
+| ID | 種類 | モード | 説明 |
+|---|---|---|---|
+| `left` | モーション | `normal`、`visual` | 左へ |
+| `down` | モーション | `normal`、`visual` | 下の行へ |
+| `up` | モーション | `normal`、`visual` | 上の行へ |
+| `right` | モーション | `normal`、`visual` | 右へ |
+| `word-next` | モーション | `normal`、`visual` | 次の単語の先頭へ |
+| `word-prev` | モーション | `normal`、`visual` | 前の単語の先頭へ |
+| `word-end` | モーション | `normal`、`visual` | 単語の末尾へ |
+| `bigword-next` | モーション | `normal`、`visual` | 次の空白区切りの単語の先頭へ |
+| `bigword-prev` | モーション | `normal`、`visual` | 前の空白区切りの単語の先頭へ |
+| `bigword-end` | モーション | `normal`、`visual` | 空白区切りの単語の末尾へ |
+| `line-start` | モーション | `normal`、`visual` | 行の先頭へ |
+| `line-first-nonblank` | モーション | `normal`、`visual` | 行の最初の空白でない文字へ |
+| `line-end` | モーション | `normal`、`visual` | 行の末尾へ |
+| `file-start` | モーション | `normal`、`visual` | 最初の行へ（回数があればその行へ） |
+| `file-end` | モーション | `normal`、`visual` | 最後の行へ（回数があればその行へ） |
+| `find-forward` | モーション | `normal`、`visual` | 行の中で右の {文字} へ |
+| `find-backward` | モーション | `normal`、`visual` | 行の中で左の {文字} へ |
+| `till-forward` | モーション | `normal`、`visual` | 行の中で右の {文字} の手前へ |
+| `till-backward` | モーション | `normal`、`visual` | 行の中で左の {文字} の手前へ |
+| `find-repeat` | モーション | `normal`、`visual` | 直前の f、F、t、T を繰り返す |
+| `find-repeat-reverse` | モーション | `normal`、`visual` | 直前の f、F、t、T を逆向きに繰り返す |
+| `match-pair` | モーション | `normal`、`visual` | 対応する括弧へ |
+| `paragraph-prev` | モーション | `normal`、`visual` | 前の段落へ |
+| `paragraph-next` | モーション | `normal`、`visual` | 次の段落へ |
+| `search-forward` | モーション | `normal`、`visual` | 前方へ検索する |
+| `search-backward` | モーション | `normal`、`visual` | 後方へ検索する |
+| `search-next` | モーション | `normal`、`visual` | 直前の検索を同じ向きに繰り返す |
+| `search-prev` | モーション | `normal`、`visual` | 直前の検索を逆向きに繰り返す |
+| `search-word-forward` | モーション | `normal`、`visual` | カーソルの単語を前方へ検索する |
+| `search-word-backward` | モーション | `normal`、`visual` | カーソルの単語を後方へ検索する |
+| `delete` | オペレーター | `normal`、`visual` | 消す |
+| `change` | オペレーター | `normal`、`visual` | 消して入力する |
+| `yank` | オペレーター | `normal`、`visual` | ヤンクする |
+| `toggle-case` | オペレーター | `normal`、`visual` | 大文字と小文字を入れ替える |
+| `lowercase` | オペレーター | `normal`、`visual` | 小文字にする |
+| `uppercase` | オペレーター | `normal`、`visual` | 大文字にする |
+| `surround-add` | オペレーター | `normal` | 対象を {文字} で囲む（sa{対象}{文字}） |
+| `indent` | オペレーター | `visual` | 選んだ行を右へずらす（選択は残す） |
+| `dedent` | オペレーター | `visual` | 選んだ行を左へずらす（選択は残す） |
+| `delete-lines` | オペレーター | `visual` | 選んだ行を消す |
+| `change-lines` | オペレーター | `visual` | 選んだ行を消して入力する |
+| `yank-lines` | オペレーター | `visual` | 選んだ行をヤンクする |
+| `inner-word` | テキストオブジェクト | `visual` | 単語 |
+| `a-word` | テキストオブジェクト | `visual` | 単語と後ろの空白 |
+| `inner-bigword` | テキストオブジェクト | `visual` | 空白区切りの単語 |
+| `a-bigword` | テキストオブジェクト | `visual` | 空白区切りの単語と後ろの空白 |
+| `inner-double-quote` | テキストオブジェクト | `visual` | "…" の中 |
+| `a-double-quote` | テキストオブジェクト | `visual` | "…" の全体 |
+| `inner-single-quote` | テキストオブジェクト | `visual` | '…' の中 |
+| `a-single-quote` | テキストオブジェクト | `visual` | '…' の全体 |
+| `inner-paren` | テキストオブジェクト | `visual` | (…) の中 |
+| `a-paren` | テキストオブジェクト | `visual` | (…) の全体 |
+| `inner-bracket` | テキストオブジェクト | `visual` | […] の中 |
+| `a-bracket` | テキストオブジェクト | `visual` | […] の全体 |
+| `inner-brace` | テキストオブジェクト | `visual` | {…} の中 |
+| `a-brace` | テキストオブジェクト | `visual` | {…} の全体 |
+| `inner-paragraph` | テキストオブジェクト | `visual` | 段落 |
+| `a-paragraph` | テキストオブジェクト | `visual` | 段落と後ろの空行 |
+| `toggle-case-char` | 操作 | `normal` | カーソルの文字の大文字と小文字を入れ替える |
+| `put-after` | 操作 | `normal` | カーソルの後に貼る |
+| `put-before` | 操作 | `normal` | カーソルの前に貼る |
+| `delete-char` | 操作 | `normal` | カーソルの文字を消す |
+| `delete-char-before` | 操作 | `normal` | カーソルの前の文字を消す |
+| `replace-char` | 操作 | `normal` | カーソルの文字を {文字} に置き換える |
+| `delete-to-line-end` | 操作 | `normal` | 行の末尾まで消す（d$） |
+| `change-to-line-end` | 操作 | `normal` | 行の末尾まで消して入力する（c$） |
+| `substitute-line` | 操作 | `normal` | 行を消して入力する（cc） |
+| `yank-line` | 操作 | `normal` | 行をヤンクする（yy） |
+| `indent-line` | 操作 | `normal` | 行を右へずらす（>>。回数は行数） |
+| `dedent-line` | 操作 | `normal` | 行を左へずらす（<<。回数は行数） |
+| `surround-delete` | 操作 | `normal` | {文字} の囲みを消す（sd{文字}） |
+| `surround-replace` | 操作 | `normal` | 囲みを替える（sr{前の文字}{後の文字}） |
+| `join-lines` | 操作 | `normal` | 行をつなげる |
+| `open-below` | 操作 | `normal` | 下に行を足して入力する |
+| `open-above` | 操作 | `normal` | 上に行を足して入力する |
+| `insert` | 操作 | `normal` | カーソルの前から入力する |
+| `append` | 操作 | `normal` | カーソルの後から入力する |
+| `insert-line-start` | 操作 | `normal` | 行の最初の空白でない文字の前から入力する |
+| `append-line-end` | 操作 | `normal` | 行の末尾から入力する |
+| `undo` | 操作 | `normal` | アンドゥ |
+| `redo` | 操作 | `normal` | リドゥ |
+| `command-line` | 操作 | `normal`、`visual` | コマンドラインに入る |
+| `visual` | 操作 | `normal`、`visual` | 文字単位のビジュアルモード |
+| `visual-line` | 操作 | `normal`、`visual` | 行単位のビジュアルモード |
+| `visual-swap` | 操作 | `visual` | 選択の反対の端へ移る |
+| `page-down` | 操作 | `normal`、`visual` | 1 画面下へスクロールする |
+| `page-up` | 操作 | `normal`、`visual` | 1 画面上へスクロールする |
+| `output-next` | 操作 | `normal` | 出力の欄を開く、次の欄へ切り替える |
+| `output-close` | 操作 | `normal` | 出力の欄を閉じる |
+| `output-scroll-up` | 操作 | `normal` | 出力の欄を上へスクロールする |
+| `output-scroll-down` | 操作 | `normal` | 出力の欄を下へスクロールする |
+| `popup-focus` | 操作 | `normal` | ポップアップへフォーカスを入れる、元のタブへ戻る |
+| `jump-older` | 操作 | `normal` | ジャンプリストを戻る |
+| `jump-newer` | 操作 | `normal` | ジャンプリストを進む |
+| `alternate-buffer` | 操作 | `normal` | 裏のタブへ移る |
+| `tab-next` | 操作 | `normal` | 次のタブへ移る |
+| `tab-prev` | 操作 | `normal` | 前のタブへ移る |
+| `put-older` | 操作 | `normal` | 貼った直後に、履歴の古い項目に貼り直す |
+| `put-newer` | 操作 | `normal` | 貼った直後に、履歴の新しい項目に貼り直す |
+| `diff-next` | 操作 | `normal` | 見比べで、次の差分へ |
+| `diff-prev` | 操作 | `normal` | 見比べで、前の差分へ |
+| `insert.left` | 操作 | `insert` | 左へ |
+| `insert.right` | 操作 | `insert` | 右へ |
+| `insert.up` | 操作 | `insert` | 上の行へ |
+| `insert.down` | 操作 | `insert` | 下の行へ |
+| `insert.line-start` | 操作 | `insert` | 行の先頭へ |
+| `insert.line-end` | 操作 | `insert` | 行末の位置へ |
+| `insert.page-up` | 操作 | `insert` | 1 画面上へスクロールする |
+| `insert.page-down` | 操作 | `insert` | 1 画面下へスクロールする |
+| `insert.delete-prev-char` | 操作 | `insert` | 前の文字を消す |
+| `insert.delete-char` | 操作 | `insert` | カーソルの文字を消す |
+| `insert.delete-to-line-end` | 操作 | `insert` | カーソルから行末まで消す（行末では次の行をつなげる） |
+| `hover` | 操作 | `normal` | ホバー（LSP） |
+| `peek.definition` | 操作 | `normal` | 定義をポップアップで見る（LSP） |
+| `definition` | 操作 | `normal` | 定義へ移る（LSP） |
+| `peek.implementation` | 操作 | `normal` | 実装をポップアップで見る（LSP） |
+| `implementation` | 操作 | `normal` | 実装へ移る（LSP） |
+| `peek.typeDefinition` | 操作 | `normal` | 型の定義をポップアップで見る（LSP） |
+| `typeDefinition` | 操作 | `normal` | 型の定義へ移る（LSP） |
+| `references` | 操作 | `normal` | 参照の一覧（LSP） |
+| `rename` | 操作 | `normal` | 名前を変える（LSP） |
+| `codeAction` | 操作 | `normal` | コードアクション（LSP） |
+| `documentSymbols` | 操作 | `normal` | ファイルのシンボルの一覧（LSP） |
+| `workspaceSymbols` | 操作 | `normal` | ワークスペースのシンボルの一覧（LSP） |
+| `diagnostic.list` | 操作 | `normal` | ファイルの診断の一覧 |
+| `diagnostic.listAll` | 操作 | `normal` | ワークスペースの診断の一覧 |
+| `diagnostic.next` | 操作 | `normal` | 次の診断へ移る |
+| `diagnostic.prev` | 操作 | `normal` | 前の診断へ移る |
+| `format` | オペレーター | `normal`、`visual` | 整形する（LSP） |
+| `debug.continue` | 操作 | `normal` | デバッグを始める、続行する（DAP） |
+| `debug.pause` | 操作 | `normal` | 一時停止する（DAP） |
+| `debug.terminate` | 操作 | `normal` | デバッグを終える（DAP） |
+| `debug.restart` | 操作 | `normal` | デバッグをやり直す（DAP） |
+| `breakpoint.toggle` | 操作 | `normal` | ブレークポイントを切り替える（DAP） |
+| `breakpoint.conditional` | 操作 | `normal` | 条件付きのブレークポイントを置く（DAP） |
+| `breakpoint.clear` | 操作 | `normal` | ブレークポイントをすべて消す（DAP） |
+| `debug.stepOver` | 操作 | `normal` | ステップオーバー（DAP） |
+| `debug.stepIn` | 操作 | `normal` | ステップイン（DAP） |
+| `debug.stepOut` | 操作 | `normal` | ステップアウト（DAP） |
+| `debug.runLast` | 操作 | `normal` | 前回の設定で実行する（DAP） |
+| `debug.toggleUI` | 操作 | `normal` | DAP のペインを切り替える（DAP） |
+<!-- action-ids:end -->
 
 `extensions.settings` は、拡張機能の ID から、その拡張機能に渡す設定への対応である。
 中身は拡張機能ごとに違い、それぞれの設定の型の doc にある（[標準の拡張機能](#標準の拡張機能)の各節）。
@@ -783,6 +984,7 @@ Vim と同じく、`:` の無い語はまずキーや設定の名前として引
 一覧の各行は、キー、モード（`n` はノーマル、`v` はビジュアル、`o` はオペレーターの後、`i` はインサート、`c` はコマンドライン）、出どころ、説明である。
 出どころは、本体の既定のキーが `本体`、設定の `keymap` が `設定`、拡張機能が `拡張機能 <ID>` である。
 設定の `keymap` の項目の説明は、`→ ` の後の展開先のキーの列である。
+右辺に操作の ID を書いた項目の説明は、その操作の説明（[操作の ID の一覧](#操作の-id-の一覧)の説明の列）である。
 設定の `keymap` が本体か拡張機能のキーと同じキーを割り当てていると、両方の行を出し、効かないほうの行の説明の後に `（設定の keymap が優先）` と付ける。
 `keymap` で `s` を割り当てたときの `sa` のように、手前の部分を割り当てて打てなくなったキーにも同じ印を付ける。
 一部のモードだけを割り当てたときは、`（v では設定の keymap が優先）` のように効かないモードを書く。

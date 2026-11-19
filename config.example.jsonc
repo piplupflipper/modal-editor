@@ -1,6 +1,6 @@
-// vi-imitation の設定の例（見た目）。
+// vi-imitation の設定の例（キーの割り当てと見た目）。
 // $XDG_CONFIG_HOME/vi-imitation/config.jsonc（未設定なら ~/.config/vi-imitation/config.jsonc）に写して使う。
-// 項目の説明は docs/usage.md の「見た目の設定」にある。
+// 項目の説明は docs/usage.md の「設定ファイル」と「見た目の設定」にある。
 //
 // 配色は、本体に同梱した iceberg（https://github.com/cocopon/iceberg.vim の暗い背景の色）を選び、その上に colors を重ねる。
 // colors に書いたのは、端末の背景を見せる（背景を透過させる）前提の調整、lightline の iceberg に近いステータス行の色、
@@ -8,6 +8,24 @@
 // iceberg.vim から写した値と写した元は、internal/config/colors/iceberg.jsonc にある。
 // 24 ビットの色を出せる端末で使う。
 {
+  // インサートモードの Emacs 風のキー。右辺の { "action": "<ID>" } は本体の操作で、ID の一覧は docs/usage.md の「操作の ID の一覧」にある。
+  // 本体の既定のキー（<Left>、<BS>、<Del> など）はそのまま使える
+  // Ctrl-H（前の文字を消す）は書かない。端末も tmux も Ctrl-H を ^H（0x08）で送り、本体は <BS> と読むので、
+  // <C-h> の割り当ては効かない。Ctrl-H は <BS> の既定（insert.delete-prev-char）で前の文字を消す
+  "keymap": {
+    "insert": {
+      "<C-a>": { "action": "insert.line-start" }, // 行の先頭へ
+      "<C-e>": { "action": "insert.line-end" }, // 行末の位置へ
+      "<C-f>": { "action": "insert.right" }, // 右へ
+      // 左へ。tmux の prefix が既定の C-b のままなら、Ctrl-B は tmux が受け取り、本体に届かない
+      "<C-b>": { "action": "insert.left" },
+      "<C-n>": { "action": "insert.down" }, // 下の行へ
+      "<C-p>": { "action": "insert.up" }, // 上の行へ
+      "<C-d>": { "action": "insert.delete-char" }, // カーソルの文字を消す
+      "<C-k>": { "action": "insert.delete-to-line-end" }, // カーソルから行末まで消す（行末では次の行をつなげる）
+    },
+  },
+
   "colorscheme": "iceberg",
 
   "colors": {

@@ -1,6 +1,9 @@
 package command
 
 import (
+	"slices"
+	"unicode/utf8"
+
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command/target"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
@@ -8,10 +11,12 @@ import (
 
 // insertState は、インサートモードの 1 回分の入力の状態である。
 type insertState struct {
-	// cmd は、インサートモードへ移った編集コマンドの値である。抜けるときに Text を埋めてドットリピートに記録する。
+	// cmd は、インサートモードへ移った編集コマンドの値である。抜けるときに Inserted を埋めてドットリピートに記録する。
 	cmd editcmd.Command
-	// text は、入力した文字の列である。<CR> は '\n'、<BS> は '\b' として記録する。
-	text []rune
+	// text は、入力した文字と削除の操作の列である。<CR> は文字 '\n' として記録する。
+	// 削除（<BS> などの insert.delete-*）は文字と別の種類（editcmd.InsertInput.Op）で記録するので、
+	// 入力した制御文字（キーの列の展開から届く '\b'、'\x0b'、'\x7f' など）は文字のまま入る（#257 のレビュー）。
+	text []editcmd.InsertInput
 	// repeat は、入力したテキストを入れる回数である（3ix<Esc> なら 3）。c では 1 である。
 	repeat int
 	// extraGroups は、抜けるときに追加で閉じるアンドゥのグループの数である（インサートモードで終わったマクロの再生の分）。
@@ -27,40 +32,86 @@ func (s *State) startInsert(cmd editcmd.Command, repeat int) {
 	s.mode = ModeInsert
 	s.insert = insertState{cmd: cmd, repeat: repeat}
 	if s.replaying {
-		for _, r := range cmd.Text {
-			s.insertRune(r)
+		for _, in := range cmd.Inserted {
+			s.insertInput(in)
 		}
 		s.finishInsert()
 	}
 }
 
-// insertKey は、インサートモードのキーを 1 個処理する。
-// 文字、<CR>、<Tab>、<BS>、<Esc> と、カーソルキー（insertMove）を扱い、それ以外のキー（<Del>、Ctrl つきの文字など）は無視する。
+// insertKey は、インサートモードのキーを 1 個処理する。キーは次の 2 つの経路に分ける（#257 の決定）。
 //
-// req: FR-01
+//   - 1 文字の入力の経路: 修飾キーの付かない文字、<CR>、<Tab>、<Esc>。下の switch の各 case で直接処理し、操作の表を引かない。
+//     1 文字の入力の速さ（要件定義 8.1 の計測の対象）に、表を引く処理を足さないためである
+//   - 操作の経路: それ以外のキー（<BS>、<Del>、カーソルキー、修飾キーの付いたキーなど）。switch を抜けた後で、操作の表の
+//     インサートモードの登録（KeyParser.InsertAction）を引き、割り当てた操作を insertAction で実行する（FR-127）。
+//     割り当ての無いキーは何もしない
+//
+// 2 つの経路の分け方は、internal/input の InsertTableKey（インサートモードの登録の左辺の検査）と同じにする。
+//
+// req: FR-01, FR-127
 func (s *State) insertKey(k editcmd.Key) {
-	if k.Mod != 0 {
+	if k.Mod == 0 {
+		switch k.Code {
+		case editcmd.CodeEsc:
+			s.finishInsert()
+			return
+		case editcmd.CodeEnter:
+			s.insertRune('\n')
+			return
+		case editcmd.CodeTab:
+			s.insertRune('\t')
+			return
+		case editcmd.CodeRune:
+			s.insertRune(k.Rune)
+			return
+		case editcmd.CodeBackspace, editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
+			editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1:
+			// 操作の経路へ進む。
+		}
+	}
+	ref, ok := s.parser.InsertAction(k)
+	if !ok || !ref.Builtin() {
+		// 拡張機能の操作は、インサートモードには登録されない（internal/editor の buildKeymap は既定のモードで登録する）。
 		return
 	}
-	switch k.Code {
-	case editcmd.CodeEsc:
-		s.finishInsert()
-	case editcmd.CodeEnter:
-		s.insertRune('\n')
-	case editcmd.CodeTab:
-		s.insertRune('\t')
-	case editcmd.CodeBackspace:
-		s.insertRune('\b')
-	case editcmd.CodeRune:
-		s.insertRune(k.Rune)
-	case editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
-		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown:
-		s.insertMove(k.Code)
-	case editcmd.CodeDelete, editcmd.CodeInsert, editcmd.CodeF1:
+	if f, ok := insertActions[ref.ID]; ok {
+		f(s)
 	}
 }
 
+// insertActions は、インサートモードの操作の ID（internal/input の builtinInsert の表）から実装への対応である（FR-127）。
+// 移動は insertMove、削除は insertInput に削除の種類（editcmd.InsertDeletePrev など）を渡す。
+// 削除は文字と同じ入力の記録（insertState.text）に、文字と別の種類として入れるので、アンドゥの単位、ドットリピート、
+// 回数による繰り返し（3i）、カーソルキーで区切った後の入力の始め直し（resumeInsert）は、3 つの削除で同じ扱いになる。
+//
+// req: FR-127
+var insertActions = map[string]func(*State){
+	"insert.left":               func(s *State) { s.insertMove(editcmd.CodeLeft) },
+	"insert.right":              func(s *State) { s.insertMove(editcmd.CodeRight) },
+	"insert.up":                 func(s *State) { s.insertMove(editcmd.CodeUp) },
+	"insert.down":               func(s *State) { s.insertMove(editcmd.CodeDown) },
+	"insert.line-start":         func(s *State) { s.insertMove(editcmd.CodeHome) },
+	"insert.line-end":           func(s *State) { s.insertMove(editcmd.CodeEnd) },
+	"insert.page-up":            func(s *State) { s.insertMove(editcmd.CodePageUp) },
+	"insert.page-down":          func(s *State) { s.insertMove(editcmd.CodePageDown) },
+	"insert.delete-prev-char":   func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeletePrev}) },
+	"insert.delete-char":        func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeleteChar}) },
+	"insert.delete-to-line-end": func(s *State) { s.insertInput(editcmd.InsertInput{Op: editcmd.InsertDeleteToLineEnd}) },
+}
+
+// InsertActionIDs は、実装のあるインサートモードの操作の ID を返す（順は決まらない）。
+// internal/editor のテストが、internal/input の操作の表と照合する（同じ層のパッケージどうしはテストからも import しないため）。
+func InsertActionIDs() []string {
+	ids := make([]string, 0, len(insertActions))
+	for id := range insertActions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // insertMove は、インサートモードのカーソルキーでカーソルを動かす（Vim 9.1 の ins_left() などに当たる）。
+// c は既定のキー（<Left> など）で、操作の ID（insert.left など）から insertActions が渡す。設定で別のキーに割り当てても同じく動く。
 //
 //   - <Left> と <Right> は 1 文字動く。行の先頭と行末の位置を越えない（'whichwrap' の既定）
 //   - <Up> と <Down> は、望みの列を保って 1 行動く。行の幅が望みの列に届かなければ行末の位置へ移る
@@ -144,9 +195,8 @@ func (s *State) breakInsert() {
 	}
 	s.insert.moved = true
 	s.buf.EndUndoGroup()
-	text := string(s.insert.text)
 	cmd := s.insert.cmd
-	cmd.Text = text
+	cmd.Inserted = slices.Clone(s.insert.text)
 	s.dot = &cmd
 }
 
@@ -163,21 +213,57 @@ func (s *State) resumeInsert() {
 	s.insert.cmd = editcmd.Command{Kind: editcmd.KindAction, Action: editcmd.Ref{ID: "insert"}, Count: 1, Mode: editcmd.ModeInsert}
 }
 
-// insertRune は、入力した文字を記録して、バッファに入れる。
+// insertRune は、入力した文字を記録して、バッファに入れる。制御文字も文字として入れる。
 func (s *State) insertRune(r rune) {
+	s.insertInput(editcmd.InsertInput{Op: editcmd.InsertRune, Rune: r})
+}
+
+// insertInput は、入力（文字か削除の操作）を記録して、バッファに行う。
+func (s *State) insertInput(in editcmd.InsertInput) {
 	s.resumeInsert()
-	s.insert.text = append(s.insert.text, r)
-	if err := s.typeRune(r); err != nil {
+	s.insert.text = append(s.insert.text, in)
+	if err := s.typeInput(in); err != nil {
 		s.fail(err)
 	}
 }
 
-// typeRune は、文字 1 つをカーソルの位置に入れる。'\n' は行を分け、'\b' はカーソルの前の文字を消す。
-// '\b' は行の先頭では前の行とつなぎ、バッファの先頭では何もしない（'backspace' が "indent,eol,start" の動き）。
-func (s *State) typeRune(r rune) error {
+// typeInput は、入力の記録の 1 件をカーソルの位置に行う。
+//
+//   - 文字（editcmd.InsertRune）は入れる。'\n' は行を分ける。他の制御文字は文字のまま入れる（typeRune）
+//   - editcmd.InsertDeletePrev はカーソルの前の文字を消す。行の先頭では前の行とつなぎ、バッファの先頭では何もしない
+//     （'backspace' が "indent,eol,start" の動き）
+//   - editcmd.InsertDeleteChar はカーソルの文字を消し、editcmd.InsertDeleteToLineEnd はカーソルから行末までを消す。
+//     どちらもカーソルは動かない。行末の位置では、どちらも次の行をつなげる（次の行の先頭の空白は残す）。
+//     最後の行の行末と空のバッファでは何もしない。InsertDeleteChar は Vim 9.1 のインサートモードの <Del>
+//     （'backspace' が "indent,eol,start"）と同じ動きである。InsertDeleteToLineEnd は Vim に対応するキーが無く、
+//     行末の位置で次の行をつなげるのは Emacs の C-k に合わせた（#257 の決定）
+//
+// 消したテキストは、レジスターにも履歴にも入れない。
+//
+// req: FR-127
+func (s *State) typeInput(in editcmd.InsertInput) error {
 	c := s.cursor
-	switch r {
-	case '\b':
+	switch in.Op {
+	case editcmd.InsertRune:
+		return s.typeRune(in.Rune)
+	case editcmd.InsertDeleteChar, editcmd.InsertDeleteToLineEnd:
+		line := s.line(c.Line)
+		var to buffer.Position
+		switch {
+		case c.Byte < len(line) && in.Op == editcmd.InsertDeleteChar:
+			to = pos(c.Line, nextChar(line, c.Byte))
+		case c.Byte < len(line):
+			to = pos(c.Line, len(line))
+		case c.Line < s.lastLine():
+			to = pos(c.Line+1, 0)
+		default:
+			return nil
+		}
+		if err := s.apply(buffer.Edit{Range: buffer.Range{Start: c, End: to}}); err != nil {
+			return err
+		}
+		s.cursor = c
+	case editcmd.InsertDeletePrev:
 		var from buffer.Position
 		switch {
 		case c.Byte > 0:
@@ -191,12 +277,20 @@ func (s *State) typeRune(r rune) error {
 			return err
 		}
 		s.cursor = from
-	case '\n':
+	}
+	s.updateWant()
+	return nil
+}
+
+// typeRune は、文字 1 つをカーソルの位置に入れる。'\n' は行を分け、他の文字（制御文字を含む）はそのまま入れる。
+func (s *State) typeRune(r rune) error {
+	c := s.cursor
+	if r == '\n' {
 		if err := s.apply(buffer.Edit{Range: emptyRange(c), Text: "\n"}); err != nil {
 			return err
 		}
 		s.cursor = pos(c.Line+1, 0)
-	default:
+	} else {
 		str := string(r)
 		if err := s.apply(buffer.Edit{Range: emptyRange(c), Text: str}); err != nil {
 			return err
@@ -210,15 +304,18 @@ func (s *State) typeRune(r rune) error {
 // finishInsert は、インサートモードを抜ける（<Esc>）。
 //
 // 回数つきで入った場合（3ix、3o）は、入力したテキストを残りの回数だけ続けて入れる。o と O は、そのたびに行を開く。
-// カーソルを 1 文字左へ戻し、アンドゥのグループを閉じ、入力したテキストを値の Text に埋めてドットリピートに記録する（FR-06）。
+// カーソルを 1 文字左へ戻し、アンドゥのグループを閉じ、入力の記録を値の Inserted に埋めてドットリピートに記録する（FR-06）。
 // カーソルキーで区切った後、まだ文字を入力していなければ（moved）、区切ったときに閉じて記録してあるので、カーソルを戻すだけにする。
 //
 // req: FR-06, FR-07
 func (s *State) finishInsert() {
 	in := s.insert
-	text := string(in.text)
 	if n := in.repeat - 1; n > 0 && !in.moved {
-		if len(text)*n > maxPutBytes {
+		size := 0
+		for _, x := range in.text {
+			size += max(utf8.RuneLen(x.Rune), 1)
+		}
+		if size*n > maxPutBytes {
 			s.fail(failf("text too large"))
 			n = 0
 		}
@@ -231,8 +328,8 @@ func (s *State) finishInsert() {
 					break
 				}
 			}
-			for _, r := range in.text {
-				if err := s.typeRune(r); err != nil {
+			for _, x := range in.text {
+				if err := s.typeInput(x); err != nil {
 					s.fail(err)
 					break
 				}
@@ -250,7 +347,7 @@ func (s *State) finishInsert() {
 	if !in.moved {
 		s.buf.EndUndoGroup()
 		cmd := in.cmd
-		cmd.Text = text
+		cmd.Inserted = slices.Clone(in.text)
 		s.dot = &cmd
 	}
 	s.insert = insertState{}

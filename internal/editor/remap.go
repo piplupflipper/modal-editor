@@ -35,7 +35,8 @@ type mapping struct {
 // remapper は、利用者のキーマップ（基本設計 7 章の keymap）で、キーの列を別のキーの列に展開する。
 // internal/input の Parser の前段の層である（input.Keymap の doc）。
 //
-// 展開した列は、もう一度展開しない（Vim の noremap）。
+// 展開した列は、もう一度展開しない（この点は Vim の noremap と同じ）。展開した列は、利用者が操作を割り当てた後の操作の表
+// （applyKeymapActions）で解釈するので、操作を割り当てたキーはその操作になる（Vim の noremap と違う）。
 // 登録の接頭辞を受け取っている間はキーを溜め、続くキーで登録に進めなくなった時点か、時間切れ（flush）で確定させる。
 // マクロには展開した後のキーが記録される。再生は Parser へ直接渡すので、展開の層を通らなくても同じ結果になる。
 type remapper struct {
