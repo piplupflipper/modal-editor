@@ -493,6 +493,10 @@ type EditorStateResult struct {
 	// CanSplit は、カーソルのあるタブの client のペインを、端末多重化ソフトの層で分割できるかである（diff/start。#245）。
 	// 端末多重化ソフトの外（FR-60）では false で、省く。
 	CanSplit bool `json:"canSplit,omitempty"`
+	// WorkDir は、操作中の client の作業ディレクトリ（:e の相対パスを解く場所）の絶対パスである（API 0.8.0 で足した）。
+	// 段階 3 では client ごとに作業ディレクトリが違いうるので、拡張機能のプロセスの作業ディレクトリと一致するとは限らない。
+	// ファジーファインダーがファイルと検索の場所に使う（基本設計 6.9）。
+	WorkDir string `json:"workDir,omitempty"`
 }
 
 // BufferInfo は、editor/state で返す、開いているバッファ 1 つの情報である。

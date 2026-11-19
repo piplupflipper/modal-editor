@@ -232,6 +232,10 @@ type Editor struct {
 	// paneActive と paneSaved は、ペインの部品の client のキーを処理している間（paneInput）の、そのペインの部品と、
 	// 退避した元の client のポップアップである（component.go）。処理していなければ nil である。
 	paneActive, paneSaved *floatState
+	// selectionSeq は、最後に拡張機能のポップアップで利用者が選んだときの選択の番号で、execGrants は、拡張機能ごとの、
+	// まだ使っていない editor/execute の許し（list.go）である。
+	selectionSeq uint64
+	execGrants   map[string]execGrant
 	// noRecord は、feedKey がマクロに記録せずに State へ渡す間であることを表す（キーの一覧で選んだキー。selectKeyRow）。
 	// 選んだ <CR> がもう記録されているので、選んだキーまで記録すると、再生で 2 回動くためである。
 	noRecord bool

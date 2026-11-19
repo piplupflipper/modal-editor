@@ -108,6 +108,21 @@ func init() {
 	}
 }
 
+// Name は、Ex コマンドの表の 1 行の名前である（Names）。
+type Name struct {
+	// Full は、省略しない名前（"write"）、Short は、省略できる最短の形（"w"）である。
+	Full, Short string
+}
+
+// Names は、対応する Ex コマンドの名前を、表の順に返す（拡張機能の editor/list のコマンドの一覧。FR-107）。
+func Names() []Name {
+	out := make([]Name, len(commands))
+	for i, c := range commands {
+		out[i] = Name{Full: c.name, Short: c.name[:c.min]}
+	}
+	return out
+}
+
 // runPopup は、引数を取らないポップアップのコマンド（:popup、:tabopen）を実行する関数を返す。
 // 縮めるタブと広げるポップアップを持つのは、Action を受け取る呼び出し側（internal/editor）である。
 //

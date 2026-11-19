@@ -176,6 +176,8 @@ func (e *Editor) replayAnswered(c *clientView, r *exthost.QueryResult) {
 		return
 	}
 	e.useClient(c)
+	// 再生の続きが、待つ間に開いたポップアップの入力の行へ打った（ファインダー。#246）なら、キーの後と同じく input/change で知らせる。
+	defer e.afterFloatKey()
 	var err error
 	switch {
 	case r.Err == nil:

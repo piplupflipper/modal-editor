@@ -55,6 +55,9 @@ const (
 	// StylePopupBorder は、浮かべる窓（popup/show の本文と Frame.List）の枠線である（記号 SymbolPopupBorder を設定したときだけ描く）。
 	// 表に無ければ StylePopup で描く。
 	StylePopupBorder = "popup.border"
+	// StyleFinderMatch は、ファインダー（FR-106）の一覧の、入力に一致した文字である（fzf の hl に当たる）。
+	// 拡張機能が一覧の項目の highlights でこの名前を指す。
+	StyleFinderMatch = "finder.match"
 	// StyleStatusLineMode などは、ステータス行の部品ごとの色である。名前は "statusline." と部品の ID（StatusPart...）をつないだもの。
 	// 部品は StyleStatusLine の上に重ねて描く（Attr.Over）ので、文字の色だけを変えることもできる。既定の対応には無い。
 	StyleStatusLineMode      = "statusline.mode"
@@ -88,7 +91,7 @@ var styleNames = []string{
 	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey,
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
-	StylePopup, StylePopupSelected, StylePopupBorder,
+	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch,
 	StyleSignBreakpoint, StyleSignBreakpointUnverified, StyleSignExecutionPoint,
 	StyleSignDiagnosticError, StyleSignDiagnosticWarning, StyleSignDiagnosticInfo, StyleSignDiagnosticHint,
 	StyleStatusLineMode, StyleStatusLineName, StyleStatusLineModified, StyleStatusLineReadOnly, StyleStatusLineFileType,
@@ -153,6 +156,7 @@ func DefaultTheme() Theme {
 		StyleStatusLineNC:             {Reverse: true},
 		StylePopup:                    {Fg: Indexed(15), Bg: Indexed(8)},
 		StylePopupSelected:            {Fg: Indexed(0), Bg: Indexed(14)},
+		StyleFinderMatch:              {Bold: true, Underline: true},
 		StyleSignBreakpoint:           {Fg: Indexed(9), Bold: true},
 		StyleSignBreakpointUnverified: {Fg: Indexed(8)},
 		StyleSignExecutionPoint:       {Fg: Indexed(11), Bold: true},

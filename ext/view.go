@@ -1,9 +1,6 @@
 package ext
 
-import (
-	"errors"
-	"fmt"
-)
+import "fmt"
 
 // ポップアップと表示の部品（基本設計 1.4、5.3 の段階 3 の表。FR-68〜FR-72）。
 //
@@ -66,12 +63,20 @@ const (
 	ViewTree ViewKind = "tree"
 	// ViewInput は、1 行の入力である。中身が変わるたびに input/change で知らせ、<CR> で view/select（Item は中身）を送る。
 	ViewInput ViewKind = "input"
+	// ViewFinder は、入力の行と一覧を組にした部品である（ファジーファインダー。FR-106。API 0.8.0 で足した）。
+	// Text は入力の行の最初の中身、Items は一覧の項目（子を持たない）である。
+	// フォーカスは入力の行に置き、開いた時点でインサートモードにする。入力の行が変わるたびに input/change（Seq 付き）で知らせ、
+	// 拡張機能は絞り込んだ一覧を view/update（同じ Seq 付き）で返す。本体は、最後に知らせた Seq より古い Seq の一覧を出さない。
+	// view/update は一覧（Items）と見出し（Title）だけを置き換え、入力の行の中身（Text）は読まない（利用者が打ち続けているため）。
+	// 一覧の中のカーソルは <C-n>、<C-p>、<C-j>、<C-k>、<Down>、<Up> で動かし、<CR> で view/select（Item は一覧の項目の ID、
+	// Input は入力の行の中身）を送る。<Esc> はインサートモードでも閉じる。
+	ViewFinder ViewKind = "finder"
 )
 
 // Known は、k がこの版の API の知っている部品の種類かを返す。
 func (k ViewKind) Known() bool {
 	switch k {
-	case ViewText, ViewList, ViewTree, ViewInput:
+	case ViewText, ViewList, ViewTree, ViewInput, ViewFinder:
 		return true
 	}
 	return false
@@ -82,7 +87,7 @@ type ViewComponent struct {
 	Kind ViewKind `json:"kind"`
 	// Title は、ポップアップの枠の上に出す見出しである。空なら出さない。
 	Title string `json:"title,omitempty"`
-	// Text は、ViewText の本文と、ViewInput の最初の中身である。ViewInput では改行を含めない。
+	// Text は、ViewText の本文と、ViewInput と ViewFinder の入力の行の最初の中身である。ViewInput と ViewFinder では改行を含めない。
 	Text string `json:"text,omitempty"`
 	// Format は、ViewText の本文の形式である。PopupMarkdown なら、本体はコードの囲みの行を除いて出す（popup/show と同じ）。
 	Format PopupFormat `json:"format,omitempty"`
@@ -90,7 +95,7 @@ type ViewComponent struct {
 	// Markdown で本体が除くコードの囲みの行の中の範囲（始まりか終わりがその行にあるもの）は捨てる。
 	// Style は 7.1 の色の名前（"keyword"、"diagnostic.error" など）で、知らない名前には色を付けない。
 	Highlights []Decoration `json:"highlights,omitempty"`
-	// Items は、ViewList と ViewTree の項目である。ViewTree では Children で木にする。
+	// Items は、ViewList、ViewTree、ViewFinder の項目である。ViewTree では Children で木にする。
 	Items []ViewItem `json:"items,omitempty"`
 }
 
@@ -139,8 +144,8 @@ func (c *ViewComponent) Validate() error {
 	if !c.Kind.Known() {
 		return fmt.Errorf("kind %q は知らない部品の種類である", c.Kind)
 	}
-	if c.Kind == ViewInput && containsNewline(c.Text) {
-		return errors.New("input の text が改行を含む")
+	if (c.Kind == ViewInput || c.Kind == ViewFinder) && containsNewline(c.Text) {
+		return fmt.Errorf("%s の text が改行を含む", c.Kind)
 	}
 	seen := map[string]bool{}
 	var check func(items []ViewItem, path string) error
@@ -279,9 +284,17 @@ type PaneOpenResult struct {
 // 一覧と木では、カーソルのあった項目の ID が新しい中身にもあれば、その項目の行へカーソルを置く。無ければ、行の番号を行数に収まる範囲で保つ。
 // テキストと入力の行では、行の番号を保つ。ただしテキストでカーソルが最後の行にあれば、新しい中身の最後の行へ置く
 // （書き足した出力の末尾を追う。#244）。木の開閉の状態は、項目の ID ごとに保つ（ViewItem.Expanded）。
+//
+// ViewFinder では、一覧（Items）と見出し（Title）だけを置き換え、Component.Text は読まない。
+// Seq は、この一覧がどの入力に答えたものかを、input/change の Seq（開いたときの中身なら 0）で表す。
+// 本体は、最後に送った input/change の Seq より小さい Seq の view/update を捨てる（古い入力への一覧を出さない。基本設計 6.9）。
+// 同じ Seq の view/update は何度送ってもよい（候補を読みながら一覧を送り直すとき）。
+// 前の view/update より大きい Seq の一覧では、カーソルを先頭の項目へ置き、同じ Seq なら項目の ID で保つ。
+// ViewFinder 以外では Seq を読まない。
 type ViewUpdateParams struct {
 	View      ViewID        `json:"view"`
 	Component ViewComponent `json:"component"`
+	Seq       uint64        `json:"seq,omitempty"`
 }
 
 // ViewCloseParams は、view/close の params である。
@@ -297,8 +310,15 @@ type ViewClosedParams struct {
 // ViewSelectParams は、view/select の params である。
 type ViewSelectParams struct {
 	View ViewID `json:"view"`
-	// Item は、選んだ項目の ID（ViewList、ViewTree）か、入力の行の中身（ViewInput）である。
+	// Item は、選んだ項目の ID（ViewList、ViewTree、ViewFinder）か、入力の行の中身（ViewInput）である。
+	// ViewFinder で一覧が空なら空である。
 	Item string `json:"item"`
+	// Input は、ViewFinder の入力の行の中身である。他の部品では省く。
+	Input string `json:"input,omitempty"`
+	// Selection は、ViewList、ViewTree、ViewFinder の項目の選択に本体が付ける番号である（1 から。API 0.8.0 で足した）。
+	// 拡張機能は、この選択への応答として、同じ番号を付けた editor/execute（EditorExecuteParams.Selection）を 1 回だけ送れる。
+	// ViewInput では省く。
+	Selection uint64 `json:"selection,omitempty"`
 }
 
 // InputChangeParams は、input/change の params である。
@@ -306,6 +326,10 @@ type InputChangeParams struct {
 	View ViewID `json:"view"`
 	// Text は、変わった後の入力の行の中身である。
 	Text string `json:"text"`
+	// Seq は、そのポップアップの入力の行が変わるたびに 1 から 1 ずつ増やす番号である（API 0.8.0 で足した）。
+	// ViewFinder の拡張機能は、この入力への一覧を view/update の Seq に同じ値を入れて返す。
+	// 本体は、前の入力への一覧が届いていなくても次の input/change を送るので、拡張機能は古い入力への計算を捨ててよい。
+	Seq uint64 `json:"seq,omitempty"`
 }
 
 // ViewKeyParams は、view/key の params である（FR-69）。
@@ -313,6 +337,8 @@ type ViewKeyParams struct {
 	View ViewID `json:"view"`
 	// ID は、打ったキーの contributes.popupKeys の項目の ID である。
 	ID string `json:"id"`
-	// Item は、一覧と木ではカーソルの行の項目の ID、入力の行では中身、テキストでは空である。
+	// Item は、一覧、木、ViewFinder ではカーソルの行の項目の ID、入力の行では中身、テキストでは空である。
 	Item string `json:"item,omitempty"`
+	// Input は、ViewFinder の入力の行の中身である。他の部品では省く。
+	Input string `json:"input,omitempty"`
 }

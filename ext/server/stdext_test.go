@@ -42,6 +42,10 @@ func (sh *stdHost) handle(req *rpc.Request, reply rpc.Replier) bool {
 		res = ext.DiagnosticListResult{Entries: []ext.DiagnosticEntry{{Buffer: 1, Extension: "lsp", Version: 3}}}
 	case ext.MethodChoiceAsk:
 		res = ext.ChoiceAskResult{Selected: "yes"}
+	case ext.MethodEditorList:
+		res = ext.EditorListResult{Tabs: []ext.ListTab{{Buffer: 1, Name: "a", Client: 1}}}
+	case ext.MethodEditorExecute:
+		res = ext.EditorExecuteResult{}
 	default:
 		return false
 	}
@@ -99,9 +103,30 @@ func TestStdExtRequests(t *testing.T) {
 		t.Errorf("host received %s", got)
 	}
 
-	// 誤りのある editor/open の params は送らない。
+	ls, err := s.ListEditor(ctx, ext.ListTabs)
+	if err != nil || len(ls.Tabs) != 1 || ls.Tabs[0].Name != "a" {
+		t.Errorf("ListEditor = %+v, %v", ls, err)
+	}
+	if got := sh.next(t); got != `editor/list {"list":"tabs"}` {
+		t.Errorf("host received %s", got)
+	}
+
+	if err := s.Execute(ctx, ext.EditorExecuteParams{Selection: 1, Keys: "dd"}); err != nil {
+		t.Errorf("Execute = %v", err)
+	}
+	if got := sh.next(t); got != `editor/execute {"selection":1,"keys":"dd"}` {
+		t.Errorf("host received %s", got)
+	}
+	if err := s.Execute(ctx, ext.EditorExecuteParams{}); err == nil {
+		t.Error("Execute with no keys and command succeeded")
+	}
+
+	// 誤りのある editor/open と editor/list の params は送らない。
 	if _, err := s.OpenEditor(ctx, ext.EditorOpenParams{Path: "relative"}); err == nil {
 		t.Error("OpenEditor with a relative path succeeded")
+	}
+	if _, err := s.ListEditor(ctx, "marks"); err == nil {
+		t.Error("ListEditor with an unknown list succeeded")
 	}
 	select {
 	case got := <-sh.params:

@@ -88,6 +88,8 @@ type Renderer struct {
 	// 窓が替わるか無くなったら作り直す。
 	float   *Renderer
 	floatID uint64
+	// floatList は、ファインダーのポップアップ（Float.List）の一覧を描く子の Renderer である（drawFinder）。float と同じく窓ごとに作り直す。
+	floatList *Renderer
 	// posFrom は、ステータス行の範囲の位置（StatusPartPosition）を、この Renderer の代わりに数える Renderer である。
 	// フォーカスのあるポップアップのステータス行を描く間だけ、窓の子の Renderer を入れる。
 	posFrom *Renderer
@@ -237,7 +239,7 @@ func (r *Renderer) render(f *Frame) Screen {
 			listCursor = &c
 		}
 	default:
-		r.float = nil
+		r.float, r.floatList = nil, nil
 	}
 	screen := Screen{Grid: g, Cursor: Cursor{
 		Row: curRow, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,

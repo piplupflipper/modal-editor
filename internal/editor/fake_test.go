@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -197,13 +198,69 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.exec は、引数の JSON（ext.EditorExecuteParams と、待つ時間の "delay"（ミリ秒））を、待ってから editor/execute で送り、
+		// 結果を "exec err=<誤り>" と出す。selection を省くと、最後に届いた view/select の選択の番号を使う（PR #249 の再レビューの検証）。
+		var lastSelection atomic.Uint64
+		s.Command("fake.exec", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var a struct{ Text string }
+			_ = json.Unmarshal(p.Args, &a)
+			var x struct {
+				ext.EditorExecuteParams
+				Delay int `json:"delay"`
+			}
+			_ = json.Unmarshal([]byte(a.Text), &x)
+			if x.Selection == 0 {
+				x.Selection = lastSelection.Load()
+			}
+			go func() {
+				time.Sleep(time.Duration(x.Delay) * time.Millisecond)
+				err := s.Execute(hostCtx, x.EditorExecuteParams)
+				fmt.Fprintf(os.Stderr, "exec err=%v\n", err)
+				if err != nil {
+					// 本体が出した理由を上書きしないように、断られたら出さない。成功のときだけ出す。
+					return
+				}
+				_ = s.ShowMessage(ext.MessageInfo, "exec ok")
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
+		// fake.list は、引数の一覧（tabs、commands、keys、registers、jumps）を editor/list で問い合わせ、結果の JSON を出す（FR-107）。
+		s.Command("fake.list", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			var a struct{ Text string }
+			_ = json.Unmarshal(p.Args, &a)
+			go func() {
+				r, err := s.ListEditor(hostCtx, ext.EditorListKind(a.Text))
+				b, _ := json.Marshal(r)
+				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("list %s err=%v", b, err))
+			}()
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		s.OnView(func(_ context.Context, e *server.ViewEvent) {
 			msg := fmt.Sprintf("view %d kind=%d item=%s key=%s", e.View, e.Kind, e.Item, e.Key)
 			if e.Kind == server.ViewExpanded {
 				msg += fmt.Sprintf(" expanded=%v", e.Expanded)
 			}
+			if e.Kind == server.ViewSelected {
+				lastSelection.Store(e.Selection)
+			}
+			if e.Seq != 0 || e.Input != "" {
+				msg += fmt.Sprintf(" seq=%d input=%s", e.Seq, e.Input)
+			}
 			_ = s.ShowMessage(ext.MessageInfo, msg)
 			switch {
+			case e.Kind == server.ViewInputChanged && strings.HasPrefix(e.Item, "f:"):
+				// ファインダー（入力が f: で始まる）は、候補のうち入力の残りを含むものを、同じ seq で返す（FR-106）。
+				q := strings.TrimPrefix(e.Item, "f:")
+				var items []ext.ViewItem
+				for _, it := range fakePopup("finder").Component.Items {
+					if i := strings.Index(it.Label, q); i >= 0 {
+						it.Highlights = []ext.ViewSpan{{Start: i, End: i + len(q), Style: "finder.match"}}
+						items = append(items, it)
+					}
+				}
+				_ = s.UpdateView(ext.ViewUpdateParams{View: e.View, Seq: e.Seq, Component: ext.ViewComponent{
+					Kind: ext.ViewFinder, Title: fmt.Sprintf("finder %d", len(items)), Items: items,
+				}})
 			case e.Kind == server.ViewSelected && e.Item == "top":
 				// 拡張機能から開閉を指定し直す（dir を閉じ、lazy を開いたまま子を付ける）。
 				c := fakePopup("tree").Component
@@ -499,6 +556,11 @@ func fakePopup(kind string) ext.PopupOpenParams {
 		return ext.PopupOpenParams{Placement: ext.PopupCenter, Component: ext.ViewComponent{Kind: ext.ViewList, Title: "files", Items: []ext.ViewItem{
 			{ID: "open", Label: "opened.txt"}, {ID: "slow", Label: "slow"}, {ID: "late", Label: "late"},
 		}}}
+	case "finder":
+		// placement を書かなくても、本体はファインダーを中央に出す。
+		return ext.PopupOpenParams{Component: ext.ViewComponent{Kind: ext.ViewFinder, Title: "finder", Text: "f:", Items: []ext.ViewItem{
+			{ID: "a", Label: "apple"}, {ID: "b", Label: "banana"}, {ID: "c", Label: "cherry"},
+		}}}
 	case "text":
 		return ext.PopupOpenParams{Component: ext.ViewComponent{
 			Kind: ext.ViewText, Text: "alpha beta\ngamma",
@@ -530,7 +592,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 				act(ext.ActivationCommand, "fake.echo"), act(ext.ActivationCommand, "fake.openlater"),
 				act(ext.ActivationCommand, "fake.write"), act(ext.ActivationCommand, "fake.touch"),
 				act(ext.ActivationCommand, "fake.popup"), act(ext.ActivationCommand, "fake.headdiff"),
-				act(ext.ActivationCommand, "fake.pane"),
+				act(ext.ActivationCommand, "fake.pane"), act(ext.ActivationCommand, "fake.list"), act(ext.ActivationCommand, "fake.exec"),
 			},
 			Contributes: ext.Contributes{
 				TextObjects: []ext.Contribution{contrib("fake.line", "il"), contrib("fake.slow", "is"), contrib("fake.hang", "ih")},
@@ -542,7 +604,8 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
 					contrib("fake.write", ""), contrib("fake.touch", ""),
-					contrib("fake.popup", ""), contrib("fake.headdiff", ""), contrib("fake.pane", ""),
+					contrib("fake.popup", ""), contrib("fake.headdiff", ""), contrib("fake.pane", ""), contrib("fake.list", ""),
+					contrib("fake.exec", ""),
 				},
 				// ポップアップの中だけで効くキー（FR-69）。x は本体では文字を消すキーで、ポップアップの中ではこちらが先に効く。
 				// gx は g で始まるので、gg はキーの列が当たらずに本体の gg として動く。

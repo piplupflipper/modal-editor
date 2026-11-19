@@ -24,6 +24,9 @@ func TestViewComponentValidate(t *testing.T) {
 		{"知らない種類", PopupOpenParams{Component: ViewComponent{Kind: "grid"}}, "知らない部品"},
 		{"知らない置き場所", PopupOpenParams{Placement: "side", Component: ViewComponent{Kind: ViewText}}, "知らない置き場所"},
 		{"入力の行の改行", PopupOpenParams{Component: ViewComponent{Kind: ViewInput, Text: "a\nb"}}, "改行"},
+		{"ファインダー", PopupOpenParams{Placement: PopupCenter, Component: ViewComponent{Kind: ViewFinder, Text: "q", Items: []ViewItem{item("a", "A")}}}, ""},
+		{"ファインダーの入力の改行", PopupOpenParams{Component: ViewComponent{Kind: ViewFinder, Text: "a\nb"}}, "改行"},
+		{"ファインダーの子", PopupOpenParams{Component: ViewComponent{Kind: ViewFinder, Items: []ViewItem{item("d", "D", item("a", "A"))}}}, "tree でだけ"},
 		{"空の ID", PopupOpenParams{Component: ViewComponent{Kind: ViewList, Items: []ViewItem{item("", "A")}}}, "id が空"},
 		{"木の中の重複", PopupOpenParams{Component: ViewComponent{Kind: ViewTree, Items: []ViewItem{item("d", "D", item("d", "A"))}}}, "重複"},
 		{"一覧の子", PopupOpenParams{Component: ViewComponent{Kind: ViewList, Items: []ViewItem{item("d", "D", item("a", "A"))}}}, "tree でだけ"},
@@ -52,6 +55,49 @@ func TestViewMessageJSON(t *testing.T) {
 	roundTrip(t, ViewSelectParams{View: 3, Item: "a"}, `{"view":3,"item":"a"}`)
 	roundTrip(t, ViewKeyParams{View: 3, ID: "k"}, `{"view":3,"id":"k"}`)
 	roundTrip(t, InputChangeParams{View: 3, Text: "x"}, `{"view":3,"text":"x"}`)
+	roundTrip(t, InputChangeParams{View: 3, Text: "x", Seq: 2}, `{"view":3,"text":"x","seq":2}`)
+	roundTrip(t, ViewUpdateParams{View: 3, Seq: 2, Component: ViewComponent{Kind: ViewFinder, Items: []ViewItem{{ID: "a", Label: "A"}}}},
+		`{"view":3,"component":{"kind":"finder","items":[{"id":"a","label":"A"}]},"seq":2}`)
+	roundTrip(t, ViewSelectParams{View: 3, Item: "a", Input: "q"}, `{"view":3,"item":"a","input":"q"}`)
+	roundTrip(t, ViewKeyParams{View: 3, ID: "k", Item: "a", Input: "q"}, `{"view":3,"id":"k","item":"a","input":"q"}`)
+	roundTrip(t, EditorListParams{List: ListTabs}, `{"list":"tabs"}`)
+	roundTrip(t, EditorListResult{Tabs: []ListTab{{Buffer: 1, Path: "/a", Name: "a", Client: 1, Own: true, Current: true}}},
+		`{"tabs":[{"buffer":1,"path":"/a","name":"a","client":1,"own":true,"current":true}]}`)
+	roundTrip(t, EditorListResult{Keys: []ListKey{{Keys: "gq", Modes: "n", Source: "extension", Extension: "finder"}}},
+		`{"keys":[{"keys":"gq","modes":"n","source":"extension","extension":"finder"}]}`)
+	roundTrip(t, EditorListResult{Jumps: []ListJump{{Buffer: 1, Name: "a", Position: Position{Line: 2}, Current: true}}},
+		`{"jumps":[{"buffer":1,"name":"a","position":{"line":2,"byte":0},"current":true}]}`)
+}
+
+// editor/list の params は、知っている一覧の種類だけを通す（FR-107）。
+func TestEditorListParamsValidate(t *testing.T) {
+	for _, k := range []EditorListKind{ListTabs, ListCommands, ListKeys, ListRegisters, ListJumps} {
+		p := EditorListParams{List: k}
+		if err := p.Validate(); err != nil {
+			t.Errorf("%s: %v", k, err)
+		}
+	}
+	p := EditorListParams{List: "marks"}
+	if err := p.Validate(); err == nil {
+		t.Error("marks: want error")
+	}
+	for _, tt := range []struct {
+		p  EditorExecuteParams
+		ok bool
+	}{
+		{EditorExecuteParams{Selection: 1, Keys: "dd"}, true},
+		{EditorExecuteParams{Selection: 1, Command: "write"}, true},
+		{EditorExecuteParams{Keys: "dd"}, false},
+		{EditorExecuteParams{Selection: 1}, false},
+		{EditorExecuteParams{Selection: 1, Keys: "dd", Command: "write"}, false},
+		{EditorExecuteParams{Selection: 1, Command: "w\nq"}, false},
+	} {
+		if err := tt.p.Validate(); (err == nil) != tt.ok {
+			t.Errorf("%+v: %v", tt.p, err)
+		}
+	}
+	roundTrip(t, EditorExecuteParams{Selection: 2, Command: "write"}, `{"selection":2,"command":"write"}`)
+	roundTrip(t, ViewSelectParams{View: 3, Item: "a", Selection: 2}, `{"view":3,"item":"a","selection":2}`)
 	roundTrip(t, EditorOpenParams{Path: "/a", Position: &Position{Line: 1}, Peek: true}, `{"path":"/a","position":{"line":1,"byte":0},"peek":true}`)
 }
 
