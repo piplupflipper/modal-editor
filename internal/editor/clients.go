@@ -263,6 +263,14 @@ func (e *Editor) forwardInput(c *clientView, term Terminal) {
 	}()
 	defer e.recoverPanic()
 	for ev := range term.Input() {
+		if ev.Terminal != nil {
+			select {
+			case e.termCh <- termResult{c: c, r: *ev.Terminal}:
+			case <-e.stop:
+				return
+			}
+			continue
+		}
 		if ev.Resize {
 			c.size.Store([2]int{ev.Width, ev.Height})
 			signal(e.resizeCh)
@@ -352,6 +360,7 @@ func (e *Editor) viewOf(c *clientView) *viewFields {
 
 // reapClients は、終わる client を外す。:q などで最後のタブを閉じた client と、端末の入力が閉じて残りのキーを処理し終えた client である。
 func (e *Editor) reapClients() {
+	defer e.reapWaiters()
 	for _, c := range slices.Clone(e.clients) {
 		switch {
 		case e.viewOf(c).quit:
@@ -482,7 +491,12 @@ func (e *Editor) removeClient(c *clientView) {
 	}
 	if e.shell != nil && e.shell.client == c {
 		// 外部のコマンドを打った client が終わった。出力を入れる先の画面が無いので止める（結果は shellFinished が捨てる）。
-		e.shell.cancel()
+		// 端末を渡した実行（:! と権限を上げた保存）は、その client の端末で動くので、結果はもう届かない。忘れる。
+		if e.shell.terminal {
+			e.dropTerminalJob()
+		} else {
+			e.shell.cancel()
+		}
 	}
 	if c.replay != nil {
 		// 再生の続きを入れる先の画面が無いので、問い合わせを取り消す（結果は replayAnswered が捨てる）。
@@ -554,6 +568,7 @@ func (e *Editor) showsQuestion() bool {
 
 // keyAllowed は、client c のキーを今処理してよいかを返す。
 // 問いの間は問いを出した client のキーだけを、外部のコマンドの実行中はそれを打った client 以外のキーを処理する（パッケージの doc）。
+// ただし、外部のコマンドの子孫が起動した待つだけの client のタブをその client に開いている間（reclaimed。FR-117）は、その client のキーも処理する。
 // 再生中の拡張機能の結果を待っている client のキーも、続け終えるまで処理しない（replayWait）。
 func (e *Editor) keyAllowed(c *clientView) bool {
 	if c.detached {
@@ -562,5 +577,5 @@ func (e *Editor) keyAllowed(c *clientView) bool {
 	if q := e.asker; q != nil && q != c {
 		return false
 	}
-	return (e.shell == nil || e.shell.client != c) && c.replay == nil
+	return (e.shell == nil || e.shell.client != c || e.shell.reclaimed) && c.replay == nil
 }

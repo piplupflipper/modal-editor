@@ -62,6 +62,12 @@ var ErrNotTerminal = errors.New("term: not a terminal")
 // 一時停止を受けるのは、kill -TSTP など外から送られたときである。raw モードでは <C-z> はキーとして届き、シグナルにならない。
 // Draw、SetClipboard、Size は、1 つの goroutine（エディタのイベントループ）から呼ぶ。
 // Restore は、どの goroutine からも何度でも呼べ、2 回目以降は何もしない。
+//
+// # 端末の受け渡し
+//
+// Release で端末を子プロセスへ渡し（:!。FR-80）、Reacquire で取り戻す（handover.go）。
+// 渡している間は in を読まない。読み取りの goroutine は、in を read で待たずに poll(2) で待つので、
+// 渡す前に止められる（止めないと、子プロセスへ打ったキーをこちらが先に読んでしまう）。
 type Terminal struct {
 	in, out     *os.File
 	inFd, outFd int
@@ -73,8 +79,17 @@ type Terminal struct {
 	restored bool
 	// suspended は、一時停止（SIGTSTP）のために端末を戻してあり、再開（SIGCONT）を待っていることを表す。
 	suspended bool
-	painter   Painter
-	buf       bytes.Buffer
+	// away は、Release で端末を子プロセスへ渡してあり、raw モードでも代替画面でもないことを表す（handover.go）。
+	away bool
+	// noScreen は、Reacquire(false) で raw モードに戻したが、代替画面にはまだ入っていないことを表す（「続けるには ENTER」の問い）。
+	noScreen bool
+	// prevFg は、Reacquire が端末の前面のプロセスグループを自分へ移す前の前面のプロセスグループである。0 なら移していない。
+	// Release で、そのプロセスグループへ返す（基本設計 4.9 の端末の取り合い）。
+	prevFg int
+	// restoreIntr は、RestoreInterrupts が呼ぶ関数である（SetInterruptRestore）。
+	restoreIntr func()
+	painter     Painter
+	buf         bytes.Buffer
 
 	events chan Event
 	stop   chan struct{}
@@ -83,6 +98,9 @@ type Terminal struct {
 	closeOnce  sync.Once
 	// winch は、SIGWINCH、SIGTSTP、SIGCONT を受ける。
 	winch chan os.Signal
+
+	// gate は、読み取りの goroutine を止めて再開させる仕組みである（handover.go の readGate）。
+	gate readGate
 }
 
 // Open は、in を raw モードにし、out を代替画面に切り替えて、Terminal を返す。
@@ -119,8 +137,13 @@ func Open(in, out *os.File, opts Options) (*Terminal, error) {
 		readerDone: make(chan struct{}),
 		winch:      make(chan os.Signal, 4),
 	}
+	if err := t.gate.init(); err != nil {
+		_ = xterm.Restore(inFd, state) // 元の誤りを返す
+		return nil, err
+	}
 	if _, err := out.WriteString(seqEnter); err != nil {
 		_ = xterm.Restore(inFd, state) // 元の誤りを返す
+		t.gate.close()
 		return nil, fmt.Errorf("term: write: %w", err)
 	}
 	signal.Notify(t.winch, syscall.SIGWINCH, syscall.SIGTSTP, syscall.SIGCONT)
@@ -144,11 +167,11 @@ func (t *Terminal) Size() (width, height int) {
 }
 
 // Draw は、画面 s を端末へ出す。前回の Draw から変わったセルだけを書く（Painter）。
-// Restore の後は何も書かずに nil を返す。
+// Restore の後と、端末を子プロセスへ渡している間（Release）は、何も書かずに nil を返す。
 func (t *Terminal) Draw(s ui.Screen) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.restored || t.suspended {
+	if !t.screenOn() {
 		return nil
 	}
 	t.buf.Reset()
@@ -166,13 +189,13 @@ func (t *Terminal) Draw(s ui.Screen) error {
 
 // SetClipboard は、text を OSC 52 の制御シーケンス（ESC ] 52 ; c ; <base64> BEL）で端末へ送り、
 // ホストのクリップボードに入れる（FR-56）。端末の応答は待たず、端末が受け取ったかは分からない。
-// 画面の出力と混ざらないよう、Draw と同じロックの中で書く。Restore の後と一時停止の間は何も書かずに nil を返す。
+// 画面の出力と混ざらないよう、Draw と同じロックの中で書く。Restore の後、一時停止の間、端末を渡している間は何も書かずに nil を返す。
 //
 // req: FR-56
 func (t *Terminal) SetClipboard(text string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.restored || t.suspended {
+	if !t.screenOn() {
 		return nil
 	}
 	if _, err := t.out.Write(osc52(text)); err != nil {
@@ -201,8 +224,8 @@ func (t *Terminal) Restore() error {
 		return nil
 	}
 	t.restored = true
-	if t.suspended {
-		return nil // 一時停止のときに戻してある
+	if t.suspended || t.away {
+		return nil // 一時停止のときか、子プロセスへ渡したときに戻してある
 	}
 	_, werr := t.out.WriteString(seqLeave)
 	rerr := xterm.Restore(t.inFd, t.state)
@@ -216,10 +239,11 @@ func (t *Terminal) Restore() error {
 }
 
 // suspend は、一時停止（SIGTSTP）の前に、端末を Open の前の状態に戻す。Restore と違い、resume で入り直せる。
+// 端末を子プロセスへ渡している間（Release の後）は、端末に触らない（子プロセスと一緒に止まるだけにする）。
 func (t *Terminal) suspend() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.restored || t.suspended {
+	if t.restored || t.suspended || t.away {
 		return
 	}
 	t.suspended = true
@@ -229,14 +253,18 @@ func (t *Terminal) suspend() {
 
 // resume は、一時停止からの再開（SIGCONT）で、raw モードと代替画面に入り直し、次の Draw で全体を書き直させる。
 // suspend を通らない停止（外からの SIGSTOP）の後も、シェルが端末の設定を変えているかもしれないので入り直す。
+// 端末を子プロセスへ渡している間は、何もしない。代替画面に入る前の問いの間（noScreen）は、raw モードにだけ戻す。
 func (t *Terminal) resume() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.restored {
+	if t.restored || t.away {
 		return
 	}
 	t.suspended = false
-	_, _ = xterm.MakeRaw(t.inFd)       // 入り直せなくても、描き直しは試みる
+	_, _ = xterm.MakeRaw(t.inFd) // 入り直せなくても、描き直しは試みる
+	if t.noScreen {
+		return
+	}
 	_, _ = t.out.WriteString(seqEnter) // 同上
 	t.painter.Invalidate()
 }
@@ -253,12 +281,12 @@ func (t *Terminal) RestoreOnPanic() {
 }
 
 // Close は、入力の読み取りとリサイズの監視を止め、Input のチャネルを閉じる。端末は戻さない（Restore を先に呼ぶ）。
-// in の読み取りの途中で止められない種類のファイル（標準入力のように、読み取りの期限を付けられないもの）では、
-// 読み取りの goroutine は次の入力か、プロセスの終了まで残る。Input のチャネルはそれを待たずに閉じる。
+// 読み取りの goroutine は in を poll(2) で待っているので、起こして終わらせる（readGate）。
 func (t *Terminal) Close() error {
 	t.closeOnce.Do(func() {
 		signal.Stop(t.winch)
 		close(t.stop)
+		t.gate.stop()
 		// 読み取りの途中の Read を戻す。期限を付けられないファイルでは誤りになるが、そのときは待たない。
 		_ = t.in.SetReadDeadline(time.Now()) // 戻せなくても Close は続ける
 	})
@@ -280,13 +308,21 @@ func fdOf(f *os.File) (int, error) {
 }
 
 // read は、in を読み、読んだバイト列を chunks へ送る。読み取りが誤りで終わると chunks を閉じる。
+// 読む前に、in が読めるようになるのを poll(2) で待つ（readGate.wait）。端末を子プロセスへ渡している間は、そこで止まる。
 func (t *Terminal) read(chunks chan<- []byte) {
 	defer close(t.readerDone)
 	defer close(chunks)
+	defer t.gate.exited()
 	defer t.RestoreOnPanic()
 	buf := make([]byte, 4096)
 	for {
+		if !t.gate.wait(t.inFd) {
+			return
+		}
 		n, err := t.in.Read(buf)
+		if isAgain(err) {
+			continue // poll の後に別の読み手が読んだ（起きない想定）か、偽の目覚め
+		}
 		if n > 0 {
 			select {
 			case chunks <- append([]byte(nil), buf[:n]...):
@@ -326,6 +362,13 @@ func (t *Terminal) loop(chunks <-chan []byte) {
 		case sig := <-t.winch:
 			switch sig {
 			case syscall.SIGTSTP:
+				// 端末を子プロセスへ渡している間（:! の中の <C-z>）に、本体のプロセスグループが孤立している（親にジョブ制御が無い。
+				// シェルを通さずに起動した）なら止まらない。カーネルは、孤立したプロセスグループへの端末の SIGTSTP を、既定の扱いの子プロセスには
+				// 止めずに捨てる。本体は SIGTSTP を受け取って自分で止まるので、同じ判断をしないと、子プロセスは続くのに本体だけが、
+				// 再開させるものがいないまま止まる（PR #234 の再レビュー 4）。渡していないとき（外からの kill -TSTP）の扱いは変えない。
+				if t.HandedOver() && orphanedPgrp() {
+					continue
+				}
 				// 端末を戻してから自分を止める。SIGSTOP は捕まえられないので、そのまま止まる。
 				// 再開（SIGCONT）は、このチャネルへ届いてから resume する。
 				t.suspend()

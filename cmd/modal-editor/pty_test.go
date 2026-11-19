@@ -158,7 +158,10 @@ func (p *editorProc) checkRestored(t *testing.T, before unix.Termios) {
 	if after := ptytest.Termios(t, p.tty); after != before {
 		t.Errorf("端末の設定が戻っていない:\n before %+v\n after  %+v", before, after)
 	}
-	p.out.WaitForString(t, "\x1b[?1049l")
+	// :! などで代替画面を出入りしたテストでは、前の "\x1b[?1049l" が既に出ているので、終わるときのものを待つ（PR #234 の再レビュー 3 の必須 3）。
+	p.out.WaitFor(t, "最後に代替画面から戻る列", func(out string) bool {
+		return strings.LastIndex(out, "\x1b[?1049l") > strings.LastIndex(out, "\x1b[?1049h")
+	})
 	out := p.out.String()
 	if i, j := strings.LastIndex(out, "\x1b[?1049h"), strings.LastIndex(out, "\x1b[?1049l"); j < i {
 		t.Errorf("代替画面から戻る列が、切り替える列より前にある: %q", out)

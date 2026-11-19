@@ -225,6 +225,12 @@ func (n navigator) RunActions(acts []ex.Action) (err error) {
 			e.askWrite(bs, a, acts[i+1:])
 			return fmt.Errorf("%w: replay stopped at a write prompt", command.ErrFailed)
 		}
+		var pe *permissionError
+		if errors.As(err, &pe) {
+			// 権限を上げて書くかを問う（FR-79）。問いの答えを待つので、再生はここで止める（:w の上書きの問いと同じ）。
+			e.askElevate(bs, a, acts[i+1:], pe)
+			return fmt.Errorf("%w: replay stopped at an elevate prompt", command.ErrFailed)
+		}
 		if err != nil {
 			return err
 		}

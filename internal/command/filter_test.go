@@ -126,7 +126,6 @@ func TestFilterErrors(t *testing.T) {
 	}{
 		{"実行できない", "2!cat", errors.New("interrupted")},
 		{":r の実行できない", "r !cat", errors.New("interrupted")},
-		{"範囲の無い :!", "!ls", nil},
 		{":r {file}", "r foo", nil},
 		// :g の cmd の中では、実行の間に :g の続きを止められないので使えない（Vim では使える）。
 		{":g の中の :!", "g/a/.!cat", nil},

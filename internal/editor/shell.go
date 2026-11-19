@@ -31,6 +31,10 @@ const shellWaitDelay = 200 * time.Millisecond
 // errShellOutputLimit は、外部のコマンドの出力が shellOutputLimit を超えたことを表す。
 var errShellOutputLimit = errors.New("output limit exceeded")
 
+// errShellBusy は、外部のコマンド（:!、:{range}!、:r !、権限を上げた保存）の実行中に、次の外部のコマンドを始めようとしたことを表す。
+// 外部のコマンドは server に 1 つだけ動かせる（基本設計 10 章）。
+var errShellBusy = errors.New("E319: 外部のコマンドの実行中です")
+
 // shellJob は、実行中の外部のコマンドである。イベントループの goroutine だけが触る。
 type shellJob struct {
 	// bs は、コマンドを打ったバッファである。終わったら、このバッファの State の FinishShell に結果を渡す。
@@ -47,6 +51,19 @@ type shellJob struct {
 	// どれも、出力を入れ終えた後に、この順で続ける。実行できなかった、中断したときは捨てる（Vim の再生とキーマップが誤りで止まるのと同じ）。
 	replay []command.ReplaySegment
 	heldInput
+
+	// terminal は、client の端末を子プロセスへ渡した実行（:! と権限を上げた保存。handover.go）であることを表す。
+	// 結果は shellDone ではなく、client の端末から TerminalResult で届く。id はその実行の ID である。
+	terminal bool
+	id       uint64
+	// reclaimed は、実行中に、子孫が起動した待つだけの client（FR-83）のタブをコマンドを打った client に開き、
+	// その client のキーを処理していることを表す（FR-117。keyAllowed）。端末を渡した実行では、端末も取り戻している。
+	reclaimed bool
+	// releasing は、タブが閉じられ、端末を子プロセスへ渡し直すのを待っている待つだけの client である。
+	// client が渡し直したこと（TerminalResult.Released）を受けてから終わらせる。
+	releasing []*waiter
+	// save は、権限を上げた保存（FR-79、FR-116）のときの、終わった後の処理である。:! なら nil。
+	save *elevatedSave
 }
 
 // shellOutcome は、外部のコマンドを動かす goroutine からイベントループへ送る結果である。
@@ -69,7 +86,11 @@ type shellOutcome struct {
 // req: FR-81
 func (e *Editor) startShell(bs *bufferState, req *ex.ShellRequest, replay []command.ReplaySegment) {
 	if e.shell != nil {
-		e.showError(errors.New("E319: 外部のコマンドの実行中です"))
+		e.showError(errShellBusy)
+		return
+	}
+	if req.Terminal {
+		e.startTerminalShell(bs, req, replay)
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -101,8 +122,10 @@ func (e *Editor) startShell(bs *bufferState, req *ex.ShellRequest, replay []comm
 
 // interruptShell は、実行中の外部のコマンドがあり、それを打った client の <C-c> の印が立っていれば中断する。
 // 印は下ろさない（キーの列の <C-c> までの先打ちは、終わった後に shellFinished が捨てる）。
+// 端末を渡した実行（:!）は中断しない（<C-c> は端末から子プロセスへ届く）。待つだけの client のタブを編集している間（reclaimed）も、
+// <C-c> は編集のキー（<Esc>）であり、中断しない。
 func (e *Editor) interruptShell() {
-	if e.shell != nil && e.shell.client.intr.Load() && !e.shell.interrupted {
+	if e.shell != nil && !e.shell.terminal && !e.shell.reclaimed && e.shell.client.intr.Load() && !e.shell.interrupted {
 		e.shell.interrupted = true
 		e.shell.cancel()
 	}

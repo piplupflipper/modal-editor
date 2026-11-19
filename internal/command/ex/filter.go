@@ -19,17 +19,21 @@ func init() {
 // reportLines は、Vim の 'report' の既定値である。変えた行の数がこれを超えたら通知を出す。
 const reportLines = 2
 
-// ShellRequest は、:{range}!{cmd} と :r !{cmd} が呼び出し側へ求める、外部のコマンドの実行である（FR-81）。
+// ShellRequest は、:{range}!{cmd}、:r !{cmd}、:!{cmd} が呼び出し側へ求める、外部のコマンドの実行である（FR-80、FR-81）。
 //
-// 呼び出し側は、Cmd をシェルで実行し、Input を標準入力へ渡し（nil なら何も渡さない）、
+// Terminal が false（:{range}! と :r !）なら、呼び出し側は、Cmd をシェルで実行し、Input を標準入力へ渡し（nil なら何も渡さない）、
 // 標準出力と標準エラー出力を書かれた順に合わせたものを Finish へ渡す
 // （Vim の 'shellredir' の既定 ">%s 2>&1" と同じく、標準エラー出力もバッファへ入る）。
+// Terminal が true（範囲の無い :!）なら、呼び出し側は端末を子プロセスへ渡して Cmd をシェルで実行し（Vim と同じ）、
+// 終わったら出力を渡さずに Finish を呼ぶ。バッファは変わらない。
 // 実行できなかった、中断したときは Finish を呼ばず、バッファは変えない。
 type ShellRequest struct {
 	// Cmd は、シェルへ渡すコマンドである。先頭の空白は除き、末尾の空白は残す（Vim と同じ）。空ではない。
 	Cmd string
-	// Input は、標準入力へ渡すテキストである。:{range}! では範囲の行を改行で終えて並べたもの、:r ! では nil である。
+	// Input は、標準入力へ渡すテキストである。:{range}! では範囲の行を改行で終えて並べたもの、:r ! と :! では nil である。
 	Input []byte
+	// Terminal は、端末を子プロセスへ渡して実行すること（範囲の無い :!{cmd}。FR-80）を表す。
+	Terminal bool
 
 	read         bool
 	line1, line2 int  // 0 始まり。:r では line2 がアドレスの行
@@ -47,6 +51,11 @@ func (r *ShellRequest) Finish(b *buffer.Buffer, st *State, cursor int, out []byt
 		st = &State{}
 	}
 	c := &execCtx{b: b, st: st, cursor: clampLine(b, cursor)}
+	if r.Terminal {
+		// :! はバッファを変えない。終了コードだけを知らせる（Vim の "shell returned N"）。
+		statusNotice(c, status)
+		return c.res(), nil
+	}
 	if b.Version() != r.version {
 		return c.res(), errAt(0, codeNotAvailable, "外部のコマンドの実行中にバッファが変わったので、出力を捨てました")
 	}
@@ -64,16 +73,18 @@ func (r *ShellRequest) Finish(b *buffer.Buffer, st *State, cursor int, out []byt
 	return c.res(), err
 }
 
-// runFilter は :{range}!{cmd} を解析し、Result.Shell で実行を求める（FR-81）。
-// 範囲の無い :!{cmd} は、端末を子プロセスへ渡す実行（FR-80）で、まだ無いので E319 にする。
+// runFilter は :{range}!{cmd} と :!{cmd} を解析し、Result.Shell で実行を求める（FR-80、FR-81）。
+// 範囲の無い :!{cmd} は、端末を子プロセスへ渡す実行（ShellRequest.Terminal）である。編集を禁止したバッファでも使える。
+// コマンドが空なら何もしない（Vim 9.1 の :! は E34 だが、:{range}! に合わせた）。
 //
-// req: FR-81
+// req: FR-80, FR-81
 func runFilter(c *execCtx, inv *invocation) error {
-	if inv.rangeCount == 0 {
-		return errAt(inv.namePos, codeNotAvailable, ":!{コマンド}（端末を渡す実行）はまだ使えません。範囲を付けた :{範囲}!{コマンド} は使えます")
-	}
 	cmd := shellArg(inv.arg)
 	if cmd == "" {
+		return nil
+	}
+	if inv.rangeCount == 0 {
+		c.shell = &ShellRequest{Cmd: cmd, Terminal: true}
 		return nil
 	}
 	var in strings.Builder

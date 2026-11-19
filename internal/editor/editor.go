@@ -81,6 +81,9 @@ type TermEvent struct {
 	// 今は編集の client が 1 つだけなので、イベントループは読まない。forwardInput がキーの列に積むときに捨て、大きさも 1 つに上書きする。
 	// 2 段目以降の複数の client の issue で、キーの列、中断の印、キーの列の待ち、オペレーターの途中の状態を client ごとに分けるときに使う（基本設計 2.1、FR-62）。
 	Client ClientID
+	// Terminal は、端末を子プロセスへ渡した実行（TerminalHandover）の結果である。nil でなければ、このイベントはキーではない（handover.go）。
+	// キーと同じ列で届けるので、結果より前に打ったキーは結果より前に、後に打ったキーは後に届く。
+	Terminal *TerminalResult
 }
 
 // ClientID は、server に繋いだ client の識別子である。0 は「client を区別しない」（server を通さずに端末をつないだ場合）を表す。
@@ -178,7 +181,11 @@ type Config struct {
 	// 同じ名前は後のものが勝つ（os/exec の決まり）。
 	// FR-82 の server のソケットのパス（仮に MODAL_EDITOR_SOCKET）と、EDITOR、GIT_EDITOR を入れる口で、
 	// 値は server のソケットができてから呼び出し側が入れる（#190）。
+	// :! のシェル（client が起動する。FR-80）と、権限を上げた保存のコマンド（FR-79）の環境変数にも、client の環境の後に足す。
 	ChildEnv []string
+	// ElevateCommand は、権限の不足で書けないファイルを書くときに、tee <パス> の前に付けるコマンドである（設定の elevateCommand。FR-79）。
+	// 空なら DefaultElevateCommand（["sudo"]）を使う。
+	ElevateCommand []string
 	// ExtManager は、:ext sync（拡張機能の管理。基本設計 5.6）の設定である。ゼロ値は本体の既定の置き場所を使う（extsync.go）。
 	ExtManager ExtManagerConfig
 }
@@ -244,6 +251,14 @@ type Editor struct {
 	// shell は、実行中の外部のコマンド（:{range}! と :r !）である。無ければ nil。shellDone へ結果が届く（shell.go）。
 	shell     *shellJob
 	shellDone chan shellOutcome
+	// termSeq は、端末を子プロセスへ渡す実行の ID の連番である（handover.go）。
+	termSeq uint64
+	// termCh は、client の端末から届いた、端末を渡した実行の結果を、イベントループへ送る（forwardInput）。
+	termCh chan termResult
+	// waiters は、待つだけの client（FR-83）である。waitCh と waitGoneCh で足し、外す（handover.go）。
+	waiters    []*waiter
+	waitCh     chan waitRequest
+	waitGoneCh chan *waiter
 	// extSync は、実行中の :ext sync である。無ければ nil。進み具合と結果は inspect で届く（extsync.go）。
 	extSync *extSyncJob
 	// extStopped は、:ext sync が削除の後に Disable で止めた拡張機能の ID である。無効になった知らせを異常として出さない（stateChange）。
@@ -402,25 +417,28 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		return nil, err
 	}
 	e := &Editor{
-		cfg:       cfg,
-		log:       lg,
-		host:      host,
-		mcpSocket: sock,
-		keys:      newKeyQueue(),
-		intrCh:    make(chan struct{}, 1),
-		shellDone: make(chan shellOutcome, 1),
-		resizeCh:  make(chan struct{}, 1),
-		inspect:   make(chan func()),
-		decoDone:  make(chan decoBuilt),
-		checkDone: make(chan []fileResult),
-		attachCh:  make(chan attachRequest),
-		goneCh:    make(chan *clientView),
-		keyFireCh: make(chan keyFire),
-		extClient: map[string]*clientView{},
-		finished:  make(chan struct{}),
-		diff:      newDiffState(),
-		outputs:   map[outputKey][]string{},
-		nextID:    1,
+		cfg:        cfg,
+		log:        lg,
+		host:       host,
+		mcpSocket:  sock,
+		keys:       newKeyQueue(),
+		intrCh:     make(chan struct{}, 1),
+		shellDone:  make(chan shellOutcome, 1),
+		termCh:     make(chan termResult),
+		waitCh:     make(chan waitRequest),
+		waitGoneCh: make(chan *waiter),
+		resizeCh:   make(chan struct{}, 1),
+		inspect:    make(chan func()),
+		decoDone:   make(chan decoBuilt),
+		checkDone:  make(chan []fileResult),
+		attachCh:   make(chan attachRequest),
+		goneCh:     make(chan *clientView),
+		keyFireCh:  make(chan keyFire),
+		extClient:  map[string]*clientView{},
+		finished:   make(chan struct{}),
+		diff:       newDiffState(),
+		outputs:    map[outputKey][]string{},
+		nextID:     1,
 	}
 	e.fileType = defaultFileTypes()
 	for k, v := range cfg.FileTypes {
@@ -654,6 +672,12 @@ func (e *Editor) Run(ctx context.Context) error {
 			e.interruptReplay()
 		case o := <-e.shellDone:
 			e.shellFinished(o)
+		case r := <-e.termCh:
+			e.terminalResult(r)
+		case req := <-e.waitCh:
+			e.addWaiter(req)
+		case w := <-e.waitGoneCh:
+			e.waiterGone(w)
 		case ev, ok := <-e.host.Events():
 			if !ok {
 				return nil

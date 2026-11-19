@@ -85,11 +85,15 @@ func (e *Editor) promptKey(k editcmd.Key) {
 func (e *Editor) runActions(bs *bufferState, acts []ex.Action) bool {
 	for i, a := range acts {
 		err := e.doAction(bs, a)
+		var pe *permissionError
 		switch {
 		case err == nil:
 			continue
 		case errors.Is(err, errChangedOnDisk):
 			e.askWrite(bs, a, acts[i+1:])
+		case errors.As(err, &pe):
+			// 権限の不足で書けなかった。権限を上げて書くかを問い、続きの動作は書けた後に行う（FR-79、FR-116）。
+			e.askElevate(bs, a, acts[i+1:], pe)
 		default:
 			e.showError(err)
 		}

@@ -75,6 +75,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	listen := flags.String("listen", "", "計測用（利用者向けではない）。端末を使わずに server だけを起動し、このパスのソケットで編集の client を待つ")
 	connect := flags.String("connect", "", "計測用（利用者向けではない）。このパスのソケットの server に編集の client として繋ぐ。ファイルの引数は取らない")
 	serverPath := flags.String("server", "", "内部用（利用者は指定しない）。tmux と herdr の中で起動した編集の client が、このパスのソケットの server として自分の子に起動する")
+	// req: FR-84
+	newServer := flags.Bool("new", false, "環境変数 "+envSocket+" があっても親の server に繋がず、新しい server と client を起動する（エディタの中で起動したエディタを、別のエディタとして使う）")
 
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("引数の解釈に失敗: %w", err)
@@ -83,6 +85,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if *showVersion {
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
+	}
+	if sock := os.Getenv(envSocket); sock != "" && !*newServer && countSet(*listen, *connect, *serverPath) == 0 {
+		// :! などの子孫として起動した modal-editor は、待つだけの client になる（FR-83）。
+		// MODAL_EDITOR_SOCKET の server がもう無ければ、規則 2 以降でソケットを決める編集の client として動く（基本設計 1.2）。
+		if conn, err := protocol.Dial(sock); err == nil {
+			return waitClient(conn, os.Getenv, flags.Args(), *readOnly)
+		}
 	}
 	switch {
 	case countSet(*listen, *connect, *serverPath) > 1:
@@ -103,7 +112,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if !inOK || !outOK {
 		return errNotTerminal
 	}
-	return edit(flags.Args(), *readOnly, in, out, *logPath, *connect)
+	return edit(flags.Args(), *readOnly, in, out, *logPath, *connect, *newServer)
 }
 
 var errNotTerminal = errors.New("標準入力と標準出力が端末のときだけ起動できる")
@@ -138,7 +147,12 @@ func countSet(values ...string) int {
 // SIGKILL で終わったときは戻せない。
 // readOnly は起動のオプション -R で、files を編集を禁止した状態で開く（editor.Config.ReadOnlyArgs）。
 // connect が空でなければ、server を動かさずに、そのパスの server に編集の client として繋ぐ（runClient）。
-func edit(files []string, readOnly bool, in, out *os.File, logPath, connect string) (err error) {
+// newServer（--new。FR-84）なら、端末多重化ソフトの中でも同じ window の server に繋がず、1 つのプロセスの構成で新しい server と client を動かす
+// （server のソケットは、プロセス ID と乱数の名前のディレクトリに置く。基本設計 4.9）。
+//
+// 端末を子プロセスへ渡している間（:!。FR-80）は、端末の <C-c> と <C-\> が本体にも SIGINT と SIGQUIT で届くので、
+// その間は internal/client が signal.Ignore で無視にし、終わったら signalContext の受け取りを登録し直す（term.Terminal.SetInterruptRestore）。
+func edit(files []string, readOnly bool, in, out *os.File, logPath, connect string, newServer bool) (err error) {
 	logger, closeLog, err := openLog(logPath)
 	if err != nil {
 		return err
@@ -148,7 +162,7 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 		logger = slog.New(wrapLogHandler(logger.Handler()))
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	ctx, stop, renotify := signalContext()
 	defer stop()
 	tm, err := term.Open(in, out, term.Options{})
 	if errors.Is(err, term.ErrNotTerminal) {
@@ -157,6 +171,7 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 	if err != nil {
 		return fmt.Errorf("端末を開けない: %w", err)
 	}
+	tm.SetInterruptRestore(renotify)
 	defer func() { _ = tm.Close() }() // Close は誤りを返さない
 	return guard(tm.Restore, func() error {
 		if connect != "" {
@@ -165,6 +180,10 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 				return fmt.Errorf("server に繋げない: %w", err)
 			}
 			return runClient(ctx, conn, tm, logger)
+		}
+		if newServer {
+			// req: FR-84
+			return runEditor(ctx, files, readOnly, tm, logger, nil)
 		}
 		start := func(path string) (*serverChild, error) {
 			return startServerProcess(path, startOptions{logPath: logPath})
@@ -224,6 +243,7 @@ func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Term
 		sock = nil
 	} else {
 		cfg.MCPSocket = sock.Path
+		cfg = withChildEnv(cfg, filepath.Join(filepath.Dir(sock.Path), server.SocketName), logger)
 	}
 	defer func() {
 		if rerr := sock.Remove(); rerr != nil { // 拡張機能を止めた後（closeServer の後）に消す
@@ -300,7 +320,7 @@ func serve(path string, files []string, readOnly bool, logPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 	defer stop()
 
-	cfg := loadConfig(logger)
+	cfg := withChildEnv(loadConfig(logger), path, logger)
 	cfg.ReadOnlyArgs = readOnly
 	srv, err := server.New(cfg)
 	if err != nil {
@@ -353,7 +373,9 @@ func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, re
 		abs[i] = a
 	}
 	w, h := tm.Size()
-	first, err := client.Start(conn, clientHello(os.Getenv, abs, readOnly, w, h))
+	hello := clientHello(os.Getenv, abs, readOnly, w, h)
+	hello.Features = client.Features(tm)
+	first, err := client.Start(conn, hello)
 	if err != nil {
 		return nil, fmt.Errorf("server に繋げないので 1 つのプロセスで動かす: %w", err)
 	}
@@ -432,11 +454,12 @@ func loadConfig(logger *slog.Logger) editor.Config {
 			MaxEntryBytes:   cfg.RegisterMaxEntryBytes,
 			DeleteToHistory: cfg.DeleteToHistory,
 		},
-		NoClipboard: cfg.RegisterClipboard == config.ClipboardOff,
-		Extensions:  specs,
-		Host:        host,
-		Logger:      logger,
-		Problems:    problems,
+		NoClipboard:    cfg.RegisterClipboard == config.ClipboardOff,
+		ElevateCommand: cfg.ElevateCommand,
+		Extensions:     specs,
+		Host:           host,
+		Logger:         logger,
+		Problems:       problems,
 	}
 }
 

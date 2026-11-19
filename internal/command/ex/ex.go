@@ -39,6 +39,7 @@
 //	:wqa[ll][!]、:xa[ll][!]  ActionWriteAll と ActionQuitAll を返す
 //	:bd[elete][!] [N|名前]  バッファを閉じる ActionBufferDelete を返す。未保存の変更の確認は呼び出し側が行う
 //	:{range}!{cmd}       範囲の行を cmd の標準入力へ渡し、出力で範囲を置き換える（FR-81。Result.Shell を返す）
+//	:!{cmd}              端末を子プロセスへ渡して cmd を実行する（FR-80。Result.Shell の Terminal を true にして返す）
 //	:[N]r[ead] !{cmd}    cmd の出力を N 行目（省くとカーソルの行）の後に入れる。:0r は 1 行目の前に入れる（FR-81。:r! も同じ）
 //	:reado[nly]          バッファの編集の禁止を切り替え、切り替えた後の状態を Notice で知らせる（FR-86。Vim に無い本体のコマンド。名前は仮）
 //
@@ -51,7 +52,8 @@
 // 置き換えと挿入は Finish の 1 回でアンドゥの 1 単位になるが、同じ行の前のコマンド（:s/a/b/|2,3!sort の :s）とは別の単位になる。
 // 実行の間に続きを止められないので、:g の cmd の中では使えず E319 にする（Vim では使える）。
 // Vim と違い、cmd の中の "!"（直前のコマンド）、"%"、"#"（ファイル名）は展開しない。
-// 範囲の無い :!{cmd}（端末を渡す実行。FR-80）と、ファイルを読み込む :r {file} はまだ無く、E319 にする。
+// 範囲の無い :!{cmd}（端末を渡す実行。FR-80）も同じく Result.Shell で求め、バッファは変えない。編集を禁止したバッファでも使える。
+// ファイルを読み込む :r {file} はまだ無く、E319 にする。
 //
 // :b、:bn、:bp の番号と回数は引数でだけ書け、Vim の範囲で書く形（:2b、:3bn）は E481 にする。
 // :b、:bn、:bp、:e は、移った先のバッファでは "|" の後のコマンドを続けない。後のコマンドは移る前のバッファで実行する
@@ -526,7 +528,8 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 	if c.inGlobal && !cmd.inGlobal {
 		return "", 0, false, errAt(namePos, codeNotAvailable, ":global の中では使えません: %s", cmd.name)
 	}
-	if cmd.modify && c.b.ReadOnly() {
+	// 範囲の無い :!{cmd}（FR-80）はバッファを変えないので、編集を禁止したバッファでも使える。
+	if cmd.modify && c.b.ReadOnly() && (cmd != &filterCommand || r.count > 0) {
 		// req: FR-85
 		return "", 0, false, errAt(namePos, codeReadOnly, "%s", msgReadOnly)
 	}

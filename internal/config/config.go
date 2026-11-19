@@ -61,7 +61,8 @@ import (
 //	  "colors": { "diagnostic.error": { "sp": "#e27878", "undercurl": true }, "statusline": { "fg": 7, "bg": 0 } },
 //	  "symbols": { "sign.breakpoint": "●", "popup.border": "┌─┐│┘─└│" },
 //	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] },
-//	  "tabline": { "show": "always" }
+//	  "tabline": { "show": "always" },
+//	  "elevateCommand": ["sudo"]
 //	}
 type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
@@ -137,6 +138,10 @@ type Config struct {
 	// TabLineShow は tabline.show の値で、タブの行を出す場合である（基本設計 7.1。FR-62）。
 	// TabLineAlways か TabLineMultiple で、項目が無いか誤りなら空で、既定の TabLineAlways として扱う。
 	TabLineShow string
+	// ElevateCommand は elevateCommand の値で、権限の不足で書けないファイルを書くときに tee <パス> の前に付けるコマンドと引数である
+	// （基本設計 4.7。FR-79。項目の名前は仮）。項目が無いか誤りなら nil で、editor の既定（["sudo"]）を使う。
+	// editor.Config.ElevateCommand にそのまま渡す。
+	ElevateCommand []string
 
 	// pos は、見た目の設定の項目を書いた位置である（CheckAppearance）。
 	pos appearancePos
@@ -234,6 +239,8 @@ func Parse(path string, data []byte) (Config, []error) {
 			cfg.StatusLine = s.statusLine(m.value, &cfg)
 		case "tabline":
 			cfg.TabLineShow = s.tabLine(m.value)
+		case "elevateCommand":
+			cfg.ElevateCommand = s.elevateCommand(m.value)
 		default:
 			s.report(m.nameOff, "未知の項目 %s を無視する", join("", m.name))
 		}
