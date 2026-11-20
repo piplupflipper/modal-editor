@@ -9,7 +9,17 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/config"
 )
 
-// タブの名前（tabNames）は、名前の無いバッファでは filepath.Base("") の "." になる。
+// viewTabs は、読み込んでいる client のタブのファイル名を、並びの順に空白で区切って返す。
+// 名前の無いバッファは filepath.Base("") の "." になる（offscreen_test.go の tabNames と同じ形）。
+func (h *harness) viewTabs() string {
+	var names []string
+	h.e.do(func() {
+		for _, bs := range h.e.view.tabs {
+			names = append(names, filepath.Base(bs.path))
+		}
+	})
+	return strings.Join(names, " ")
+}
 
 // :tab.new は、名前の無い空のバッファを、カーソルのあるタブの右の新しいタブで開いて移る。
 // 名前の無いバッファは :w ファイル で名前を付けられる。引数にファイルを書くと :e ファイル と同じく開く。
@@ -20,7 +30,7 @@ func TestTabNewCommand(t *testing.T) {
 	h := start(t, Config{WorkDir: dir}, "a.txt", "b.txt")
 	h.keys(":b a.txt<CR>:tab.new<CR>")
 	h.settle()
-	if got := h.tabNames(0); got != "a.txt . b.txt" {
+	if got := h.viewTabs(); got != "a.txt . b.txt" {
 		t.Fatalf(":tab.new: tabs = %q (message %q)", got, h.message())
 	}
 	var path, fileType string
@@ -41,19 +51,19 @@ func TestTabNewCommand(t *testing.T) {
 	if disk, err := os.ReadFile(filepath.Join(dir, "c.txt")); err != nil || string(disk) != "hello\n" {
 		t.Errorf(":w c.txt: disk = %q, %v (message %q)", disk, err, h.message())
 	}
-	if got := h.tabNames(0); got != "a.txt c.txt b.txt" {
+	if got := h.viewTabs(); got != "a.txt c.txt b.txt" {
 		t.Errorf(":w c.txt: tabs = %q", got)
 	}
 	// ファイルを書けば :e と同じく開く。開いているファイルはそのタブへ移り、無いファイルは右の新しいタブで開く。
 	h.keys(":tab.new b.txt<CR>")
 	h.settle()
 	h.e.do(func() { path = h.e.cur.path })
-	if got := h.tabNames(0); filepath.Base(path) != "b.txt" || got != "a.txt c.txt b.txt" {
+	if got := h.viewTabs(); filepath.Base(path) != "b.txt" || got != "a.txt c.txt b.txt" {
 		t.Errorf(":tab.new b.txt: cur %q, tabs %q", path, got)
 	}
 	h.keys(":tab.new d.txt<CR>")
 	h.settle()
-	if got := h.tabNames(0); got != "a.txt c.txt b.txt d.txt" {
+	if got := h.viewTabs(); got != "a.txt c.txt b.txt d.txt" {
 		t.Errorf(":tab.new d.txt: tabs = %q", got)
 	}
 	h.keys(":tab.ne<CR>")
@@ -70,7 +80,7 @@ func TestTabNewFromEmpty(t *testing.T) {
 	h := start(t, Config{})
 	h.keys(":tab.new<CR>")
 	h.settle()
-	if got := h.tabNames(0); got != ". ." {
+	if got := h.viewTabs(); got != ". ." {
 		t.Errorf("tabs = %q", got)
 	}
 }
@@ -106,12 +116,12 @@ func TestConfigCommandAliases(t *testing.T) {
 	h := start(t, Config{WorkDir: dir, Extensions: specs, CommandAliases: aliases}, "a.txt")
 	h.keys(":tabe b.txt<CR>")
 	h.settle()
-	if got := h.tabNames(0); got != "a.txt b.txt" {
+	if got := h.viewTabs(); got != "a.txt b.txt" {
 		t.Fatalf(":tabe b.txt: tabs = %q (message %q)", got, h.message())
 	}
 	h.keys(":tabnew<CR>")
 	h.settle()
-	if got := h.tabNames(0); got != "a.txt b.txt ." {
+	if got := h.viewTabs(); got != "a.txt b.txt ." {
 		t.Errorf(":tabnew: tabs = %q (message %q)", got, h.message())
 	}
 	h.keys(":ec こんにちは|x<CR>")

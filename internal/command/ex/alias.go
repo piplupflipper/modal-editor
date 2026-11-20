@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/piplupflipper/vi-imitation/internal/option"
 )
@@ -89,7 +88,8 @@ type RenameAlias struct {
 //
 // req: FR-150
 func (t *Aliases) Add(a RenameAlias, extCommands []string) error {
-	if a.Name == "" || strings.ContainsFunc(a.Name, func(r rune) bool { return r >= utf8.RuneSelf || !isLetter(byte(r)) }) {
+	// 名前の全体が、コマンドラインと同じ読み方（scanner.letters）で 1 つの名前として読めることを確かめる。
+	if a.Name == "" || len(a.Name) != len((&scanner{src: a.Name}).letters()) {
 		return fmt.Errorf("別名の名前 %q は英字だけで書く", a.Name)
 	}
 	if a.Min < 1 || a.Min > len(a.Name) {
