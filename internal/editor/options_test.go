@@ -139,6 +139,63 @@ func TestEditorOptions(t *testing.T) {
 	}
 }
 
+// screenRow は、偽の端末に最後に描いた画面の row 行目を、右の空白を除いて返す。
+func (h *harness) screenRow(row int) string {
+	h.t.Helper()
+	return strings.TrimRight(strings.Split(h.term.screen(), "\n")[row], " ")
+}
+
+// 設定ファイルの lineNumber.show と lineNumber.minWidth（Config.Options）で、起動したときから行番号の列を出す。
+// :set number、:set nonumber、:set number!、:set numberwidth=N は、次の描画から効く（描画が描くたびに今の値を読む）。
+// 範囲の外の :set numberwidth は誤りにして、値を変えない。
+//
+// req: FR-135, FR-136
+func TestLineNumberOption(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(path, []byte("one\ntwo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := start(t, Config{WorkDir: dir, Options: map[string]option.Value{
+		option.LineNumberShow: option.BoolValue(true), option.LineNumberMinWidth: option.IntValue(5),
+	}}, path)
+	// 画面の最初の行はタブの行なので、バッファの最初の行は 2 行目に描く。
+	h.eventually("設定ファイルの値で出す", func() bool { return h.screenRow(1) == "   1 one" && h.screenRow(2) == "   2 two" })
+
+	steps := []struct {
+		keys string
+		row1 string
+	}{
+		{":set nonumber<CR>", "one"},
+		{":set number<CR>", "   1 one"},
+		{":set numberwidth=3<CR>", " 1 one"},
+		{":set number!<CR>", "one"},
+		{":set number!<CR>", " 1 one"},
+		{":option.set lineNumber.minWidth 1<CR>", "1 one"},
+	}
+	for _, s := range steps {
+		h.keys(s.keys)
+		h.settle()
+		h.eventually(s.keys, func() bool { return h.screenRow(1) == s.row1 })
+	}
+
+	for _, s := range []struct{ keys, code string }{
+		{":set numberwidth=0<CR>", "E487"},
+		{":set numberwidth=21<CR>", "E474"},
+	} {
+		h.keys(s.keys)
+		h.settle()
+		h.e.do(func() {
+			if !strings.HasPrefix(h.e.message.Text, s.code) {
+				t.Errorf("%s: message = %q, want %s", s.keys, h.e.message.Text, s.code)
+			}
+			if got := h.e.options.Get(option.LineNumberMinWidth).Int(); got != 1 {
+				t.Errorf("%s: minWidth = %d, want 1（変えない）", s.keys, got)
+			}
+		})
+	}
+}
+
 // 利用者向けの文書（docs/usage.md）の設定の名前の一覧に、表のすべての項目がある。
 func TestOptionNamesInUsage(t *testing.T) {
 	_, list, ok := strings.Cut(docs.Usage, "\n### 設定の名前の一覧\n")

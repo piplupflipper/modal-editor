@@ -29,6 +29,8 @@ const (
 	StyleNonText = "nontext"
 	// StyleSpecialKey は、^A や <80> の形で出した文字である。
 	StyleSpecialKey = "specialkey"
+	// StyleLineNr は、行番号の列（Frame.LineNumbers。FR-135）である。数字と、右の空けた 1 列を含む列の全体に付ける（Vim の LineNr）。
+	StyleLineNr = "linenr"
 	// StyleMessageInfo、StyleMessageWarning、StyleMessageError は、コマンドラインの行に出すメッセージである。
 	StyleMessageInfo    = "message.info"
 	StyleMessageWarning = "message.warning"
@@ -88,7 +90,7 @@ const (
 var styleNames = []string{
 	StyleComment, StyleKeyword, StyleString, StyleNumber, StyleConstant, StyleFunction, StyleType, StyleVariable,
 	StyleOperator, StylePunctuation,
-	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey,
+	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleLineNr,
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
 	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch,
@@ -141,10 +143,12 @@ func DefaultTheme() Theme {
 		StyleType:     {Fg: Indexed(10)},
 		StyleOperator: {Fg: Indexed(11)},
 
-		StyleVisual:         {Reverse: true},
-		StyleStatusLine:     {Reverse: true, Bold: true},
-		StyleNonText:        {Fg: Indexed(12)},
-		StyleSpecialKey:     {Fg: Indexed(12)},
+		StyleVisual:     {Reverse: true},
+		StyleStatusLine: {Reverse: true, Bold: true},
+		StyleNonText:    {Fg: Indexed(12)},
+		StyleSpecialKey: {Fg: Indexed(12)},
+		// 行番号は、Vim 9.1 の暗い背景の既定（2026-11-20 に TERM=xterm-256color、background=dark の :hi LineNr で確かめた ctermfg=11）と同じ番号にした。
+		StyleLineNr:         {Fg: Indexed(11)},
 		StyleMessageWarning: {Fg: Indexed(11)},
 		StyleMessageError:   {Fg: Indexed(15), Bg: Indexed(1)},
 

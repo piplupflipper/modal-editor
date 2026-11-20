@@ -25,6 +25,7 @@
   "visual": { "bg": "#272c42" }, // Visual
   "nontext": { "fg": "#242940" }, // NonText
   "specialkey": { "fg": "#515e97" }, // SpecialKey（Neovim の側。Vim では Whitespace へのリンク）
+  "linenr": { "fg": "#444b71", "bg": "#1e2132" }, // LineNr
   "message.warning": { "fg": "#e27878", "bg": "#161821" }, // WarningMsg
   "message.error": { "fg": "#e27878", "bg": "#161821" }, // ErrorMsg
   "popup": { "fg": "#c6c8d1", "bg": "#3d425b" }, // Pmenu

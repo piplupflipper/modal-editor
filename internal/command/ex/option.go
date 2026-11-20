@@ -63,8 +63,10 @@ func splitName(arg string, pos int) (name string, rest string, restPos int) {
 // 値の末尾の空白は、型によらず除いて読む（末尾に空白を打っても E474 や E521 にならず、文字列の値にも入らない。
 // #264 の本文の「空白の後の行末まで」との違いで、今の項目に末尾の空白を入れたい値は無い）。
 // 知らない名前は E518、真偽でない値は E474、整数でない値は E521 にする（Vim 9.1 の :set と同じ番号）。名前が無ければ E471 にする。
+// 整数の項目の範囲（option.Def.Range）の外の値は、下限より小さければ E487、上限より大きければ E474 にする
+// （Vim 9.1 の :set numberwidth=0 と :set numberwidth=21 と同じ番号。項目の名前では分けない）。
 //
-// req: FR-131, FR-132
+// req: FR-131, FR-132, FR-136
 func runOptionSet(c *execCtx, inv *invocation) error {
 	name, text, textPos := splitName(inv.arg, inv.argPos)
 	if name == "" {
@@ -85,6 +87,10 @@ func runOptionSet(c *execCtx, inv *invocation) error {
 		return errAt(textPos, codeInvalidArg, "%s は true か false にします: %s", d.Name, text)
 	case errors.Is(err, option.ErrNumberRequired):
 		return errAt(textPos, codeNumberRequired, "%s は整数にします: %s", d.Name, text)
+	case errors.Is(err, option.ErrBelowMin) && d.Range != nil:
+		return errAt(textPos, codeNotPositive, "%s は %d 以上にします: %s", d.Name, d.Range.Min, text)
+	case errors.Is(err, option.ErrAboveMax) && d.Range != nil:
+		return errAt(textPos, codeInvalidArg, "%s は %d 以下にします: %s", d.Name, d.Range.Max, text)
 	case err != nil:
 		return errAt(textPos, codeInvalidArg, "%s の値を読めません: %s", d.Name, text)
 	}

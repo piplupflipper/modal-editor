@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -65,17 +66,24 @@ func hasOptionUnder(defs []option.Def, prefix string) bool {
 }
 
 // optionValue は、v を項目 d の型の値に変換し、コマンドラインから読む値と同じ検査（option.Def.Check）を通して返す。
-// 変換できないか、検査で誤りなら、誤りを記録して false を返す。
+// 変換できないか、検査で誤りなら、誤りを記録して false を返す（呼び出し側は値を入れないので、表の既定値を使う）。
+// 整数の範囲（option.Def.Range）の外の値は、範囲を添えて知らせる（FR-136）。項目の名前では分けない。
+//
+// req: FR-131, FR-136
 func (s *source) optionValue(v *hujson.Value, d option.Def) (option.Value, bool) {
 	val, ok := s.convertOption(v, d)
 	if !ok {
 		return option.Value{}, false
 	}
-	if err := d.Check(val); err != nil {
+	switch err := d.Check(val); {
+	case err == nil:
+		return val, true
+	case errors.Is(err, option.ErrOutOfRange) && d.Range != nil:
+		s.report(v.StartOffset, "%s は %d から %d の整数にする: %s", d.Name, d.Range.Min, d.Range.Max, val)
+	default:
 		s.report(v.StartOffset, "%s の値が正しくない: %s", d.Name, val)
-		return option.Value{}, false
 	}
-	return val, true
+	return option.Value{}, false
 }
 
 // convertOption は、JSON の値 v を項目 d の型の値に変換する（真偽、整数、文字列の JSON の値）。値の検査はしない。

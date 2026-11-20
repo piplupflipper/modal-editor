@@ -3,6 +3,7 @@ package option
 import (
 	"errors"
 	"regexp"
+	"strconv"
 	"testing"
 )
 
@@ -30,6 +31,12 @@ func TestDefs(t *testing.T) {
 		if d.Default.Type() != d.Type {
 			t.Errorf("%s: 既定値の型 = %v, want %v", d.Name, d.Default.Type(), d.Type)
 		}
+		if d.Range != nil && (d.Type != Int || d.Range.Min > d.Range.Max) {
+			t.Errorf("%s: 範囲 = %+v（型 %v）", d.Name, *d.Range, d.Type)
+		}
+		if err := d.Check(d.Default); err != nil {
+			t.Errorf("%s: 既定値 %v が検査を通らない: %v", d.Name, d.Default, err)
+		}
 		if got, ok := Lookup(d.Name); !ok || got != d {
 			t.Errorf("Lookup(%q) = %+v, %v", d.Name, got, ok)
 		}
@@ -39,6 +46,55 @@ func TestDefs(t *testing.T) {
 	}
 	if _, ok := Lookup("file"); ok {
 		t.Error("名前の省略を受け付けた")
+	}
+}
+
+// 行番号の 2 つの項目は、範囲がエディタ全体で、既定は出さない、最小の列数は 4（1 から 20）である。
+//
+// req: FR-135, FR-136
+func TestLineNumberDefs(t *testing.T) {
+	if d, ok := Lookup(LineNumberShow); !ok || d.Type != Bool || d.Scope != ScopeEditor || d.Default != BoolValue(false) || d.Range != nil {
+		t.Errorf("Lookup(LineNumberShow) = %+v, %v", d, ok)
+	}
+	d, ok := Lookup(LineNumberMinWidth)
+	if !ok || d.Type != Int || d.Scope != ScopeEditor || d.Default != IntValue(4) || d.Range == nil || *d.Range != (IntRange{Min: 1, Max: 20}) {
+		t.Errorf("Lookup(LineNumberMinWidth) = %+v, %v", d, ok)
+	}
+}
+
+// Check は、整数の項目の範囲（Range）の外の値を、下限の側と上限の側で分けて断る。範囲の両端は通す。
+// Parse と Values.Set も同じ検査を通る。
+//
+// req: FR-136
+func TestCheckRange(t *testing.T) {
+	d := Def{Name: "n", Type: Int, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}}
+	tests := []struct {
+		n    int
+		want error
+	}{
+		{-1, ErrBelowMin},
+		{0, ErrBelowMin},
+		{1, nil},
+		{20, nil},
+		{21, ErrAboveMax},
+	}
+	for _, tt := range tests {
+		err := d.Check(IntValue(tt.n))
+		if !errors.Is(err, tt.want) || (tt.want != nil && !errors.Is(err, ErrOutOfRange)) {
+			t.Errorf("Check(%d) = %v, want %v", tt.n, err, tt.want)
+		}
+		if _, err := d.Parse(strconv.Itoa(tt.n)); !errors.Is(err, tt.want) {
+			t.Errorf("Parse(%d) = %v, want %v", tt.n, err, tt.want)
+		}
+		var vs Values
+		if err := vs.Set(d, IntValue(tt.n)); !errors.Is(err, tt.want) {
+			t.Errorf("Set(%d) = %v, want %v", tt.n, err, tt.want)
+		}
+	}
+	// 範囲の無い整数の項目は、どの値も通す。
+	free := Def{Name: "m", Type: Int, Default: IntValue(0)}
+	if err := free.Check(IntValue(-1000)); err != nil {
+		t.Errorf("範囲の無い項目の Check(-1000) = %v", err)
 	}
 }
 

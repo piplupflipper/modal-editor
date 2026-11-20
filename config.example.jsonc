@@ -34,7 +34,7 @@
     // 端末の背景を透過させる前提の調整
     // iceberg の NonText（#242940）は透過した背景では見えないので、LineNr の文字の色（#444b71）を使う
     "nontext": { "fg": "#444b71" },
-    // 浮かべる窓、メッセージ、印の列、タブの行のいまのタブには背景の色を付けない
+    // 浮かべる窓、メッセージ、印の列、行番号の列、タブの行のいまのタブには背景の色を付けない
     // （iceberg の背景の色が、透過した背景の上で帯に見えるため）。文字の色は iceberg と同じにする
     "popup": { "fg": "#c6c8d1" },
     "message.warning": { "fg": "#e27878" },
@@ -44,6 +44,7 @@
     "sign.diagnostic.warning": { "fg": "#e2a478" },
     "sign.diagnostic.info": { "fg": "#89b8c2" },
     "sign.diagnostic.hint": { "fg": "#6b7089" },
+    "linenr": { "fg": "#444b71" },
 
     // ステータス行を lightline の iceberg に近づける。値は iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の
     // autoload/lightline/colorscheme/iceberg.vim の dark の側のパレットから写した。
@@ -84,4 +85,8 @@
     "left": ["mode", "name", "modified", "readonly"],
     "right": ["recording", "filetype", "ruler", "position"],
   },
+
+  // 行番号の列を出す（:set number に当たる。本体の既定は Vim と同じく出さない）。
+  // 列の幅は minWidth と、最後の行の番号の桁数に 1 を足した数の大きい方なので、5 にすると 9999 行までは幅が変わらず本文の位置がずれない
+  "lineNumber": { "show": true, "minWidth": 5 },
 }

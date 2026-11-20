@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
@@ -50,6 +51,7 @@ func (e *Editor) frame() *ui.Frame {
 		Decorations:     bs.decoView,
 		Diagnostics:     bs.uiDiagnostics(),
 		Signs:           bs.uiSigns(),
+		LineNumbers:     e.uiLineNumbers(),
 		Output:          e.uiOutput(),
 		Tabs:            e.uiTabs(),
 		Diff:            e.uiDiff(bs),
@@ -91,6 +93,18 @@ func (e *Editor) frame() *ui.Frame {
 		}
 	}
 	return f
+}
+
+// uiLineNumbers は、行番号の列の出し方を、エディタ全体の設定の今の値（lineNumber.show と lineNumber.minWidth）から作る（FR-135、FR-136）。
+// 描くたびに読むので、:set number などで値を変えたときに呼ぶ処理は無い（基本設計 7.3）。
+// 列を出すのはバッファの表示領域だけで、ポップアップの窓の中（ui が読まない）と部品の client の画面（この値を詰めない）には出さない。
+//
+// req: FR-135
+func (e *Editor) uiLineNumbers() ui.LineNumbers {
+	return ui.LineNumbers{
+		Show:     e.options.Get(option.LineNumberShow).Bool(),
+		MinWidth: e.options.Get(option.LineNumberMinWidth).Int(),
+	}
 }
 
 // hitEnter は、改行を含むメッセージを出していて、Vim の hit-enter の問いと同じくキーを待っているかを返す。

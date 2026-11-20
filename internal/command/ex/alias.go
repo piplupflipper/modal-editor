@@ -92,7 +92,9 @@ func (x *aliasCtx) get(name string, pos int) (option.Value, error) {
 // vimOptionNames は、:set で受け付ける Vim の名前から、設定の正規の名前への対応である（FR-133）。
 // 短い名前（Vim の ft など）は受け付けない。
 var vimOptionNames = map[string]string{
-	"filetype": option.FileType,
+	"filetype":    option.FileType,
+	"number":      option.LineNumberShow,
+	"numberwidth": option.LineNumberMinWidth,
 }
 
 // vimOption は、:set の Vim の名前 name の項目を返す。無ければ ok は false である。
