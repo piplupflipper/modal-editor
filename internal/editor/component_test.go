@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -566,4 +567,77 @@ func TestPaneOutsideMux(t *testing.T) {
 	if !slices.Contains(peer.term.exits(), "") && len(peer.term.exits()) != 0 {
 		t.Errorf("peer exited: %q", peer.term.exits())
 	}
+}
+
+// pane/open の placement が center なら、端末多重化ソフトの中でもペインを分割せずに中央のポップアップ（端末多重化ソフトのポップアップ）に出す。
+// closeOnSelect なら、木の子の無い項目を選んだら（view/select の後に）閉じて view/closed を送る。子を持つ項目の <CR> は開閉で、閉じない。
+// 閉じても、選んだ選択への editor/execute の許しは残す。分割したペインは、closeOnSelect でも選んで閉じない（FR-147）。
+// 分割したペインには、元の client のカーソルのあるタブが替わるたびに view/tabChange を送り、開いた時点のタブは送らない。
+//
+// req: FR-147
+func TestPanePlacementAndCloseOnSelect(t *testing.T) {
+	var calls muxCalls
+	cfg := Config{Extensions: fakeSpecs(t)}
+	calls.config(&cfg)
+	h := start(t, cfg)
+	peer := h.attach(ClientInfo{ID: 2, Pane: "%9"})
+	popup := func() *floatState { return h.e.viewOf(h.clientOf(peer.term)).float }
+
+	peer.keys(":fake.pane center tree<CR>")
+	h.eventually("中央のポップアップ", func() bool { f := popup(); return f != nil && f.center && f.focused && !f.pane })
+	h.eventually("端末多重化ソフトのポップアップ", func() bool { _, ok := calls.last(false); return ok })
+	if _, ok := calls.last(true); ok {
+		t.Error("pane/open with placement center split the pane")
+	}
+	peer.keys("<CR>")
+	h.waitMessage("kind=4 item=dir key= expanded=true")
+	var open bool
+	h.e.do(func() { open = popup() != nil })
+	if !open {
+		t.Fatal("opening a parent item closed the popup")
+	}
+	peer.keys("G<CR>")
+	h.eventually("選んで閉じたポップアップ", func() bool { return popup() == nil })
+	h.e.do(func() {
+		if _, ok := h.e.execGrants["fake"]; !ok {
+			t.Error("closing on select revoked the editor/execute grant of the selection")
+		}
+	})
+	// 拡張機能には、view/select の後に view/closed が届く。
+	h.eventually("view/select の後の view/closed", func() bool {
+		sel := slices.IndexFunc(h.e.msgHistory, func(m ui.Message) bool { return strings.Contains(m.Text, "kind=1 item=top") })
+		return sel >= 0 && slices.ContainsFunc(h.e.msgHistory[sel+1:], func(m ui.Message) bool { return strings.Contains(m.Text, "kind=0 ") })
+	})
+
+	// 分割したペインは、closeOnSelect でも選んで閉じない。元の client のタブが替わると view/tabChange（kind=5）を送る。
+	peer.keys(":fake.pane closing tree<CR>")
+	h.eventually("OpenPane", func() bool { _, ok := calls.last(true); return ok })
+	call, _ := calls.last(true)
+	comp := h.attachComponent(call.view, true)
+	comp.waitScreen("▸ dir")
+	comp.keys("G<CR>")
+	h.waitMessage("kind=1 item=top")
+	h.settle()
+	var panes int
+	var tabChanges int
+	h.e.do(func() {
+		panes = len(h.e.viewOf(h.clientOf(peer.term)).panes)
+		for _, m := range h.e.msgHistory {
+			if strings.Contains(m.Text, "kind=5") {
+				tabChanges++
+			}
+		}
+	})
+	if panes != 1 {
+		t.Errorf("panes after selecting in a closing split pane = %d, want 1", panes)
+	}
+	if tabChanges != 0 {
+		t.Errorf("view/tabChange sent %d times before the tab changed", tabChanges)
+	}
+	dir := t.TempDir()
+	peer.keys(":e " + filepath.Join(dir, "x.txt") + "<CR>")
+	want := fmt.Sprintf("view %d kind=5 item=%s", call.view, filepath.Join(dir, "x.txt"))
+	h.eventually("view/tabChange", func() bool {
+		return slices.ContainsFunc(h.e.msgHistory, func(m ui.Message) bool { return strings.HasPrefix(m.Text, want) })
+	})
 }

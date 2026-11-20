@@ -386,12 +386,15 @@ func (e *Editor) later(f func()) {
 	}
 }
 
-// paneOpenRequest は、拡張機能の pane/open を処理する（FR-115、FR-123）。その拡張機能へ最後に問い合わせを始めた client
+// paneOpenRequest は、拡張機能の pane/open を処理する（FR-115、FR-123、FR-147）。その拡張機能へ最後に問い合わせを始めた client
 // （元の client。呼び出し側が読み込む）のペインを分割して部品を開き、部品の ID を応答する。
-// 端末多重化ソフトの外か、元の client のペインを知らなければ、ペインに代えて中央のポップアップに出す（FR-123）。
+// 出す場所（ext.PaneOpenParams.Placement）が中央のポップアップか、端末多重化ソフトの外か、元の client のペインを知らなければ、
+// ペインに代えて中央のポップアップに出す（FR-123、FR-147）。中央のポップアップは popup/open の PopupCenter と同じものである
+// （tmux と herdr の中では端末多重化ソフトのポップアップに出す。openFloat）。
 // ペインは別の goroutine で開き（Config.OpenPane）、開けなければ、同じ ID のまま中央のポップアップへ移して、理由をメッセージの行に出す。
+// CloseOnSelect は、中央のポップアップに出したときに、項目を選んだら閉じることを表す（closeSelected）。
 //
-// req: FR-115, FR-123
+// req: FR-115, FR-123, FR-147
 func (e *Editor) paneOpenRequest(ev *exthost.PaneOpenRequest) {
 	p := ev.Params
 	if e.cur == nil {
@@ -399,8 +402,9 @@ func (e *Editor) paneOpenRequest(ev *exthost.PaneOpenRequest) {
 		return
 	}
 	f := e.newComponentFloat(p.Component, ev.Extension)
+	f.closeOnSelect = p.CloseOnSelect
 	pane := e.view.info.Pane
-	if e.cfg.OpenPane == nil || pane == "" {
+	if p.Placement == ext.PaneCenter || e.cfg.OpenPane == nil || pane == "" {
 		f.center, f.focused = true, true
 		e.openFloat(f)
 		_ = ev.Reply(ext.PaneOpenResult{View: ext.ViewID(f.id)})
@@ -410,6 +414,8 @@ func (e *Editor) paneOpenRequest(ev *exthost.PaneOpenRequest) {
 	f.id = e.floatSeq
 	f.pane = true
 	f.base = e.cur
+	f.shownTab = e.tab()
+	f.shownPath = f.shownTab.path
 	f.bs.state.Viewport = floatViewport{f: f, r: e.renderer}
 	e.panes = append(e.panes, f)
 	_ = ev.Reply(ext.PaneOpenResult{View: ext.ViewID(f.id)})
@@ -436,6 +442,31 @@ func (e *Editor) paneOpenRequest(ev *exthost.PaneOpenRequest) {
 			})
 		})
 	}()
+}
+
+// notifyPaneTabs は、読み込んでいる client のカーソルのあるタブ（tab）が、分割したペインの部品ごとに最後に知らせたタブから替わっていれば、
+// その部品の持ち主の拡張機能へ view/tabChange で知らせる（ext.ViewTabChangeParams。FR-105 のファイラの追従）。描く前に呼ぶ。
+// 描くのは溜まったキーを処理し終えてから（renderIdle）なので、キーの列の途中のタブの行き来は知らせない。
+// ペインを開いた時点のタブは知らせない（shownTab をそのタブにして開く）。
+// noteViewClient は呼ばない。利用者の操作の知らせではなく、ペインで選んだ後のフォーカスを戻す印（extFromPane）を下ろさないためである。
+//
+// req: FR-105
+func (e *Editor) notifyPaneTabs() {
+	t := e.tab()
+	if t == nil {
+		return
+	}
+	for _, p := range e.panes {
+		// 同じバッファでもパスが替われば知らせる（名前の無いバッファで :e を打つと、そのバッファにファイルを読む）。
+		if p.ext == "" || (p.shownTab == t && p.shownPath == t.path) {
+			continue
+		}
+		p.shownTab, p.shownPath = t, t.path
+		params := ext.ViewTabChangeParams{View: ext.ViewID(p.id), Buffer: t.id, Path: t.path}
+		if err := e.host.Notify(p.ext, ext.MethodViewTabChange, params); err != nil {
+			e.log.Warn("view/tabChange を送れない", "extension", p.ext, "err", err)
+		}
+	}
 }
 
 // applyComponentSizes は、読み込んでいる client の部品の client の端末から届いた最新の大きさを、その画面の描画の部品に反映する。

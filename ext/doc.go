@@ -77,4 +77,9 @@ package ext
 // #277 で宣言ファイルの起動の契機の種類 settingsFileType（ActivationSettingsFileType）を足したが、バージョンは上げていない。
 // メッセージの形は変えておらず、古い本体は知らない契機を警告にして無視し、宣言ファイルを拒まない（Manifest.Validate）ためである。
 // ただし古い本体では、この契機から作るファイルの種類の契機が無いので、利用者が設定で足したファイルの種類では拡張機能を起動しない。
-const APIVersion = "0.9.0"
+// 0.10.0 で、pane/open の placement（分割したペインか中央のポップアップか）と closeOnSelect（中央のポップアップで選んだら閉じる）、
+// 部品の cursor（カーソルを置く項目）、本体からの view/tabChange、宣言ファイルの contributes.popupKeys の action を足した
+// （#286。FR-105、FR-147）。
+// 古い本体は placement と closeOnSelect と cursor を黙って捨て、分割したペインに出してカーソルを先頭に置く。
+// popupKeys の action も捨てて view/key を送る。view/tabChange は送らない。
+const APIVersion = "0.10.0"

@@ -12,7 +12,7 @@ import (
 func init() {
 	Symbols["github.com/piplupflipper/vi-imitation/ext/ext"] = map[string]reflect.Value{
 		// function, constant and variable definitions
-		"APIVersion":                 reflect.ValueOf(constant.MakeFromLiteral("\"0.9.0\"", token.STRING, 0)),
+		"APIVersion":                 reflect.ValueOf(constant.MakeFromLiteral("\"0.10.0\"", token.STRING, 0)),
 		"ActivationCommand":          reflect.ValueOf(ext.ActivationCommand),
 		"ActivationFileType":         reflect.ValueOf(ext.ActivationFileType),
 		"ActivationMotion":           reflect.ValueOf(ext.ActivationMotion),
@@ -74,6 +74,7 @@ func init() {
 		"MethodViewExpand":           reflect.ValueOf(constant.MakeFromLiteral("\"view/expand\"", token.STRING, 0)),
 		"MethodViewKey":              reflect.ValueOf(constant.MakeFromLiteral("\"view/key\"", token.STRING, 0)),
 		"MethodViewSelect":           reflect.ValueOf(constant.MakeFromLiteral("\"view/select\"", token.STRING, 0)),
+		"MethodViewTabChange":        reflect.ValueOf(constant.MakeFromLiteral("\"view/tabChange\"", token.STRING, 0)),
 		"MethodViewUpdate":           reflect.ValueOf(constant.MakeFromLiteral("\"view/update\"", token.STRING, 0)),
 		"ModeCommandLine":            reflect.ValueOf(ext.ModeCommandLine),
 		"ModeInsert":                 reflect.ValueOf(ext.ModeInsert),
@@ -105,10 +106,13 @@ func init() {
 		"OpTypeDefinition":           reflect.ValueOf(ext.OpTypeDefinition),
 		"OpWorkspaceSymbols":         reflect.ValueOf(ext.OpWorkspaceSymbols),
 		"Operations":                 reflect.ValueOf(&ext.Operations).Elem(),
+		"PaneCenter":                 reflect.ValueOf(ext.PaneCenter),
 		"PaneDown":                   reflect.ValueOf(ext.PaneDown),
 		"PaneRight":                  reflect.ValueOf(ext.PaneRight),
+		"PaneSplit":                  reflect.ValueOf(ext.PaneSplit),
 		"PopupAtCursor":              reflect.ValueOf(ext.PopupAtCursor),
 		"PopupCenter":                reflect.ValueOf(ext.PopupCenter),
+		"PopupKeySelect":             reflect.ValueOf(ext.PopupKeySelect),
 		"PopupMarkdown":              reflect.ValueOf(ext.PopupMarkdown),
 		"PopupPlainText":             reflect.ValueOf(ext.PopupPlainText),
 		"SeverityError":              reflect.ValueOf(ext.SeverityError),
@@ -198,9 +202,11 @@ func init() {
 		"PaneDirection":           reflect.ValueOf((*ext.PaneDirection)(nil)),
 		"PaneOpenParams":          reflect.ValueOf((*ext.PaneOpenParams)(nil)),
 		"PaneOpenResult":          reflect.ValueOf((*ext.PaneOpenResult)(nil)),
+		"PanePlacement":           reflect.ValueOf((*ext.PanePlacement)(nil)),
 		"PingParams":              reflect.ValueOf((*ext.PingParams)(nil)),
 		"PingResult":              reflect.ValueOf((*ext.PingResult)(nil)),
 		"PopupFormat":             reflect.ValueOf((*ext.PopupFormat)(nil)),
+		"PopupKeyAction":          reflect.ValueOf((*ext.PopupKeyAction)(nil)),
 		"PopupOpenParams":         reflect.ValueOf((*ext.PopupOpenParams)(nil)),
 		"PopupOpenResult":         reflect.ValueOf((*ext.PopupOpenResult)(nil)),
 		"PopupPlacement":          reflect.ValueOf((*ext.PopupPlacement)(nil)),
@@ -230,6 +236,7 @@ func init() {
 		"ViewKind":                reflect.ValueOf((*ext.ViewKind)(nil)),
 		"ViewSelectParams":        reflect.ValueOf((*ext.ViewSelectParams)(nil)),
 		"ViewSpan":                reflect.ValueOf((*ext.ViewSpan)(nil)),
+		"ViewTabChangeParams":     reflect.ValueOf((*ext.ViewTabChangeParams)(nil)),
 		"ViewUpdateParams":        reflect.ValueOf((*ext.ViewUpdateParams)(nil)),
 	}
 }
