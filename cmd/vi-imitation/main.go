@@ -424,30 +424,37 @@ func clientUntil(ctx context.Context, conn protocol.ClientConn, run func() error
 func loadConfig(logger *slog.Logger) editor.Config {
 	var problems []error
 	var cfg config.Config
-	if path, err := config.DefaultPath(); err != nil {
-		problems = append(problems, fmt.Errorf("設定ファイルの場所を決められない: %w", err))
+	path, pathErr := config.DefaultPath()
+	var cfgErrs []error
+	if pathErr != nil {
+		problems = append(problems, fmt.Errorf("設定ファイルの場所を決められない: %w", pathErr))
 	} else {
-		var errs []error
-		cfg, errs = config.Load(path)
-		errs = append(errs, cfg.CheckAppearance(appearanceCheck)...)
+		cfg, cfgErrs = config.Load(path)
+		cfgErrs = append(cfgErrs, cfg.CheckAppearance(appearanceCheck)...)
 		// keymap の右辺に書いた操作の ID（FR-126）を本体の操作の表で確かめ、使えない項目を位置付きの誤りにして除く。
-		errs = append(errs, cfg.CheckKeymapActions(editor.KeymapActionCheck(cfg.Leader))...)
-		config.SortErrors(errs)
-		problems = append(problems, errs...)
-		// 配色のファイルの誤りは、設定ファイルの誤りの後に知らせる（最初の 1 件は設定ファイルの誤りにする）。
-		problems = append(problems, cfg.LoadColorScheme(filepath.Dir(path), appearanceCheck)...)
+		cfgErrs = append(cfgErrs, cfg.CheckKeymapActions(editor.KeymapActionCheck(cfg.Leader))...)
 	}
 	exe, err := os.Executable()
 	if err != nil {
 		logger.Warn("実行ファイルのパスを決められないので、同梱の拡張機能を探さない", "err", err)
 		exe = ""
 	}
-	exts, errs := config.LoadExtensions(config.ExtensionDirs(exe), cfg)
-	problems = append(problems, errs...)
+	exts, extErrs := config.LoadExtensions(config.ExtensionDirs(exe), cfg)
 	specs := make([]exthost.Spec, len(exts))
 	for i, x := range exts {
 		specs[i] = exthost.Spec(x)
 	}
+	// commandAliases の別名（FR-150）を、本体の別名の表に書いた順に足す。付け替える先に拡張機能のコマンドを書けるので、
+	// 宣言ファイルを読んだ後に確かめ、足せない別名を位置付きの誤りにして除く。
+	aliases, addAlias := editor.CommandAliases(specs)
+	if pathErr == nil {
+		cfgErrs = append(cfgErrs, cfg.CheckCommandAliases(addAlias)...)
+		config.SortErrors(cfgErrs)
+		problems = append(problems, cfgErrs...)
+		// 配色のファイルの誤りは、設定ファイルの誤りの後に知らせる（最初の 1 件は設定ファイルの誤りにする）。
+		problems = append(problems, cfg.LoadColorScheme(filepath.Dir(path), appearanceCheck)...)
+	}
+	problems = append(problems, extErrs...)
 	for i, p := range problems {
 		problems[i] = shortProblem(p)
 	}
@@ -471,6 +478,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		FileTypes:        cfg.FileTypes,
 		FixEndOfLine:     cfg.FixEndOfLine,
 		Options:          cfg.Options,
+		CommandAliases:   aliases,
 		ReadOnlyPaths:    cfg.ReadOnlyPaths,
 		ColorScheme:      uiColors(cfg.SchemeColors),
 		Colors:           uiColors(cfg.Colors),

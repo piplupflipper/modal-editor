@@ -275,36 +275,45 @@ func TestOptionCommandsOverExtCommands(t *testing.T) {
 //
 // req: FR-133
 func TestRenameAlias(t *testing.T) {
-	prev := aliases
-	aliases = append(slices.Clone(aliases), alias{name: "xdelete", min: 2, target: "delete"}, alias{name: "xget", min: 4, target: optionGetName})
-	t.Cleanup(func() { aliases = prev })
+	al := NewAliases()
+	for _, a := range []RenameAlias{{Name: "xdelete", Min: 2, Target: "delete"}, {Name: "xget", Min: 4, Target: optionGetName}} {
+		if err := al.Add(a, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 	b := buffer.New("a\nb\nc\n")
-	if _, err := Execute(b, nil, 0, "2xd|xdel"); err != nil {
+	if _, err := Execute(b, &State{Aliases: al}, 0, "2xd|xdel"); err != nil {
 		t.Fatal(err)
 	}
 	// :2xd が 2 行目を消してカーソルを 3 行目だった行へ移し、:xdel がその行を消す。
 	if got := b.Text(); got != "a" {
 		t.Errorf("text = %q, want %q", got, "a")
 	}
-	if _, err := Execute(b, nil, 0, "xd!"); errCode(t, err) != "E477" {
+	if _, err := Execute(b, &State{Aliases: al}, 0, "xd!"); errCode(t, err) != "E477" {
 		t.Errorf(":xd!: err = %v, want E477", err)
 	}
-	res, err := Execute(b, &State{Options: &fakeOptions{}}, 0, "xget filetype")
+	res, err := Execute(b, &State{Options: &fakeOptions{}, Aliases: al}, 0, "xget filetype")
 	if err != nil || res.Notice.Text != "filetype=" {
 		t.Errorf(":xget: notice = %q, err = %v", res.Notice.Text, err)
+	}
+	// 表を渡さなければ、本体の行だけを引く。
+	if _, err := Execute(b, nil, 0, "xd"); errCode(t, err) != "E492" {
+		t.Errorf(":xd（表なし）: err = %v, want E492", err)
 	}
 }
 
 // Names は、Ex コマンドの表の行の後に、別名の表の行（:set と、名前を付け替えるだけの行）を表の順に返す。
+// 設定ファイルで足した別名も、本体の別名の後に足した順に返す。
 //
-// req: FR-133
+// req: FR-133, FR-150
 func TestNamesIncludeAliases(t *testing.T) {
-	prev := aliases
-	aliases = append(slices.Clone(aliases), alias{name: "xdelete", min: 2, target: "delete"})
-	t.Cleanup(func() { aliases = prev })
-	names := Names()
-	if len(names) != len(commands)+len(aliases) {
-		t.Fatalf("len = %d, want %d", len(names), len(commands)+len(aliases))
+	al := NewAliases()
+	if err := al.Add(RenameAlias{Name: "xdelete", Min: 2, Target: "delete"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	names := Names(al)
+	if len(names) != len(commands)+len(builtinAliases)+1 {
+		t.Fatalf("len = %d, want %d", len(names), len(commands)+len(builtinAliases)+1)
 	}
 	want := []Name{{Full: "set", Short: "se"}, {Full: "nohlsearch", Short: "noh"}, {Full: "xdelete", Short: "xd"}}
 	if got := names[len(commands):]; !slices.Equal(got, want) {
@@ -312,6 +321,9 @@ func TestNamesIncludeAliases(t *testing.T) {
 	}
 	if names[0] != (Name{Full: "write", Short: "w"}) {
 		t.Errorf("先頭 = %+v", names[0])
+	}
+	if got := Names(nil)[len(commands):]; !slices.Equal(got, want[:2]) {
+		t.Errorf("Names(nil) の別名の行 = %+v", got)
 	}
 }
 
@@ -333,7 +345,7 @@ func TestAddrKindDottedName(t *testing.T) {
 
 // Names は、表に入れた設定のコマンドを、省略できない名前で返す。
 func TestOptionCommandNames(t *testing.T) {
-	for _, n := range Names() {
+	for _, n := range Names(nil) {
 		if strings.HasPrefix(n.Full, "option.") && n.Short != n.Full {
 			t.Errorf("%s の省略形 = %q", n.Full, n.Short)
 		}

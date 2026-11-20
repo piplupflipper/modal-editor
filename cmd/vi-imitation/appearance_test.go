@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/piplupflipper/vi-imitation/internal/command/ex"
 	"github.com/piplupflipper/vi-imitation/internal/config"
 	"github.com/piplupflipper/vi-imitation/internal/editor"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
@@ -15,8 +16,9 @@ import (
 
 // 同梱する設定の例（config.example.jsonc）は、誤り無く読め、見た目の項目がすべて描画に渡る。
 // keymap.insert の Emacs 風のキーは、本体の操作の ID として使える。
+// commandAliases の :tabedit（:tabe）と :tabnew は、拡張機能が無くても Ex コマンドの別名の表に足せる。
 //
-// req: FR-91, FR-92, FR-93, FR-126
+// req: FR-91, FR-92, FR-93, FR-126, FR-150
 func TestConfigExample(t *testing.T) {
 	data, err := os.ReadFile("../../config.example.jsonc")
 	if err != nil {
@@ -26,8 +28,13 @@ func TestConfigExample(t *testing.T) {
 	errs = append(errs, cfg.CheckAppearance(appearanceCheck)...)
 	errs = append(errs, cfg.LoadColorScheme(t.TempDir(), appearanceCheck)...)
 	errs = append(errs, cfg.CheckKeymapActions(editor.KeymapActionCheck(cfg.Leader))...)
+	aliases, addAlias := editor.CommandAliases(nil)
+	errs = append(errs, cfg.CheckCommandAliases(addAlias)...)
 	if len(errs) != 0 {
 		t.Fatalf("設定の例の誤り: %v", errs)
+	}
+	if got, want := aliases.Added(), []ex.RenameAlias{{Name: "tabedit", Min: 4, Target: "edit"}, {Name: "tabnew", Min: 6, Target: "tab.new"}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("commandAliases = %+v, want %+v", got, want)
 	}
 	// インサートモードの Emacs 風のキー（#257）。Ctrl-H は <BS> として届くので、<C-h> は書かない（PR #258 のレビューの推奨 4）。
 	wantInsert := map[string]string{

@@ -98,6 +98,15 @@
   // マクロの再生と . の繰り返しの中のヤンクには付けない。色の名前は yank
   "yank": { "highlightMs": 300 },
 
+  // Ex コマンドの別名。名前から、付け替える先のコマンド（command）と、省略できる最短の長さ（min。省くと省略できない）への対応である。
+  // 説明は docs/usage.md の「Ex コマンドの別名を足す」にある。省略の長さは Vim 9.1 と同じにした（:tab は Vim の修飾子、:tabn は :tabnext）
+  "commandAliases": {
+    // :tabe[dit] ファイル は :e ファイル と同じく、ファイルを新しいタブで開く
+    "tabedit": { "command": "edit", "min": 4 },
+    // :tabnew は名前の無い空のタブを開く。:tabnew ファイル は :e ファイル と同じ
+    "tabnew": { "command": "tab.new" },
+  },
+
   // LSP の言語サーバーを足す例（Python の pyright）。説明は docs/usage.md の「LSP」にある。
   // 既定の言語サーバーは Go の gopls だけで、ほかの言語は servers と activation の両方に書く
   "extensions": {

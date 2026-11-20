@@ -141,7 +141,7 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 				e.closeFloat(true)
 				return nil
 			}
-		case ex.ActionQuitAll, ex.ActionTabMove, ex.ActionDiff:
+		case ex.ActionQuitAll, ex.ActionTabMove, ex.ActionDiff, ex.ActionTabNew:
 			// タブを対象にするコマンドは、ポップアップを閉じてから、開いたときのタブで行う。
 			e.closeFloat(true)
 			bs = e.cur
@@ -173,6 +173,9 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 		return e.deleteBuffer(bs, a)
 	case ex.ActionEdit:
 		return e.edit(bs, a)
+	case ex.ActionTabNew:
+		e.newTab()
+		return nil
 	case ex.ActionOutput:
 		return e.outputAction(a)
 	case ex.ActionCheckTime:

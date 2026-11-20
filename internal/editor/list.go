@@ -186,11 +186,13 @@ func (e *Editor) listTabs() []ext.ListTab {
 	return out
 }
 
-// listCommands は、コマンドラインから呼べるコマンドを返す。本体の Ex コマンド（ex.Names の表の順）の後に、
+// listCommands は、コマンドラインから呼べるコマンドを返す。本体の Ex コマンドと別名（設定ファイルの別名を含む。ex.Names の表の順）の後に、
 // 拡張機能のコマンドと、本体が拡張機能のコマンドの口から呼ぶコマンド（:help、:keys、:ext、provides の操作の名前）を名前の順に並べる。
+//
+// req: FR-150
 func (e *Editor) listCommands() []ext.ListCommand {
 	var out []ext.ListCommand
-	for _, n := range ex.Names() {
+	for _, n := range ex.Names(e.aliases) {
 		out = append(out, ext.ListCommand{Name: n.Full, Short: n.Short})
 	}
 	desc := map[string]string{}

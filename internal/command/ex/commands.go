@@ -97,6 +97,8 @@ func init() {
 		{name: "xall", min: 2, bang: true, rng: rangeNone, run: runAll(true, true)},
 		{name: "bdelete", min: 2, bang: true, rng: rangeNone, run: runBufferDelete},
 		{name: "tabmove", min: 4, rng: rangeNone, run: runTabMove},
+		// 空のタブを開く（FR-151）。点を含む正規の名前で、省略できない。Vim の :tabnew に当たる名前は、設定ファイルの別名で付ける（FR-150）。
+		{name: tabNewName, min: len(tabNewName), bang: true, rng: rangeNone, run: runTabNew},
 		// ポップアップとタブの間でバッファを移す（基本設計 1.4。FR-70。名前は仮）。
 		{name: "popup", min: 4, rng: rangeNone, run: runPopup(PopupShrink)},
 		{name: "tabopen", min: 5, rng: rangeNone, run: runPopup(PopupExpand)},
@@ -121,16 +123,42 @@ type Name struct {
 }
 
 // Names は、コマンドラインから呼べる本体の Ex コマンドの名前を返す（拡張機能の editor/list のコマンドの一覧。FR-107）。
-// Ex コマンドの表の行を表の順に並べ、その後に別名の表の行（:set など。FR-133）を表の順に並べる。
-func Names() []Name {
-	out := make([]Name, 0, len(commands)+len(aliases))
+// Ex コマンドの表の行を表の順に並べ、その後に別名の表 t の行（:set など。FR-133。設定ファイルの別名。FR-150）を表の順に並べる。
+// t が nil なら、別名は本体の行だけである。
+//
+// req: FR-150
+func Names(t *Aliases) []Name {
+	rows := t.list()
+	out := make([]Name, 0, len(commands)+len(rows))
 	for _, c := range commands {
 		out = append(out, Name{Full: c.name, Short: c.name[:c.min]})
 	}
-	for _, a := range aliases {
+	for _, a := range rows {
 		out = append(out, Name{Full: a.name, Short: a.name[:a.min]})
 	}
 	return out
+}
+
+// tabNewName は、空のタブを開く正規の Ex コマンドの名前である（FR-151）。
+const tabNewName = "tab.new"
+
+// runTabNew は :tab.new[!] [file] を実行する（FR-151）。
+// file が無ければ、名前の無い空のバッファを新しいタブで開く ActionTabNew を返す。開くのは、Action を受け取る呼び出し側である。
+// file があれば、:e file と同じ ActionEdit を返す（Vim の :tabnew file と同じく、ファイルを新しいタブで開く）。
+// "!" は受け付ける（Vim 9.1 の :tabnew! と同じ）。file を開くのは新しいタブなので、未保存の変更を確かめない（:e file と同じ）。
+//
+// req: FR-151
+func runTabNew(c *execCtx, inv *invocation) error {
+	file, err := fileArg(inv)
+	if err != nil {
+		return err
+	}
+	if file != "" {
+		c.actions = append(c.actions, Action{Kind: ActionEdit, File: file, Force: inv.bang})
+		return nil
+	}
+	c.actions = append(c.actions, Action{Kind: ActionTabNew})
+	return nil
 }
 
 // runPopup は、引数を取らないポップアップのコマンド（:popup、:tabopen）を実行する関数を返す。

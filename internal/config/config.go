@@ -66,7 +66,8 @@ import (
 //	  "symbols": { "sign.breakpoint": "●", "popup.border": "┌─┐│┘─└│" },
 //	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] },
 //	  "tabline": { "show": "always", "left": ["tabs"], "right": ["mrreview.status"] },
-//	  "elevateCommand": ["sudo"]
+//	  "elevateCommand": ["sudo"],
+//	  "commandAliases": { "tabedit": { "command": "edit", "min": 4 }, "tabnew": { "command": "tab.new" } }
 //	}
 //
 // 設定の表（internal/option）の、範囲がエディタ全体の項目は、点で区切った名前を入れ子のキーにして書き、Options に入る
@@ -169,12 +170,19 @@ type Config struct {
 	// 正規の名前から値への対応で、書かなかった項目と誤りのある項目は入らない（表の既定値を使う）。項目が無ければ nil である。
 	// editor.Config.Options にそのまま渡す。
 	Options map[string]option.Value
+	// CommandAliases は commandAliases の値で、Ex コマンドの名前を付け替えるだけの別名を、書いた順に並べたものである（基本設計 7.3。FR-150）。
+	// 形の誤りのある別名は除いてある。表に足せるか（名前、省略の長さ、付け替える先、重なり）は CheckCommandAliases で確かめる。
+	// 項目が無ければ nil である。
+	CommandAliases []CommandAlias
 
 	// pos は、見た目の設定の項目を書いた位置である（CheckAppearance）。
 	pos appearancePos
 
 	// keymapPos は、KeymapActions の各項目の右辺を書いた位置である（CheckKeymapActions）。
 	keymapPos map[string]map[string]*Error
+
+	// aliasPos は、CommandAliases の各別名の名前を書いた位置で、CommandAliases と同じ順に並べる（CheckCommandAliases）。
+	aliasPos []*Error
 
 	// extPos は、extensions.settings と extensions.activation に書いた拡張機能の ID の位置である。
 	// 見つからない拡張機能の ID を LoadExtensions が知らせるのに使う。
@@ -273,6 +281,8 @@ func Parse(path string, data []byte) (Config, []error) {
 			cfg.TabLineShow, cfg.TabLineParts = s.tabLine(m.value, &cfg)
 		case "elevateCommand":
 			cfg.ElevateCommand = s.elevateCommand(m.value)
+		case "commandAliases":
+			cfg.CommandAliases = s.commandAliases(m.value, &cfg)
 		default:
 			// 上の項目でなければ、設定の表（option）の項目として読む。表の項目の名前の最上位の段は、上の項目と重ねない。
 			if !s.option(m, "", option.Defs(), &cfg) {
