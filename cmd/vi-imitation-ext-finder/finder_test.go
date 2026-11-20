@@ -251,6 +251,36 @@ func TestItemPreviews(t *testing.T) {
 	}
 }
 
+// ヘルプの語の候補は、語、種類、説明を並べた表示で、選ぶと本体にその語の :help を開かせる（editor/execute の help）。
+// プレビューとアイコンは付けない。
+//
+// req: FR-148
+func TestHelpItems(t *testing.T) {
+	r := ext.EditorListResult{Help: []ext.ListHelpWord{
+		{Word: "w", Kind: ext.HelpKindKey, Description: "次の単語の先頭へ（n、v、o）"},
+		{Word: ":write", Kind: ext.HelpKindCommand},
+	}}
+	title, its := listItems(ext.ListHelp, r)
+	if title != "ヘルプ" || len(its) != 2 {
+		t.Fatalf("listItems = %q %d", title, len(its))
+	}
+	want := []string{
+		fmt.Sprintf("%-24s %-8s %s", "w", "key", "次の単語の先頭へ（n、v、o）"),
+		fmt.Sprintf("%-24s %s", ":write", "command"),
+	}
+	for i, it := range its {
+		if it.label != want[i] {
+			t.Errorf("label[%d] = %q, want %q", i, it.label, want[i])
+		}
+		if it.exec == nil || it.exec.Help != r.Help[i].Word || it.exec.Keys != "" || it.exec.Command != "" {
+			t.Errorf("exec[%d] = %+v", i, it.exec)
+		}
+		if it.preview != nil || it.file != nil || it.open != nil {
+			t.Errorf("item[%d] has a preview, a file or an open: %+v", i, it)
+		}
+	}
+}
+
 // ファイル、検索、ファイルのタブ、ファイルのジャンプの候補には、本体がアイコンを付けるファイル（FR-152）としてそのパスを付け、
 // 一覧に送る項目に載せる。行、ファイルでないバッファのタブとジャンプ、キー、コマンド、レジスターの候補には付けない。
 //

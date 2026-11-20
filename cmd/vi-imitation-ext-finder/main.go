@@ -10,7 +10,8 @@
 //
 // コマンドと既定のキーは、オーナーの nvim の fzf-lua の割り当てに合わせた（どれも仮）。<leader> は本体の設定の leader である。
 //
-//   - finder.files（<leader>ff）: 作業ディレクトリの下のファイル。fd（fdfind）か rg --files があれば使い、無ければ Go で歩く
+//   - finder.files（<leader>ff）: 作業ディレクトリの下のファイル。fd（fdfind）か rg --files があれば使い、無ければ Go で歩く。
+//     fzf-lua の <C-p> は割り当てない（本体の <C-p> は貼り直し。FR-55。#308 のオーナーの決めで、<leader> のキーを前提にする）
 //   - finder.grep（<leader>fg）: 作業ディレクトリの下を rg で検索する。入力が変わるたびに rg を起動し直す（live grep）
 //   - finder.grepDir（<leader>f.）: カーソルのあるバッファのファイルのディレクトリの下を rg で検索する
 //   - finder.grepWord（<leader>fw）: カーソルの下の語を入力に入れて finder.grep を開く
@@ -19,13 +20,15 @@
 //   - finder.keys（<leader>fk）: キーの一覧（editor/list の keys）。選んだキーは editor/execute で本体に実行させる
 //   - finder.commands（<leader>fc）: コマンド。選んだコマンドは editor/execute で本体に実行させる（:名前<CR> と同じ）
 //   - finder.registers（<leader>fr）、finder.jumps（<leader>fj）: レジスターと履歴、ジャンプリスト
+//   - finder.help（<leader>fh）: :help で引ける語（editor/list の help。FR-148）。選んだ語は editor/execute で本体に :help を開かせる
 //   - finder.resume（<leader>fp）: 最後に開いたファインダーを、最後の入力で開き直す
 //
 // ファイル、検索、行、ジャンプリストの候補には、プレビューに出すもの（ext.ViewItem.Preview。FR-149）を付ける。
 // ファイルは先頭から、検索と行とジャンプリストはその行を真ん中にして出す。中身は本体が読むので、この拡張機能は場所だけを渡す。
-// キー、コマンド、レジスター、タブには付けず、窓を一覧だけにする（#288 のオーナーの決め）。
+// キー、コマンド、レジスター、タブ、ヘルプには付けず、窓を一覧だけにする（#288 のオーナーの決め）。
+// プレビューのスクロール（<S-Down> など。FR-159）は本体の操作で、この拡張機能は何もしない。
 //
-// キーとコマンドを実行させる editor/execute には、選んだ view/select の選択の番号（selection）を付ける。
+// キー、コマンド、ヘルプの語を実行させる editor/execute には、選んだ view/select の選択の番号（selection）を付ける。
 // 本体は、その選択への応答で、利用者がノーマルモードで入力の途中でないときだけ実行する（ext.EditorExecuteParams）。
 //
 // マクロとドットリピートの再生中（command/execute の sync が true）に呼ばれたコマンドは、ポップアップを開いてから応答する。

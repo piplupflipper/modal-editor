@@ -67,11 +67,14 @@ func TestViewMessageJSON(t *testing.T) {
 		`{"keys":[{"keys":"gq","modes":"n","source":"extension","extension":"finder"}]}`)
 	roundTrip(t, EditorListResult{Jumps: []ListJump{{Buffer: 1, Name: "a", Position: Position{Line: 2}, Current: true}}},
 		`{"jumps":[{"buffer":1,"name":"a","position":{"line":2,"byte":0},"current":true}]}`)
+	roundTrip(t, EditorListParams{List: ListHelp}, `{"list":"help"}`)
+	roundTrip(t, EditorListResult{Help: []ListHelpWord{{Word: ":write", Kind: HelpKindCommand, Description: "保存する"}, {Word: "w", Kind: HelpKindKey}}},
+		`{"help":[{"word":":write","kind":"command","description":"保存する"},{"word":"w","kind":"key"}]}`)
 }
 
 // editor/list の params は、知っている一覧の種類だけを通す（FR-107）。
 func TestEditorListParamsValidate(t *testing.T) {
-	for _, k := range []EditorListKind{ListTabs, ListCommands, ListKeys, ListRegisters, ListJumps} {
+	for _, k := range []EditorListKind{ListTabs, ListCommands, ListKeys, ListRegisters, ListJumps, ListHelp} {
 		p := EditorListParams{List: k}
 		if err := p.Validate(); err != nil {
 			t.Errorf("%s: %v", k, err)
@@ -91,12 +94,16 @@ func TestEditorListParamsValidate(t *testing.T) {
 		{EditorExecuteParams{Selection: 1}, false},
 		{EditorExecuteParams{Selection: 1, Keys: "dd", Command: "write"}, false},
 		{EditorExecuteParams{Selection: 1, Command: "w\nq"}, false},
+		{EditorExecuteParams{Selection: 1, Help: ":write"}, true},
+		{EditorExecuteParams{Selection: 1, Help: "w", Keys: "w"}, false},
+		{EditorExecuteParams{Selection: 1, Help: "a\nb"}, false},
 	} {
 		if err := tt.p.Validate(); (err == nil) != tt.ok {
 			t.Errorf("%+v: %v", tt.p, err)
 		}
 	}
 	roundTrip(t, EditorExecuteParams{Selection: 2, Command: "write"}, `{"selection":2,"command":"write"}`)
+	roundTrip(t, EditorExecuteParams{Selection: 2, Help: ":write"}, `{"selection":2,"help":":write"}`)
 	roundTrip(t, ViewSelectParams{View: 3, Item: "a", Selection: 2}, `{"view":3,"item":"a","selection":2}`)
 	roundTrip(t, EditorOpenParams{Path: "/a", Position: &Position{Line: 1}, Peek: true}, `{"path":"/a","position":{"line":1,"byte":0},"peek":true}`)
 }

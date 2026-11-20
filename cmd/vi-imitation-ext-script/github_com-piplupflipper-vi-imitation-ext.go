@@ -12,7 +12,7 @@ import (
 func init() {
 	Symbols["github.com/piplupflipper/vi-imitation/ext/ext"] = map[string]reflect.Value{
 		// function, constant and variable definitions
-		"APIVersion":                 reflect.ValueOf(constant.MakeFromLiteral("\"0.12.0\"", token.STRING, 0)),
+		"APIVersion":                 reflect.ValueOf(constant.MakeFromLiteral("\"0.13.0\"", token.STRING, 0)),
 		"ActivationCommand":          reflect.ValueOf(ext.ActivationCommand),
 		"ActivationFileType":         reflect.ValueOf(ext.ActivationFileType),
 		"ActivationMotion":           reflect.ValueOf(ext.ActivationMotion),
@@ -24,7 +24,13 @@ func init() {
 		"EnvMCPSocket":               reflect.ValueOf(constant.MakeFromLiteral("\"VI_IMITATION_MCP_SOCKET\"", token.STRING, 0)),
 		"EnvSocketFDs":               reflect.ValueOf(constant.MakeFromLiteral("\"VI_IMITATION_SOCKET_FDS\"", token.STRING, 0)),
 		"ErrorCodeReadOnly":          reflect.ValueOf(ext.ErrorCodeReadOnly),
+		"HelpKindAction":             reflect.ValueOf(constant.MakeFromLiteral("\"action\"", token.STRING, 0)),
+		"HelpKindCommand":            reflect.ValueOf(constant.MakeFromLiteral("\"command\"", token.STRING, 0)),
+		"HelpKindKey":                reflect.ValueOf(constant.MakeFromLiteral("\"key\"", token.STRING, 0)),
+		"HelpKindOperation":          reflect.ValueOf(constant.MakeFromLiteral("\"operation\"", token.STRING, 0)),
+		"HelpKindOption":             reflect.ValueOf(constant.MakeFromLiteral("\"option\"", token.STRING, 0)),
 		"ListCommands":               reflect.ValueOf(ext.ListCommands),
+		"ListHelp":                   reflect.ValueOf(ext.ListHelp),
 		"ListJumps":                  reflect.ValueOf(ext.ListJumps),
 		"ListKeys":                   reflect.ValueOf(ext.ListKeys),
 		"ListRegisters":              reflect.ValueOf(ext.ListRegisters),
@@ -185,6 +191,7 @@ func init() {
 		"InitializeResult":        reflect.ValueOf((*ext.InitializeResult)(nil)),
 		"InputChangeParams":       reflect.ValueOf((*ext.InputChangeParams)(nil)),
 		"ListCommand":             reflect.ValueOf((*ext.ListCommand)(nil)),
+		"ListHelpWord":            reflect.ValueOf((*ext.ListHelpWord)(nil)),
 		"ListJump":                reflect.ValueOf((*ext.ListJump)(nil)),
 		"ListKey":                 reflect.ValueOf((*ext.ListKey)(nil)),
 		"ListRegister":            reflect.ValueOf((*ext.ListRegister)(nil)),

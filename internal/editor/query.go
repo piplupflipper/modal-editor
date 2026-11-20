@@ -487,6 +487,9 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 	if done, err := x.e.helpAction(x.bs, ref, q.Text); done {
 		return buffer.Transaction{BaseVersion: b.Version()}, err
 	}
+	if x.e.previewScrollAction(x.bs, ref, count(q.Count, q.CountGiven)) {
+		return buffer.Transaction{BaseVersion: b.Version()}, nil
+	}
 	if ref.Extension == input.ProviderExtension {
 		return x.providerAction(ref, b, q, info)
 	}

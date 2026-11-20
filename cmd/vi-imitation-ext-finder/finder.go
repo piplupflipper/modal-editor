@@ -118,6 +118,7 @@ func newFinder(ctx context.Context) *finder {
 		"finder.commands":  f.editorListCommand(ext.ListCommands),
 		"finder.registers": f.editorListCommand(ext.ListRegisters),
 		"finder.jumps":     f.editorListCommand(ext.ListJumps),
+		"finder.help":      f.editorListCommand(ext.ListHelp),
 		"finder.lines":     f.lines,
 		"finder.resume":    func(_ *server.Buffer, _ *ext.CommandExecuteParams, done func()) error { return f.resume(done) },
 	} {
@@ -888,6 +889,16 @@ func listItems(kind ext.EditorListKind, r ext.EditorListResult) (string, []item)
 			its = append(its, item{id: strconv.Itoa(i), label: label, open: op, preview: openPreview(op), file: openFile(op)})
 		}
 		return "ジャンプ", its
+	case ext.ListHelp:
+		// 語、種類、説明の順に並べる（finder.keys と同じく、語の列を空白でそろえる）。選ぶと本体がその語の :help を開く（FR-148）。
+		// プレビューは付けない（#288 のオーナーの決めの表。ヘルプは一覧が窓の幅を全部使う）。
+		//
+		// req: FR-148
+		for i, w := range r.Help {
+			label := strings.TrimRight(fmt.Sprintf("%-24s %-8s %s", w.Word, w.Kind, w.Description), " ")
+			its = append(its, item{id: strconv.Itoa(i), label: label, exec: &ext.EditorExecuteParams{Help: w.Word}})
+		}
+		return "ヘルプ", its
 	}
 	return string(kind), its
 }

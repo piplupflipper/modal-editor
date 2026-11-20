@@ -499,7 +499,8 @@ func (e *Editor) floatKey(f *floatState, k editcmd.Key, insert bool) (bool, []ed
 			e.selectFloat(f)
 			return true, nil
 		}
-		return false, nil
+		// プレビューのスクロール（<S-Down> など。FR-159）。インサートモードの State は提供者へ振り分ける操作を実行しないので、ここで引く。
+		return e.previewInsertKey(f, k), nil
 	}
 	if f.ext != "" {
 		done, held := e.popupKey(f, k)

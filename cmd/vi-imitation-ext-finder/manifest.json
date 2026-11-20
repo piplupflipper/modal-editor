@@ -12,6 +12,7 @@
     { "on": "command", "id": "finder.commands" },
     { "on": "command", "id": "finder.registers" },
     { "on": "command", "id": "finder.jumps" },
+    { "on": "command", "id": "finder.help" },
     { "on": "command", "id": "finder.resume" }
   ],
   "contributes": {
@@ -26,6 +27,7 @@
       { "id": "finder.commands", "keys": "<Leader>fc", "description": "コマンドを探す" },
       { "id": "finder.registers", "keys": "<Leader>fr", "description": "レジスターと履歴を探して貼る" },
       { "id": "finder.jumps", "keys": "<Leader>fj", "description": "ジャンプリストを探して移る" },
+      { "id": "finder.help", "keys": "<Leader>fh", "description": "ヘルプの語を探して :help で開く" },
       { "id": "finder.resume", "keys": "<Leader>fp", "description": "最後のファインダーを最後の入力で開き直す" }
     ]
   }

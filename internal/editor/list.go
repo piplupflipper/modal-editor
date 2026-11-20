@@ -15,7 +15,7 @@ import (
 
 // 本体が持つ一覧の問い合わせ（editor/list。基本設計 6.9。FR-107）。
 //
-// 拡張機能（ファジーファインダー）は、タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリストを問い合わせて候補にする。
+// 拡張機能（ファジーファインダー）は、タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリスト、ヘルプの語（FR-148）を問い合わせて候補にする。
 // 応答は問い合わせた時点の写しで、イベントループが、その拡張機能へ最後に問い合わせを始めた client（extView）を読み込んで作る。
 // 「その client の」ものになるのはジャンプリスト（client ごと。基本設計 4.4）と、タブの Own である。
 
@@ -35,6 +35,8 @@ func (e *Editor) editorList(kind ext.EditorListKind) ext.EditorListResult {
 		r.Registers = e.listRegisters()
 	case ext.ListJumps:
 		r.Jumps = e.listJumps()
+	case ext.ListHelp:
+		r.Help = e.listHelpWords()
 	}
 	return r
 }
@@ -124,11 +126,19 @@ func (e *Editor) knownCommand(name string) bool {
 //   - Keys: キーの一覧（keyRows）からその表記の行を引き直し、キーの一覧で選んだのと同じく selectKeyRow で実行する。
 //     同じ表記の行が複数あれば（< の n と v など）、ノーマルモードの行を選ぶ
 //   - Command: :Command<CR> を、キーマップを通さずに打ったのと同じく渡す
+//   - Help: :help Help と同じく、その語の説明の行を開いたヘルプを出す（openHelp）。コマンドラインを通さないので、
+//     語が | や " を含んでも（:help の引数は行末までだが、コマンドラインの履歴にも残らない）そのまま引く。見つからなければ E149 を出す
 //
-// どちらもマクロに記録しない（選んだ <CR> が記録されている）。ドットリピートの値は、打ったときと同じく替わる。
+// どれもマクロに記録しない（選んだ <CR> が記録されている）。ドットリピートの値は、Keys と Command では打ったときと同じく替わる。
 //
-// req: FR-107
+// req: FR-107, FR-148
 func (e *Editor) editorExecute(p ext.EditorExecuteParams) {
+	if p.Help != "" {
+		if err := e.openHelp(p.Help); err != nil {
+			e.showError(err)
+		}
+		return
+	}
 	if p.Keys != "" {
 		rows := e.keyRows("", nil)
 		pick := -1

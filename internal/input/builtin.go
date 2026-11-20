@@ -381,6 +381,27 @@ var keyListKeys = []struct {
 	{keys: "<Leader>d?", group: KeyGroupDAP, desc: "DAP のキーの一覧"},
 }
 
+// PreviewPrefix は、ポップアップとペインの項目のプレビュー（FR-149）をスクロールする操作の ID の接頭辞である（FR-159）。
+// 後ろは向きと単位（page-down、page-up、down、up）である。提供者へは問い合わせず、internal/editor が、
+// プレビューを出している一覧、木、ファインダーの中で、フォーカスを一覧（ファインダーの入力の行）に置いたままスクロールする。
+// プレビューを出していないところ（編集のバッファ、プレビューの無いポップアップ）では何もしない。
+// ProviderExtension の操作にするのは、キーの一覧（KeyListPrefix）と同じく、ドットリピートに記録せず、
+// 編集を禁止したバッファ（ファイラの木、プレビュー）でも断らない扱いにするためである。
+const PreviewPrefix = "preview."
+
+// previewKeys は、プレビューをスクロールする操作の既定のキーである（FR-159）。
+// キーは fzf-lua の既定（keymap.builtin の <S-down>、<S-up>、<M-S-down>、<M-S-up>）に合わせた（#308 の決まったこと）。
+// ファインダーは入力の行がインサートモードで、ファイラの木はノーマルモードなので、どちらのモードにも割り当てる。
+// Vim の <S-Down> と <S-Up>（1 画面のスクロール）は、本体では今まで割り当てていなかった。
+//
+// req: FR-159
+var previewKeys = []providerSpec{
+	{keys: "<S-Down>", id: PreviewPrefix + "page-down", kind: BindAction, modes: MapNormal | MapInsert, desc: "プレビューを 1 画面下へスクロールする"},
+	{keys: "<S-Up>", id: PreviewPrefix + "page-up", kind: BindAction, modes: MapNormal | MapInsert, desc: "プレビューを 1 画面上へスクロールする"},
+	{keys: "<A-S-Down>", id: PreviewPrefix + "down", kind: BindAction, modes: MapNormal | MapInsert, desc: "プレビューを 1 行下へスクロールする"},
+	{keys: "<A-S-Up>", id: PreviewPrefix + "up", kind: BindAction, modes: MapNormal | MapInsert, desc: "プレビューを 1 行上へスクロールする"},
+}
+
 // KeyListBinding は、接頭辞 prefix で始まるキーと、分類 group（空なら無し）の操作のキーの一覧（FR-90）を出す、
 // prefix の後に ? を続けたキーの登録を返す。Ref.ID は KeyListPrefix で始まり（ParseKeyListID）、Ref.Extension は ProviderExtension である。
 func KeyListBinding(prefix []editcmd.Key, group, desc string) Binding {
@@ -473,6 +494,16 @@ func DefaultKeymapLeader(leader []editcmd.Key) (m *Keymap, errs []error) {
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("キーの一覧の既定のキー %s を登録できない: %w", s.keys, err))
+		}
+	}
+	for _, s := range previewKeys {
+		err := m.Bind(Binding{
+			Kind: s.kind, Modes: s.modes, Keys: editcmd.MustParseKeys(s.keys),
+			Ref: editcmd.Ref{ID: s.id, Extension: ProviderExtension}, Description: s.desc,
+		})
+		if err != nil {
+			// 表の誤りはプログラムの誤りで、テストで検出する（builtinKeymap と同じ）。
+			panic(fmt.Sprintf("プレビューの操作の表の誤り: %v", err))
 		}
 	}
 	return m, errs

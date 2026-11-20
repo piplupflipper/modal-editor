@@ -227,6 +227,19 @@ func Load(path string) (Config, []error) {
 	return Parse(path, data)
 }
 
+// topLevelNames は、設定ファイルの最上位の項目の名前のうち、設定の表（option）の項目でないもの（Parse の switch の case）である。
+// 並びは Parse の switch と同じにする（TestTopLevelNames が照合する）。
+var topLevelNames = []string{
+	"keymap", "leader", "fixendofline", "autoread", "checkIntervalMs", "fileTypes", "extensions", "registers", "readonlyPaths",
+	"colors", "colorscheme", "symbols", "icons", "statusline", "tabline", "elevateCommand", "commandAliases",
+}
+
+// TopLevelNames は、設定ファイルの最上位に書ける項目の名前のうち、設定の表（option.Defs）の項目でないものを返す。
+// 本体のヘルプの語の一覧（:finder.help。FR-148）が、設定の名前として使う。返す値は写しである。
+func TopLevelNames() []string {
+	return append([]string(nil), topLevelNames...)
+}
+
 // Parse は、data を JSONC の設定ファイルとして読む。path は誤りの文言に出すパスである。
 //
 // 誤りのある項目（型の違い、範囲外の値、読めないキーの表記、未知の項目）は Config に入れず、

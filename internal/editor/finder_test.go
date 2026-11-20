@@ -12,6 +12,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/config"
 	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
@@ -185,6 +186,96 @@ func TestStandardFinder(t *testing.T) {
 	h.keys("<CR>")
 	h.eventually("実行した :readonly", func() bool { return h.e.float == nil && h.e.cur.buf.ReadOnly() })
 	h.keys(":readonly<CR>")
+}
+
+// <Space>fh はヘルプの語の一覧を開き、選んだ語の :help を開く（FR-148）。一覧はキー、Ex コマンド、設定の名前、操作の ID を含む。
+// 同梱でない拡張機能（docs/usage.md に書かれていない）のキーの無いコマンドと、オペレーターなどの操作の ID も出て、選ぶと :help が開く
+// （PR #309 のレビューの必須 1）。説明は、その語を定めた所の説明文（キーの一覧、宣言ファイルの description、操作の表）である。
+//
+// req: FR-148
+func TestStandardFinderHelp(t *testing.T) {
+	spec := buildFinder(t)
+	third := exthost.Spec{Manifest: ext.Manifest{ID: "peek3p", Command: "/bin/true", Contributes: ext.Contributes{
+		Commands:    []ext.Contribution{{ID: "peek3p.list", Description: "3p list"}, {ID: "peek3p.nodesc"}},
+		TextObjects: []ext.Contribution{{ID: "peek3p.obj", Description: "3p obj"}, {ID: "peek3p.to"}},
+	}}}
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec, third}}, "a.txt")
+	h.keys("<Space>fh")
+	h.eventually("ヘルプの語の一覧", func() bool { f := h.e.float; return f != nil && strings.HasPrefix(f.title, "ヘルプ") })
+	// ファインダーが送るのは上位 300 件なので、語の一覧は本体の一覧（editor/list の help）で確かめる。
+	var words []ext.ListHelpWord
+	var lines []string
+	h.e.do(func() { words, lines = h.e.listHelpWords(), strings.Split(h.e.helpText(), "\n") })
+	kinds := map[string]string{}
+	for _, w := range words {
+		if _, dup := kinds[w.Word]; dup {
+			t.Errorf("help word %q appears twice", w.Word)
+		}
+		kinds[w.Word] = w.Kind
+		if _, ok := helpLine(lines, w.Word); !ok {
+			t.Errorf("help word %q is not found by :help", w.Word)
+		}
+	}
+	for w, kind := range map[string]string{
+		"<C-o>": ext.HelpKindKey, "<C-p>": ext.HelpKindKey, "<Space>ff": ext.HelpKindKey, ":tabmove": ext.HelpKindCommand,
+		":finder.files": ext.HelpKindCommand, "lineNumber.show": ext.HelpKindOption, "page-down": ext.HelpKindAction,
+		"preview.page-down": ext.HelpKindAction, "colorscheme": ext.HelpKindOption, "leader": ext.HelpKindOption,
+		":peek3p.list": ext.HelpKindCommand, "peek3p.obj": ext.HelpKindOperation,
+	} {
+		if kinds[w] != kind {
+			t.Errorf("help word %q: kind %q, want %q", w, kinds[w], kind)
+		}
+	}
+	descs := map[string]string{
+		"w":              "次の単語の先頭へ（nvo）",
+		"<C-p>":          "貼った直後に、履歴の古い項目に貼り直す（n）",
+		":finder.keys":   "キーの一覧を探す",
+		"<Space>ff":      "ファイルを探して開く",
+		":peek3p.list":   "3p list",
+		"peek3p.obj":     "3p obj",
+		":peek3p.nodesc": "拡張機能 peek3p のコマンド",
+		"peek3p.to":      "拡張機能 peek3p のテキストオブジェクト",
+		"visual":         "文字単位のビジュアルモード",
+		// 設定ファイルの最上位の名前は、docs/usage.md の「設定ファイルの項目」の表の行に当たる（:registers のコマンドの行ではない）。
+		"registers":       "レジスターの履歴の件数（historySize）、1 件の最大のバイト数（maxEntryBytes）、削除を履歴に積むか（deleteToHistory）、ホストのクリップボードへ送る手段（clipboard）（レジスターと履歴）",
+		"checkIntervalMs": "開いているバッファのファイルが外で変わっていないかを確かめる間隔のミリ秒。既定は 1000。0 は定期的に確かめない",
+	}
+	// 設定ファイルの最上位の名前は、すべて一覧に出る（docs/usage.md に書き忘れると落ちる）。
+	for _, n := range config.TopLevelNames() {
+		if kinds[n] != ext.HelpKindOption {
+			t.Errorf("設定ファイルの項目 %q が一覧に無い（kind %q）", n, kinds[n])
+		}
+	}
+	for _, w := range words {
+		if want, ok := descs[w.Word]; ok && w.Description != want {
+			t.Errorf("%s の説明 = %q, want %q", w.Word, w.Description, want)
+		}
+	}
+	// 同梱でない拡張機能のコマンドも、選ぶと :help が開く。:help :ID と :help ID は同じ行に当たる。
+	h.keys("peek3p.list")
+	h.eventually("絞った第三者のコマンド", func() bool { return strings.HasPrefix(finderText(h.e), ":peek3p.list ") })
+	h.keys("<CR>")
+	h.eventually(":help :peek3p.list", func() bool { f := h.e.float; return f != nil && f.kind == floatText && f.title == helpTitle })
+	var at string
+	h.e.do(func() { at = h.e.cur.buf.Line(h.e.cur.state.Cursor().Line) })
+	if !strings.HasPrefix(at, "- `:peek3p.list`（拡張機能 peek3p のコマンド）") {
+		t.Errorf(":help :peek3p.list の行 = %q", at)
+	}
+	if i, ok := helpLine(lines, "peek3p.list"); !ok || lines[i] != at {
+		t.Errorf(":help peek3p.list = %q, %v", lines[i], ok)
+	}
+	h.keys("<Esc><Space>fh")
+	h.eventually("ヘルプの語の一覧", func() bool { f := h.e.float; return f != nil && strings.HasPrefix(f.title, "ヘルプ") })
+	h.keys("tabmove")
+	h.eventually("絞ったヘルプの語", func() bool { return strings.HasPrefix(finderText(h.e), ":tabmove ") })
+	h.keys("<CR>")
+	h.eventually(":help :tabmove", func() bool { f := h.e.float; return f != nil && f.kind == floatText && f.title == helpTitle })
+	var line string
+	h.e.do(func() { line = h.e.cur.buf.Line(h.e.cur.state.Cursor().Line) })
+	if !strings.Contains(line, "`:tabmove") {
+		t.Errorf(":help :tabmove の行 = %q", line)
+	}
 }
 
 // ファインダーを開くキーを記録したマクロを再生すると、拡張機能が応答の前にポップアップを開き、再生の残りのキーはファインダーに入る。
