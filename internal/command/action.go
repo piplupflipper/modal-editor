@@ -66,6 +66,7 @@ func init() {
 		"visual":             actVisual(ModeVisual),
 		"visual-line":        actVisual(ModeVisualLine),
 		"visual-swap":        actVisualSwap,
+		"select-all":         actSelectAll,
 		"page-down":          actPage(true),
 		"page-up":            actPage(false),
 		"output-next":        actOutput(ex.OutputNext),

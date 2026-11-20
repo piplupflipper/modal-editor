@@ -37,6 +37,9 @@ func TestUserBinding(t *testing.T) {
 		{MapInsert, "<C-k>", "insert.delete-to-line-end", BindAction, ""},
 		{MapInsert, "<C-w>", "insert.delete-prev-word", BindAction, ""},
 		{MapInsert, "<C-u>", "insert.delete-to-line-start", BindAction, ""},
+		// 既定のキーの無い本体の操作（FR-130）。
+		{MapNormal, "Q", "select-all", BindAction, ""},
+		{MapVisual, "Q", "select-all", BindAction, ""},
 	} {
 		b, err := UserBinding(tt.mode, k(tt.keys), tt.id)
 		if err != nil {

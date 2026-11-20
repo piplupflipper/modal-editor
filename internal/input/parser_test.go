@@ -599,6 +599,9 @@ func TestDefaultKeymap(t *testing.T) {
 	}
 	for _, tt := range tables {
 		for _, s := range tt.specs {
+			if s.keys == "" {
+				continue // 既定のキーの無い操作（select-all）は登録しない（builtinKeymap）
+			}
 			mode := tt.mode
 			if s.modes != 0 && s.modes&mode == 0 {
 				mode = MapVisual // ビジュアルモードだけの登録

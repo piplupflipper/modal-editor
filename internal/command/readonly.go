@@ -15,6 +15,7 @@ var keepsTextActions = map[string]bool{
 	"visual":             true,
 	"visual-line":        true,
 	"visual-swap":        true,
+	"select-all":         true,
 	"page-down":          true,
 	"page-up":            true,
 	"output-next":        true,

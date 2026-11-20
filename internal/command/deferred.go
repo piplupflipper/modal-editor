@@ -23,11 +23,11 @@ type Deferred struct {
 	// Cursor は、問い合わせたとき（値を実行する前）のカーソルである。
 	Cursor buffer.Position
 
-	// mode と anchor は、値を実行する前のモードとビジュアルモードの選択の端である。
+	// mode と anchor と head は、値を実行する前のモードとビジュアルモードの選択の両端である。
 	// ビジュアルモードのオペレーターは、選択を抜けてから問い合わせるので、適用のときに選択を戻す。
-	mode   Mode
-	anchor buffer.Position
-	want   int
+	mode         Mode
+	anchor, head buffer.Position
+	want         int
 	// exCommand は、コマンドラインから呼んだ拡張機能のコマンドを保留したときの動作である。このとき Command は使わない。
 	exCommand *ex.Action
 	// replay は、再生中の問い合わせの結果を待つために止めた（ErrQueryPending）ときの、続けるための控えである（ResumeReplay）。
@@ -106,7 +106,7 @@ func (s *State) deferredReady(d Deferred) bool {
 		// ビジュアルモードのオペレーターは、問い合わせる前に選択を抜けている。
 		return s.mode == ModeNormal
 	case d.mode.visual():
-		return s.mode == d.mode && s.visual.anchor == d.anchor
+		return s.mode == d.mode && s.visual.anchor == d.anchor && s.visual.head == d.head
 	default:
 		return s.mode == ModeNormal
 	}
@@ -122,7 +122,7 @@ func (d Deferred) visualOperator() bool {
 func (s *State) rerunDeferred(d Deferred) {
 	if d.visualOperator() {
 		s.mode = d.mode
-		s.visual.anchor = d.anchor
+		s.visual.anchor, s.visual.head = d.anchor, d.head
 		s.want = d.want
 		s.parser.SetVisual(true)
 	}

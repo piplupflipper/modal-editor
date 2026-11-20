@@ -420,3 +420,46 @@ func TestKeymapActionConfig(t *testing.T) {
 		t.Errorf("ポップアップの中: %+v %v", fi, ok)
 	}
 }
+
+// 設定の keymap.normal で <Leader>a に select-all を割り当てると、<Leader>a と y で、カーソルも画面も動かさずに
+// バッファの全体をヤンクし、ホストのクリップボードへ送る（#263 の「この上に何が載るか」）。ジャンプリストにも記録しない。
+//
+// req: FR-129, FR-130
+func TestSelectAllConfig(t *testing.T) {
+	text := numberedLines("line", 60, "")
+	dir := writeFiles(t, map[string]string{"a.txt": text})
+	cfg := Config{WorkDir: dir, KeymapActions: map[string]map[string]string{"normal": {"<Leader>a": "select-all"}}}
+	h := start(t, cfg, "a.txt")
+	h.keys("40Gw")
+	h.settle()
+	var top int
+	var cur buffer.Position
+	var jumps string
+	h.e.do(func() { top, cur, jumps = h.e.renderer.Top(), h.e.cur.state.Cursor(), fst(h.e.jumpList()) })
+	if top == 0 || cur.Line != 39 {
+		t.Fatalf("前提: top %d cursor %v", top, cur)
+	}
+	h.keys("<Space>a")
+	h.settle()
+	h.e.do(func() {
+		st := h.e.cur.state
+		start, end, linewise, ok := st.Selection()
+		if !ok || linewise || st.Mode() != command.ModeVisual || start != (buffer.Position{}) || end != (buffer.Position{Line: 59, Byte: 6}) {
+			t.Errorf("selection = %v-%v linewise %v ok %v mode %v", start, end, linewise, ok, st.Mode())
+		}
+		if st.Cursor() != cur || h.e.renderer.Top() != top {
+			t.Errorf("cursor %v top %d, want %v %d", st.Cursor(), h.e.renderer.Top(), cur, top)
+		}
+	})
+	h.keys("y")
+	h.waitClipboard([]string{strings.TrimSuffix(text, "\n")})
+	h.e.do(func() {
+		st := h.e.cur.state
+		if st.Mode() != command.ModeNormal || st.Cursor() != cur || h.e.renderer.Top() != top || fst(h.e.jumpList()) != jumps {
+			t.Errorf("y の後: mode %v cursor %v top %d jumps %q, want %v %d %q", st.Mode(), st.Cursor(), h.e.renderer.Top(), fst(h.e.jumpList()), cur, top, jumps)
+		}
+	})
+}
+
+// fst は、jumpList の最初の戻り値（ジャンプリストの並び）を返す。
+func fst(list string, _ int, _ string) string { return list }

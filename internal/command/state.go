@@ -228,10 +228,16 @@ func (s *State) Cursor() buffer.Position { return s.cursor }
 // 望みの列は、移した位置の列にする。
 // ビジュアルモードでは、行末の位置（行末の後）をそのまま残す（Vim の check_cursor_col は、'selection' が old でない
 // ビジュアルモードで NUL の位置を残す。拡張機能の編集の後に呼び出し側が置き直しても、選択が改行を含んだままになる。#89）。
+// ビジュアルモードでは、カーソルが動いたなら、カーソルを動かす他の操作と同じく、選択の動く側の端（head）をカーソルに合わせる
+// （visualState の doc）。動かなければ head に触れないので、呼び出し側が同じ位置へ置き直しても select-all の選択は残る。
 func (s *State) SetCursor(pos buffer.Position) {
+	old := s.cursor
 	s.cursor = s.clampPos(pos)
 	if s.mode != ModeInsert && !s.mode.visual() {
 		s.cursor = s.clampNormal(s.cursor)
+	}
+	if s.cursor != old {
+		s.followCursor()
 	}
 	s.updateWant()
 }
@@ -375,7 +381,7 @@ func (s *State) Execute(cmd editcmd.Command) Result {
 // 拡張機能が結果を保留した（ErrDeferred）場合は、再生中でなければ失敗にせず、Result.Deferred に記録する。
 // ドットリピートとマクロの再生の中で保留が返った場合は、失敗として扱う（FR-19）。
 func (s *State) run(cmd editcmd.Command) {
-	d := Deferred{Command: cmd, Version: s.buf.Version(), Cursor: s.cursor, mode: s.mode, anchor: s.visual.anchor, want: s.want}
+	d := Deferred{Command: cmd, Version: s.buf.Version(), Cursor: s.cursor, mode: s.mode, anchor: s.visual.anchor, head: s.visual.head, want: s.want}
 	err := s.execute(cmd)
 	switch {
 	case err == nil:
