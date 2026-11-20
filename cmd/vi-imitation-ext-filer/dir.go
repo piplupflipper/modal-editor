@@ -13,7 +13,7 @@ import (
 	"unicode/utf8"
 )
 
-// ディレクトリの読み込みと gitignore の判定。どちらも木ごとの goroutine（tree.run）か、木を開く前のコマンドの goroutine で呼ぶ。
+// ディレクトリの読み込みと gitignore の判定。どちらも木ごとの操作の列の goroutine（tree.ops）か、木を開く前のコマンドの goroutine で呼ぶ。
 // ext/server のメッセージを処理する goroutine では呼ばない（main の doc）。
 
 // gitTimeout は、git の 1 回の実行を待つ上限である（仮。cmd/vi-imitation-ext-git と同じ）。
