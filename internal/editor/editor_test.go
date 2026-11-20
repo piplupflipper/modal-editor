@@ -608,6 +608,34 @@ func TestInterrupt(t *testing.T) {
 	}
 }
 
+// client の中断の印は、pushInterrupt が中断の印だけを立てた途中では読まず、<C-c> を積み終えるのを待って読む（#294）。
+// 再生は中断の印を錠の外から読んで止まる。前は afterKey が client の印も錠の外から読んでいて、この途中に当たると後始末
+// （印を下ろして <C-c> までを捨てる）を飛ばし、残った <C-c> を後で <Esc> として処理して「中断しました」を消した。
+func TestInterruptedWaitsForPush(t *testing.T) {
+	q := newKeyQueue()
+	c := &clientView{}
+	// pushInterrupt の途中（中断の印を立て、client の印と <C-c> はまだ置いていない）を、列の錠を持って作る。
+	q.mu.Lock()
+	got := make(chan bool, 1)
+	go func() { got <- q.interrupted(c) }()
+	select {
+	case v := <-got:
+		q.mu.Unlock()
+		t.Fatalf("pushInterrupt の途中で読んだ: %v", v)
+	case <-time.After(50 * time.Millisecond):
+	}
+	c.intr.Store(true)
+	q.items = append(q.items, keyInput{c: c, key: interruptKey})
+	q.mu.Unlock()
+	if !<-got {
+		t.Fatal("pushInterrupt の後の client の印が下りている")
+	}
+	q.dropThrough(interruptKey, c)
+	if !q.empty() {
+		t.Error("<C-c> が列に残った")
+	}
+}
+
 // 確認の問いを出している間は拡張機能のイベントを取っておくので、問いの間に届いた editor/open（focus）で
 // カーソルのあるバッファが入れ替わっても、答えは問いを出したバッファで実行する。
 //

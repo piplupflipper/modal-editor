@@ -403,9 +403,12 @@ func (p *picker) loop() {
 		started, grepQuery = true, in.text
 		ctx, cancel := context.WithCancel(p.ctx)
 		grepCancel = cancel
+		// 検索の番号は、goroutine を始める前にここで進める。goroutine の中で進めると、取り消した前の入力の goroutine が
+		// 後から動いたときに大きい番号を取って今の検索になり、新しい入力の検索の結果を捨てる（#262）。
+		gen := p.beginGrep(in)
 		go func() {
 			defer cancel()
-			p.runGrep(ctx, in)
+			p.runGrep(ctx, in, gen)
 		}()
 	}
 }
@@ -590,18 +593,23 @@ func (f *finder) openGrep(dir, query string, done func()) error {
 	return nil
 }
 
-// runGrep は、入力 in で rg を起動し、一致を候補にして送る。ctx が終わったら（次の入力が届いたら）止める。
+// beginGrep は、入力 in の検索を今の検索にし、その番号を返す。前の検索の候補を消す。
+// 入力が届いた順に picker の goroutine（loop）から呼ぶので、新しい入力の検索ほど大きい番号になる。
+func (p *picker) beginGrep(in inputState) uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.grepGen++
+	p.grepSeq = in.seq
+	p.items, p.labels, p.err, p.loading = nil, nil, nil, in.text != ""
+	return p.grepGen
+}
+
+// runGrep は、beginGrep で番号 gen を振った入力 in で rg を起動し、一致を候補にして送る。ctx が終わったら（次の入力が届いたら）止める。
 // 候補は上限の数で打ち切る。空の入力では検索しない。
-func (p *picker) runGrep(ctx context.Context, in inputState) {
+func (p *picker) runGrep(ctx context.Context, in inputState, gen uint64) {
 	p.f.mu.Lock()
 	hidden, limit := p.f.hidden, p.f.limit
 	p.f.mu.Unlock()
-	p.mu.Lock()
-	p.grepGen++
-	gen := p.grepGen
-	p.grepSeq = in.seq
-	p.items, p.labels, p.err, p.loading = nil, nil, nil, in.text != ""
-	p.mu.Unlock()
 	if in.text == "" {
 		p.sendIfCurrent(gen)
 		return
