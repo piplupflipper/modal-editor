@@ -337,6 +337,7 @@ func (b *Buffer) Text() string {
 }
 
 // Slice は、範囲 r のテキストを返す（基本設計 4.3 の「範囲を読む」）。
+// 返すテキストは行と別に確保した文字列なので、受け取った側が持ち続けても、バッファの行を保持しない（slice）。
 // 範囲がバッファの外にあるか、文字の途中を指す場合は ErrInvalidPosition を、
 // 終わりが始まりより前にある場合は ErrInvalidRange を返す。
 func (b *Buffer) Slice(r Range) (string, error) {
@@ -607,20 +608,47 @@ func (b *Buffer) mustApplyAll(edits []Edit) {
 // apply は、1 つの編集を適用し、それを取り消す逆の編集を返す。
 // 位置が正しくなければ、何も変えずにエラーを返す。
 //
-// 逆の編集のテキスト（消したテキスト）は、行の部分文字列のままにせず写す。逆の編集はアンドゥの記録に残るので、
-// 部分文字列のままだと、編集の前の行の全体を記録が保持する。空の範囲への挿入でも、長さ 0 の部分文字列が前の行を指して保持する。
+// 行の部分文字列は、元の行の全体を指したまま残る（空の部分文字列でも、元の行を指すことがある）。
+// 部分文字列を、作り直した後の別の行や、行の外（アンドゥの記録）に残すと、編集の前の行の全体を保持し続ける。
 // 長い行を 1 文字ずつ変えると、行の長さと編集の数の積のメモリが残り、100000afoo xy <Esc> で server のメモリが 13GB を超えた（#279）。
+// このため次のようにする。
+//
+//   - 逆の編集のテキスト（消したテキスト）は、写した文字列にする（slice）
+//   - 編集で行が 2 行以上に分かれるときは、最初の行と最後の行を、それぞれ新しく確保した文字列にする（concat）。
+//     前の行と、入れたテキストの最初と最後の行をつないで 1 つの文字列にしてから分けると、分けた行のどれもがつないだ全体を指す。
+//     その後で一方の行を作り直しても、もう一方（短い行や空の行）が全体を保持し続ける（PR #285 のレビュー）。
+//     Go の文字列の連結は、片方が空なら、もう片方をそのまま返すので、+ では新しく確保されないことがある
+//   - 1 行に収まる編集は、+ でつなぐ。結果は前の行の部分文字列になりうるが、前の行はその行で置き換えて手放すので、保持する量は増えない
+//
+// 間の行は e.Text の部分文字列になる。e.Text は呼び出し側が作った文字列で、バッファの行を指さない。
 func (b *Buffer) apply(e Edit) (Edit, error) {
 	if err := b.checkRange(e.Range); err != nil {
 		return Edit{}, err
 	}
 	start, end := e.Range.Start, e.Range.End
-	removed := strings.Clone(b.slice(e.Range))
+	removed := b.slice(e.Range)
 
-	joined := b.lines[start.Line][:start.Byte] + e.Text + b.lines[end.Line][end.Byte:]
-	b.lines = slices.Replace(b.lines, start.Line, end.Line+1, strings.Split(joined, "\n")...)
+	head, tail := b.lines[start.Line][:start.Byte], b.lines[end.Line][end.Byte:]
+	lines := strings.Split(e.Text, "\n")
+	if n := len(lines); n == 1 {
+		lines[0] = head + e.Text + tail
+	} else {
+		lines[0] = concat(head, lines[0])
+		lines[n-1] = concat(lines[n-1], tail)
+	}
+	b.lines = slices.Replace(b.lines, start.Line, end.Line+1, lines...)
 
 	return Edit{Range: Range{Start: start, End: endOf(start, e.Text)}, Text: removed}, nil
+}
+
+// concat は、a と b をつないだ文字列を、新しく確保して返す（apply）。
+// a か b が空でも、もう一方をそのまま返さずに写す。結果が空なら、どの文字列も指さない "" を返す。
+func concat(a, b string) string {
+	var sb strings.Builder
+	sb.Grow(len(a) + len(b))
+	sb.WriteString(a)
+	sb.WriteString(b)
+	return sb.String()
 }
 
 // endOf は、start に text を挿入したとき、挿入したテキストの直後に当たる位置を返す。
@@ -632,11 +660,14 @@ func endOf(start Position, text string) Position {
 	return Position{Line: start.Line + n, Byte: len(text) - strings.LastIndexByte(text, '\n') - 1}
 }
 
-// slice は、正しいことを確かめた範囲 r のテキストを返す。
+// slice は、正しいことを確かめた範囲 r のテキストを、行と別に確保した文字列で返す。
+// 行の部分文字列を返すと、受け取った側（アンドゥの記録、ヤンクしたレジスターの履歴）が元の行の全体を保持する。
+// 長い行から 1 文字をヤンクしても、履歴の 1 件の上限（FR-53。テキストの長さで比べる）に掛からず、件数 × 行の長さまで残った（PR #285 のレビュー）。
+// 空の範囲は、どの文字列も指さない "" を返す。
 func (b *Buffer) slice(r Range) string {
 	s, e := r.Start, r.End
 	if s.Line == e.Line {
-		return b.lines[s.Line][s.Byte:e.Byte]
+		return strings.Clone(b.lines[s.Line][s.Byte:e.Byte])
 	}
 	var sb strings.Builder
 	sb.WriteString(b.lines[s.Line][s.Byte:])
