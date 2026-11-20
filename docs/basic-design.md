@@ -3071,11 +3071,12 @@ ID は一意にし、`internal/input` のテスト（`TestActionIDUnique`）が�
 
 | 移る理由 | 見分け方 | 移った先 | Vim 9.1 で確かめたこと |
 |---|---|---|---|
-| 利用者のキーで実行したコマンドの動作（`:tab.new`、`:e`、`:b` など） | `Editor.keyActions` が 0 でない（Ex コマンドの `Result.Actions` を行う `runActions` と、再生の途中の `navigator.RunActions` の間だけ数える） | 下の表のとおり、インサートモードを続ける | `<Cmd>tabnew<CR>` |
+| 利用者のキーで実行したコマンドの動作（`:tab.new`、`:e`、`:b` など）と、キーで呼んだ拡張機能の操作とコマンドの結果の `Open`（定義へ移動と同じ形） | `Editor.keyActions` が 0 でない（Ex コマンドの `Result.Actions` を行う `runActions`、再生の途中の `navigator.RunActions`、`Feed` の間に溜めた `Open` を行う `doPendingOpens`、再生の途中の `openFromCommand` の間だけ数える） | 下の表のとおり、インサートモードを続ける。拡張機能の `editor/open` の「入力の途中のバッファからは移さない」も、`keyActions` が 0 でなければ当てない（PR #303 の再レビューの必須 2） | `<Cmd>tabnew<CR>`。`set hidden` と `<Cmd>buffer b.txt<CR>` の `Afoo<C-g>bar<Esc>` は、`b.txt` へ移って `bar` を入れる（レビューで確かめた） |
 | 外からの要求（待つだけの client が開いたファイル（FR-83）など） | それ以外 | 持ち込まず、どちらのバッファもノーマルモードにする | `vim --servername S` で `Afoo` を打った後に、別の端末から `--remote-wait-silent x.txt` を打つと、`mode()` は `n`（レビューで確かめた） |
 
-拡張機能の `editor/open` と他の client のタブ（`focusOwner`）は、前から「入力の途中のバッファからは移さない」作りで、変えていない。
-ただし、フォーカスのあるポップアップ（ファインダーなど）へフォーカスを入れるとき（`focusFloat`）は、開いたときのタブの入力と選択を `SuspendMode` で終え、持ち込む値は捨てる。
+外からの拡張機能の `editor/open` と他の client のタブ（`focusOwner`）は、前から「入力の途中のバッファからは移さない」作りで、変えていない。
+ただし、フォーカスのあるポップアップ（ファインダーなど）を開いて、その client のキーを受けるバッファが実際にポップアップへ移るとき（`openFloat`）は、開いたときのタブの入力と選択を `SuspendMode` で終え、持ち込む値は捨てる。
+ペインの部品（別の client）のキー（`paneInput`）は、キーのたびに `focusFloat` でペインのバッファへ移って戻るだけで、元の client のフォーカスは移らないので、元の client の入力を終えない（PR #303 の再レビューの必須 1。最初は `focusFloat` で終えていたため、ペインで `j` を打つと元の client の `ofoo` の入力が終わり、続く `bar<Esc>` が `froo` になった）。
 インサートモードの `command` で開いたファインダーで選んだファイルを、拡張機能が `editor/open` で開くときに、開いたときのタブがインサートモードのままだと「入力の途中」に当たって移らず、`:tab.new` は移るのと食い違ったためである（PR #303 のレビューの推奨 1）。
 どちらもキーから呼んだコマンドの結果として移る。
 ファインダーの場合、入力はポップアップの中で続けたので、選んだファイルへはノーマルモードで移る。

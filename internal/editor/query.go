@@ -577,6 +577,9 @@ func (e *Editor) openFromCommand(extID string, bs *bufferState, p ext.EditorOpen
 		e.pendingOpen = append(e.pendingOpen, openRequest{ext: extID, p: p})
 		return nil
 	}
+	// 再生したキーで呼んだコマンドの結果なので、移る理由をキーからの実行にする（switchTo と editorOpen。FR-154）。
+	e.keyActions++
+	defer func() { e.keyActions-- }()
 	if _, _, err := e.editorOpen(p); err != nil {
 		return errExtension(editcmd.Ref{Extension: extID, ID: "open"}, err)
 	}
@@ -606,6 +609,10 @@ func (e *Editor) moveCursor(bs *bufferState, p ext.EditorOpenParams, jump bool) 
 func (e *Editor) doPendingOpens() {
 	ops := e.pendingOpen
 	e.pendingOpen = nil
+	// 溜めた Open は、利用者のキーで呼んだコマンド（拡張機能の操作とコマンド）の結果である。
+	// 移る理由をキーからの実行にする（switchTo と editorOpen。FR-154）。
+	e.keyActions++
+	defer func() { e.keyActions-- }()
 	for _, op := range ops {
 		if _, _, err := e.editorOpen(op.p); err != nil {
 			e.showError(fmt.Errorf("拡張機能 %s の移動: %w", op.ext, err))

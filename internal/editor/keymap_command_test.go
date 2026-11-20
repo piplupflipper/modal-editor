@@ -281,6 +281,77 @@ func TestKeymapCommandPopupFromInsert(t *testing.T) {
 	}
 }
 
+// ペインの部品（別の client）でキーを打っても、元の client のインサートモードの入力は続く（PR #303 の再レビューの必須 1）。
+// ペインのキーは、キーのたびにペインへ移って戻るだけで、元の client のフォーカスは移らないためである。
+//
+// req: FR-154
+func TestPaneKeyKeepsInsert(t *testing.T) {
+	var calls muxCalls
+	cfg := Config{Extensions: fakeSpecs(t)}
+	calls.config(&cfg)
+	h := start(t, cfg)
+	peer := h.attach(ClientInfo{ID: 2, Pane: "%9"})
+	peer.keys(":fake.pane tree<CR>")
+	h.eventually("OpenPane", func() bool { _, ok := calls.last(true); return ok })
+	call, _ := calls.last(true)
+	h.waitMessage("err=<nil>")
+	comp := h.attachComponent(call.view, true)
+	comp.waitScreen("▸ dir")
+
+	peer.keys("ofoo")
+	h.settle()
+	comp.keys("j")
+	h.settle()
+	var mode command.Mode
+	h.e.do(func() { mode = h.e.viewOf(h.clientOf(peer.term)).cur.state.Mode() })
+	if mode != command.ModeInsert {
+		t.Errorf("ペインで j を打った後の元の client のモード = %v", mode)
+	}
+	peer.keys("bar<Esc>")
+	h.settle()
+	var text string
+	h.e.do(func() { text = strings.TrimSuffix(h.e.viewOf(h.clientOf(peer.term)).cur.buf.Text(), "\n") })
+	if text != "\nfoobar" {
+		t.Errorf("元の client の text = %q, want %q", text, "\nfoobar")
+	}
+}
+
+// インサートモードの keymap の Ex コマンドで呼んだ拡張機能のコマンドが、別のバッファを開く結果（Open。Focus が true）を返すと、
+// :tab.new と同じく移り、移った先でインサートモードが続く（PR #303 の再レビューの必須 2）。
+// Vim 9.1 で set hidden と inoremap <C-g> <Cmd>buffer b.txt<CR> の Afoo<C-g>bar<Esc> は、b.txt へ移って bar を入れる（レビューで確かめた）。
+// 外からの editor/open（拡張機能が自分で送るもの）は、今までどおり入力の途中のバッファからは移さない。
+//
+// req: FR-154
+func TestKeymapCommandOpenFromInsert(t *testing.T) {
+	// fake.goto は、カーソルのあるバッファでない最も小さい番号のバッファ（a.txt）の 2 行目へ移る Open を返す。
+	dir := writeFiles(t, map[string]string{"a.txt": "a1\na2\n", "b.txt": "abc\ndef\n"})
+	h := start(t, Config{
+		WorkDir: dir, Extensions: fakeSpecs(t),
+		KeymapCommands: map[string]map[string]config.KeymapCommand{
+			"insert": {"<C-g>": {Name: "fake.goto"}},
+		},
+	}, "a.txt", "b.txt")
+	var first *bufferState
+	h.e.do(func() { first = h.e.cur })
+	h.keys("ggAfoo<C-g>")
+	h.eventually("a.txt へ移る", func() bool { return h.e.cur.path == filepath.Join(dir, "a.txt") })
+	var mode, firstMode command.Mode
+	h.e.do(func() { mode, firstMode = h.e.cur.state.Mode(), first.state.Mode() })
+	if mode != command.ModeInsert || firstMode != command.ModeNormal {
+		t.Fatalf("移った先 %v、a.txt %v", mode, firstMode)
+	}
+	h.keys("bar<Esc>")
+	h.settle()
+	var text, firstText string
+	h.e.do(func() {
+		text = h.e.cur.buf.Text()
+		firstText = strings.TrimSuffix(first.buf.Text(), "\n")
+	})
+	if text != "a1\nbara2" || firstText != "abcfoo\ndef" {
+		t.Errorf("移った先の text %q、b.txt %q", text, firstText)
+	}
+}
+
 // KeymapCommandCheck は、keymap の Ex コマンドの名前を、拡張機能の宣言ファイルと Ex コマンドの別名の表（設定の別名を足した後）で確かめる。
 // 拡張機能のコマンドと provides の操作の名前は書けるが、本体が拡張機能のコマンドと同じ口から呼ぶ :help などは、
 // 正規の名前の無いコマンドなので書けない。モードと左辺は、操作の項目と同じ規則で確かめる。

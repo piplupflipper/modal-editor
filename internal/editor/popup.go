@@ -227,6 +227,14 @@ func (e *Editor) openFloat(f *floatState) {
 	f.focused = false
 	e.float = f
 	if focus {
+		// フォーカスのあるポップアップを開くと、この client のキーを受けるバッファが、開いたときのタブからポップアップへ実際に移る。
+		// 開いたときのタブの入力と選択は、ここで終える（command.State.SuspendMode。持ち込む値は捨てる）。
+		// インサートモードの keymap の Ex コマンドで開いたファインダー（FR-154）では、選んだファイルを拡張機能の editor/open で開くときに、
+		// 開いたときのタブがインサートモードのままだと「入力の途中のバッファからは移さない」に当たり、ファイルへ移らないためである
+		// （入力はポップアップの中で続けたので、選んだファイルへは持ち込まない）。
+		// ペインの部品のキー（paneInput）は、キーのたびに focusFloat でペインへ移って戻るだけで、ここを通らないので、
+		// 別の client（ペイン）のキーで元の client の入力を終えない（PR #303 の再レビューの必須 1）。
+		f.base.state.SuspendMode()
 		e.focusFloat()
 	}
 	if f.center {
@@ -275,13 +283,6 @@ func (e *Editor) focusFloat() {
 	}
 	f.focused = true
 	f.transient = false
-	if e.cur == f.base {
-		// 開いたときのタブの入力は、ここで終える（command.State.SuspendMode。持ち込む値は捨てる）。
-		// インサートモードの keymap の Ex コマンドで開いたファインダー（FR-154）では、選んだファイルを拡張機能の editor/open で開くときに、
-		// 開いたときのタブがインサートモードのままだと「入力の途中のバッファからは移さない」に当たり、ファイルへ移らないためである。
-		// キーで実行したコマンドで移るときと同じく、選んだファイルへ移る（入力はポップアップの中で続けたので、持ち込まない）。
-		f.base.state.SuspendMode()
-	}
 	e.switchFocus(f.bs)
 	if pv := f.preview.bs; f.preview.focus && pv != nil && f.preview.owned && slices.Contains(e.bufs, pv) {
 		// プレビューにフォーカスを入れていたペインの部品（paneInput はキーのたびにフォーカスを入れ直す）。FR-149。
