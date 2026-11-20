@@ -207,13 +207,13 @@ func TestParseObjectCapture(t *testing.T) {
 	}
 	// 書いたクエリのキャプチャ名は、どれも対象と部分に分かれる。
 	h := newTestHighlighter(t)
-	for _, l := range h.langs {
+	for _, l := range h.all {
 		if l.objects == nil {
 			continue
 		}
 		for i, n := range l.objects.CaptureNames() {
 			if l.objectCaptures[i].part == partNone {
-				t.Errorf("%s: capture @%s is not a text object", l.fileType, n)
+				t.Errorf("%s: capture @%s is not a text object", l.name, n)
 			}
 		}
 	}

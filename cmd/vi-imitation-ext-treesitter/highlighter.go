@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -45,8 +46,11 @@ type job struct {
 // 解析の間に同じバッファの差分が溜まれば、次の 1 回でまとめて適用して 1 回だけ解析し直し、途中のバージョンの一覧は送らない。
 // 本体は、バージョンの古い一覧でも描画できる（基本設計 6.1）。
 type highlighter struct {
-	langs map[string]*language // ファイルの種類から言語へ。作った後は変えない
-	log   *log.Logger
+	// langs は、ファイルの種類から言語への表である。同じ言語を使う種類（"json" と "jsonc"）は、同じ *language を指す。作った後は変えない
+	langs map[string]*language
+	// all は、languages の順に並べた言語の一覧で、言語ごとに 1 つずつ持つ。解放と、言語ごとに 1 回だけ行う検査に使う。作った後は変えない
+	all []*language
+	log *log.Logger
 	// maxBytes は、decoration/set の本文の大きさの上限である。maxDecorationSetBytes を入れる。テストは小さくしてよい。
 	maxBytes int
 
@@ -72,8 +76,8 @@ type highlighter struct {
 	notify func(ext.MessageLevel, string) error
 }
 
-// newHighlighter は、languages のすべての言語のパーサーとクエリを用意する。
-// クエリを解釈できないなど、用意できない言語があれば誤りを返す。
+// newHighlighter は、languages のすべての言語のパーサーとクエリを 1 つずつ用意し、言語の fileTypes のどの種類からも引けるようにする。
+// クエリを解釈できないなど、用意できない言語があるか、1 つの種類が複数の言語に書かれていれば誤りを返す。
 func newHighlighter() (*highlighter, error) {
 	h := &highlighter{
 		langs:    map[string]*language{},
@@ -92,7 +96,14 @@ func newHighlighter() (*highlighter, error) {
 			h.close()
 			return nil, err
 		}
-		h.langs[spec.fileType] = l
+		h.all = append(h.all, l)
+		for _, ft := range spec.fileTypes {
+			if _, dup := h.langs[ft]; dup {
+				h.close()
+				return nil, fmt.Errorf("file type %q is listed in more than one language", ft)
+			}
+			h.langs[ft] = l
+		}
 	}
 	h.trees = newTreeStore()
 	h.objects = newTextObjects(h.langs, h.trees)
@@ -117,9 +128,11 @@ func (h *highlighter) close() {
 		d.close()
 	}
 	clear(h.docs)
-	for _, l := range h.langs {
+	// langs は同じ言語を複数の種類から指すので、言語ごとに 1 つずつ持つ all から解放する。
+	for _, l := range h.all {
 		l.close()
 	}
+	h.all = nil
 	clear(h.langs)
 }
 

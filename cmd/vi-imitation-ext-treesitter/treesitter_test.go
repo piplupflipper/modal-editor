@@ -159,6 +159,52 @@ func TestDecorationsJSON(t *testing.T) {
 	checkWellFormed(t, d, decs)
 }
 
+// jsoncSource は、JSON の文法の外にあるコメントと末尾のカンマ（配列の中、オブジェクトの中、最後の項目の後）を含む JSONC の内容である。
+const jsoncSource = `{
+  // comment
+  "a": [1, 2,],
+  "b": { "c": "x", },
+  "d": true,
+}`
+
+// TestDecorationsJSONC は、種類が "jsonc" のバッファに、"json" と同じ文法とクエリで、同じ色の範囲が付くことを確かめる。
+// コメントと末尾のカンマを含む内容で、その後ろの要素にも色が付くことを確かめる。
+// tree-sitter-json（v0.24.8）の文法は、コメントを extras に持つが、末尾のカンマを持たない。
+// 末尾のカンマの所には ERROR と MISSING のノードができるが、パーサーが立ち直るので、後ろの要素の色は変わらない。
+//
+// req: FR-35
+func TestDecorationsJSONC(t *testing.T) {
+	h := newTestHighlighter(t)
+	if h.langs["jsonc"] == nil || h.langs["jsonc"] != h.langs["json"] {
+		t.Fatalf(`langs["jsonc"] = %p, want the same language as langs["json"] = %p`, h.langs["jsonc"], h.langs["json"])
+	}
+	d := parse(t, h, "jsonc", jsoncSource)
+	decs := d.decorations()
+	if want := parse(t, h, "json", jsoncSource).decorations(); !slices.Equal(decs, want) {
+		t.Fatalf("jsonc decorations = %+v, want the same as json %+v", decs, want)
+	}
+	tests := []struct {
+		token string
+		want  string
+	}{
+		{"// comment", "comment"},
+		{`"a"`, "string"},
+		{"1", "number"},
+		{"2", "number"},
+		{`"b"`, "string"},
+		{`"c"`, "string"},
+		{`"x"`, "string"},
+		{`"d"`, "string"},
+		{"true", "constant"},
+	}
+	for _, tt := range tests {
+		if got := styleOf(t, d, decs, tt.token, 0); got != tt.want {
+			t.Errorf("%q: style = %q, want %q", tt.token, got, tt.want)
+		}
+	}
+	checkWellFormed(t, d, decs)
+}
+
 // checkWellFormed は、一覧の範囲が空でなく、互いに重ならず先頭から順に並び、名前が 6.1 の表にあることを確かめる。
 func checkWellFormed(t *testing.T, d *document, decs []ext.Decoration) {
 	t.Helper()
@@ -209,15 +255,15 @@ func TestStyleFor(t *testing.T) {
 func TestQueriesMapCaptures(t *testing.T) {
 	h := newTestHighlighter(t)
 	want := map[string][]string{"go": {"property"}, "json": nil}
-	for ft, l := range h.langs {
+	for _, l := range h.all {
 		var unmapped []string
 		for i, n := range l.query.CaptureNames() {
 			if l.styles[i] == noStyle {
 				unmapped = append(unmapped, n)
 			}
 		}
-		if !slices.Equal(unmapped, want[ft]) {
-			t.Errorf("%s: unmapped captures = %v, want %v", ft, unmapped, want[ft])
+		if !slices.Equal(unmapped, want[l.name]) {
+			t.Errorf("%s: unmapped captures = %v, want %v", l.name, unmapped, want[l.name])
 		}
 	}
 }
@@ -468,6 +514,26 @@ func TestServeOpenAndChange(t *testing.T) {
 	}
 }
 
+// TestServeJSONC は、本体の役から種類が "jsonc" のバッファを buffer/open で送ると、
+// "json" として解析したものと同じ一覧の decoration/set が届くことを確かめる。
+//
+// req: FR-35
+func TestServeJSONC(t *testing.T) {
+	conn, got := connect(t)
+	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Version: 1, FileType: "jsonc", Text: jsoncSource}); err != nil {
+		t.Fatal(err)
+	}
+	p := receive(t, got)
+	h := newTestHighlighter(t)
+	want := parse(t, h, "json", jsoncSource).decorations()
+	if p.Buffer != 1 || p.Version != 1 || !slices.Equal(p.Decorations, want) {
+		t.Fatalf("open: buffer %d version %d, decorations %+v, want buffer 1 version 1, %+v", p.Buffer, p.Version, p.Decorations, want)
+	}
+	if !slices.Contains(p.Decorations, ext.Decoration{Range: ext.Range{Start: ext.Position{Line: 1, Byte: 2}, End: ext.Position{Line: 1, Byte: 12}}, Style: "comment"}) {
+		t.Errorf("comment is not decorated: %+v", p.Decorations)
+	}
+}
+
 // TestServeFileTypes は、文法を持たない種類のファイルでは一覧を送らず、
 // 送り直しで種類が文法を持たないものに変わったら空の一覧を送って色を消すことを確かめる。
 func TestServeFileTypes(t *testing.T) {
@@ -513,7 +579,7 @@ func TestManifest(t *testing.T) {
 		}
 	}
 	for _, l := range languages {
-		want = append(want, l.fileType)
+		want = append(want, l.fileTypes...)
 	}
 	slices.Sort(patterns)
 	slices.Sort(want)
