@@ -45,6 +45,9 @@ func TestFinderPopup(t *testing.T) {
 	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
 	h.keys(":fake.popup finder<CR>")
 	h.eventually("ファインダー", func() bool { _, _, _, ok := finderOf(h.e); return ok })
+	var view uint64
+	h.e.do(func() { view = h.e.float.id })
+	h.waitPopupOpened(view)
 	fi, _ := h.float()
 	if fi.text != "f:" || !fi.focused || !fi.center || fi.kind != floatFinder {
 		t.Fatalf("finder: %+v", fi)
