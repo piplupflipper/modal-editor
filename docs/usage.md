@@ -332,6 +332,10 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `debug.stepOut` | 操作 | `normal` | ステップアウト（DAP） |
 | `debug.runLast` | 操作 | `normal` | 前回の設定で実行する（DAP） |
 | `debug.toggleUI` | 操作 | `normal` | DAP のペインを切り替える（DAP） |
+| `preview.page-down` | 操作 | `normal`、`insert` | プレビューを 1 画面下へスクロールする |
+| `preview.page-up` | 操作 | `normal`、`insert` | プレビューを 1 画面上へスクロールする |
+| `preview.down` | 操作 | `normal`、`insert` | プレビューを 1 行下へスクロールする |
+| `preview.up` | 操作 | `normal`、`insert` | プレビューを 1 行上へスクロールする |
 <!-- action-ids:end -->
 
 `extensions.settings` は、拡張機能の ID から、その拡張機能に渡す設定への対応である。

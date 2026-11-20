@@ -87,4 +87,8 @@ package ext
 // 古い本体はどちらも黙って捨て、プレビューを出さずに今までの窓の幅で一覧だけを出す。
 // 0.12.0 で、一覧と木とファインダーの項目が指すファイルかディレクトリ（ViewItem.File、ViewFile）を足した（#295。FR-152）。
 // 本体はこれを持つ項目の前にファイルの種類のアイコンを付ける。古い本体は黙って捨て、アイコンを付けずに出す。
-const APIVersion = "0.12.0"
+// 0.13.0 で、editor/list の一覧の種類 help（:help で引ける語。ListHelp）と、その語の :help を開かせる editor/execute の help と、
+// 本体の既定のキーより優先して割り当てる宣言ファイルの contributes の各項目の overrideKeys（Contribution.OverrideKeys）を足した
+// （#308。FR-148）。古い本体は help の editor/list を知らない一覧として誤りで断り、help だけの editor/execute も誤りで断る。
+// overrideKeys は黙って捨てる（そのキーを割り当てない）。
+const APIVersion = "0.13.0"

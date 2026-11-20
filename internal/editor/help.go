@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -12,6 +13,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/command"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/input"
+	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
@@ -285,20 +287,33 @@ func helpKeyLines(km *input.Keymap) []string {
 //
 // 語の一部だけを含む見出し（:help w が「同じ window の…」）には当てない（PR #230 のレビュー）。
 func helpLine(lines []string, word string) (int, bool) {
-	forms := []string{word}
-	if !strings.HasPrefix(word, ":") {
-		forms = append(forms, ":"+word)
-	}
-	type mdLine struct {
-		spans   []string
-		defs    []string
-		heading bool
-	}
-	parsed := make([]mdLine, len(lines))
+	return newHelpIndex(lines).find(word)
+}
+
+// helpMDLine は、:help の文書の 1 行を、語を探すために読んだもの（helpIndex）である。
+type helpMDLine struct {
+	// spans は行の `…` の中身、defs はそのうち定義の行（見出し、表の最初の列、「- `…`: 」の箇条書き）の名前である。
+	spans   []string
+	defs    []string
+	heading bool
+}
+
+// helpIndex は、:help の文書の行を、語を探すために 1 回だけ読んだものである（helpLine の 1〜6 の段の材料）。
+// ヘルプの語の一覧（listHelpWords。FR-148）は、多くの語をこの 1 つの読みで引く。
+type helpIndex struct {
+	lines  []string
+	parsed []helpMDLine
 	// idRows は、操作の ID の一覧（docs/usage.md の action-ids の印の間）の行の、最初の列の `…` である。
-	// 一覧の行は、他の段で当たる所が無い語のときだけ当てる（下の 6。#257 のレビューの推奨 2）。
-	idRows := map[int][]string{}
+	// 一覧の行は、他の段で当たる所が無い語のときだけ当てる（helpLine の 6。#257 のレビューの推奨 2）。
+	idRows map[int][]string
 	// idSection は、操作の ID の節（actionIDsSection の見出しの次から一覧の終わりの印まで）の、見出しでない行である。
+	idSection map[int]bool
+}
+
+// newHelpIndex は、:help の文書の行 lines を読む。コードの区画の中の行は、語の候補にしない。
+func newHelpIndex(lines []string) *helpIndex {
+	parsed := make([]helpMDLine, len(lines))
+	idRows := map[int][]string{}
 	idSection := map[int]bool{}
 	inCode, inIDs, inSection := false, false, false
 	for i, l := range lines {
@@ -328,7 +343,7 @@ func helpLine(lines []string, word string) (int, bool) {
 			}
 			continue
 		}
-		p := mdLine{spans: codeSpans(l), heading: strings.HasPrefix(l, "#")}
+		p := helpMDLine{spans: codeSpans(l), heading: strings.HasPrefix(l, "#")}
 		switch {
 		case p.heading:
 			p.defs = p.spans
@@ -343,35 +358,46 @@ func helpLine(lines []string, word string) (int, bool) {
 		}
 		parsed[i] = p
 	}
+	return &helpIndex{lines: lines, parsed: parsed, idRows: idRows, idSection: idSection}
+}
+
+// find は、語 word の説明の行の行番号を返す（helpLine の 1〜6 の段）。
+func (h *helpIndex) find(word string) (int, bool) {
+	lines := h.lines
+	forms := []string{word}
+	if !strings.HasPrefix(word, ":") {
+		forms = append(forms, ":"+word)
+	}
 	// 語が操作の ID（一覧の行の ID と完全に一致する）なら、操作の ID の節の本文（書き方の規則の箇条書きなど）と、
 	// 設定の例で ID を値に書いた行（"action": "語"）を 2〜5 の候補にしない。その語は、節の本文より一覧の行に当てる。
 	isID := false
-	for _, ids := range idRows {
+	for _, ids := range h.idRows {
 		if slices.Contains(ids, word) {
 			isID = true
 			break
 		}
 	}
 	actionValue := `"action": "` + word + `"`
-	skip := func(i int) bool { return isID && (idSection[i] || strings.Contains(lines[i], actionValue)) }
-	for i := range parsed {
+	skip := func(i int) bool { return isID && (h.idSection[i] || strings.Contains(lines[i], actionValue)) }
+	line := func(i int) helpMDLine {
 		if skip(i) {
-			parsed[i] = mdLine{}
+			return helpMDLine{}
 		}
+		return h.parsed[i]
 	}
 	exact := func(span, f string) bool { return span == f || strings.HasPrefix(span, f+" ") }
-	find := func(pick func(mdLine) []string, match func(string, string) bool) (int, bool) {
+	find := func(pick func(helpMDLine) []string, match func(string, string) bool) (int, bool) {
 		for _, f := range forms {
-			for i, p := range parsed {
-				if slices.ContainsFunc(pick(p), func(s string) bool { return match(s, f) }) {
+			for i := range h.parsed {
+				if slices.ContainsFunc(pick(line(i)), func(s string) bool { return match(s, f) }) {
 					return i, true
 				}
 			}
 		}
 		return 0, false
 	}
-	defs := func(p mdLine) []string { return p.defs }
-	spans := func(p mdLine) []string { return p.spans }
+	defs := func(p helpMDLine) []string { return p.defs }
+	spans := func(p helpMDLine) []string { return p.spans }
 	if i, ok := find(defs, exact); ok {
 		return i, true
 	}
@@ -384,7 +410,7 @@ func helpLine(lines []string, word string) (int, bool) {
 	}
 	idRow := func() (int, bool) {
 		for i := range lines {
-			if slices.Contains(idRows[i], word) {
+			if slices.Contains(h.idRows[i], word) {
 				return i, true
 			}
 		}
@@ -407,13 +433,114 @@ func helpLine(lines []string, word string) (int, bool) {
 		return i, true
 	}
 	if utf8.RuneCountInString(word) >= 2 {
-		for i, p := range parsed {
-			if p.heading && strings.Contains(lines[i], word) {
+		for i := range h.parsed {
+			if line(i).heading && strings.Contains(lines[i], word) {
 				return i, true
 			}
 		}
 	}
 	return idRow()
+}
+
+// listHelpWords は、:help で引ける語の一覧（editor/list の help。FR-148）を返す。
+//
+// 語は、次の順に集め、:help でその語の説明の行が見つかる（helpLine）ものだけを残す。同じ語は最初の 1 つだけにする。
+//
+//   - キー: :help の「本体のキー」の節のキー（helpKeyLines。LSP と DAP の操作の既定のキーと、回数などの Parser が先に読むキーを含む）と、
+//     読み込んだ拡張機能の宣言ファイルの操作の既定のキー（keys と overrideKeys。<Leader> は設定の leader にする）
+//   - Ex コマンド: コマンドの一覧（listCommands。本体の Ex コマンド、別名、拡張機能のコマンド）の名前に : を付けたもの
+//   - 設定の名前: 実行中に変えられる設定の表（internal/option）の名前
+//   - 操作の ID: 設定の keymap に書ける操作の ID（input.Actions）
+//
+// 説明は、見つかった行を 1 行の要約にしたもの（helpSummary）である。文書は :help と同じもの（helpText）を 1 回だけ読む。
+//
+// req: FR-148
+func (e *Editor) listHelpWords() []ext.ListHelpWord {
+	lines := strings.Split(e.helpText(), "\n")
+	idx := newHelpIndex(lines)
+	var out []ext.ListHelpWord
+	seen := map[string]bool{}
+	add := func(word, kind string) {
+		if word == "" || seen[word] {
+			return
+		}
+		seen[word] = true
+		if i, ok := idx.find(word); ok {
+			out = append(out, ext.ListHelpWord{Word: word, Kind: kind, Description: helpSummary(lines[i], word)})
+		}
+	}
+	for _, l := range helpKeyLines(e.keymap) {
+		if spans := codeSpans(l); len(spans) > 0 {
+			add(spans[0], ext.HelpKindKey)
+		}
+	}
+	for _, s := range e.cfg.Extensions {
+		c := s.Manifest.Contributes
+		for _, cs := range [][]ext.Contribution{c.Operators, c.Motions, c.TextObjects, c.Commands} {
+			for _, x := range cs {
+				for _, k := range append([]string{x.Keys}, x.OverrideKeys...) {
+					if ks, err := editcmd.ParseKeysLeader(k, e.leader); err == nil && len(ks) > 0 {
+						add(editcmd.KeysString(ks), ext.HelpKindKey)
+					}
+				}
+			}
+		}
+	}
+	for _, c := range e.listCommands() {
+		add(":"+c.Name, ext.HelpKindCommand)
+	}
+	for _, d := range option.Defs() {
+		add(d.Name, ext.HelpKindOption)
+	}
+	for _, a := range input.Actions() {
+		add(a.ID, ext.HelpKindAction)
+	}
+	return out
+}
+
+// mdLink は、Markdown のリンク（[文](#見出し)）である。helpSummary が文だけを残す。
+var mdLink = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+
+// helpSummaryMax は、ヘルプの語の説明（helpSummary）の文字数の上限である。超えた分は … にする（仮）。
+const helpSummaryMax = 160
+
+// helpSummary は、:help の文書の行 line（語 word の説明の行）を、ヘルプの語の一覧に出す 1 行の説明にする（FR-148）。
+//
+//   - 見出しは、# を除いた見出しの文
+//   - 表の行は、最初の列が語を含めば 2 つ目からの列を、含まなければすべての列を、空白 2 つで区切って並べたもの
+//   - 「- `語`: 説明」の箇条書き（本体のキーの節、拡張機能の操作の節）は、説明
+//   - ほかの行は、行の文（箇条書きの - を除く）
+//
+// どれも、` を除き、リンクは文だけを残し、\| は | にする。
+func helpSummary(line, word string) string {
+	s := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(s, "#"):
+		s = strings.TrimLeft(s, "# ")
+	case strings.HasPrefix(s, "|"):
+		cells := strings.Split(strings.Trim(s, "| "), " | ")
+		if len(cells) > 1 && slices.ContainsFunc(codeSpans(cells[0]), func(c string) bool {
+			return c == word || strings.HasPrefix(c, word+" ") || c == ":"+word
+		}) {
+			cells = cells[1:]
+		}
+		s = strings.Join(cells, "  ")
+	default:
+		s = strings.TrimPrefix(s, "- ")
+		if spans := codeSpans(s); len(spans) > 0 {
+			if rest, ok := strings.CutPrefix(s, "`"+spans[0]+"`"); ok {
+				if rest, ok = strings.CutPrefix(rest, ":"); ok {
+					s = strings.TrimSpace(rest)
+				}
+			}
+		}
+	}
+	s = mdLink.ReplaceAllString(s, "$1")
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "`", ""), `\|`, "|")
+	if r := []rune(s); len(r) > helpSummaryMax {
+		s = string(r[:helpSummaryMax]) + "…"
+	}
+	return s
 }
 
 // 操作の ID の一覧の印（docs/usage.md。internal/input の TestActionIDDoc が同じ印で表を照合する）。

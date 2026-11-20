@@ -146,6 +146,13 @@ type Contribution struct {
 	// Keys は、既定のキーの列（"ys" など）である。利用者の設定で上書きできる。
 	// 既定のキーを持たない操作では空。
 	Keys string `json:"keys,omitempty"`
+	// OverrideKeys は、Keys に加えて割り当てる既定のキーの列で、本体の既定のキー（LSP と DAP の操作の既定のキーを含む）と
+	// 同じモードで重なっても、本体の操作からそのキーを外して、この操作に割り当てる（API 0.13.0）。
+	// Keys は本体の既定のキーと重なると割り当てないので、本体のキーを上書きすると決めたキーだけをここに書く
+	// （標準のファインダーの <C-p>。本体の <C-p> は貼り直し。FR-55）。拡張機能どうしの重なりは Keys と同じく割り当てない。
+	// 設定の keymap はこれより優先する。operators、motions、textObjects、commands の項目で読み、popupKeys の項目では読まない。
+	// 古い本体は黙って捨てる（割り当てない）。
+	OverrideKeys []string `json:"overrideKeys,omitempty"`
 	// Description は、操作の説明文である（基本設計 5.1）。本体はキーの一覧（FR-90）とヘルプ（:help）に出す。無ければ省く。
 	// 足したのは API 0.4.0 の後だが、版は上げていない（APIVersion の doc）。
 	Description string `json:"description,omitempty"`
@@ -225,7 +232,7 @@ func (m *Manifest) HandlesFileType(ft string) bool {
 //   - 操作の契機は、同じ種類の操作として Contributes にある ID を指すこと
 //   - ファイルの種類の契機は、Pattern が空でないこと
 //   - 設定からファイルの種類を作る契機（ActivationSettingsFileType）は、Pattern が "/" で始まること
-//   - Contributes の各操作の ID が空でなく、種類をまたいで重複しないこと
+//   - Contributes の各操作の ID が空でなく、種類をまたいで重複しないこと。OverrideKeys の各項目が空でないこと
 //   - Contributes.StatusLine の各部品の ID が、拡張機能の ID と "." で始まり、その後が空でなく "." を含まず、空白を含まず、重複しないこと
 //   - Contributes.PopupKeys の各項目の ID とキーが空でなく、ID が PopupKeys の中で重複しないこと
 //
@@ -274,6 +281,11 @@ func (m *Manifest) Validate() (warnings []error, err error) {
 			}
 			seen[c.ID] = path
 			ids[group.kind][c.ID] = true
+			for j, k := range c.OverrideKeys {
+				if k == "" {
+					errs = append(errs, fmt.Errorf("%s.overrideKeys[%d] が空である", path, j))
+				}
+			}
 		}
 	}
 

@@ -5,17 +5,18 @@ import "fmt"
 // 本体が持つ一覧の問い合わせ（基本設計 5.3 の段階 3 の表、6.9。FR-107）。
 //
 // 拡張機能は、editor/list（拡張機能 → 本体、リクエスト）で、本体が持つ一覧を 1 つずつ問い合わせる。
-// ファジーファインダーの拡張機能（FR-106）が、タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリストを候補にするために使う。
-// 応答は問い合わせた時点の写しで、後から変わっても知らせない。足したのは API 0.9.0 である。
+// ファジーファインダーの拡張機能（FR-106）が、タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリスト、ヘルプの語を候補にするために使う。
+// 応答は問い合わせた時点の写しで、後から変わっても知らせない。足したのは API 0.9.0 で、ヘルプの語（ListHelp）は API 0.13.0 で足した。
 const (
 	// MethodEditorList は、拡張機能から本体へのリクエストである。params は EditorListParams、result は EditorListResult。
 	MethodEditorList = "editor/list"
 	// MethodEditorExecute は、拡張機能から本体へのリクエストである。params は EditorExecuteParams、result は EditorExecuteResult。
 	// editor/list の keys と commands の項目を、利用者が打ったのと同じく実行させる（ファインダーで選んだキーとコマンド。PR #249 のレビューの必須 1）。
+	// help の項目は、その語の :help を開かせる（API 0.13.0。FR-148）。
 	MethodEditorExecute = "editor/execute"
 )
 
-// EditorExecuteParams は、editor/execute の params である。Keys と Command のどちらか一方を指定する。
+// EditorExecuteParams は、editor/execute の params である。Keys、Command、Help のどれか 1 つを指定する。
 //
 // 呼べる条件（満たさなければ、本体は実行せずに JSON-RPC の誤りで応答し、利用者のメッセージの行にも理由を出す）:
 //
@@ -39,18 +40,27 @@ type EditorExecuteParams struct {
 	// Command は、コマンドの一覧の項目の Name（ListCommand.Name）である。本体は :Name<CR> を打ったのと同じく実行する。
 	// 引数が要るコマンドは、打ったときと同じ誤りになる。
 	Command string `json:"command,omitempty"`
+	// Help は、ヘルプの語の一覧の項目の Word（ListHelpWord.Word）である。本体は :help Word を打ったのと同じく、
+	// その語の説明の行を開いたヘルプを出す（API 0.13.0。FR-148）。説明が見つからない語は、:help と同じ誤り（E149）を出す。
+	Help string `json:"help,omitempty"`
 }
 
-// Validate は、Selection を指定し、Keys と Command のどちらか一方だけを指定し、どちらも改行を含まないことを検査する。
+// Validate は、Selection を指定し、Keys、Command、Help のどれか 1 つだけを指定し、どれも改行を含まないことを検査する。
 // 一覧の項目と一致するかと、呼べる条件は本体が確かめる。
 func (p *EditorExecuteParams) Validate() error {
+	given := 0
+	for _, s := range []string{p.Keys, p.Command, p.Help} {
+		if s != "" {
+			given++
+		}
+	}
 	switch {
 	case p.Selection == 0:
 		return fmt.Errorf("selection を指定していない（view/select への応答としてだけ使える）")
-	case (p.Keys == "") == (p.Command == ""):
-		return fmt.Errorf("keys と command のどちらか一方を指定する")
-	case containsNewline(p.Command) || containsNewline(p.Keys):
-		return fmt.Errorf("keys か command が改行を含む")
+	case given != 1:
+		return fmt.Errorf("keys、command、help のどれか 1 つを指定する")
+	case containsNewline(p.Command) || containsNewline(p.Keys) || containsNewline(p.Help):
+		return fmt.Errorf("keys、command、help のどれかが改行を含む")
 	}
 	return nil
 }
@@ -73,12 +83,14 @@ const (
 	ListRegisters EditorListKind = "registers"
 	// ListJumps は、問い合わせを始めた client のジャンプリスト（基本設計 4.4）である（EditorListResult.Jumps）。
 	ListJumps EditorListKind = "jumps"
+	// ListHelp は、:help で引ける語（キー、Ex コマンド、設定の名前、操作の ID）である（EditorListResult.Help。API 0.13.0。FR-148）。
+	ListHelp EditorListKind = "help"
 )
 
 // Known は、k がこの版の API の知っている一覧の種類かを返す。
 func (k EditorListKind) Known() bool {
 	switch k {
-	case ListTabs, ListCommands, ListKeys, ListRegisters, ListJumps:
+	case ListTabs, ListCommands, ListKeys, ListRegisters, ListJumps, ListHelp:
 		return true
 	}
 	return false
@@ -104,6 +116,28 @@ type EditorListResult struct {
 	Keys      []ListKey      `json:"keys,omitempty"`
 	Registers []ListRegister `json:"registers,omitempty"`
 	Jumps     []ListJump     `json:"jumps,omitempty"`
+	Help      []ListHelpWord `json:"help,omitempty"`
+}
+
+// ListHelpWord の Kind の値。
+const (
+	HelpKindKey     = "key"
+	HelpKindCommand = "command"
+	HelpKindOption  = "option"
+	HelpKindAction  = "action"
+)
+
+// ListHelpWord は、:help で引ける語 1 つである（FR-148）。本体は、:help でその語の説明の行が見つかる語だけを返す。
+// 並びは、種類の順（キー、Ex コマンド、設定の名前、操作の ID）で、同じ種類の中は本体の一覧の順である。同じ語は 1 つにまとめる。
+type ListHelpWord struct {
+	// Word は、:help に渡す語（"w"、"<C-o>"、":write"、"lineNumber.show"、"page-down"）である。
+	// editor/execute の help に渡すと、その語の :help を開く。
+	Word string `json:"word"`
+	// Kind は、語の種類である。HelpKindKey（キー）、HelpKindCommand（Ex コマンドと拡張機能のコマンド。Word は : で始まる）、
+	// HelpKindOption（:option.set で変える設定の名前）、HelpKindAction（設定の keymap に書く操作の ID）のどれかである。
+	Kind string `json:"kind"`
+	// Description は、:help でその語を引いたときの説明の行から、Markdown の記号と語そのものを除いた 1 行である。無ければ空。
+	Description string `json:"description,omitempty"`
 }
 
 // ListTab は、タブ 1 つである。並びは、client の古い順に、各 client のタブの並びの順である。

@@ -13,6 +13,7 @@ import (
 
 	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/command"
 	"github.com/piplupflipper/vi-imitation/internal/exthost"
 	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
@@ -414,6 +415,129 @@ func TestPreviewFocus(t *testing.T) {
 	})
 }
 
+// previewTop は、部品 f のプレビューの中身を描く子の Renderer の、最初の行と行数を返す。まだ描いていなければ ok が false である。
+// イベントループの goroutine で呼ぶ。
+func previewTop(e *Editor, f *floatState) (top, rows int, ok bool) {
+	sub := previewViewport{f: f, r: e.renderer}.sub()
+	if sub == nil {
+		return 0, 0, false
+	}
+	return sub.Top(), sub.TextRows(), true
+}
+
+// プレビューを出しているポップアップのノーマルモードで、<S-Down> と <S-Up> は 1 画面（中身の行数から 2 を引いた行数）、
+// <A-S-Down> と <A-S-Up> は 1 行、プレビューをスクロールする。回数を付けるとその回数だけ動く。
+// フォーカスと一覧のカーソルは動かさず、色を付ける行も変えない。上は最初の行で、下は最後の行が窓の最後の行に来た位置で止まり、
+// 端でもう一度打っても動かず、誤りも出さない。開いているバッファを出しているときは、そのバッファ（タブ）のカーソルを動かさない。
+// 中身の無いプレビューと、プレビューの無いポップアップと、編集のバッファでは何もしない。
+//
+// req: FR-159
+func TestPreviewScroll(t *testing.T) {
+	dir := previewDir(t)
+	h, ft := startPreview(t, dir, 200, 20, nil, "b.txt")
+	f := openPreviewFloat(h, ext.ViewList, []ext.ViewItem{
+		{ID: "a", Label: "a.go", Preview: pvOf(filepath.Join(dir, "a.go"))},
+		{ID: "x", Label: "bin.dat", Preview: pvOf(filepath.Join(dir, "bin.dat"))},
+	})
+	fireLast(h, ft, 0)
+	waitPreview(h, f, "p:"+filepath.Join(dir, "a.go")+"#-")
+	h.eventually("プレビューの中身", func() bool {
+		_, _, ok := previewTop(h.e, f)
+		return ok && strings.Contains(h.term.screen(), "package main")
+	})
+	var rows int
+	h.e.do(func() { _, rows, _ = previewTop(h.e, f) })
+	if rows < 5 || rows >= 40 {
+		t.Fatalf("preview rows = %d", rows)
+	}
+	page, bottom := rows-2, 40-rows
+	check := func(keys string, want int) {
+		t.Helper()
+		h.keys(keys)
+		h.settle()
+		h.e.do(func() {
+			top, _, _ := previewTop(h.e, f)
+			if top != want {
+				t.Errorf("%s: preview top = %d, want %d", keys, top, want)
+			}
+			if h.e.cur != f.bs || f.bs.state.Cursor().Line != 0 || f.preview.focus || h.e.message.Text != "" {
+				t.Errorf("%s: focus or the list cursor moved, or a message %q", keys, h.e.message.Text)
+			}
+			if c := f.preview.bs.state.Cursor().Line; c < top || c >= top+rows {
+				t.Errorf("%s: preview cursor %d is outside %d..%d", keys, c, top, top+rows-1)
+			}
+		})
+		// 描いた画面でも、窓の最初の行が top+1 行目（1 行目は "package main"）である。
+		if want > 0 {
+			line := fmt.Sprintf("// line %d ", want+1)
+			if !strings.Contains(h.term.screen()+" ", line) {
+				t.Errorf("%s: %q is not on the screen", keys, line)
+			}
+		}
+	}
+	check("<S-Up>", 0)
+	check("<S-Down>", page)
+	check("<A-S-Down>", page+1)
+	check("2<A-S-Down>", page+3)
+	check("<A-S-Up>", page+2)
+	check("<S-Down><S-Down><S-Down><S-Down>", bottom)
+	check("<S-Down>", bottom)
+	check("<A-S-Down>", bottom)
+	check("<S-Up><S-Up><S-Up><S-Up><S-Up>", 0)
+
+	// 中身の無いプレビュー（バイナリのファイル）では何もしない。
+	h.keys("j")
+	h.settle()
+	fireLast(h, ft, 1)
+	waitPreview(h, f, "p:"+filepath.Join(dir, "bin.dat")+"#-")
+	h.keys("<S-Down>")
+	h.settle()
+	h.e.do(func() {
+		if f.preview.bs != nil || h.e.message.Text != "" || f.bs.state.Cursor().Line != 1 {
+			t.Errorf("scroll without contents: %+v %q", f.preview.bs, h.e.message.Text)
+		}
+	})
+	h.keys("<Esc>")
+	h.settle()
+
+	// 開いているバッファ（タブの a.go）を出しているときは、タブのカーソルを動かさず、プレビューの側の行を動かす。
+	h.keys(":e a.go<CR>5G")
+	h.settle()
+	var tab *bufferState
+	h.e.do(func() { tab = h.e.cur })
+	g := openPreviewFloat(h, ext.ViewList, []ext.ViewItem{{ID: "a", Label: "a.go", Preview: pvOf(filepath.Join(dir, "a.go"), 1)}})
+	fireLast(h, ft, 2)
+	waitPreview(h, g, "p:"+filepath.Join(dir, "a.go")+"#1")
+	h.eventually("開いているバッファのプレビュー", func() bool { _, _, ok := previewTop(h.e, g); return ok && !g.preview.owned })
+	h.keys("<S-Down><S-Down>")
+	h.settle()
+	h.e.do(func() {
+		top, _, _ := previewTop(h.e, g)
+		if top != min(2*page, bottom) || top == 0 || tab.state.Cursor().Line != 4 || !g.preview.anchored || g.preview.anchor < top || g.preview.anchor >= top+rows {
+			t.Errorf("scroll an open buffer: top %d (page %d), tab cursor %+v, anchor %d %v", top, page, tab.state.Cursor(), g.preview.anchor, g.preview.anchored)
+		}
+	})
+	h.keys("<Esc>")
+	h.settle()
+
+	// プレビューの無いポップアップと編集のバッファでは何もしない。
+	k := openPreviewFloat(h, ext.ViewList, []ext.ViewItem{{ID: "k", Label: "key"}, {ID: "l", Label: "key2"}})
+	h.keys("<S-Down><A-S-Down>")
+	h.settle()
+	h.e.do(func() {
+		if h.e.float != k || k.bs.state.Cursor().Line != 0 || h.e.message.Text != "" {
+			t.Errorf("scroll without a preview: cursor %+v, message %q", k.bs.state.Cursor(), h.e.message.Text)
+		}
+	})
+	h.keys("<Esc><S-Down><S-Up>")
+	h.settle()
+	h.e.do(func() {
+		if h.e.float != nil || h.e.cur != tab || tab.state.Cursor().Line != 4 || h.e.message.Text != "" {
+			t.Errorf("<S-Down> in a tab: cursor %+v, message %q", tab.state.Cursor(), h.e.message.Text)
+		}
+	})
+}
+
 // 端末多重化ソフトのポップアップに出す中央のポップアップも、編集の client の画面に描く窓と同じ規則と同じ設定の項目で決める。
 // ポップアップの幅の百分率は端末の幅に対するものなので、出すかも、ポップアップを出す端末の幅（Config.PopupScreenWidth）の 90% で決め、
 // 出すなら 90% の幅で開かせて、ポップアップの部品の client の画面（枠線の内側）で一覧の右にプレビューを描く。
@@ -682,6 +806,99 @@ func TestStandardPreviews(t *testing.T) {
 	h90.e.do(func() {
 		if p := pv90(); p.loading || p.key != "" {
 			t.Errorf("a preview of the filer on the 90-column screen: %+v", p)
+		}
+	})
+}
+
+// 標準のファインダー（入力の行がインサートモード）とファイラ（木がノーマルモード）の中央のポップアップで、
+// <S-Down> と <S-Up> はフォーカスを入力の行と木に置いたままプレビューをスクロールする。ファインダーはインサートモードのままで、入力の行も変わらない。
+// 設定の keymap で操作の ID を別のキーに割り当てられる（FR-126）。プレビューを出さない狭い画面では何もしない。
+//
+// req: FR-159
+func TestStandardPreviewScroll(t *testing.T) {
+	finder := buildFinder(t)
+	filer := buildStdExt(t, "vi-imitation-ext-filer")
+	dir := previewDir(t)
+	specs := []exthost.Spec{finder, filer}
+	startW := func(w int) *harness {
+		term := newFakeTerm()
+		term.w, term.h = w, 24
+		return startTerm(t, term, Config{
+			WorkDir: dir, Extensions: specs, Options: noIcons,
+			KeymapActions: map[string]map[string]string{"insert": {"<C-f>": "preview.page-down"}, "normal": {"<C-f>": "preview.page-down"}},
+		}, "c.txt")
+	}
+	// topOf は、ポップアップのプレビューの最初の行を返す。eventually の中（イベントループの goroutine）で呼ぶ。
+	topOf := func(h *harness) int {
+		if h.e.float == nil {
+			return -1
+		}
+		top, _, _ := previewTop(h.e, h.e.float)
+		return top
+	}
+	h := startW(200)
+	h.keys("<Space>ff")
+	h.eventually("ファイルのファインダー", func() bool { _, _, _, ok := finderOf(h.e); return ok })
+	h.keys("a.go")
+	h.eventually("ファイルのプレビュー", func() bool {
+		f := h.e.float
+		if f == nil || f.preview.bs == nil || f.preview.key != "p:"+filepath.Join(dir, "a.go")+"#-" {
+			return false
+		}
+		_, _, ok := previewTop(h.e, f)
+		return ok
+	})
+	h.keys("<S-Down>")
+	h.eventually("ファインダーのプレビューのスクロール", func() bool { return topOf(h) > 0 })
+	var first int
+	h.e.do(func() { first = topOf(h) })
+	h.keys("<C-f>")
+	h.eventually("keymap の <C-f>", func() bool { return topOf(h) > first })
+	h.keys("<S-Up><S-Up><S-Up>")
+	h.eventually("上の端", func() bool { return topOf(h) == 0 })
+	h.e.do(func() {
+		f := h.e.float
+		if f == nil || h.e.cur != f.bs || f.bs.state.Mode() != command.ModeInsert || f.bs.buf.Line(0) != "a.go" {
+			t.Errorf("finder after scrolling: mode or input changed")
+		}
+	})
+	h.keys("<Esc>")
+	h.settle()
+
+	h.keys("<Space>e")
+	h.eventually("ファイラ", func() bool { f := h.e.float; return f != nil && f.kind == floatTree })
+	h.keys("/a.go<CR>")
+	h.eventually("ファイラのプレビュー", func() bool {
+		f := h.e.float
+		if f == nil || f.preview.bs == nil || f.preview.key != "p:"+filepath.Join(dir, "a.go")+"#-" {
+			return false
+		}
+		_, _, ok := previewTop(h.e, f)
+		return ok
+	})
+	h.keys("<S-Down>")
+	h.eventually("ファイラのプレビューのスクロール", func() bool { return topOf(h) > 0 })
+	h.keys("<C-f>")
+	h.eventually("ファイラの keymap の <C-f>", func() bool { return topOf(h) > first })
+	h.e.do(func() {
+		f := h.e.float
+		if f == nil || h.e.cur != f.bs || !strings.Contains(f.bs.buf.Line(f.bs.state.Cursor().Line), "a.go") {
+			t.Errorf("filer after scrolling: focus or cursor moved")
+		}
+	})
+	h.keys("<Esc>")
+	h.settle()
+
+	// 90 列の画面では、プレビューを出さないので何もしない（入力の行も一覧のカーソルも変わらない）。
+	h90 := startW(90)
+	h90.keys("<Space>ff")
+	h90.eventually("ファイルの一覧", func() bool { return finderText(h90.e) != "" })
+	h90.keys("a.go<S-Down><A-S-Down>")
+	h90.settle()
+	h90.e.do(func() {
+		f := h90.e.float
+		if f == nil || f.bs.buf.Line(0) != "a.go" || f.list.state.Cursor().Line != 0 || h90.e.message.Text != "" {
+			t.Errorf("scroll on the 90-column screen changed the finder")
 		}
 	})
 }

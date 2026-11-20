@@ -15,6 +15,8 @@ import (
 
 	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/input"
 	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
@@ -84,6 +86,11 @@ type previewState struct {
 	id uint64
 	// focus は、フォーカスをプレビューへ移したことを表す。キーは bs の State へ入る。
 	focus bool
+	// anchor は、開いているバッファを出しているとき（owned でない）に、スクロール（scrollPreview）で動かした中身のカーソルの行で、
+	// anchored がそれを持っていることを表す。持っていなければ、中身のカーソルは色を付ける行（line）に置く。
+	// 開いているバッファのカーソルはタブのカーソルなので動かさず、プレビューの側に持つ。出すものを替えたら捨てる。
+	anchor   int
+	anchored bool
 }
 
 // forget は、閉じたバッファ bs をプレビューに出していれば、出していないことにする。次の描画で出し直す。
@@ -324,7 +331,7 @@ func (e *Editor) previewTitle(name, path string, line int) string {
 func (e *Editor) movePreviewLine(f *floatState, key string, line int, pv *ext.ViewPreview) {
 	p := &f.preview
 	p.key, p.pending, p.loading = key, "", false
-	p.line = line
+	p.line, p.anchored = line, false
 	name := ""
 	if p.bs.path == "" {
 		name = e.bufferName(p.bs)
@@ -364,6 +371,7 @@ func (e *Editor) setPreview(f *floatState, key string, content previewContent, o
 	e.dropPreviewBuffer(f)
 	p.key, p.pending, p.loading = key, "", false
 	p.line, p.title, p.note, p.source = -1, content.title, content.note, source
+	p.anchored = false
 	e.previewSeq++
 	p.id = e.previewSeq
 	switch {
@@ -483,11 +491,117 @@ func (e *Editor) uiPreview(f *floatState) *ui.Preview {
 			}
 		}
 	default:
-		// 開いているバッファは、そのカーソルを動かさず、色を付ける行にカーソルを置いた形で描く。
-		view.Cursor = buffer.Position{Line: max(out.Line, 0)}
+		// 開いているバッファは、そのカーソルを動かさず、色を付ける行（スクロールした後はプレビューの側に持つ行）にカーソルを置いた形で描く。
+		line := max(out.Line, 0)
+		if p.anchored {
+			line = min(p.anchor, max(n-1, 0))
+		}
+		view.Cursor = buffer.Position{Line: line}
 	}
 	out.View = view
 	return out
+}
+
+// previewScrollAction は、ref がプレビューをスクロールする操作（input.PreviewPrefix で始まる ID。FR-159）なら、
+// バッファ bs でキーを受けている部品（ポップアップかペイン。フォーカスをプレビューへ移していればそのプレビューのバッファ）の
+// プレビューを n 回スクロールし、true を返す。n が 0 なら 1 回である（回数を付けていない）。
+// bs でキーを受けている部品が無いか、その部品がプレビューを出していなければ、何もせずに true を返す（編集のバッファの <S-Down>）。
+// それ以外の操作なら false を返す。
+//
+// ノーマルモードのキー（ファイラの木）は、ほかの提供者へ振り分ける操作と同じく extQuery.Action から呼ぶ。
+// インサートモードのキー（ファインダーの入力の行）は、インサートモードの State が提供者へ振り分ける操作を実行しないので、
+// ポップアップのキーの口（previewInsertKey）から呼ぶ。
+//
+// req: FR-159
+func (e *Editor) previewScrollAction(bs *bufferState, ref editcmd.Ref, n int) bool {
+	how, ok := strings.CutPrefix(ref.ID, input.PreviewPrefix)
+	if !ref.Provider() || !ok {
+		return false
+	}
+	f := e.float
+	if f == nil || !f.focused || (f.bs != bs && !(f.preview.focus && f.preview.bs == bs)) {
+		return true
+	}
+	e.scrollPreview(f, how, max(n, 1))
+	return true
+}
+
+// previewInsertKey は、フォーカスのあるポップアップ f の入力の行（インサートモード）のキー k が、
+// 操作の表のインサートモードでプレビューをスクロールする操作に割り当てたキーなら、スクロールして true を返す（FR-159）。
+// 設定の keymap で割り当てを変えたときも、その割り当てを引く（FR-126）。
+//
+// req: FR-159
+func (e *Editor) previewInsertKey(f *floatState, k editcmd.Key) bool {
+	b, ok := e.keymap.Lookup(input.MapInsert, []editcmd.Key{k})
+	if !ok {
+		return false
+	}
+	return e.previewScrollAction(f.bs, b.Ref, 1)
+}
+
+// scrollPreview は、部品 f のプレビューを、how（page-down、page-up、down、up）の向きと単位で n 回スクロールする（FR-159）。
+// プレビューを出していないとき、中身が無いとき（理由だけを出している）、まだ描いていないときは何もしない。
+//
+// 1 画面は、プレビューの中身の行数から 2 を引いた行数（Vim の <C-f> と同じ。1 行より少なければ 1 行）である。
+// 下へは、最後の行がプレビューの最後の行に来る位置で止め、最後の行の後に空の行を出さない（fzf-lua の preview-page-down が
+// 最後の行を窓の下の端に合わせる（zb）のと同じ）。上へは最初の行で止める。端では何もしない（失敗にしない）。
+// フォーカスは一覧（ファインダーの入力の行）に置いたままで、一覧のカーソルとプレビューに出すものは変えない。
+//
+// 中身を描く子の Renderer（previewViewport）のスクロールの位置を動かし、中身のカーソル（フォーカスが無ければ見えない）を
+// 窓の中に入るように動かす。子の Renderer は次の描画でカーソルが窓の外ならスクロールし直すためである。
+// プレビューのために作ったバッファはそのカーソルを、開いているバッファはプレビューの側の行（previewState.anchor）を動かす。
+// 色を付ける行（grep の一致した行）は変えない。別の項目へ移ると、新しい項目の行を真ん中に置き直す（ui の drawPreview）。
+//
+// req: FR-159
+func (e *Editor) scrollPreview(f *floatState, how string, n int) {
+	p := &f.preview
+	if !e.previewShown(f) || p.bs == nil || !slices.Contains(e.bufs, p.bs) {
+		return
+	}
+	sub := previewViewport{f: f, r: e.renderer}.sub()
+	if sub == nil {
+		return
+	}
+	rows := max(sub.TextRows(), 1)
+	lines := p.bs.buf.LineCount()
+	var step int
+	switch how {
+	case "page-down":
+		step = max(rows-2, 1)
+	case "page-up":
+		step = -max(rows-2, 1)
+	case "down":
+		step = 1
+	case "up":
+		step = -1
+	default:
+		return
+	}
+	top := sub.Top()
+	next := top + step*n
+	if step > 0 {
+		// 行を真ん中に置いた位置（最後の行の後に空の行が出ている）からは、上へ戻さない。
+		next = max(min(next, max(lines-rows, 0)), top)
+	} else {
+		next = max(next, 0)
+	}
+	if next == top {
+		return
+	}
+	sub.SetScroll(next, sub.Left())
+	last := max(min(next+rows, lines)-1, next)
+	if p.owned {
+		cur := p.bs.state.Cursor()
+		if cur.Line < next || cur.Line > last {
+			p.bs.state.SetCursor(buffer.Position{Line: min(max(cur.Line, next), last)})
+		}
+		return
+	}
+	cur := max(p.line, 0)
+	if p.anchored {
+		cur = p.anchor
+	}
+	p.anchor, p.anchored = min(max(cur, next), last), true
 }
 
 // previewViewport は、プレビューのバッファのページ単位のスクロール（command.State.Viewport）を、プレビューの表示領域につなぐ口である。

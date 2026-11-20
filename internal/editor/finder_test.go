@@ -187,6 +187,63 @@ func TestStandardFinder(t *testing.T) {
 	h.keys(":readonly<CR>")
 }
 
+// 標準のファジーファインダーの <C-p> は、本体の貼り直し（FR-55）に代えて :finder.files を開く（宣言ファイルの overrideKeys）。
+// <Space>fh はヘルプの語の一覧を開き、選んだ語の :help を開く（FR-148）。一覧はキー、Ex コマンド、設定の名前、操作の ID を含む。
+//
+// req: FR-148
+func TestStandardFinderHelp(t *testing.T) {
+	spec := buildFinder(t)
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, "a.txt")
+	h.keys("<C-p>")
+	h.eventually("<C-p> のファイルの一覧", func() bool {
+		f := h.e.float
+		return f != nil && f.kind == floatFinder && strings.HasPrefix(f.title, "ファイル") && strings.HasSuffix(finderText(h.e), "a.txt")
+	})
+	h.keys("<Esc>")
+	h.eventually("閉じたファインダー", func() bool { return h.e.float == nil })
+
+	h.keys("<Space>fh")
+	h.eventually("ヘルプの語の一覧", func() bool { f := h.e.float; return f != nil && strings.HasPrefix(f.title, "ヘルプ") })
+	// ファインダーが送るのは上位 300 件なので、語の一覧は本体の一覧（editor/list の help）で確かめる。
+	var words []ext.ListHelpWord
+	var lines []string
+	h.e.do(func() { words, lines = h.e.listHelpWords(), strings.Split(h.e.helpText(), "\n") })
+	kinds := map[string]string{}
+	for _, w := range words {
+		if _, dup := kinds[w.Word]; dup {
+			t.Errorf("help word %q appears twice", w.Word)
+		}
+		kinds[w.Word] = w.Kind
+		if _, ok := helpLine(lines, w.Word); !ok {
+			t.Errorf("help word %q is not found by :help", w.Word)
+		}
+	}
+	for w, kind := range map[string]string{
+		"<C-o>": ext.HelpKindKey, "<C-p>": ext.HelpKindKey, "<Space>ff": ext.HelpKindKey, ":tabmove": ext.HelpKindCommand,
+		":finder.files": ext.HelpKindCommand, "lineNumber.show": ext.HelpKindOption, "page-down": ext.HelpKindAction,
+		"preview.page-down": ext.HelpKindAction,
+	} {
+		if kinds[w] != kind {
+			t.Errorf("help word %q: kind %q, want %q", w, kinds[w], kind)
+		}
+	}
+	for _, w := range words {
+		if w.Word == "w" && w.Description != "次の単語の先頭へ（nvo）" {
+			t.Errorf("w の説明 = %q", w.Description)
+		}
+	}
+	h.keys("tabmove")
+	h.eventually("絞ったヘルプの語", func() bool { return strings.HasPrefix(finderText(h.e), ":tabmove ") })
+	h.keys("<CR>")
+	h.eventually(":help :tabmove", func() bool { f := h.e.float; return f != nil && f.kind == floatText && f.title == helpTitle })
+	var line string
+	h.e.do(func() { line = h.e.cur.buf.Line(h.e.cur.state.Cursor().Line) })
+	if !strings.Contains(line, "`:tabmove") {
+		t.Errorf(":help :tabmove の行 = %q", line)
+	}
+}
+
 // ファインダーを開くキーを記録したマクロを再生すると、拡張機能が応答の前にポップアップを開き、再生の残りのキーはファインダーに入る。
 // 元のバッファは書き換わらない（PR #249 のレビューの必須 2）。
 //

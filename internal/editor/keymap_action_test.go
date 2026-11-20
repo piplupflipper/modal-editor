@@ -312,12 +312,13 @@ func TestInsertUnmappedKeys(t *testing.T) {
 }
 
 // 操作の表のインサートモードの操作の ID（internal/input）と、実装のある ID（internal/command）は同じである。
+// 提供者へ振り分ける操作（プレビューのスクロール。FR-159）は、internal/editor がポップアップのキーの口で実行するので除く。
 //
 // req: FR-127
 func TestInsertActionIDs(t *testing.T) {
 	var table []string
 	for _, a := range input.Actions() {
-		if a.Modes&input.MapInsert != 0 {
+		if a.Modes&input.MapInsert != 0 && !a.Provider {
 			table = append(table, a.ID)
 		}
 	}

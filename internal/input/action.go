@@ -53,12 +53,14 @@ func Actions() []Action {
 			add(Action{ID: s.id, Kind: t.kind, Modes: modes, Description: s.desc, takesChar: s.takesChar, takesChar2: s.takesChar2, next: s.next})
 		}
 	}
-	for _, s := range providerKeys {
-		modes := s.modes
-		if modes == 0 {
-			modes = defaultModes[s.kind]
+	for _, ss := range [][]providerSpec{providerKeys, previewKeys} {
+		for _, s := range ss {
+			modes := s.modes
+			if modes == 0 {
+				modes = defaultModes[s.kind]
+			}
+			add(Action{ID: s.id, Kind: s.kind, Modes: modes, Provider: true, Description: s.desc})
 		}
-		add(Action{ID: s.id, Kind: s.kind, Modes: modes, Provider: true, Description: s.desc})
 	}
 	return out
 }

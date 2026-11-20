@@ -85,6 +85,52 @@ func TestBuildKeymapLeader(t *testing.T) {
 	}
 }
 
+// 宣言ファイルの overrideKeys のキーは、keys に加えて割り当て、本体の既定のキー（<C-p> の貼り直し）と重なれば本体のキーを外す。
+// 外した本体のキーは、設定の keymap が外したものと違い、キーの一覧に残さない。keys は今までどおり本体のキーと重なれば割り当てない。
+// 拡張機能どうしの重なりは、overrideKeys でも割り当てずに誤りにする（宣言の順に依らない）。
+// 設定の keymap は overrideKeys より優先する。
+func TestBuildKeymapOverrideKeys(t *testing.T) {
+	specs := []exthost.Spec{
+		{Manifest: ext.Manifest{ID: "fx", Contributes: ext.Contributes{Commands: []ext.Contribution{
+			{ID: "fx.files", Keys: "<Leader>ff", OverrideKeys: []string{"<C-p>", "<Leader>zz"}},
+			{ID: "fx.bb", OverrideKeys: []string{"<C-b>"}},
+			{ID: "fx.next", Keys: "<C-n>"},
+		}}}},
+		{Manifest: ext.Manifest{ID: "gx", Contributes: ext.Contributes{Commands: []ext.Contribution{
+			{ID: "gx.zz", Keys: "<Leader>zz"},
+			{ID: "gx.bb", Keys: "<C-b>"},
+		}}}},
+	}
+	km, errs := buildKeymap(specs, editcmd.MustParseKeys("<Space>"))
+	// keys の <C-n> は本体の貼り直しと重なるので割り当てない。overrideKeys の <Space>zz と <C-b> は gx の keys と重なる。
+	if len(errs) != 3 || !strings.Contains(errs[0].Error(), "fx.next（<C-n>）") ||
+		!strings.Contains(errs[1].Error(), "fx.files（<Leader>zz）") || !strings.Contains(errs[2].Error(), "fx.bb（<C-b>）") {
+		t.Errorf("errs = %v", errs)
+	}
+	for keys, want := range map[string]string{"<C-p>": "fx/fx.files", "<Space>ff": "fx/fx.files", "<Space>zz": "gx/gx.zz", "<C-b>": "gx/gx.bb", "<C-n>": "/put-newer"} {
+		b, ok := km.Lookup(input.MapNormal, editcmd.MustParseKeys(keys))
+		if got := b.Ref.Extension + "/" + b.Ref.ID; !ok || got != want {
+			t.Errorf("%s = %s (%v), want %s", keys, got, ok, want)
+		}
+	}
+	for _, b := range append(km.Bindings(), km.Overridden()...) {
+		if b.Ref.ID == "put-older" {
+			t.Errorf("put-older remains: %+v", b)
+		}
+	}
+
+	// 設定の keymap は、拡張機能の overrideKeys より優先する。
+	finder := []exthost.Spec{specs[0]}
+	finder[0].Manifest.Command = "/bin/true"
+	h := start(t, Config{Extensions: finder, KeymapActions: map[string]map[string]string{"normal": {"<C-p>": "put-older"}}})
+	var b input.Binding
+	var ok bool
+	h.e.do(func() { b, ok = h.e.keymap.Lookup(input.MapNormal, editcmd.MustParseKeys("<C-p>")) })
+	if !ok || b.Ref.ID != "put-older" || !b.User {
+		t.Errorf("<C-p> with the user keymap = %+v, %v", b, ok)
+	}
+}
+
 // 設定の leader とキーマップの <Leader> を、起動したエディタで使える。
 //
 // req: FR-97
