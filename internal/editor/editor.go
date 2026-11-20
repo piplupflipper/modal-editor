@@ -15,6 +15,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command"
 	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/command/target"
 	"github.com/piplupflipper/vi-imitation/internal/config"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/exthost"
@@ -357,6 +358,9 @@ type Editor struct {
 	// flash は、決まった時間が過ぎたら消える色付け（ヤンクした範囲の色。FR-140）である。本体の全体で 1 つだけ持つ（flash.go）。
 	// 無ければ nil。
 	flash *flash
+	// findMatch は、打つたびの検索（FR-153）が、イベントループの外の goroutine で一致を探す関数である（incsearch.go）。
+	// 既定は target.FindMatch で、テストが、検索の終わる順と時間の上限を超えたときを確かめるために差し替える。
+	findMatch func(ctx context.Context, src target.Lines, from buffer.Position, s target.Search, count, steps int) (target.Match, error)
 	// decoDone は、別の goroutine で作り終えた構文の色の表を、イベントループへ渡す（rebuildDecorations）。
 	decoDone chan decoBuilt
 	// checkDone は、別の goroutine で確かめた外での変更の結果を、イベントループへ渡す（startCheck）。
@@ -534,6 +538,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		resizeCh:    make(chan struct{}, 1),
 		inspect:     make(chan func()),
 		afterFunc:   afterFunc,
+		findMatch:   target.FindMatch,
 		decoDone:    make(chan decoBuilt),
 		checkDone:   make(chan []fileResult),
 		attachCh:    make(chan attachRequest),

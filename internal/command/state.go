@@ -192,6 +192,10 @@ type State struct {
 	visual      visualState
 	cmdline     []rune
 	search      *pendingSearch // / か ? でパターンを入力している間の値。Ex コマンドの入力中は nil
+	// searchGen は、/ か ? の入力を始めた回数である（pendingSearch.gen）。
+	searchGen uint64
+	// searchSteps は、<CR> で決めた / と ? を実行している間だけ、<C-g> と <C-t> で動かした数を持つ（finishSearch。request が読む）。
+	searchSteps int
 	// searchBackward は、直前の検索（/、?、*、#）が後ろ向きだったかである。n と N の向きを決める。
 	searchBackward bool
 	recording      rune // マクロの記録先。0 なら記録していない

@@ -111,6 +111,8 @@ type viewFields struct {
 	regList *regListState
 	// outView は、開いている出力の欄である。nil なら閉じている。
 	outView *outputView
+	// inc は、/ か ? でパターンを打っている間の、打つたびの検索の状態である（incsearch.go。FR-153）。打っていなければ nil。
+	inc *incSearch
 	// quit は、client の最後のタブを閉じたので、この client を終えることを表す（reapClients が外す）。
 	quit bool
 }

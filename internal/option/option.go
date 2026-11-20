@@ -136,6 +136,11 @@ const (
 	// SearchHighlight は、直前の検索のパターンに一致する範囲に色を付けるかである（FR-137。Vim の 'hlsearch'）。
 	// 描画が、描くたびにこの値と直前の検索のパターンを読む。
 	SearchHighlight = "search.highlight"
+	// SearchIncrementalTimeoutMs は、/ と ? でパターンを打っている間の、打つたびの検索の時間の上限のミリ秒である（FR-153）。
+	// 上限を超えたら、その回は一致を出さない。<CR> で決めたときの検索には上限を付けない。範囲は 1 から 10000 である。
+	// 既定の 500 は、Vim 9.1 の 'incsearch' が検索を約 0.5 秒で打ち切るのと同じである（:help 'incsearch'。'redrawtime' の既定の 2000 は
+	// 'hlsearch' の色付けの上限で、打つたびの検索には使わない）。打つたびの検索をしない設定は持たない（#296 のオーナーの決め）。
+	SearchIncrementalTimeoutMs = "search.incrementalTimeoutMs"
 	// YankHighlightMs は、本体の y でヤンクした範囲に色を付けておくミリ秒である（FR-140。nvim の vim.hl.on_yank の timeout）。
 	// 0 なら付けない。範囲は 0 から 10000 である。Vim にこの設定は無い。
 	YankHighlightMs = "yank.highlightMs"
@@ -162,6 +167,8 @@ var defs = []Def{
 	{Name: LineNumberShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: LineNumberMinWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}},
 	{Name: SearchHighlight, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	// 下限は、打つたびの検索をしない値（0）を作らないため 1 にした。上限は yank.highlightMs と同じ 10 秒にした。
+	{Name: SearchIncrementalTimeoutMs, Type: Int, Scope: ScopeEditor, Default: IntValue(500), Range: &IntRange{Min: 1, Max: 10000}},
 	// 上限は、色を一瞬だけ付ける設定なので 10 秒にした（ミリ秒を時間の長さにしたときに溢れないためでもある）。
 	{Name: YankHighlightMs, Type: Int, Scope: ScopeEditor, Default: IntValue(0), Range: &IntRange{Min: 0, Max: 10000}},
 	// 境目の上限は、端末の列数として現実に無い大きさにした。0 にすると、プレビューの欄を持つ窓では常に出す。

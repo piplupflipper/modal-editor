@@ -24,6 +24,12 @@ type pendingSearch struct {
 	back Mode
 	// delim は、コマンドラインの先頭の文字（'/' か '?'）である。
 	delim rune
+	// gen は、入力を始めるたびに進む番号（State.searchGen）である。打つたびの検索の問い（IncSearch.Gen）に入れる。
+	gen uint64
+	// steps は、<C-g> を打った数から <C-t> を打った数を引いたものである（target.Request.SearchSteps。FR-153）。
+	steps int
+	// shown は、打つたびの検索で最後に受け取った結果である（ShowIncSearch）。nil ならまだ受け取っていない。
+	shown *incShown
 }
 
 // searchInputMotions は、パターンをコマンドラインで受け取る検索のモーションの ID と、コマンドラインの先頭の文字である。
@@ -103,7 +109,8 @@ func (s *State) CommandLineType() rune {
 //
 // req: FR-01, FR-03
 func (s *State) startSearch(cmd editcmd.Command, delim rune) {
-	s.search = &pendingSearch{cmd: cmd, back: s.mode, delim: delim}
+	s.searchGen++
+	s.search = &pendingSearch{cmd: cmd, back: s.mode, delim: delim, gen: s.searchGen}
 	s.cmdline = s.cmdline[:0]
 	s.mode = ModeCommandLine
 }
@@ -120,7 +127,12 @@ func (s *State) cancelSearch() {
 // text が空なら（/<CR>）、直前のパターンを使う。直前のパターンも無ければ E35 で失敗する。
 // オフセット（/foo/e の e）は未対応で、空でないオフセットは E319 で失敗する。空のオフセット（/foo/）は無いものとして扱う。
 //
-// req: FR-03, FR-09
+// 打っている間に <C-g> と <C-t> で一致を動かしていれば、その数（pendingSearch.steps）だけ動かした一致へ移る（target.Request.SearchSteps）。
+// 一致は、打つたびの検索と同じ target.FindMatch で、時間の上限を付けずに決めるので、打っている間に出した一致と同じになる（FR-153）。
+// ジャンプリスト、直前の検索、消した一致の色を戻すことは、ここから実行する値（s.run）だけが行う。打つたびの検索は、どれも変えない。
+// 動かした数は、実行する値には残さない。ドットリピートは、パターンと回数だけを繰り返す。
+//
+// req: FR-03, FR-09, FR-153
 func (s *State) finishSearch(text string) {
 	ps := s.search
 	s.mode = ps.back
@@ -139,6 +151,8 @@ func (s *State) finishSearch(text string) {
 	}
 	cmd := ps.cmd
 	cmd.Target.Pattern = pat
+	s.searchSteps = ps.steps
+	defer func() { s.searchSteps = 0 }()
 	s.run(cmd)
 }
 

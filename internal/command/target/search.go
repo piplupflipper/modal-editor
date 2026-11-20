@@ -1,6 +1,7 @@
 package target
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -42,12 +43,12 @@ func (e *PatternError) Error() string {
 func (e *PatternError) Unwrap() error { return e.Err }
 
 // searchMotion は、/（backward が true なら ?）を返す。req.Search.Pattern を検索する。向きは req.Search を見ない。
-// パターンを受け取るコマンドラインは呼び出し側が持つ。
+// パターンを受け取るコマンドラインは呼び出し側が持つ。打っている間に <C-g> と <C-t> で動かした数（req.SearchSteps）だけ、一致を動かす。
 //
 // req: FR-03, FR-09
 func searchMotion(backward bool) MotionFunc {
 	return func(b *buffer.Buffer, req Request) (Result, error) {
-		return search(b, req, req.Cursor, Search{Pattern: req.Search.Pattern, Backward: backward})
+		return search(b, req, req.Cursor, Search{Pattern: req.Search.Pattern, Backward: backward}, req.SearchSteps)
 	}
 }
 
@@ -59,7 +60,7 @@ func searchRepeat(reverse bool) MotionFunc {
 	return func(b *buffer.Buffer, req Request) (Result, error) {
 		s := req.Search
 		s.Backward = s.Backward != reverse
-		return search(b, req, req.Cursor, s)
+		return search(b, req, req.Cursor, s, 0)
 	}
 }
 
@@ -150,35 +151,154 @@ func isASCIIWord(r rune) bool {
 //   - バッファの端に着いたら、反対の端から from の行まで続け、Result.Wrapped を true にする
 //
 // パターンは行ごとに当てる。改行をまたぐ一致（\n を含むパターン）は見つからない。
-// 回数の分だけ、見つけた一致から次の一致を探す。どこにも無ければ ErrPatternNotFound を返す。
-// 返す Result.Search は s である。
+// 回数の分だけ、見つけた一致から次の一致を探す。steps が 0 でなければ、その一致からさらに動かす（FindMatch。/ と ? の <C-g> と <C-t>）。
+// どこにも無ければ ErrPatternNotFound を返す。返す Result.Search は s である。
+// 一致を決める規則は、打っている間の打つたびの検索（FR-153）と同じ FindMatch である。時間の上限は付けない。
 //
 // req: FR-09
-func search(b *buffer.Buffer, req Request, from buffer.Position, s Search) (Result, error) {
+func search(b *buffer.Buffer, req Request, from buffer.Position, s Search, steps int) (Result, error) {
+	m, err := FindMatch(context.Background(), b, from, s, req.count1(), steps)
+	switch {
+	case errors.Is(err, ErrPatternNotFound):
+		return Result{Search: s}, err
+	case err != nil:
+		return Result{}, err
+	}
+	res := at(b, req, m.Range.Start, Exclusive)
+	res.Search, res.Wrapped = s, m.Wrapped
+	return res, nil
+}
+
+// Lines は、検索が読む行の並びである。*buffer.Buffer と、イベントループの外で検索するために写した行（LineSnapshot）が満たす。
+type Lines interface {
+	// Line は、i 行目（0 から数える）の文字列を、改行を除いて返す。
+	Line(i int) string
+	// LineCount は、行の数を返す。
+	LineCount() int
+}
+
+// LineSnapshot は、バッファの行を写した並びである（Snapshot）。
+// 写した後にバッファを変えても変わらないので、イベントループの外の goroutine で読んでよい（基本設計 2.1）。
+type LineSnapshot []string
+
+// Line は、i 行目の文字列を返す。
+func (l LineSnapshot) Line(i int) string { return l[i] }
+
+// LineCount は、行の数を返す。
+func (l LineSnapshot) LineCount() int { return len(l) }
+
+// Snapshot は、b の行を写した並びを返す。行の文字列は写さずに共有する（Go の文字列は変わらない）ので、
+// 時間と量は、行の長さによらず行の数に比例する。イベントループの goroutine で呼ぶ。
+func Snapshot(b *buffer.Buffer) LineSnapshot {
+	out := make(LineSnapshot, b.LineCount())
+	for i := range out {
+		out[i] = b.Line(i)
+	}
+	return out
+}
+
+// Match は、検索で見つけた一致である。
+type Match struct {
+	// Range は、一致の範囲（半開区間）である。空の一致（^、$、x* など）は、Start と End が同じである。
+	Range buffer.Range
+	// Wrapped は、バッファの端で折り返して見つけたかである。
+	Wrapped bool
+}
+
+// checkBytes は、FindMatch が ctx の終わりを調べる間隔である。行を読み進めて、読んだバイト数（行の数を足す）がこれに達するたびに調べる。
+const checkBytes = 64 << 10
+
+// FindMatch は、src の from から s のパターンを s の向きに count 回検索した一致から、count の一致を 1 単位にして steps 単位だけ
+// 動かした一致を返す。steps が正ならバッファの末尾の方へ、負なら先頭の方へ動かす（s の向きによらない）。count が 1 未満なら 1 にする。
+// from は src の中に丸める。
+//
+// / と ? を <CR> で決めたときの移り先（search。Request.SearchSteps）と、打っている間の打つたびの検索（FR-153）は、
+// どちらもこの関数で一致を決める。このため、打っている間に出した一致と、<CR> で移る先は同じになる。
+// 1 回ずつの検索の規則は search の doc のとおりである。
+// steps は、打っている間の <C-g> と <C-t> である。nvim 0.12.5 の <C-g> と <C-t> も、/ と ? のどちらでも <C-g> が末尾の方へ動き、
+// 1 回で回数の数だけ一致を進める（2026-11-20 に nvim --clean で、3/foo の後の <C-t> と、?foo の後の <C-g> を確かめた）。
+//
+// ctx が終わったら（打つたびの検索の時間の上限を超えた、次の入力で取り消した）、探すのをやめて ctx.Err() を返す。
+// ctx は、行を読み進めて読んだ量が checkBytes に達するたびに調べる。1 行の中の正規表現の照合は途中で止めない。
+// パターンが空なら ErrNoPattern、正しくなければ *PatternError、どこにも無ければ ErrPatternNotFound を返す。
+// src を読むだけで変えないので、src が LineSnapshot ならイベントループの外の goroutine で呼んでよい。
+//
+// req: FR-153
+func FindMatch(ctx context.Context, src Lines, from buffer.Position, s Search, count, steps int) (Match, error) {
 	if s.Pattern == "" {
-		return Result{}, ErrNoPattern
+		return Match{}, ErrNoPattern
 	}
 	re, err := regexp.Compile(s.Pattern)
 	if err != nil {
-		return Result{}, &PatternError{Pattern: s.Pattern, Err: err}
+		return Match{}, &PatternError{Pattern: s.Pattern, Err: err}
 	}
-	p := from
-	wrapped := false
-	for range req.count1() {
-		var w, ok bool
-		if s.Backward {
-			p, w, ok = searchBackward(b, re, p)
-		} else {
-			p, w, ok = searchForward(b, re, p)
-		}
-		if !ok {
-			return Result{Search: s}, ErrPatternNotFound
-		}
-		wrapped = wrapped || w
+	n := src.LineCount()
+	if n == 0 {
+		return Match{}, ErrPatternNotFound
 	}
-	res := at(b, req, p, Exclusive)
-	res.Search, res.Wrapped = s, wrapped
-	return res, nil
+	from.Line = min(max(from.Line, 0), n-1)
+	from.Byte = min(max(from.Byte, 0), len(src.Line(from.Line)))
+	sc := scanner{ctx: ctx, src: src, re: re}
+	m := Match{Range: buffer.Range{Start: from, End: from}}
+	walk := func(backward bool, times int) error {
+		for range times {
+			r, w, err := sc.next(m.Range.Start, backward)
+			if err != nil {
+				return err
+			}
+			m.Range, m.Wrapped = r, m.Wrapped || w
+		}
+		return nil
+	}
+	count = max(count, 1)
+	if err := walk(s.Backward, count); err != nil {
+		return Match{}, err
+	}
+	if steps != 0 {
+		if err := walk(steps < 0, count*abs(steps)); err != nil {
+			return Match{}, err
+		}
+	}
+	return m, nil
+}
+
+// abs は、n の絶対値を返す。
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// scanner は、FindMatch の 1 回ずつの検索である。読んだ量を数え、checkBytes ごとに ctx の終わりを調べる。
+type scanner struct {
+	ctx  context.Context
+	src  Lines
+	re   *regexp.Regexp
+	read int
+}
+
+// next は、from の次（backward なら前）の一致の範囲と、バッファの端で折り返したかを返す。
+func (sc *scanner) next(from buffer.Position, backward bool) (buffer.Range, bool, error) {
+	if backward {
+		return sc.backward(from)
+	}
+	return sc.forward(from)
+}
+
+// advance は、n バイトの行を読んだことを数え、checkBytes に達したら ctx の終わりを調べる。
+func (sc *scanner) advance(n int) error {
+	sc.read += n + 1
+	if sc.read < checkBytes {
+		return nil
+	}
+	sc.read = 0
+	return sc.ctx.Err()
+}
+
+// matchRange は、line 行目の一致 m（regexp の位置の組）の範囲を返す。
+func matchRange(line int, m []int) buffer.Range {
+	return buffer.Range{Start: buffer.Position{Line: line, Byte: m[0]}, End: buffer.Position{Line: line, Byte: m[1]}}
 }
 
 // matchCol は、一致の先頭 start を、カーソルの位置と比べる列にする。行末の位置での一致は 1 つ前にする（Vim の searchit()）。
@@ -189,49 +309,65 @@ func matchCol(line string, start int) int {
 	return start
 }
 
-func searchForward(b *buffer.Buffer, re *regexp.Regexp, from buffer.Position) (p buffer.Position, wrapped, ok bool) {
-	line := b.Line(from.Line)
+// forward は、前向きの検索の 1 回である（search の doc の規則）。
+func (sc *scanner) forward(from buffer.Position) (buffer.Range, bool, error) {
+	line := sc.src.Line(from.Line)
 	size := 1
 	if from.Byte < len(line) {
 		_, size = utf8.DecodeRuneInString(line[from.Byte:])
 	}
-	for _, m := range re.FindAllStringIndex(line, -1) {
+	for _, m := range sc.re.FindAllStringIndex(line, -1) {
 		if matchCol(line, m[0]) >= from.Byte+size {
-			return buffer.Position{Line: from.Line, Byte: m[0]}, false, true
+			return matchRange(from.Line, m), false, nil
 		}
 	}
-	n := b.LineCount()
+	if err := sc.advance(len(line)); err != nil {
+		return buffer.Range{}, false, err
+	}
+	n := sc.src.LineCount()
 	for k := 1; k <= n; k++ {
 		l := (from.Line + k) % n
-		if m := re.FindStringIndex(b.Line(l)); m != nil {
-			return buffer.Position{Line: l, Byte: m[0]}, l <= from.Line, true
+		s := sc.src.Line(l)
+		if m := sc.re.FindStringIndex(s); m != nil {
+			return matchRange(l, m), l <= from.Line, nil
+		}
+		if err := sc.advance(len(s)); err != nil {
+			return buffer.Range{}, false, err
 		}
 	}
-	return from, false, false
+	return buffer.Range{}, false, ErrPatternNotFound
 }
 
-func searchBackward(b *buffer.Buffer, re *regexp.Regexp, from buffer.Position) (p buffer.Position, wrapped, ok bool) {
-	line := b.Line(from.Line)
+// backward は、後ろ向きの検索の 1 回である（search の doc の規則）。
+func (sc *scanner) backward(from buffer.Position) (buffer.Range, bool, error) {
+	line := sc.src.Line(from.Line)
 	if from.Byte > 0 {
-		found := -1
-		for _, m := range re.FindAllStringIndex(line, -1) {
+		var found []int
+		for _, m := range sc.re.FindAllStringIndex(line, -1) {
 			if matchCol(line, m[0]) >= from.Byte {
 				break
 			}
-			found = m[0]
+			found = m
 		}
-		if found >= 0 {
-			return buffer.Position{Line: from.Line, Byte: found}, false, true
+		if found != nil {
+			return matchRange(from.Line, found), false, nil
 		}
 	}
-	n := b.LineCount()
+	if err := sc.advance(len(line)); err != nil {
+		return buffer.Range{}, false, err
+	}
+	n := sc.src.LineCount()
 	for k := 1; k <= n; k++ {
 		l := ((from.Line-k)%n + n) % n
-		if ms := re.FindAllStringIndex(b.Line(l), -1); len(ms) > 0 {
-			return buffer.Position{Line: l, Byte: ms[len(ms)-1][0]}, l >= from.Line, true
+		s := sc.src.Line(l)
+		if ms := sc.re.FindAllStringIndex(s, -1); len(ms) > 0 {
+			return matchRange(l, ms[len(ms)-1]), l >= from.Line, nil
+		}
+		if err := sc.advance(len(s)); err != nil {
+			return buffer.Range{}, false, err
 		}
 	}
-	return from, false, false
+	return buffer.Range{}, false, ErrPatternNotFound
 }
 
 // SplitSearch は、/ と ? のコマンドラインに入力した文字列 text を、パターンとオフセットに分ける。

@@ -63,7 +63,8 @@ func (e *Editor) frame() *ui.Frame {
 	}
 	f.HitEnter = e.hitEnter()
 	f.OperatorPending = st.Mode() == command.ModeNormal && st.Pending()
-	if start, end, linewise, ok := st.Selection(); ok && cur == bs {
+	// ビジュアルモードから / か ? で打っている間も選択を出し、打つたびの検索の一致まで広げる（command.State.ShownSelection。FR-153）。
+	if start, end, linewise, ok := st.ShownSelection(); ok && cur == bs {
 		f.Selection = ui.Selection{Active: true, Start: start, End: end, Linewise: linewise}
 	}
 	// 問いは、問いを出した client の画面にだけ出す（clients.go の doc）。
@@ -102,13 +103,15 @@ func (e *Editor) frame() *ui.Frame {
 // bufferFrame は、client の画面（バッファの表示領域のある画面）の描画の入力を作る。frame に行番号の列の出し方、検索の一致のパターン、
 // 一時的な色付け（タブのバッファのものなら。flashHighlights。FR-140）を足したものである。
 // 行番号を出すかは、この 1 か所で決める。部品の client の画面とポップアップの窓の中の Frame は、ここを通らないので行番号が載らない。
+// / か ? でパターンを打っている間は、打つたびの検索で出す一致を足す（incSearchFrame。FR-153）。
 //
-// req: FR-135, FR-140
+// req: FR-135, FR-140, FR-153
 func (e *Editor) bufferFrame() *ui.Frame {
 	f := e.frame()
 	f.LineNumbers = e.uiLineNumbers()
 	f.Search = e.uiSearch()
 	f.Highlights = e.flashHighlights(e.tab())
+	e.incSearchFrame(f)
 	return f
 }
 
@@ -119,8 +122,9 @@ func (e *Editor) bufferFrame() *ui.Frame {
 //
 // 直前の検索は client の間で共有する状態なので、最後にそれを持った State（e.shared）から読む。
 // 別の client で検索した直後でも、この client の画面に同じパターンの色が付く（Vim で窓をまたいで同じ色が付くのと同じ）。
+// この client で / か ? を打っている間は、直前の検索のパターンの代わりに、打つたびの検索のパターンを使う（incSearchPattern。FR-153）。
 //
-// req: FR-137, FR-138
+// req: FR-137, FR-138, FR-153
 func (e *Editor) uiSearch() *regexp.Regexp {
 	if !e.options.Get(option.SearchHighlight).Bool() {
 		return nil
@@ -133,6 +137,9 @@ func (e *Editor) uiSearch() *regexp.Regexp {
 		return nil
 	}
 	pat := st.HighlightPattern(e.options.Revision(option.SearchHighlight))
+	if p, ok := e.incSearchPattern(); ok {
+		pat = p
+	}
 	if pat == "" {
 		return nil
 	}
@@ -198,6 +205,8 @@ func (e *Editor) render() {
 		e.expireFloat()
 		e.notifyPaneTabs()
 		e.syncPreviews()
+		// 打つたびの検索（FR-153）は、描く前に問いを読んで検索を始め、画面の位置を決め直す。
+		e.syncIncSearch()
 		e.renderView()
 		e.renderComponents()
 	})
