@@ -12,6 +12,10 @@
 // 言語サーバーは、そのファイルの種類の最初のファイルを開いたときに起動する。
 // 利用者が設定で言語を足したときの起動の契機は、利用者の設定から宣言ファイルの activation へ足す（基本設計 6.7）。
 //
+// 言語サーバーの実行ファイルは PATH から探す。見つからず、設定に mise の道具の ID（serverConfig.Mise）があれば、
+// 入れ方を一度だけ案内するか、利用者が autoInstall を選んでいれば mise に入れさせてから mise exec で起動する（FR-143。mise.go）。
+// 言語サーバーと mise は、拡張機能が強制終了されても残らないように起動する（startProcess）。
+//
 // # 機能
 //
 //   - 文書の同期: buffer/open、buffer/change、buffer/close を textDocument/didOpen、didChange（増分）、didClose にする

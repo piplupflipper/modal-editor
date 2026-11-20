@@ -7,7 +7,9 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // 既定値。どれも仮である。
@@ -24,6 +26,9 @@ const (
 	defaultResetAfter = time.Minute
 	// defaultRestartDelay は、異常終了から再起動までの待ち時間の 1 回目である。n 回目は n 倍にする。
 	defaultRestartDelay = 500 * time.Millisecond
+	// defaultInstallTimeout は、mise に言語サーバーを入れさせるとき（mise where と mise install）に待つ時間の上限である（FR-143）。
+	// 入れている間は initialize の期限（defaultInitTimeout）を数えないので、別に上限を置く。
+	defaultInstallTimeout = 10 * time.Minute
 )
 
 // serverConfig は、1 つのファイルの種類に使う言語サーバーの設定である。
@@ -34,6 +39,14 @@ type serverConfig struct {
 	Command string `json:"command"`
 	// Args は、Command に渡す引数の列である。
 	Args []string `json:"args,omitempty"`
+	// Mise は、Command を入れる mise の道具の ID で、版を含めて書く（例: "npm:pyright@1.1.410"。FR-143）。
+	// Command が見つからないとき、空でなければ、入れ方を案内するか、mise に入れさせてから起動する（AutoInstall）。
+	// 空なら、見つからないときは起動できないことを知らせるだけである。
+	Mise string `json:"mise,omitempty"`
+	// AutoInstall は、Command が見つからないとき、mise に Mise の道具を入れさせてから mise exec で起動するかどうかである。
+	// false なら、入れ方（mise use -g <Mise>）を案内するだけで、何も入れない。
+	// 省くと、settings の autoInstall に従う。Mise が空なら効かない。
+	AutoInstall *bool `json:"autoInstall,omitempty"`
 	// LanguageID は、textDocument/didOpen の languageId である。省くとファイルの種類の名前を使う。
 	LanguageID string `json:"languageId,omitempty"`
 	// RootMarkers は、ワークスペースの根を探す目印のファイル名である。
@@ -58,6 +71,12 @@ func (c *serverConfig) formatOnSave() bool {
 	return c.FormatOnSave == nil || *c.FormatOnSave
 }
 
+// autoInstall は、Command が見つからないときに mise に入れさせるかどうかを返す。
+// parseSettings が、省いた AutoInstall を settings の autoInstall で埋める。
+func (c *serverConfig) autoInstall() bool {
+	return c.Mise != "" && c.AutoInstall != nil && *c.AutoInstall
+}
+
 // tabSize は、FormattingOptions の tabSize を返す。
 func (c *serverConfig) tabSize() int {
 	if c.TabSize <= 0 {
@@ -75,9 +94,13 @@ type settings struct {
 	// MaxRestarts は、言語サーバーが異常終了したときに再起動する回数の上限である。省くと defaultMaxRestarts。
 	// 0 なら再起動しない。負の値は 0 と同じに扱う。
 	MaxRestarts *int `json:"maxRestarts,omitempty"`
+	// AutoInstall は、servers の autoInstall を省いた言語サーバーに使う値である。省くと false（入れ方を案内するだけ）である。
+	AutoInstall bool `json:"autoInstall,omitempty"`
 }
 
 // defaultServers は、既定の言語サーバーの表である。最初は Go（gopls）だけを持つ。
+// ほかの言語の言語サーバーと、その mise の道具の ID は、利用者が設定に書く（FR-143。#278 の決め）。
+// 表に足すと、言語の側の更新（言語サーバーの名前や版）にこのリポジトリが引っ張られるためである。
 func defaultServers() map[string]*serverConfig {
 	return map[string]*serverConfig{
 		"go": {
@@ -117,6 +140,13 @@ func parseSettings(raw json.RawMessage) (*config, error) {
 		}
 		if sc.LanguageID == "" {
 			sc.LanguageID = ft
+		}
+		// mise の引数に置くので、オプションと読まれる形と空白を含む形は受け付けない。
+		if sc.Mise != "" && (strings.HasPrefix(sc.Mise, "-") || strings.ContainsFunc(sc.Mise, unicode.IsSpace)) {
+			errs = append(errs, fmt.Errorf("servers.%s.mise は mise の道具の ID（例: npm:pyright@1.1.410）でない: %q", ft, sc.Mise))
+		}
+		if sc.AutoInstall == nil {
+			sc.AutoInstall = &s.AutoInstall
 		}
 	}
 	if s.MaxRestarts != nil {

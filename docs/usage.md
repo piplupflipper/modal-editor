@@ -1214,7 +1214,7 @@ Vim と同じく、`:` の無い語はまずキーや設定の名前として引
 |---|---|---|---|---|
 | `treesitter` | 構文ハイライト（同梱は Go、JSON、JSONC。設定でほかの言語のパーサを足せる）、構文に沿ったテキストオブジェクト（Go） | Go か JSON か JSONC（`.jsonc`）のファイルか、設定でパーサを足したファイルの種類のファイルを開いたとき | `af`、`if`、`ac`、`ic`、`aa`、`ia` | 同梱の言語はなし。パーサを足すなら PATH の `git` と C コンパイラ（`cc`） |
 | `line` | 行のテキストオブジェクト | `il`、`al` を打ったとき | `il`、`al` | なし |
-| `lsp` | 診断と、LSP の操作（定義へ移動、ホバー、参照、シンボル、整形、名前の変更） | Go のファイルを開いたとき | [LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー) | PATH の `gopls` |
+| `lsp` | 診断と、LSP の操作（定義へ移動、ホバー、参照、シンボル、整形、名前の変更） | Go のファイルを開いたとき | [LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー) | PATH の `gopls`。ほかの言語の言語サーバーは、設定で足して入れる（[LSP](#lsp)） |
 | `dap` | デバッグ（DAP の操作） | 操作を呼んだとき | [LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー) | PATH の `dlv` |
 | `acp` | コーディングエージェントとの対話（ACP のクライアント） | コマンドを呼んだとき | `:acp.prompt`、`:acp.cancel` | ACP で話すエージェントと、その設定 |
 | `mcp` | エディタの状態と編集を MCP のツールとして提供する | MCP のクライアントが最初に接続したとき | `:mcp.start` | MCP のクライアント |
@@ -1329,6 +1329,49 @@ gopls は PATH から探す。
 
 言語サーバーを変える、保存の前の整形をやめるといった設定は、`extensions.settings.lsp` に書く。
 項目は `go doc -u ./cmd/vi-imitation-ext-lsp settings` と `serverConfig` にある。
+
+#### 言語を足し、言語サーバーを mise で入れる
+
+既定の言語サーバーは Go の gopls だけである。
+ほかの言語は、`extensions.settings.lsp.servers` にファイルの種類（`python`、`sh` など）ごとの言語サーバーを書き、`extensions.activation.lsp` にそのファイルの種類の起動の契機を足す。
+言語サーバーの実行ファイルは、vi-imitation が取ってこない。
+[mise](https://mise.jdx.dev/) で入れる前提で、言語サーバーごとに mise の道具の ID（`mise`）を書いておくと、見つからないときに入れ方を案内する。
+
+```jsonc
+{
+  "extensions": {
+    "settings": {
+      "lsp": {
+        "servers": {
+          "python": {
+            "command": "pyright-langserver",
+            "args": ["--stdio"],
+            "rootMarkers": ["pyproject.toml", "setup.py", ".git"],
+            // 版は、自分の mise の設定（~/.config/mise/config.toml）に書いた版に合わせる
+            "mise": "npm:pyright@1.1.410",
+          },
+        },
+        // true にすると、見つからないときに mise に入れさせてから起動する（既定は false で、案内だけ）
+        // "autoInstall": true,
+      },
+    },
+    "activation": { "lsp": [{ "on": "filetype", "pattern": "python" }] },
+  },
+}
+```
+
+`command` が PATH で見つかれば、`mise` と `autoInstall` に関わらず、そのまま起動する。
+見つからないときの動きは、`autoInstall` で選ぶ。
+
+| `autoInstall` | 見つからないときの動き |
+|---|---|
+| `false`（既定） | メッセージの行に `言語サーバー pyright-langserver が見つからない。mise use -g npm:pyright@1.1.410 で入れられる` と出し、何も入れない。同じ言語サーバーの案内は、本体を起動している間に 2 回出さない。案内のとおりに入れた後、そのファイルの種類の別のファイルを開くと、言語サーバーを起動する（本体を起動し直してもよい） |
+| `true` | mise で道具を入れてから、`mise exec npm:pyright@1.1.410 -- pyright-langserver --stdio` で起動する。入れている間は、メッセージの行に `mise で npm:pyright@1.1.410 を入れている` と mise の出力の行を出す。mise が PATH に無ければ、案内に戻る |
+
+`autoInstall` は、`servers` の言語サーバーごとにも書け、そちらが優先する。
+`autoInstall` で入れた道具は mise の設定ファイルに書かれないので、`mise use -g` と違い、mise の外（PATH）からは使えない。
+入れるのに失敗したとき（ネットワークに出られない、プロジェクトの `mise.toml` を信頼していない、など）は、mise の出力をメッセージの行に出す。
+信頼していない `mise.toml` で止まったときは、内容を確かめてから `mise trust` を打つ。vi-imitation は、利用者の代わりに信頼しない。
 
 ### DAP によるデバッグ
 
