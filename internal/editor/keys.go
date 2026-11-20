@@ -45,6 +45,7 @@ func (q *keyQueue) push(in keyInput) {
 
 // pushInterrupt は、中断の印 flag と client の印 clientFlag を立て、中断のキー in を積む。3 つを錠の中で行うので、
 // 印が立ったのを見てから dropThrough を呼べば、in はもう列にある。
+// client の印は、錠の外から読まずに interrupted で読む（#294）。
 func (q *keyQueue) pushInterrupt(in keyInput, flag, clientFlag *atomic.Bool) {
 	q.mu.Lock()
 	flag.Store(true)
@@ -52,6 +53,18 @@ func (q *keyQueue) pushInterrupt(in keyInput, flag, clientFlag *atomic.Bool) {
 	q.items = append(q.items, in)
 	q.mu.Unlock()
 	signal(q.ready)
+}
+
+// interrupted は、client c の中断の印（c.intr）が立っているかを、列の錠の中で読む。
+//
+// 再生は、中断の印（Editor.interrupt）を錠の外から読んで止まる。その時点の読む goroutine は、pushInterrupt の錠の中で
+// 中断の印だけを立て、client の印と <C-c> をまだ置いていないことがある。錠の外から client の印を読むと、再生は止まったのに
+// 後始末（印を下ろして <C-c> までを捨てる）を飛ばし、残った <C-c> を後で <Esc> として処理して「中断しました」を消す（#294）。
+// 錠の中で読めば、pushInterrupt が終わるのを待つので、中断の印を見た後なら client の印も <C-c> もそろっている。
+func (q *keyQueue) interrupted(c *clientView) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return c.intr.Load()
 }
 
 // popFor は、列の中で allowed が true を返す client の最初の入力を取り出す。
@@ -154,7 +167,7 @@ func (e *Editor) handleKeys() {
 // afterKey は、キーの処理の後に、中断の後始末と、曖昧なキーの列の時間切れの準備をする。
 func (e *Editor) afterKey() {
 	e.afterFloatKey()
-	if c := e.op; c.intr.Load() {
+	if c := e.op; e.keys.interrupted(c) {
 		// このキーで始めた外部のコマンドと再生中の拡張機能の待ちは、知らせ（intrCh）を Run が先に取っていても、ここで中断する。
 		e.interruptShell()
 		e.interruptReplay()

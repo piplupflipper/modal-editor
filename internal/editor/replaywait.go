@@ -165,7 +165,7 @@ func (e *Editor) replayAnswered(c *clientView, r *exthost.QueryResult) {
 	// 結果が届いたのと同じ頃に <C-c> を打っていた（Run が intrCh より先に結果を取り出した）ら、結果が届いていても中断として扱う。
 	// 中断の印だけを下ろして続けると、待ちを挟む再帰のマクロが <C-c> で止まらない（PR #249 の 4 回目の確認の必須）。
 	interrupted := w.interrupted
-	if c.intr.Load() {
+	if e.keys.interrupted(c) {
 		interrupted = true
 		e.interrupt.Store(false)
 		c.intr.Store(false)

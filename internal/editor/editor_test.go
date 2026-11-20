@@ -608,6 +608,112 @@ func TestInterrupt(t *testing.T) {
 	}
 }
 
+// <C-c> が、読む goroutine の pushInterrupt の途中（列の錠の中で中断の印だけを立て、client の印と <C-c> をまだ置いていない）に
+// 当たっても、中断の後始末（印を下ろして <C-c> までを捨てる）をして「中断しました」を残す（#294）。
+// 前は afterKey、shellFinished、replayAnswered が client の印を錠の外から読んでいて、この途中に当たると後始末を飛ばし、
+// 残った <C-c> を後で <Esc> として処理して「中断しました」を消した。
+// midPush で途中の状態を作り、その間に、イベントループが client の印を読んで錠で待つところまで進めてから残りを置く。
+// 外部のコマンドの終わりと拡張機能の結果は、イベントループが手すき（描画を終えて待っている）のときに錠を持ってから届かせる。
+// 錠を持った後に e.do を使うと、その後の描画（renderIdle）が錠で待ち、終わりや結果を受け取る前に止まるためである。
+func TestInterruptDuringPush(t *testing.T) {
+	t.Run("再生（afterKey）", func(t *testing.T) {
+		dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
+		h := start(t, Config{WorkDir: dir}, "a.txt")
+		h.keys("qa:s/a/aa/<CR>q")
+		h.settle()
+		h.keys("999999999@a")
+		// 列が空になれば、最後のキー（@a の a）を取り出して再生している（TestInterrupt と同じ）。
+		h.eventuallyOff("再生の始まり", func() bool { return h.e.forwarded.Load() == h.sent && h.e.keys.empty() })
+		// 再生は中断の印を見て止まり、同じキーの afterKey が client の印を読む。
+		h.midPush(h.waitLoop)
+		h.expectInterrupted()
+	})
+	t.Run("外部のコマンド（shellFinished）", func(t *testing.T) {
+		t.Setenv("SHELL", "/bin/sh")
+		dir := writeFiles(t, map[string]string{"a.txt": "a\n"})
+		h := start(t, Config{WorkDir: dir}, "a.txt")
+		h.keys(":r !touch started; while [ ! -e go ]; do sleep 0.01; done<CR>")
+		waitFile(t, filepath.Join(dir, "started"))
+		h.settle()
+		time.Sleep(100 * time.Millisecond) // settle の後の描画を終えさせる
+		h.midPush(func() {
+			if err := os.WriteFile(filepath.Join(dir, "go"), nil, 0o600); err != nil {
+				t.Error(err)
+			}
+			time.Sleep(500 * time.Millisecond)
+		})
+		h.expectInterrupted()
+	})
+	t.Run("再生中の拡張機能の待ち（replayAnswered）", func(t *testing.T) {
+		dir := writeFiles(t, map[string]string{"a.txt": "a1\nb2\nc3\n"})
+		h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t)}, "a.txt")
+		// fake.slow（is）は slowDelay の後に応答する。
+		h.e.do(func() { h.e.cur.state.Registers().Set('a', command.Register{Text: "disj"}) })
+		h.keys("@a")
+		h.eventually("待ち", func() bool { return h.e.replayPending() })
+		time.Sleep(50 * time.Millisecond) // eventually の後の描画を終えさせる
+		h.midPush(func() { time.Sleep(slowDelay + 500*time.Millisecond) })
+		h.expectInterrupted()
+	})
+}
+
+// waitLoop は、イベントループが e.do を受け取るまで待つ。200 ms 受け取らなければ（錠で待っていれば）待つのをやめる。
+func (h *harness) waitLoop() {
+	got := make(chan struct{})
+	go func() {
+		h.e.do(func() {})
+		close(got)
+	}()
+	select {
+	case <-got:
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// eventuallyOff は、cond がイベントループの外で true を返すまで待つ。イベントループが Feed の中にいて e.do で待てないときに使う。
+func (h *harness) eventuallyOff(what string, cond func() bool) {
+	h.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			h.t.Fatalf("待ちきれない: %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// midPush は、読む goroutine の pushInterrupt の途中（列の錠を持ち、中断の印だけを立てた状態）を作り、その間に advance を呼んで
+// イベントループを進める。その後に pushInterrupt の残り（client の印と <C-c>）を置いて錠を放し、forwardInput と同じく知らせる。
+func (h *harness) midPush(advance func()) {
+	h.t.Helper()
+	c := h.clientOf(h.term)
+	q := h.e.keys
+	q.mu.Lock()
+	h.e.interrupt.Store(true)
+	advance()
+	c.intr.Store(true)
+	q.items = append(q.items, keyInput{c: c, key: interruptKey})
+	q.mu.Unlock()
+	signal(q.ready)
+	signal(h.e.intrCh)
+}
+
+// expectInterrupted は、中断の後に「中断しました」が残り、<C-c> が列に残っていないことを確かめる。
+func (h *harness) expectInterrupted() {
+	h.t.Helper()
+	h.settle()
+	h.eventually("外部のコマンドの終わり", func() bool { return h.e.shell == nil })
+	h.settle()
+	if msg := h.message(); msg != "中断しました" {
+		h.t.Errorf("message = %q", msg)
+	}
+	var intr bool
+	h.e.do(func() { intr = h.e.interrupt.Load() || h.e.op.intr.Load() })
+	if intr {
+		h.t.Error("中断の印が立ったまま")
+	}
+}
+
 // 確認の問いを出している間は拡張機能のイベントを取っておくので、問いの間に届いた editor/open（focus）で
 // カーソルのあるバッファが入れ替わっても、答えは問いを出したバッファで実行する。
 //
