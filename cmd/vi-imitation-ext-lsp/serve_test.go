@@ -656,6 +656,75 @@ func TestCloseAndReopen(t *testing.T) {
 	}
 }
 
+// TestFileTypeAndPathChange は、本体がファイルの種類かパスを変えて buffer/open を送り直したとき（:set filetype=、別名での保存）、
+// 前の文書の didClose を送り、空の diagnostic/set で診断を消すことを確かめる（#267）。
+// ファイルの種類を戻すと didOpen を送り直して診断が付き直すことと、パスが変わったら新しい URI の文書として開き直すことも確かめる。
+//
+// req: FR-30
+func TestFileTypeAndPathChange(t *testing.T) {
+	h := startHost(t, hostOptions{maxRestarts: -1})
+	path := h.open(1, "a.go", "a ERR")
+	checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+	reopen := func(p ext.BufferOpenParams) {
+		t.Helper()
+		if err := h.conn.Notify(ext.MethodBufferOpen, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	didClose := func(uri string) {
+		t.Helper()
+		h.waitLog("didClose of "+uri, func(e logEntry) bool {
+			return e.Kind == lspDidClose && decode[didCloseParams](t, e.Value).TextDocument.URI == uri
+		})
+	}
+	opened := func(uri string) int {
+		n := 0
+		for _, e := range h.readLog() {
+			if e.Kind == lspDidOpen && decode[didOpenParams](t, e.Value).TextDocument.URI == uri {
+				n++
+			}
+		}
+		return n
+	}
+
+	// 言語サーバーの無いファイルの種類に変えると、診断を消す。
+	reopen(ext.BufferOpenParams{Buffer: 1, Path: path, FileType: "text", Version: 1, Text: "a ERR"})
+	if got := h.diagnosticsAt(1, 1); len(got.Diagnostics) != 0 {
+		t.Errorf("diagnostics after changing the file type to text = %+v, want cleared", got.Diagnostics)
+	}
+	didClose(pathToURI(path))
+
+	// go に戻すと、新しい文書として didOpen を送り、診断が付き直す。
+	reopen(ext.BufferOpenParams{Buffer: 1, Path: path, FileType: "go", Version: 1, Text: "a ERR"})
+	checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+	if n := opened(pathToURI(path)); n != 2 {
+		t.Errorf("didOpen of %s sent %d times, want 2", path, n)
+	}
+
+	// 別名で保存してパスが変わると、前の URI の文書を閉じて診断を消し、新しい URI の文書を開く。
+	moved := filepath.Join(h.dir, "b.go")
+	reopen(ext.BufferOpenParams{Buffer: 1, Path: moved, FileType: "go", Version: 1, Text: "a ERR"})
+	if got := h.diagnosticsAt(1, 1); len(got.Diagnostics) != 0 {
+		t.Errorf("diagnostics after changing the path = %+v, want cleared", got.Diagnostics)
+	}
+	didClose(pathToURI(path))
+	checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+	if n := opened(pathToURI(moved)); n != 1 {
+		t.Errorf("didOpen of %s sent %d times, want 1", moved, n)
+	}
+
+	// 本体が閉じたバッファ（buffer/close）には、空の診断を送らない（本体が自分で消す。基本設計 5.3）。
+	if err := h.conn.Notify(ext.MethodBufferClose, ext.BufferCloseParams{Buffer: 1}); err != nil {
+		t.Fatal(err)
+	}
+	didClose(pathToURI(moved))
+	select {
+	case p := <-h.diags:
+		t.Errorf("diagnostic/set after buffer/close: %+v", p)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 // TestDidSave は、buffer/didSave で、保存した時点の全文を含む textDocument/didSave を送ることを確かめる。
 //
 // req: FR-30
