@@ -55,6 +55,9 @@ func TestSearchCount(t *testing.T) {
 		{"単語の途中の *", "foo bar\nbaz f|oo\nqux\nfoo foo\nend", "*", Message{Text: `/\bfoo\b`, Count: "[2/4]"}},
 		// Neovim の # は末尾の一致（W [4/4]）へ移るが、本体の # は動かない。
 		{"#", "|" + searchCountText, "#", Message{Text: `?\bfoo\b`, Count: "[1/4]"}},
+		// 単語の手前の空白の * は、単語の先頭で数える（Neovim 0.12.5 の *N は [2/4] と [1/2]。PR #322 のレビューの推奨 5）。
+		{"単語の手前の空白の *", "foo bar\nbaz| foo\nqux\nfoo foo\nend", "*", Message{Text: `/\bfoo\b`, Count: "[2/4]"}},
+		{"行頭の空白の *", "|  foo\nfoo", "*", Message{Text: `/\bfoo\b`, Count: "[1/2]"}},
 		{"* の後の n", "|" + searchCountText, "*n", Message{Text: `/\bfoo\b`, Count: "[2/4]"}},
 		{"オペレーターの後の /", "|" + searchCountText, "d/foo<CR>", Message{Text: "/foo", Count: "[2/4]"}},
 		{"オペレーターの後の / の .", "|" + searchCountText, "d/foo<CR>.", Message{Text: "/foo", Count: "[2/3]"}},
@@ -71,6 +74,29 @@ func TestSearchCount(t *testing.T) {
 				t.Errorf("message = %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+// 行末の空の一致が、前に寄せた位置で前の一致と重なっても、件数は n で止まる位置の数と同じで、n のたびに番号が 1 ずつ進む。
+// 期待値は、PR #322 のレビューの再現（ab、a b、x の 3 行の 1 行目の先頭で /\b<CR> の後に n を 5 回）を、2026-11-21 に
+// nvim --clean（0.12.5）で同じ位置に一致する /\<\|\> を打って出た件数である（[2/6] から W [1/6] まで）。
+//
+// req: FR-167
+func TestSearchCountEmptyAtLineEnd(t *testing.T) {
+	s := setupSearchCount(t, "|ab\na b\nx", true)
+	steps := []struct{ keys, cursor, count string }{
+		{`/\b<CR>`, "0:1", "[2/6]"},
+		{"n", "1:0", "[3/6]"},
+		{"n", "1:1", "[4/6]"},
+		{"n", "1:2", "[5/6]"},
+		{"n", "2:0", "[6/6]"},
+		{"n", "0:0", "W [1/6]"},
+	}
+	for _, st := range steps {
+		m := lastMessage(s, st.keys)
+		if got := s.Cursor().String(); got != st.cursor || m.Count != st.count {
+			t.Errorf("%s: cursor = %s, count = %q, want %s, %q", st.keys, got, m.Count, st.cursor, st.count)
+		}
 	}
 }
 

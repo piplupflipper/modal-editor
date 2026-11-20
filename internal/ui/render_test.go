@@ -346,6 +346,29 @@ func TestGoldenMessageRight(t *testing.T) {
 	golden(t, "message-right", wide+"\n"+narrow)
 }
 
+// drawMessageRight は、描く範囲の左の列と幅を受け、範囲の中で同じ規則（右の端の 2 列を空ける、左の文字列の後ろを切る）で描く。
+// 範囲の外のセルには描かない。後にコマンドラインをポップアップに出すときに、枠の中で使う。
+//
+// req: FR-167
+func TestMessageRightRange(t *testing.T) {
+	r := newRenderer(30, 1)
+	for _, tc := range []struct {
+		name, text, right string
+		col, width        int
+		want              string
+	}{
+		{"範囲の中で右に寄せる", "/foo", "[2/4]", 5, 20, "     /foo         [2/4]       "},
+		{"左の文字列の後ろを切る", "/abcdefghijklmnop", "[2/4]", 5, 20, "     /abcdefghijk [2/4]       "},
+		{"右の文字列も収まらない範囲", "/foo", "[2/4]", 5, 6, "     [2/4]                    "},
+	} {
+		g := NewGrid(30, 1)
+		r.drawMessageRight(g, 0, tc.col, tc.width, tc.text, tc.right, Attr{})
+		if got := g.RowText(0); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestScrollVertical は、縦のスクロールの位置を、端末の Vim 9.1 で測った値と比べる。
 // 測り方: 100 行のファイルを `vim -Nu NONE` で開き、表示領域の高さ h の端末で、gg の後に nG（または G の後に nG）を打ち、line('w0') を読んだ。
 func TestScrollVertical(t *testing.T) {

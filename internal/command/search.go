@@ -33,18 +33,42 @@ const (
 )
 
 // searchCountTimeout は、一致を数える時間の上限である。超えたら件数の代わりに "[?/??]" と出す。
-// Neovim 0.12.5 も時間の上限を超えると "[?/??]" と出す。上限の値は文書に無いので、2026-11-21 に nvim --clean で、
-// 一致の少ない行を増やしたファイルで /foo を打ち、searchcount({'timeout': 0}) で測った数える時間が 36 ms のファイルでは件数が出て、
-// 45 ms のファイルでは "[?/??]" になったことから、40 ms とした。テストが差し替える。
+// Neovim 0.12.5 の検索の件数の時間の上限（src/nvim/search.h の SEARCH_STAT_DEF_TIMEOUT。v0.12.5 で 40）と同じにした。
+// 2026-11-21 に nvim --clean で、searchcount({'timeout': 0}) で測った数える時間が 36 ms のファイルでは件数が出て、
+// 45 ms のファイルでは "[?/??]" になり、この値と合う。テストが差し替える。
 var searchCountTimeout = 40 * time.Millisecond
 
-// matchCache は、検索の一致の件数のために集めた一致の一覧（target.Matches）と、集めたときのバッファ、バージョン番号、パターンである。
+// matchCache は、集めた一致の一覧（target.Matches）と、集めたときのバッファ、バージョン番号、パターン、件数の上限である（SearchMatches）。
 // バッファが変わらず、同じパターンで n を続けて押したときに、集め直さずに件数を出すために持つ。
 type matchCache struct {
 	buf     *buffer.Buffer
 	version uint64
 	pattern string
+	limit   int
 	matches target.Matches
+}
+
+// SearchMatches は、このバッファの、パターン pat の一致の一覧を、バッファの先頭から limit+1 件まで返す（target.FindMatches）。
+// 検索の一致の件数（FR-167）が使う。後に作る右端の列の一致の印も、この口か target.FindMatches で一覧を読める。
+//
+// 集めた一覧は、バッファ、バージョン番号、パターン、上限と組で 1 つだけ覚え、どれも同じ間は集め直さない。
+// バッファを変えるとバージョン番号が進むので、編集、外からの編集、アンドゥの後は集め直す。
+// 集めるのはイベントループの上で、時間の上限は timeout である。超えたら context.DeadlineExceeded を返し、覚えない。
+// パターンが空なら target.ErrNoPattern、正しくなければ *target.PatternError を返す。
+//
+// req: FR-167
+func (s *State) SearchMatches(pat string, limit int, timeout time.Duration) (target.Matches, error) {
+	if c := s.matchCache; c != nil && c.buf == s.buf && c.version == s.buf.Version() && c.pattern == pat && c.limit == limit {
+		return c.matches, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	ms, err := target.FindMatches(ctx, s.buf, pat, limit)
+	if err != nil {
+		return target.Matches{}, err
+	}
+	s.matchCache = &matchCache{buf: s.buf, version: s.buf.Version(), pattern: pat, limit: limit, matches: ms}
+	return ms, nil
 }
 
 // searchCount は、設定の search.showCount が真なら、パターン pat の一致のうち at が何件目かと件数を、メッセージの行の右に出す形
@@ -56,7 +80,7 @@ type matchCache struct {
 //   - 数える時間の上限（searchCountTimeout）を超えたら "[?/??]"
 //   - バッファの端で折り返したら、前に "W " を付ける（Neovim は件数を出すとき、折り返しの警告の文の代わりに W を付ける）
 //
-// 一致は target.FindMatches で集め、バッファとバージョン番号とパターンが同じ間は集め直さない（matchCache）。
+// 一致は SearchMatches で集め、バッファとバージョン番号とパターンが同じ間は集め直さない。
 // 時間の上限を超えたときは覚えないので、次の検索で数え直す。
 //
 // req: FR-167
@@ -68,21 +92,14 @@ func (s *State) searchCount(pat string, at buffer.Position, wrapped bool) string
 	if !ok || !s.Ex.Options.Get(d).Bool() {
 		return ""
 	}
-	c := s.matchCache
-	if c == nil || c.buf != s.buf || c.version != s.buf.Version() || c.pattern != pat {
-		ctx, cancel := context.WithTimeout(context.Background(), searchCountTimeout)
-		ms, err := target.FindMatches(ctx, s.buf, pat, searchCountLimit)
-		cancel()
-		switch {
-		case errors.Is(err, context.DeadlineExceeded):
-			return wrapMark(wrapped) + "[?/??]"
-		case err != nil:
-			return ""
-		}
-		c = &matchCache{buf: s.buf, version: s.buf.Version(), pattern: pat, matches: ms}
-		s.matchCache = c
+	ms, err := s.SearchMatches(pat, searchCountLimit, searchCountTimeout)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return wrapMark(wrapped) + "[?/??]"
+	case err != nil:
+		return ""
 	}
-	cur, total, over := c.matches.Count(at)
+	cur, total, over := ms.Count(at)
 	var count string
 	switch {
 	case over && cur > searchCountLimit:
@@ -162,14 +179,15 @@ func (s *State) HighlightPattern(rev uint64) string {
 // カーソルは動かさず、ジャンプリストにも記録しない。次の一致へは n で移る。回数は使わない。
 // 移らないので、モーションでなく対象を取らない操作にした（オペレーターの後には使えない）。ビジュアルモードでは、選択を変えない。
 // 記録したパターンは、/ で見つけたときと同じく通知に出す（* は "/"、# は "?" を前に付ける）。
-// 設定の search.showCount が真なら、カーソルが何件目の一致にいるかと件数も出す（FR-167）。カーソルは単語の上にあるので、
-// オーナーの nvim の * の割り当て（*N。FR-139）で単語の先頭へ戻ったときと同じ番号になる。カーソルが単語の手前の空白にいれば、
-// その単語の一致はまだ数えないので、Vim の searchcount() と同じく、前の一致の番号（前に無ければ 0）になる。
+// 設定の search.showCount が真なら、パターンにした単語の先頭が何件目の一致かと件数も出す（FR-167）。
+// カーソルでなく単語の先頭で数えるので、カーソルが単語の手前の空白にいても、オーナーの nvim の * の割り当て（*N。FR-139）で
+// 単語の先頭へ移ったときと同じ番号になる（2 行目の "baz foo" の空白で [2/4]、"  foo"、"foo" の先頭の空白で [1/2]。
+// 2026-11-21 に nvim 0.12.5 の *N で確かめた。PR #322 のレビューの推奨 5）。カーソルは動かさない。
 //
 // req: FR-139, FR-167
 func actSearchWord(backward bool) actionFunc {
 	return func(s *State, _ editcmd.Command) error {
-		pat, err := target.WordPattern(s.buf, s.cursor)
+		pat, start, err := target.WordPatternAt(s.buf, s.cursor)
 		if err != nil {
 			return &ex.Error{Code: "E348", Msg: "カーソルの位置に文字列がありません"}
 		}
@@ -178,7 +196,7 @@ func actSearchWord(backward bool) actionFunc {
 		if backward {
 			delim = "?"
 		}
-		s.res.Message = Message{Text: delim + pat, Count: s.searchCount(pat, s.cursor, false)}
+		s.res.Message = Message{Text: delim + pat, Count: s.searchCount(pat, start, false)}
 		return nil
 	}
 }

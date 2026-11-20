@@ -78,10 +78,20 @@ func searchRepeat(reverse bool) MotionFunc {
 //
 // req: FR-139
 func WordPattern(b *buffer.Buffer, at buffer.Position) (string, error) {
+	pat, _, err := WordPatternAt(b, at)
+	return pat, err
+}
+
+// WordPatternAt は、WordPattern と同じパターンと、パターンにした単語（文字列）の先頭の位置を返す。
+// カーソルが単語の手前の空白にあれば、先頭はカーソルより後ろになる。
+// * と # の後に一致の件数（FR-167）を数える位置にする（オーナーの nvim の *N が移る、単語の先頭の一致の位置）。
+//
+// req: FR-139, FR-167
+func WordPatternAt(b *buffer.Buffer, at buffer.Position) (string, buffer.Position, error) {
 	line := b.Line(at.Line)
 	start, end, keyword, ok := identAt(line, at.Byte)
 	if !ok {
-		return "", ErrNoString
+		return "", buffer.Position{}, ErrNoString
 	}
 	word := line[start:end]
 	pat := regexp.QuoteMeta(word)
@@ -93,7 +103,7 @@ func WordPattern(b *buffer.Buffer, at buffer.Position) (string, error) {
 			pat += `\b`
 		}
 	}
-	return pat, nil
+	return pat, buffer.Position{Line: at.Line, Byte: start}, nil
 }
 
 // identAt は、line の at から、* と # が検索する単語か文字列の範囲 [start, end) を返す。keyword は単語であるかを表す。
@@ -268,10 +278,12 @@ func FindMatch(ctx context.Context, src Lines, from buffer.Position, s Search, c
 	return m, nil
 }
 
-// Matches は、バッファの先頭から並べた一致の先頭の位置の一覧である（FindMatches。検索の一致の件数。FR-167）。
+// Matches は、バッファの先頭から並べた一致の位置の一覧である（FindMatches）。
+// 検索の一致の件数（FR-167）が使い、後に作る右端の列の一致の印も、同じ一覧を Len と At で読む。
 type Matches struct {
 	// starts は、一致の先頭を、カーソルと比べる位置（行末の位置での一致は 1 つ前。matchCol）にしたものを、
 	// バッファの先頭から limit+1 件まで並べたものである。limit+1 件目があれば、件数は limit を超える。
+	// 寄せた位置が直前の一致と同じなら入れないので、同じ位置は 2 度入らない。
 	starts []buffer.Position
 	limit  int
 }
@@ -280,8 +292,12 @@ type Matches struct {
 //
 // 一致の並べ方は、n と N の検索（search の doc）と検索の一致の色付け（FR-137。internal/ui の drawer.searchSpans）と同じく、
 // 行ごとに、行の先頭から重ならないように並べた一致（regexp の FindAllStringIndex）である。行をまたぐ一致は無い。
+// 行末の位置での空の一致（$、\b、x* など）は、n と同じく 1 つ前の位置に寄せ、寄せた位置が直前の一致と同じなら数えない
+// （n はその位置に 1 度しか止まらない。ab、a b、x の 3 行の \b は 6 件で、Neovim 0.12.5 の /\<\|\> の件数と同じである。
+// ab の x* は 0、1、2 バイト目の空の一致のうち 2 が 1 に重なるので 2 件で、Neovim 0.12.5 の /x* も [2/2] を出す。
+// どちらも 2026-11-21 に tmux で確かめた。PR #322 のレビューの必須 1）。
 // このため、件数は n で順に移れる一致の数と同じになる。
-// limit+1 件を集めたら、残りの行は読まない（Vim の searchcount() の maxcount と同じ）。
+// 重ねを除いた後の数で limit+1 件を集めたら、残りの行は読まない（Vim の searchcount() の maxcount と同じ）。
 //
 // ctx が終わったら、集めるのをやめて ctx.Err() を返す。ctx は FindMatch と同じく、読んだ量が checkBytes に達するたびに調べる。
 // パターンが空なら ErrNoPattern、正しくなければ *PatternError を返す。一致が無いときは、誤りでなく空の一覧を返す。
@@ -301,8 +317,13 @@ func FindMatches(ctx context.Context, src Lines, pattern string, limit int) (Mat
 	out := Matches{limit: limit}
 	for l := range src.LineCount() {
 		line := src.Line(l)
+		// 重なりうるのは行の最後の一致（行末の位置の空の一致）だけなので、集める数を残りの数で切っても、重ねを除いた数は足りる。
 		for _, m := range re.FindAllStringIndex(line, limit+1-len(out.starts)) {
-			out.starts = append(out.starts, buffer.Position{Line: l, Byte: matchCol(line, m[0])})
+			p := buffer.Position{Line: l, Byte: matchCol(line, m[0])}
+			if n := len(out.starts); n > 0 && out.starts[n-1] == p {
+				continue
+			}
+			out.starts = append(out.starts, p)
 		}
 		if len(out.starts) > limit {
 			break
@@ -325,6 +346,17 @@ func (m Matches) Count(at buffer.Position) (cur, total int, over bool) {
 	cur = sort.Search(len(m.starts), func(i int) bool { return at.Less(m.starts[i]) })
 	return cur, len(m.starts), len(m.starts) > m.limit
 }
+
+// Len は、集めた一致の数を返す。Over が true なら、上限（FindMatches の limit）に 1 を足した数で、残りの一致は集めていない。
+func (m Matches) Len() int { return len(m.starts) }
+
+// Over は、一致の数が上限（FindMatches の limit）を超えたか（集めていない一致があるか）を返す。
+func (m Matches) Over() bool { return len(m.starts) > m.limit }
+
+// At は、バッファの先頭から i 番目（0 から数える）の一致の位置を返す。
+// 位置は一致の先頭そのものではなく、カーソルと比べる位置である。行末の位置での一致は 1 つ前のバイトに寄せてあり、
+// 空の行の行末の一致（^$ など）は Byte が -1 になる。行は一致の行のとおりなので、行だけを使う読み手（右端の列の印）はそのまま使える。
+func (m Matches) At(i int) buffer.Position { return m.starts[i] }
 
 // abs は、n の絶対値を返す。
 func abs(n int) int {

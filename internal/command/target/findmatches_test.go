@@ -31,6 +31,11 @@ func TestFindMatchesCount(t *testing.T) {
 		{"全角の文字を含む一致", "xあいx あい", "あい", pos(0, 9), 2, 2},
 		{"全角の文字の後の一致", "あfooい\nfoo", "foo", pos(0, 3), 1, 2},
 		{"一致が無い", "abc", "zzz", pos(0, 0), 0, 0},
+		// 行末の空の一致が前に寄せた位置で前の一致と重なったら、1 件と数える（PR #322 のレビューの必須 1）。
+		// Neovim 0.12.5 の同じ中身の /\<\|\> は 6 件、ab の /x* は 2 件だった（2026-11-21 に tmux で確かめた）。
+		{"行末の \\b は前の \\b と重なる", "a b", `\b`, pos(0, 2), 3, 3},
+		{"3 行の \\b", "ab\na b\nx", `\b`, pos(2, 0), 6, 6},
+		{"行末の空の一致の x*", "ab", "x*", pos(0, 1), 2, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ms, err := FindMatches(context.Background(), buffer.New(tc.text), tc.pattern, 999)
@@ -76,6 +81,32 @@ func TestFindMatchesLimit(t *testing.T) {
 	}
 	if cur, total, over := ms.Count(buffer.Position{Line: 19}); cur != 20 || total != 20 || over {
 		t.Errorf("上限と同じ件数: %d, %d, %v, want 20, 20, false", cur, total, over)
+	}
+	// 上限は重なりを除いた数で数える。"a b" の \b は 4 つの一致のうち 2 つが重なるので、3 行で 9 件である。
+	ms, err = FindMatches(context.Background(), buffer.New(strings.Repeat("a b\n", 3)), `\b`, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms.Len() != 9 || ms.Over() {
+		t.Errorf("重なりを除いた上限: Len = %d, Over = %v, want 9, false", ms.Len(), ms.Over())
+	}
+}
+
+// Len と At で、集めた一致の位置を先頭から読める（後に作る右端の列の一致の印が使う口）。位置はカーソルと比べる位置で、
+// 行末の一致は 1 つ前のバイト、空の行の行末の一致は Byte が -1 である。
+//
+// req: FR-167
+func TestFindMatchesAt(t *testing.T) {
+	ms, err := FindMatches(context.Background(), buffer.New("ab\n\nfoo ab\n"), "b|$", 999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for i := range ms.Len() {
+		got = append(got, ms.At(i).String())
+	}
+	if want := "0:1 1:-1 2:5"; strings.Join(got, " ") != want {
+		t.Errorf("At = %v, want %s", got, want)
 	}
 }
 
