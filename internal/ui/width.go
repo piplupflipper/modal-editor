@@ -112,8 +112,41 @@ func isComposing(r rune) bool {
 	if r < 0x300 {
 		return false // Mn と Me の最初の文字は U+0300
 	}
+	if r < bmpSize {
+		return bmpComposing.has(r)
+	}
 	return unicode.In(r, unicode.Mn, unicode.Me)
 }
+
+// bmpSize は、bmpBits で引く文字の数（U+0000〜U+FFFF）である。
+const bmpSize = 0x10000
+
+// bmpBits は、U+0000〜U+FFFF の文字ごとの 1 ビットの表である。
+type bmpBits [bmpSize / 64]uint64
+
+func (b *bmpBits) set(r rune)      { b[r/64] |= 1 << (r % 64) }
+func (b *bmpBits) has(r rune) bool { return b[r/64]&(1<<(r%64)) != 0 }
+
+// bmpComposing と bmpWide は、U+0000〜U+FFFF の文字が結合文字（isComposing）か、表示幅が 2 列（wideTable）かを、
+// 1 ビットで引く表である。nextGlyph が全角文字の 1 文字ごとに unicode.In と wideTable の二分探索を呼ぶと、
+// 数十万文字の行を折り返して数えるときに時間の半分以上を占めた（PR #310 のレビューの推奨 2 のプロファイル）。
+// 表は起動時に unicode.Mn、unicode.Me、wideTable から作るので、引いた結果は前と変わらない。
+var bmpComposing, bmpWide = func() (c, w *bmpBits) {
+	c, w = new(bmpBits), new(bmpBits)
+	for _, t := range []*unicode.RangeTable{unicode.Mn, unicode.Me} {
+		for _, r := range t.R16 {
+			for x := int(r.Lo); x <= int(r.Hi); x += int(r.Stride) {
+				c.set(rune(x))
+			}
+		}
+	}
+	for _, r := range wideTable {
+		for x := r[0]; x <= r[1] && x < bmpSize; x++ {
+			w.set(x)
+		}
+	}
+	return c, w
+}()
 
 // unprintable は、Vim 9.1 が表示できない文字として <200b> の形で出す文字かどうかを返す
 // （Vim の utf_printable() が偽を返す文字。U+D800〜U+DFFF は Go の文字列の復号で現れないので除く）。
@@ -144,6 +177,12 @@ func runeWidth(r rune) int {
 		return 0
 	}
 	if r < wideTable[0][0] {
+		return 1
+	}
+	if r < bmpSize {
+		if bmpWide.has(r) {
+			return 2
+		}
 		return 1
 	}
 	i := sort.Search(len(wideTable), func(i int) bool { return wideTable[i][1] >= r })

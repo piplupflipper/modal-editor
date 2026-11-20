@@ -78,9 +78,10 @@ func TestBuildMainStatic(t *testing.T) {
 	assertStaticELF(t, path)
 }
 
-// mainSizeLimit は、`make build` の本体の実行ファイルの大きさの上限（10 MiB）である（要件定義の NFR-05）。
+// mainSizeLimit は、`make build` の本体の実行ファイルの大きさの上限（12 MiB）である（要件定義の NFR-05）。
 // `make build` はシンボルとデバッグ情報を削らないので、削らない形の大きさで比べる。
-const mainSizeLimit = 10 * 1024 * 1024
+// 2026-11-21 のオーナーの決めで、10 MiB から上げた（要件定義の NFR-05 の注。PR #310）。
+const mainSizeLimit = 12 * 1024 * 1024
 
 // TestBuildMainSize は、`make build` の本体の実行ファイルの大きさが、NFR-05 の上限に収まることを確かめる。
 // 大きさはビルドの環境が同じなら揺れないので、1 回の値をそのまま上限と比べる。

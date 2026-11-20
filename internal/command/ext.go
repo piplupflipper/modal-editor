@@ -208,6 +208,7 @@ func (s *State) request(cmd editcmd.Command, op target.Operator) target.Request 
 		Char:       cmd.Target.Char,
 		Want:       s.want,
 		Columns:    s.Columns,
+		Screen:     s.ScreenLines,
 		Last:       s.lastFind,
 		Operator:   op,
 		Search:     target.Search{Pattern: cmp.Or(cmd.Target.Pattern, s.Ex.LastPattern), Backward: s.searchBackward},

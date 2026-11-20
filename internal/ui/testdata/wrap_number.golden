@@ -1,0 +1,69 @@
+## 1 行目
+size 41x9 cursor 0,4 block
+   |  1 line1 short                          |
+   |  2 0123456789abcdefghij0123456789ABCDEFG|
+   |    HIJ0123456789abcdefghij0123456789ABCD|
+   |    EFGHIJ0123456789xyz                  |
+   |  3 あいうえおかきくけこさしすせそたちつ>|
+fg |........................................n|
+   |    てとなにぬねのはひふへほまみむめも   |
+   |  4 abcdefghijklmnopqrstuvwxyzabcdefgh@@@|
+fg |......................................nnn|
+   | NORMAL  [No Name]              1,1  Top |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                                         |
+
+## jjj で 4 行目
+size 41x9 cursor 5,4 block
+   |  2 0123456789abcdefghij0123456789ABCDEFG|
+   |    HIJ0123456789abcdefghij0123456789ABCD|
+   |    EFGHIJ0123456789xyz                  |
+   |  3 あいうえおかきくけこさしすせそたちつ>|
+fg |........................................n|
+   |    てとなにぬねのはひふへほまみむめも   |
+   |  4 abcdefghijklmnopqrstuvwxyzabcdefghijk|
+   |    l  TAB     x                         |
+   | NORMAL  [No Name]               4,1  5% |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                                         |
+
+## j で 5 行目
+size 41x9 cursor 4,4 block
+   |  3 あいうえおかきくけこさしすせそたちつ>|
+fg |........................................n|
+   |    てとなにぬねのはひふへほまみむめも   |
+   |  4 abcdefghijklmnopqrstuvwxyzabcdefghijk|
+   |    l  TAB     x                         |
+   |  5 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|
+   |    aaa        X                         |
+   |  6 line6                                |
+   | NORMAL  [No Name]              5,1  12% |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                                         |
+
+## jj で 7 行目
+size 41x9 cursor 0,4 block
+   |  7 0123456789012345678901234567890123456|
+   |    7890123456789012345678901234567890123|
+   |    4567890123456789012345678901234567890|
+   |    1234567890123456789012345678901234567|
+   |    8901234567890123456789012345678901234|
+   |    5678901234567890123456789012345678901|
+   |    2345678901234567890123456789012345678|
+   | NORMAL  [No Name]              7,1  31% |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                                         |
+
+## $ で 7 行目の行末
+size 41x9 cursor 6,33 block
+   |<<< 8901234567890123456789012345678901234|
+fg |nnn......................................|
+   |    5678901234567890123456789012345678901|
+   |    2345678901234567890123456789012345678|
+   |    9012345678901234567890123456789012345|
+   |    6789012345678901234567890123456789012|
+   |    3456789012345678901234567890123456789|
+   |    012345678901234567890123456789       |
+   | NORMAL  [No Name]            7,400  31% |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                                         |

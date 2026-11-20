@@ -105,10 +105,13 @@ func (e *Editor) frame() *ui.Frame {
 // 行番号を出すかは、この 1 か所で決める。部品の client の画面とポップアップの窓の中の Frame は、ここを通らないので行番号が載らない。
 // / か ? でパターンを打っている間は、打つたびの検索で出す一致を足す（incSearchFrame。FR-153）。
 //
-// req: FR-135, FR-140, FR-153
+// 行を折り返すか（ui.Frame.Wrap）も、描くたびに設定の今の値（lineWrap.enabled）から詰める（FR-156）。
+//
+// req: FR-135, FR-140, FR-153, FR-156
 func (e *Editor) bufferFrame() *ui.Frame {
 	f := e.frame()
 	f.LineNumbers = e.uiLineNumbers()
+	f.Wrap = e.lineWrap()
 	f.Search = e.uiSearch()
 	f.Highlights = e.flashHighlights(e.tab())
 	e.incSearchFrame(f)
@@ -170,6 +173,92 @@ func (e *Editor) uiLineNumbers() ui.LineNumbers {
 		Show:     e.options.Get(option.LineNumberShow).Bool(),
 		MinWidth: e.options.Get(option.LineNumberMinWidth).Int(),
 	}
+}
+
+// lineWrap は、長い行を折り返して描くかを、エディタ全体の設定の今の値（lineWrap.enabled）から返す（FR-156）。
+// 描くたびと、gj と gk で見た目の行を数えるたびに読むので、:set wrap などで値を変えたときに呼ぶ処理は無い（基本設計 7.3）。
+// 使うのは、client の画面のバッファの表示領域（bufferFrame）と、ポップアップのプレビューの中身（floatFrame）と、screenLines である。
+// ホバーとヘルプのポップアップは、窓の幅で折り返してからバッファにする（今のまま）ので、ここを読まない。
+func (e *Editor) lineWrap() bool {
+	return e.options.Get(option.LineWrapEnabled).Bool()
+}
+
+// screenLines は、行を折り返して描くときの見た目の行の数え方（command.State.ScreenLines。gj と gk、ページ単位のスクロール）を、
+// その State の表示領域（State.Viewport）を描く描画の部品につなぐ口である（FR-157）。
+// client の画面のバッファ（viewport）と、ポップアップのプレビューの中身（previewViewport）は、設定（lineWrap.enabled）が true なら折り返して数える。
+// ほかのポップアップの中のバッファ（floatViewport）は折り返して描かないので、折り返さないとして数える。
+// 表示領域の幅は、その描画の部品の直前の描画の本文の幅で、まだ描いていない（幅が 0）なら折り返さないとして数える。
+//
+// 同じ口で、State の望みの列の数え方（command.State.Columns。wrapColumns）も、折り返して数えるときは描画と同じ列（ui.WrapLines）にする。
+// Vim も 'wrap' のときは、j と k の望みの列（curswant）を、全角文字を送った ">" の列を含む列で数える。
+type screenLines struct {
+	e  *Editor
+	st *command.State
+}
+
+// lines は、折り返して数えるなら、その数え方を ok を true にして返す。
+func (s screenLines) lines() (l ui.WrapLines, ok bool) {
+	if !s.e.lineWrap() {
+		return l, false
+	}
+	var r *ui.Renderer
+	switch v := s.st.Viewport.(type) {
+	case viewport:
+		r = v.r
+	case previewViewport:
+		r = v.sub()
+	}
+	if r == nil || r.TextWidth() <= 0 {
+		return l, false
+	}
+	return r.WrapLines(), true
+}
+
+// Wrap は、行を折り返して数えるかを返す。
+func (s screenLines) Wrap() bool {
+	_, ok := s.lines()
+	return ok
+}
+
+// Width は、ui.WrapLines.Width である。
+func (s screenLines) Width() int {
+	l, _ := s.lines()
+	return l.Width()
+}
+
+// BreakWidth は、ui.WrapLines.BreakWidth である。
+func (s screenLines) BreakWidth() int {
+	l, _ := s.lines()
+	return l.BreakWidth()
+}
+
+// Rows は、ui.WrapLines.Rows である。
+func (s screenLines) Rows(line string) int {
+	l, _ := s.lines()
+	return l.Rows(line)
+}
+
+// wrapColumns は、State の望みの列の数え方（command.State.Columns）である。行を折り返して数えるとき（screenLines）は
+// 描画と同じ列（ui.WrapLines の Column と ByteAt）で、そうでなければ行の先頭からの表示の列（ui.Columns）で数える。
+type wrapColumns struct {
+	sl    screenLines
+	plain ui.Columns
+}
+
+// Column は、target.Columns の Column である。
+func (c wrapColumns) Column(line string, byteOff int) int {
+	if l, ok := c.sl.lines(); ok {
+		return l.Column(line, byteOff)
+	}
+	return c.plain.Column(line, byteOff)
+}
+
+// ByteAt は、target.Columns の ByteAt である。
+func (c wrapColumns) ByteAt(line string, col int) int {
+	if l, ok := c.sl.lines(); ok {
+		return l.ByteAt(line, col)
+	}
+	return c.plain.ByteAt(line, col)
 }
 
 // hitEnter は、改行を含むメッセージを出していて、Vim の hit-enter の問いと同じくキーを待っているかを返す。

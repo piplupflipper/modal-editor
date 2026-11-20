@@ -102,6 +102,24 @@ func (CharColumns) ByteAt(line string, col int) int {
 	return byteOfColumn(line, col)
 }
 
+// ScreenLines は、行を画面の幅で折り返して描くときの、見た目の行の数え方である（gj と gk。FR-157）。
+//
+// 折り返しの位置は表示幅と画面の幅で決まり、その計算は internal/ui の担当なので、Columns と同じく呼び出し側から差し込む。
+//
+// 折り返すとき、呼び出し側は Request.Columns も、Vim の vcol と同じく、見た目の行の n 番目の行の左の端を n × Width の列とする
+// 数え方（全角文字を次の見た目の行へ送った ">" の列と、続きの行の記号の列も数える）にする。gj と gk は、この列の上で
+// Vim の nv_screengo と同じ計算をする。
+type ScreenLines interface {
+	// Wrap は、行を折り返して描くかを返す。false なら gj と gk は j と k と同じに動く。
+	Wrap() bool
+	// Width は、見た目の行の列数（本文の幅）を返す。
+	Width() int
+	// BreakWidth は、続きの見た目の行の頭に描く記号（Vim の 'showbreak'）の列数を返す。付けないなら 0 である。
+	BreakWidth() int
+	// Rows は、行 line を折り返した見た目の行の数（1 以上）を返す。ページ単位のスクロールが行の高さに使う。
+	Rows(line string) int
+}
+
 // Request は、モーションとテキストオブジェクトへの入力である。
 //
 // Count と CountGiven は、internal/input の Command の同じ名前の欄をそのまま渡せる形にしてある。
@@ -118,6 +136,8 @@ type Request struct {
 	Want int
 	// Columns は、望みの列の数え方である。nil なら CharColumns を使う。
 	Columns Columns
+	// Screen は、見た目の行の数え方である（gj と gk）。nil なら行を折り返さないとして扱う。
+	Screen ScreenLines
 	// Last は、; と , が繰り返す直前の検索である。
 	Last Find
 	// Operator は、このモーションの前に入力されたオペレーターである。テキストオブジェクトは見ない。
@@ -221,6 +241,8 @@ var motions = map[string]MotionFunc{
 	"right":               right,                  // l
 	"down":                down,                   // j
 	"up":                  up,                     // k
+	"display-down":        displayVertical(true),  // gj
+	"display-up":          displayVertical(false), // gk
 	"word-next":           wordForward(false),     // w
 	"bigword-next":        wordForward(true),      // W
 	"word-prev":           wordBackward(false),    // b

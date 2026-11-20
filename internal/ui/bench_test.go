@@ -54,6 +54,41 @@ func BenchmarkRenderLongLines(b *testing.B) {
 	benchRender(b, Frame{Text: sameLines{line, 10000}, Cursor: pos(0, 20000)})
 }
 
+// 行を折り返すとき（FR-156）の描画である。どの行も画面の幅より長いので、カーソルを 1 行下げるたびに、行の単位でスクロールする。
+func BenchmarkRenderWrapLongLines(b *testing.B) {
+	line := strings.Repeat("abcdefghij", 2200)
+	benchRender(b, Frame{Text: sameLines{line, 10000}, Cursor: pos(0, 20000), Wrap: true})
+}
+
+// 行を折り返すとき、全角文字とタブを含む 20 万文字の 1 行の中で、カーソルを見た目の行で動かしながら描く（行の途中から描く）。
+func BenchmarkRenderWrapHugeLine(b *testing.B) {
+	line := strings.Repeat("abc\tあいうえお日本語 ", 20000)
+	text := sameLines{line, 1}
+	r := &Renderer{Width: 200, Height: 60}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		r.Render(&Frame{Text: text, Cursor: pos(0, (i*997)%len(line)/4*4), Wrap: true})
+	}
+}
+
+// 行の最後の見た目の行からの gk の 1 回（target の displayVertical）が WrapLines に問い合わせる数え方を、
+// BenchmarkRenderWrapHugeLine と同じ 1 行で測る。
+func BenchmarkWrapLinesHugeLine(b *testing.B) {
+	line := strings.Repeat("abc\tあいうえお日本語 ", 20000)
+	r := &Renderer{Width: 200, Height: 60}
+	r.Render(&Frame{Text: sameLines{line, 1}, Wrap: true})
+	l := r.WrapLines()
+	b.ResetTimer()
+	n := l.Column(line, len(line))
+	for i := range b.N {
+		// 行の最後の見た目の行から gk を打つ。行の最後の列、望みの列の文字、着いた文字の列を数える。
+		_ = l.Column(line, len(line))
+		at := l.ByteAt(line, n-l.Width()-(i%l.Width()))
+		_ = l.Column(line, at)
+	}
+}
+
 func BenchmarkRenderManyDecorations(b *testing.B) {
 	line := strings.Repeat("abcd ", 40)
 	benchRender(b, Frame{Text: sameLines{line, 10000}, Decorations: perLine(10000, 60, 3)})

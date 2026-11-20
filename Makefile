@@ -102,7 +102,7 @@ check: fmt-check typecheck lint test tidy-check progress-check ## コミット�
 
 # 本体を CGO_ENABLED=0 で作る（NFR-02）。make build-check が検査する。
 # 本体はシンボルとデバッグ情報を削らずに作る（-ldflags に -s -w を足さない）。デバッガーで変数を読めるようにするためで、
-# NFR-05 の実行ファイルの大きさの上限（10 MiB）は、この形で満たす。make build-check と make footprint-check が検査する。
+# NFR-05 の実行ファイルの大きさの上限（12 MiB。2026-11-21 に 10 MiB から上げた）は、この形で満たす。make build-check と make footprint-check が検査する。
 #
 # req: NFR-02, NFR-05
 .PHONY: build

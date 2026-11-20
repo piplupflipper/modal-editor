@@ -1468,6 +1468,10 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 		// 出すかは previewShown で決め、ui は決めた窓の中を幅の規則で分ける。端末多重化ソフトのポップアップ（Fill）は、
 		// 出すときに preview.windowWidthPercent % の幅で開いたので、その全体の幅も境目を超える。
 		fl.Preview, fl.PreviewRule = e.uiPreview(f), e.previewRule()
+		if fl.Preview.View != nil {
+			// プレビューの中身は本文と同じバッファの表示なので、本文と同じ設定で折り返す（FR-156。#300 の決め）。
+			fl.Preview.View.Wrap = e.lineWrap()
+		}
 	}
 	return fl
 }

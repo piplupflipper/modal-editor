@@ -58,7 +58,7 @@ type Preview struct {
 	ID uint64
 	// Title は、プレビューの欄の最初の行に出す見出し（パスと行）である。
 	Title string
-	// View は、中身のバッファの Frame である。Text、Cursor、Decorations、Mode、Selection を読む。
+	// View は、中身のバッファの Frame である。Text、Cursor、Decorations、Mode、Selection、Wrap を読む。
 	// nil か Text が nil なら、中身を出さずに Note を出す（読めないファイル、項目にプレビューが無い）。
 	View *Frame
 	// Line は、色（StylePreviewLine）を付ける行である。負なら付けない。
@@ -143,8 +143,9 @@ func (r *Renderer) drawPreview(g *Grid, theme Theme, p *Preview, top, x, w, h in
 	la := a.Over(theme.attr(StylePreviewLine))
 	n := view.Text.LineCount()
 	for i := range rows {
-		line := sub.Top() + i
-		if line >= n {
+		// 中身を折り返して描いたとき（View.Wrap。FR-156）も、表示領域の行ごとの行の番号（rowLine）で、色を付ける行と最終行より後の行を見分ける。
+		line := sub.rowLine(i)
+		if line < 0 || line >= n {
 			continue
 		}
 		base := a

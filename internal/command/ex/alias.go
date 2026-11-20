@@ -212,6 +212,7 @@ var vimOptionNames = map[string]string{
 	"number":      option.LineNumberShow,
 	"numberwidth": option.LineNumberMinWidth,
 	"hlsearch":    option.SearchHighlight,
+	"wrap":        option.LineWrapEnabled,
 }
 
 // vimOption は、:set の Vim の名前 name の項目を返す。無ければ ok は false である。

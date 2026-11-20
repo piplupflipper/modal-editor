@@ -65,6 +65,7 @@ func (r *Renderer) layout(f *Frame) {
 		lineCount = f.Text.LineCount()
 	}
 	r.numWidth = f.LineNumbers.width(lineCount)
+	r.wrap = f.Wrap
 	r.outRows = 0
 	if f.Output != nil {
 		r.outRows = min(outputMaxRows, (r.Height-3)/2)
@@ -79,6 +80,9 @@ func (r *Renderer) OutputRows() int { return r.outRows }
 
 // TextRows は、直前の Render でバッファの表示領域に使った行数を返す。
 func (r *Renderer) TextRows() int { return r.textRows() }
+
+// TextWidth は、直前の Render でバッファのテキストを描いた列数（本文の幅）を返す。まだ描いていなければ 0 である。
+func (r *Renderer) TextWidth() int { return r.textWidth() }
 
 // FloatRenderer は、直前の Render でポップアップ（Frame.Float）の窓の中を描いた子の Renderer を返す。窓が無ければ nil である。
 // 窓の中のバッファのページ単位のスクロール（command.State.Viewport）を、窓の表示領域につなぐのに使う（internal/editor）。
@@ -135,15 +139,34 @@ func (d *drawer) drawSign(row int, m signMark) {
 	}
 }
 
-// drawNumber は、表示領域の row 行目に、バッファの line 行目（0 から数える）の行番号を描く（FR-135）。
+// drawGutter は、表示領域の row 行目（中身は vr）の、印の列と行番号の列を描く。signs は signsByLine の結果である。
+// 印と番号は行の最初の見た目の行にだけ出し、折り返した続きの見た目の行（vr.k が 0 でない）は空ける（Vim と同じ。FR-156）。
+func (d *drawer) drawGutter(row int, vr viewRow, signs []signMark) {
+	if signs != nil {
+		var m signMark
+		if vr.k == 0 {
+			m = signs[vr.line-d.r.top]
+		}
+		d.drawSign(row, m)
+	}
+	if d.r.numWidth > 0 {
+		d.drawNumber(row, vr)
+	}
+}
+
+// drawNumber は、表示領域の row 行目（中身は vr）に、バッファの vr.line 行目（0 から数える）の行番号を描く（FR-135）。
 // 列は印の列の右の r.numWidth 列で、番号を最後の 1 列の手前で右に寄せ、最後の 1 列は空ける。
 // 列の全体（右寄せの前の空白と最後の 1 列を含む）に StyleLineNr を付ける（Vim の LineNr と同じ）。画面の右の端で切る。
+// 折り返した続きの見た目の行（vr.k が 0 でない）は、番号を書かずに StyleLineNr の空白で埋める（nvim 0.12.5 と同じ。FR-156）。
 //
-// req: FR-135
-func (d *drawer) drawNumber(row, line int) {
+// req: FR-135, FR-156
+func (d *drawer) drawNumber(row int, vr viewRow) {
 	x0, w := d.r.signWidth(), d.r.numWidth
 	a := d.theme.attr(StyleLineNr)
-	s := strconv.Itoa(line + 1)
+	s := ""
+	if vr.k == 0 {
+		s = strconv.Itoa(vr.line + 1)
+	}
 	pad := w - 1 - len(s)
 	for i := range w {
 		c := blank(a)

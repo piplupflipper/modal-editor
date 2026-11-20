@@ -25,6 +25,9 @@ const (
 	// SymbolPopupBorder は、浮かべる窓の枠線の 8 文字である。並びは左上、上、右上、右、右下、下、左下、左（Neovim の border の配列と同じ）。
 	// 空なら枠線を描かない（既定）。
 	SymbolPopupBorder = "popup.border"
+	// SymbolShowBreak は、行を折り返したとき（FR-156）に、続きの見た目の行の頭に付ける記号である（Vim の 'showbreak'）。
+	// 空なら付けない（既定。Vim と Neovim の既定と同じ）。本文の幅から 2 を引いた列数より広ければ付けない（wrapper）。
+	SymbolShowBreak = "lineWrap.showBreak"
 )
 
 // borderChars は、SymbolPopupBorder の文字の数である。
@@ -46,6 +49,7 @@ var defaultSymbols = Symbols{
 	SymbolReadOnly:                 "[RO]",
 	SymbolModified:                 "[+]",
 	SymbolPopupBorder:              "",
+	SymbolShowBreak:                "",
 }
 
 // DefaultSymbols は、既定の記号の対応を返す。返す対応は呼び出しごとに作り直す。
@@ -62,7 +66,7 @@ func SymbolNames() []string {
 //
 //   - 印の列の印（"sign." で始まる名前）: 表示幅が 1 か 2 の文字列。印の列は 2 列なので、1 列の印は右に空白を置いて描く
 //   - 枠線（SymbolPopupBorder）: 空か、表示幅が 1 の文字をちょうど 8 つ並べた文字列
-//   - それ以外（SymbolReadOnly、SymbolModified）: 任意の文字列。空ならその部品を出さない
+//   - それ以外（SymbolReadOnly、SymbolModified、SymbolShowBreak）: 任意の文字列。空ならその部品（続きの行の記号）を出さない
 //
 // どれも、タブと制御文字を含めない（描くと ^I の形になり、幅が変わるため）。
 //

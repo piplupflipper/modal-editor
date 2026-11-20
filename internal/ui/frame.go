@@ -132,7 +132,7 @@ type List struct {
 type Float struct {
 	// ID は、窓を見分ける番号である。替わったら窓の中のスクロールの位置を決め直す。0 も 1 つの窓として扱う。
 	ID uint64
-	// View は、窓の中に描くバッファの Frame である。Text、Cursor、Mode、Selection、Decorations、Diagnostics を読み、
+	// View は、窓の中に描くバッファの Frame である。Text、Cursor、Mode、Selection、Decorations、Diagnostics、Wrap を読み、
 	// Tabs、Output、List、Choice、Float、Diff、Message、LineNumbers、Search、Highlights は読まない
 	// （窓の中に行番号と検索の一致の色とヤンクした範囲の色は出さない）。
 	// Text が nil なら窓を出さない。
@@ -274,6 +274,9 @@ type Frame struct {
 	// LineNumbers は、バッファの表示領域の左に出す行番号の列の出し方である（FR-135、FR-136）。ゼロ値は列を出さない。
 	// internal/editor が、描くたびに設定の今の値（lineNumber.show と lineNumber.minWidth）から詰める。
 	LineNumbers LineNumbers
+	// Wrap は、長い行を本文の幅で折り返して描くかである（FR-156。Vim の 'wrap'）。false なら折り返さずに横にスクロールする。
+	// internal/editor が、描くたびに設定の今の値（lineWrap.enabled）を詰める。描き方は wrap.go の doc にある。
+	Wrap bool
 	// Search は、一致に色（StyleSearch）を付けるパターンである（FR-137）。nil なら色を付けない。
 	// internal/editor が、描くたびに設定の今の値（search.highlight）と直前の検索のパターンから詰める。
 	// 描き方は searchSpans の doc にある。
