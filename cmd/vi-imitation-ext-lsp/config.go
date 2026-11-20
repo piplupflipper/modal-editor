@@ -147,7 +147,7 @@ func parseSettings(raw json.RawMessage) (*config, error) {
 		case strings.HasPrefix(sc.Mise, "-") || strings.ContainsFunc(sc.Mise, unicode.IsSpace):
 			errs = append(errs, fmt.Errorf("servers.%s.mise は mise の道具の ID（例: npm:pyright@1.1.410）でない: %q", ft, sc.Mise))
 		case !hasMiseVersion(sc.Mise):
-			errs = append(errs, fmt.Errorf("servers.%s.mise に版が無い（例: npm:pyright@1.1.410）: %q", ft, sc.Mise))
+			errs = append(errs, fmt.Errorf("servers.%s.mise に固定した版が無い（@latest も不可。例: npm:pyright@1.1.410）: %q", ft, sc.Mise))
 		}
 		if sc.AutoInstall == nil {
 			sc.AutoInstall = &s.AutoInstall
@@ -163,10 +163,12 @@ func parseSettings(raw json.RawMessage) (*config, error) {
 //
 // 版を省くと、mise install はその時点の最新版を入れる（PR #281 のレビューで、mise 2026.5.2 の mise install --dry-run で確かめた）。
 // 道具の版を固定して、サプライチェーン攻撃に備える方針（#278 の背景）に合わせ、版の無い ID を設定の誤りにする。
+// "@latest" も、mise は最新版と読むので、版を固定していない ID として誤りにする（PR #281 の再レビューの推奨 1）。
+// "@1" のような版の範囲は、利用者が意図して書くものとして受け付ける。
 // npm の scope の "@"（"npm:@vtsls/language-server" の ":" と "/" の直後の "@"）は版の区切りとして数えない。
 func hasMiseVersion(tool string) bool {
 	i := strings.LastIndexByte(tool, '@')
-	return i > 0 && i < len(tool)-1 && tool[i-1] != ':' && tool[i-1] != '/'
+	return i > 0 && i < len(tool)-1 && tool[i-1] != ':' && tool[i-1] != '/' && tool[i+1:] != "latest"
 }
 
 // findRoot は、ファイル path のディレクトリから親へたどり、markers のどれかを含む最初のディレクトリを返す。

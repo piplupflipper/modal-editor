@@ -69,7 +69,7 @@ type command struct {
 //
 // req: FR-143
 func (c *client) prepare(ctx context.Context, root string) (cmd command, retry bool, err error) {
-	note := ""
+	var notes []string
 	path, err := exec.LookPath(c.cfg.Command)
 	switch {
 	case err == nil && c.cfg.Mise == "":
@@ -79,18 +79,18 @@ func (c *client) prepare(ctx context.Context, root string) (cmd command, retry b
 		if !ok || c.shimResolves(ctx, shim, root) {
 			return command{path: path, args: c.cfg.Args}, false, nil
 		}
-		note = fmt.Sprintf("PATH の %s は mise の shim で、版が決まっていない。", path)
+		notes = append(notes, fmt.Sprintf("PATH の %s は mise の shim で、版が決まっていない", path))
 	case c.cfg.Mise == "" || !errors.Is(err, exec.ErrNotFound) && !errors.Is(err, fs.ErrNotExist):
 		return command{}, false, err
 	}
 	if !c.cfg.autoInstall() {
-		c.guide(note)
+		c.guide(notes...)
 		return command{}, true, errReported
 	}
 	mise, merr := exec.LookPath(c.mise)
 	if merr != nil {
 		c.x.logf("%s: mise: %v", c.name(), merr)
-		c.guide(note + "mise が見つからないので、自動では入れない。mise を入れた後、")
+		c.guide(append(notes, "mise が見つからないので、自動では入れない（mise を入れてから打つ）")...)
 		return command{}, true, errReported
 	}
 	if !c.miseInstalled(ctx, mise, root) {
@@ -102,15 +102,21 @@ func (c *client) prepare(ctx context.Context, root string) (cmd command, retry b
 	return command{path: mise, args: args}, false, nil
 }
 
-// guide は、言語サーバーの入れ方を message/show で案内する。note は、入れ方の前に置く説明である。
+// guide は、言語サーバーの入れ方を message/show で案内する。notes は、入れ方の後ろに置く説明である。
+// メッセージの行は画面の幅で切れるので、利用者が打つ入れ方（mise use -g …）を前に置き、長くなりうる説明（shim のパスなど）を後ろに置く
+// （PR #281 の再レビューの推奨 2）。
 // 同じ実行ファイルと道具の ID の案内は、拡張機能が動いている間に 2 回出さない（別のファイルの種類の client からも）。
 //
 // req: FR-143
-func (c *client) guide(note string) {
+func (c *client) guide(notes ...string) {
 	if !c.x.firstGuide(c.cfg.Command + "\x00" + c.cfg.Mise) {
 		return
 	}
-	c.x.showMessage(ext.MessageWarning, fmt.Sprintf("言語サーバー %s が見つからない。%smise use -g %s で入れられる", c.name(), note, c.cfg.Mise))
+	text := fmt.Sprintf("言語サーバー %s が見つからない。mise use -g %s で入れられる", c.name(), c.cfg.Mise)
+	for _, n := range notes {
+		text += "。" + n
+	}
+	c.x.showMessage(ext.MessageWarning, text)
 }
 
 // miseShim は、path が mise の shim（mise の実行ファイルへのシンボリックリンク）なら、リンクの先の mise の実行ファイルを返す。

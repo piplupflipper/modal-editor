@@ -557,8 +557,9 @@ func TestMiseShim(t *testing.T) {
 		h := startHost(t, hostOptions{maxRestarts: -1, mise: m.path, extra: map[string]any{"command": missingCommand, "mise": testTool}})
 		h.open(1, "a.go", "a")
 		msg := receive(t, h.msgs, "message/show")
-		want := fmt.Sprintf("言語サーバー %s が見つからない。PATH の %s は mise の shim で、版が決まっていない。mise use -g %s で入れられる",
-			missingCommand, filepath.Join(shims, missingCommand), testTool)
+		// 入れ方を前に置き、長くなりうる shim のパスは後ろに置く（画面の幅で切れても入れ方が見えるように）。
+		want := fmt.Sprintf("言語サーバー %s が見つからない。mise use -g %s で入れられる。PATH の %s は mise の shim で、版が決まっていない",
+			missingCommand, testTool, filepath.Join(shims, missingCommand))
 		if msg.Level != ext.MessageWarning || msg.Text != want {
 			t.Errorf("guide = %+v, want %q", msg, want)
 		}

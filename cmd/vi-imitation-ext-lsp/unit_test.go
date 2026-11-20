@@ -249,7 +249,7 @@ func TestParseSettingsMise(t *testing.T) {
 		}
 	}
 	// 版の無い ID は誤りにする（npm の scope の "@" は版の区切りでない）。
-	for _, bad := range []string{"-g", "npm:pyright @1", "npm:pyright", "npm:pyright@", "npm:@vtsls/language-server", "@scope/pkg"} {
+	for _, bad := range []string{"-g", "npm:pyright @1", "npm:pyright", "npm:pyright@", "npm:@vtsls/language-server", "@scope/pkg", "npm:pyright@latest", "npm:@vtsls/language-server@latest"} {
 		raw := fmt.Sprintf(`{"servers": {"python": {"command": "pyright-langserver", "mise": %q}}}`, bad)
 		if _, err := parseSettings(json.RawMessage(raw)); err == nil {
 			t.Errorf("mise %q: err = nil", bad)
