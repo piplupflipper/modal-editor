@@ -35,6 +35,9 @@
   "popup": { "fg": "#c6c8d1", "bg": "#3d425b" }, // Pmenu
   "popup.selected": { "fg": "#eff0f4", "bg": "#5b6389" }, // PmenuSel
   "finder.match": { "fg": "#e2a478" }, // CtrlPMatch、deniteMatchedChar → Title
+  // 項目のプレビューの、項目の指す行。iceberg.vim に専用のグループは無く、fzf-lua のプレビューの FzfLuaCursorLine が既定で
+  // リンクする CursorLine の背景を写した（文字の色は持たず、構文の色を残す）
+  "preview.line": { "bg": "#1e2132" }, // CursorLine
 
   // ステータス行。どちらも反転（gui=reverse）なので、文字は guibg の色、背景は guifg の色で出る
   "statusline": { "fg": "#818596", "bg": "#17171b", "reverse": true }, // StatusLine

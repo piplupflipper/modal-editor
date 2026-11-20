@@ -38,6 +38,10 @@ func TestPreviewLayout(t *testing.T) {
 	if _, _, ok := (PreviewRule{WidthPercent: 99, WindowWidthPercent: 100}).Layout(10, false); ok {
 		t.Error("a 10-column window was split")
 	}
+	// Split は境目と比べない（出すと決めた窓を分ける）。tmux の 113 列の端末の 90% のポップアップは、枠線の内側が 99 列である。
+	if w, p, ok := rule.Split(99, true); w != 99 || p != 59 || !ok {
+		t.Errorf("Split(99, true) = %d, %d, %v", w, p, ok)
+	}
 }
 
 // previewText は、n 行の "row i" のテキストである。
@@ -116,11 +120,16 @@ func TestDrawPreview(t *testing.T) {
 		t.Errorf("note:\n%s", g)
 	}
 
-	// 境目を超えなければ、プレビューを描かない。
+	// 出すかは渡す側が決めるので、境目を超えない窓でも、渡されたプレビューは描く（判定を 2 か所で行わない。PR #298 のレビューの必須 1）。
 	rule.MinWindowWidth = 60
-	s = r.Render(list(&Preview{ID: 7, Title: "a.go:21", View: &Frame{Text: previewText(40)}, Line: 20}))
-	if g := s.Grid.String(); strings.Contains(g, "row 20") || strings.Contains(g, previewSeparator) || r.PreviewRenderer() != nil {
-		t.Errorf("preview under the threshold:\n%s", g)
+	s = r.Render(list(&Preview{ID: 9, Title: "a.go:21", View: &Frame{Text: previewText(40), Cursor: pos(20, 0)}, Line: 20}))
+	if g := s.Grid.String(); !strings.Contains(g, "row 20") || !strings.Contains(g, previewSeparator) {
+		t.Errorf("a given preview was not drawn:\n%s", g)
+	}
+	// 渡されなければ描かない。
+	s = r.Render(list(nil))
+	if g := s.Grid.String(); strings.Contains(g, previewSeparator) || r.PreviewRenderer() != nil {
+		t.Errorf("preview without Float.Preview:\n%s", g)
 	}
 }
 

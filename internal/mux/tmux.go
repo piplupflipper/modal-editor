@@ -382,24 +382,45 @@ func (t *Tmux) paneWindow(ctx context.Context, pane string) (string, error) {
 type tmuxClient struct {
 	name, session, window string
 	activity              int64
+	// width は、client の端末の列数（client_width）である。
+	width int
 }
 
 // clients は、tmux の client の一覧を返す。
 func (t *Tmux) clients(ctx context.Context) ([]tmuxClient, error) {
-	out, err := t.run(ctx, "list-clients", "-F", "#{client_name}\t#{session_id}\t#{window_id}\t#{client_activity}")
+	out, err := t.run(ctx, "list-clients", "-F", "#{client_name}\t#{session_id}\t#{window_id}\t#{client_activity}\t#{client_width}")
 	if err != nil {
 		return nil, err
 	}
 	var cs []tmuxClient
 	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 4 {
+		if len(f) != 5 {
 			continue
 		}
 		activity, _ := strconv.ParseInt(f[3], 10, 64)
-		cs = append(cs, tmuxClient{name: f[0], session: f[1], window: f[2], activity: activity})
+		width, _ := strconv.Atoi(f[4])
+		cs = append(cs, tmuxClient{name: f[0], session: f[1], window: f[2], activity: activity, width: width})
 	}
 	return cs, nil
+}
+
+// ScreenWidth は、target のペインの上にポップアップを出す tmux の client（OpenPopup と同じ選び方。client）の端末の列数を返す
+// （mux.ScreenWidther）。display-popup -w の百分率は、この列数に対するものである（FR-149）。
+//
+// req: FR-149
+func (t *Tmux) ScreenWidth(ctx context.Context, target string) (int, error) {
+	if target == "" {
+		return 0, ErrNoTarget
+	}
+	c, err := t.client(ctx, target)
+	if err != nil {
+		return 0, err
+	}
+	if c.width <= 0 {
+		return 0, fmt.Errorf("tmux: client %s has no width", c.name)
+	}
+	return c.width, nil
 }
 
 // client は、target のペインを表示している tmux の client を返す（ポップアップを出す先と、FocusPane で切り替える先）。

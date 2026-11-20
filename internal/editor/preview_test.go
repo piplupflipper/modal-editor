@@ -1,12 +1,14 @@
 package editor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/piplupflipper/vi-imitation/ext"
@@ -413,9 +415,11 @@ func TestPreviewFocus(t *testing.T) {
 }
 
 // 端末多重化ソフトのポップアップに出す中央のポップアップも、編集の client の画面に描く窓と同じ規則と同じ設定の項目で決める。
-// プレビューを出すなら、ポップアップを preview.windowWidthPercent（90）% の幅で開かせ、ポップアップの部品の client の画面（その幅）で
-// 一覧の右にプレビューを描く。出さない（開いた client の画面の 90% が境目を超えない、プレビューの欄が無い）なら、既定の大きさで開かせ、
-// ポップアップの画面が広くてもプレビューを描かない。
+// ポップアップの幅の百分率は端末の幅に対するものなので、出すかも、ポップアップを出す端末の幅（Config.PopupScreenWidth）の 90% で決め、
+// 出すなら 90% の幅で開かせて、ポップアップの部品の client の画面（枠線の内側）で一覧の右にプレビューを描く。
+// 開いた client のペインの幅では決めない（200 列の端末を分割した 100 列のペインからでも出す。PR #298 のレビューの必須 1）。
+// 出さない（端末の 90% が境目を超えない、プレビューの欄が無い）なら、既定の大きさで開かせ、ポップアップの画面が広くてもプレビューを描かない。
+// 端末の幅を得られなければ、ペインの幅で代える。
 //
 // req: FR-149, FR-67
 func TestPreviewMuxPopupWidth(t *testing.T) {
@@ -423,16 +427,34 @@ func TestPreviewMuxPopupWidth(t *testing.T) {
 	var calls muxCalls
 	cfg := Config{WorkDir: dir}
 	calls.config(&cfg)
+	// 端末の幅は、ペインの識別子ごとに決める（無ければ得られない）。
+	var mu sync.Mutex
+	screens := map[string]int{}
+	cfg.PopupScreenWidth = func(from string) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if w, ok := screens[from]; ok {
+			return w, nil
+		}
+		return 0, errors.New("no screen width")
+	}
 	h := start(t, cfg)
 	items := []ext.ViewItem{{ID: "a", Label: "a.go", Preview: pvOf(filepath.Join(dir, "a.go"))}}
 	n := ClientID(1)
-	open := func(width int, items []ext.ViewItem) (*floatState, muxCall) {
+	// open は、幅 width のペインの client を、幅 screen の端末（0 なら得られない）に繋いで、中央のポップアップを開く。
+	open := func(width, screen int, items []ext.ViewItem) (*floatState, muxCall) {
 		t.Helper()
 		n++
+		pane := fmt.Sprintf("%%%d", n)
+		if screen > 0 {
+			mu.Lock()
+			screens[pane] = screen
+			mu.Unlock()
+		}
 		term := &exitTerm{fakeTerm: newFakeTerm()}
 		term.w, term.h = width, 24
 		h.peers = append(h.peers, term.fakeTerm)
-		if err := h.e.Attach(term, ClientInfo{ID: n, Pane: fmt.Sprintf("%%%d", n)}); err != nil {
+		if err := h.e.Attach(term, ClientInfo{ID: n, Pane: pane}); err != nil {
 			t.Fatal(err)
 		}
 		var f *floatState
@@ -458,35 +480,106 @@ func TestPreviewMuxPopupWidth(t *testing.T) {
 		return term
 	}
 
-	// 200 列の client: 90% の幅で開かせ、180 列のポップアップの画面にプレビューを描く。
-	f, call := open(200, items)
-	if call.popup.Width != 90 {
-		t.Errorf("OpenPopup width = %d, want 90", call.popup.Width)
+	// shown は、ポップアップの部品の client（幅 inner。端末の百分率の幅から枠線の 2 列を引いたもの）を繋ぎ、プレビューを描くまで待つ。
+	shown := func(what string, f *floatState, call muxCall, inner int) {
+		t.Helper()
+		comp := component(call.view, inner)
+		h.eventually(what, func() bool {
+			s := comp.screen()
+			return f.preview.bs != nil && strings.Contains(s, "│") && strings.Contains(s, "package main")
+		})
 	}
-	comp := component(call.view, 180)
-	h.eventually("ポップアップの画面のプレビュー", func() bool {
-		s := comp.screen()
-		return f.preview.bs != nil && strings.Contains(s, "│") && strings.Contains(s, "package main")
-	})
+	// hidden は、ポップアップの部品の client（幅 inner）を繋ぎ、プレビューを開かず描かないことを確かめる。
+	hidden := func(what string, f *floatState, call muxCall, inner int) {
+		t.Helper()
+		comp := component(call.view, inner)
+		h.eventually(what+"の一覧", func() bool { return strings.Contains(comp.screen(), "a.go") })
+		h.settle()
+		h.e.do(func() {
+			if f.preview.loading || f.preview.key != "" || strings.Contains(comp.screen(), "│") {
+				t.Errorf("%s: a preview: %+v\n%s", what, f.preview, comp.screen())
+			}
+		})
+	}
+	for _, tt := range []struct {
+		what         string
+		pane, screen int
+		width        int // OpenPopup の幅の百分率（0 は既定）
+		inner        int // 開いたポップアップの枠線の内側の列数
+		show         bool
+	}{
+		{"200 列の端末の 200 列のペイン", 200, 200, 90, 178, true},
+		{"200 列の端末を分割した 100 列のペイン", 100, 200, 90, 178, true},
+		{"113 列の端末（90% は 101 列）", 113, 113, 90, 99, true},
+		{"112 列の端末（90% は 100 列）", 112, 112, 0, 87, false},
+		{"90 列の端末", 90, 90, 0, 70, false},
+		{"端末の幅を得られない 200 列のペイン", 200, 0, 90, 178, true},
+		{"端末の幅を得られない 100 列のペイン", 100, 0, 0, 158, false},
+	} {
+		f, call := open(tt.pane, tt.screen, items)
+		if call.popup.Width != tt.width {
+			t.Errorf("%s: OpenPopup width = %d, want %d", tt.what, call.popup.Width, tt.width)
+		}
+		if tt.show {
+			shown(tt.what, f, call, tt.inner)
+		} else {
+			hidden(tt.what, f, call, tt.inner)
+		}
+	}
 
 	// プレビューの欄の無い一覧は、既定の大きさで開かせる。
-	_, call = open(200, []ext.ViewItem{{ID: "k", Label: "key"}})
+	_, call := open(200, 200, []ext.ViewItem{{ID: "k", Label: "key"}})
 	if call.popup.Width != 0 {
 		t.Errorf("OpenPopup width without previews = %d, want 0 (the default)", call.popup.Width)
 	}
+}
 
-	// 90 列の client: 90% の 81 列は境目を超えないので、既定の大きさで開かせ、広いポップアップの画面でもプレビューを描かない。
-	g, call := open(90, items)
-	if call.popup.Width != 0 {
-		t.Errorf("OpenPopup width on a 90-column client = %d, want 0", call.popup.Width)
-	}
-	comp = component(call.view, 160)
-	h.eventually("ポップアップの画面の一覧", func() bool { return strings.Contains(comp.screen(), "a.go") })
-	h.settle()
+// 分割したペインの部品でプレビューへフォーカスを移すと、ペインのステータス行とコマンドラインは、キーを受けるプレビューのバッファの
+// もの（名前、モード、打ちかけの / の検索）になる。<Esc> で一覧へ戻ると、一覧のバッファのものに戻る（PR #298 のレビューの必須 2）。
+//
+// req: FR-149, FR-71
+func TestPreviewFocusInPane(t *testing.T) {
+	dir := previewDir(t)
+	var calls muxCalls
+	cfg := Config{WorkDir: dir}
+	calls.config(&cfg)
+	h := start(t, cfg)
+	peer := h.attach(ClientInfo{ID: 2, Pane: "%9"})
+	var p *floatState
 	h.e.do(func() {
-		if g.preview.loading || g.preview.key != "" || strings.Contains(comp.screen(), "│") {
-			t.Errorf("a preview in the popup of a 90-column client: %+v\n%s", g.preview, comp.screen())
-		}
+		h.e.withView(h.clientOf(peer.term), func() {
+			p = h.e.newComponentFloat(ext.ViewComponent{Kind: ext.ViewTree, Title: "tree", Items: []ext.ViewItem{
+				{ID: "a", Label: "a.go", Preview: pvOf(filepath.Join(dir, "a.go"), 20)},
+			}}, "")
+			// pane/open の分割したペインと同じに置く（paneOpenRequest）。
+			h.e.floatSeq++
+			p.id, p.pane, p.base = h.e.floatSeq, true, h.e.cur
+			p.shownTab = h.e.tab()
+			p.bs.state.Viewport = floatViewport{f: p, r: h.e.renderer}
+			h.e.panes = append(h.e.panes, p)
+		})
+	})
+	term := &exitTerm{fakeTerm: newFakeTerm()}
+	term.w, term.h = 130, 20
+	h.peers = append(h.peers, term.fakeTerm)
+	if err := h.e.AttachComponent(term, ComponentInfo{View: p.id, Pane: true, MuxPane: "%p1"}); err != nil {
+		t.Fatal(err)
+	}
+	comp := &compPeer{h: h, term: term}
+	h.eventually("ペインのプレビュー", func() bool { return p.preview.bs != nil && strings.Contains(term.screen(), "// line 21") })
+	lastRows := func() string {
+		rows := strings.Split(term.screen(), "\n")
+		return strings.Join(rows[len(rows)-2:], "\n")
+	}
+	comp.keys("<C-w>w/func")
+	h.eventually("プレビューのバッファのステータス行とコマンドライン", func() bool {
+		s := lastRows()
+		return strings.Contains(s, "a.go:21") && strings.Contains(s, "/func") && !strings.Contains(s, "tree")
+	})
+	comp.keys("<Esc><Esc>")
+	h.eventually("一覧へ戻ったステータス行", func() bool {
+		s := lastRows()
+		return !p.preview.focus && strings.Contains(s, "tree") && !strings.Contains(s, "/func")
 	})
 }
 

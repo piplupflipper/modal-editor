@@ -167,6 +167,13 @@ type Mux interface {
 	PaneFocused(ctx context.Context, pane string) (bool, error)
 }
 
+// ScreenWidther は、ポップアップを出す端末の幅を返せる端末多重化ソフトの層である（tmux。herdr は持たない）。
+// PopupOptions.Width の百分率は端末の幅に対するものなので、開くポップアップの幅を前もって知るのに使う（FR-149）。
+type ScreenWidther interface {
+	// ScreenWidth は、OpenPopup で target のペインの上にポップアップを出す先の端末の列数を返す。
+	ScreenWidth(ctx context.Context, target string) (int, error)
+}
+
 // Detect は、環境変数から端末多重化ソフトを判定し、その実装を返す。
 // getenv には os.Getenv を渡す。テストでは偽の環境を渡す。
 //

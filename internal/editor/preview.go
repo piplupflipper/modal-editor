@@ -110,12 +110,14 @@ func (e *Editor) previewCapable(f *floatState) bool {
 
 // previewShown は、部品 f の窓にプレビューを出すかを返す。ui の描き方と同じ規則（ui.PreviewRule.Layout）で決める。
 //
-//   - 中央のポップアップ: 編集の client の画面の中央に描くときも、端末多重化ソフトのポップアップに出すときも、開いた client の画面の幅の
-//     preview.windowWidthPercent % を窓の幅として決める。端末多重化ソフトのポップアップは、出すときにその百分率の幅で開く（requestPopup）。
-//     出す場所で分けず、同じ設定の項目と同じ規則で決めるためである
+//   - 中央のポップアップ: 窓を置く画面の幅の preview.windowWidthPercent % を窓の幅（枠線を含む）として決める。
+//     画面は、編集の client の画面に描くときはその画面、端末多重化ソフトのポップアップに出すときは、ポップアップの幅の百分率を数える端末である
+//     （floatState.screen。requestPopup が問い合わせ、同じ列数からポップアップの幅も決める）。問い合わせている間は出さない。
+//     出す場所で分けず、同じ設定の項目と同じ規則で、実際の窓の幅と同じ値から決めるためである
 //   - 分割したペイン: そのペインの部品の client の画面の全体が窓である
 //   - カーソルの近くの窓: 出さない
 //
+// 出すと決めたものだけを ui へ渡し（floatFrame）、ui は判定し直さずに窓の中を分ける（ui.PreviewRule.Split）。
 // 読み込んでいる client が f を開いた client であるときに呼ぶ（e.renderer がその画面の描画の部品である）。
 //
 // req: FR-149
@@ -127,8 +129,12 @@ func (e *Editor) previewShown(f *floatState) bool {
 	case f.pane && f.remote != nil:
 		_, _, ok := e.previewRule().Layout(f.remote.r.Width, true)
 		return ok
-	case f.center:
-		_, _, ok := e.previewRule().Layout(e.renderer.Width, false)
+	case f.center && !f.screenPending:
+		width := e.renderer.Width
+		if f.screen > 0 {
+			width = f.screen
+		}
+		_, _, ok := e.previewRule().Layout(width, false)
 		return ok
 	}
 	return false

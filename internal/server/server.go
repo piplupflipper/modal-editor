@@ -107,6 +107,9 @@ func New(cfg editor.Config) (*Server, error) {
 	if cfg.OpenPopup == nil {
 		cfg.OpenPopup = s.openPopup
 	}
+	if cfg.PopupScreenWidth == nil {
+		cfg.PopupScreenWidth = s.popupScreenWidth
+	}
 	if cfg.OpenPane == nil {
 		cfg.OpenPane = s.openPane
 	}

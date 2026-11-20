@@ -2,9 +2,9 @@ package ui
 
 // 一覧、木、ファインダーのポップアップの右に出す、カーソルの項目のプレビュー（基本設計 1.4 の「#288 のプレビュー」。FR-149）。
 //
-// プレビューの欄を持つ窓（Float.Preview）は、窓の幅が設定の境目（PreviewRule.MinWindowWidth）を超えるときだけ、
-// 窓を広げて右にプレビューを描く。幅の規則は窓の幅だけで決め、出す場所（中央のポップアップ、端末多重化ソフトのポップアップ、
-// 分割したペイン）では分けない。超えなければ、プレビューを描かずに今までの窓の幅で一覧だけを描く。
+// 窓の幅が設定の境目（PreviewRule.MinWindowWidth）を超えるときだけ、窓を広げて右にプレビューを描く。
+// 幅の規則は窓の幅だけで決め、出す場所（中央のポップアップ、端末多重化ソフトのポップアップ、分割したペイン）では分けない。
+// 判定は internal/editor が PreviewRule.Layout で 1 か所で行い、出すときだけ Float.Preview を渡す。ここは渡された窓を分けて描く。
 
 // previewSeparator は、枠線の記号（SymbolPopupBorder）が無いときに、一覧とプレビューの間に描く縦の線である。
 const previewSeparator = "│"
@@ -28,12 +28,21 @@ type PreviewRule struct {
 //
 // req: FR-149
 func (p PreviewRule) Layout(width int, fill bool) (window, preview int, ok bool) {
+	window, preview, ok = p.Split(width, fill)
+	if !ok || window <= p.MinWindowWidth {
+		return 0, 0, false
+	}
+	return window, preview, true
+}
+
+// Split は、Layout の、境目（MinWindowWidth）と比べない形である。出すと決めた窓（Float.Preview）の中を、一覧とプレビューに分けるのに使う。
+// 出すかは internal/editor が Layout で、実際の窓の幅と同じ値から決める（端末多重化ソフトのポップアップでは、ポップアップの幅の百分率を
+// 数える端末の幅）。ui が描く窓の幅（ポップアップの枠線の内側）で判定し直すと、判定が 2 か所で食い違う（PR #298 のレビューの必須 1）。
+// 一覧とプレビューに分けられないほど狭ければ ok は false である。
+func (p PreviewRule) Split(width int, fill bool) (window, preview int, ok bool) {
 	window = width
 	if !fill {
 		window = width * p.WindowWidthPercent / 100
-	}
-	if window <= p.MinWindowWidth {
-		return 0, 0, false
 	}
 	preview = window * p.WidthPercent / 100
 	// 一覧の側は、枠線の 2 列と区切りの 1 列と、余白を除いて 1 列は残す。プレビューの側も余白を除いて 1 列は残す。
@@ -61,13 +70,14 @@ type Preview struct {
 }
 
 // previewLayout は、窓 fl にプレビューを出すなら、窓の幅（枠線を含む）とプレビューの列数を返す。
-// プレビューの欄を持ち、中央に置く窓（Center）か画面の全体の窓（Fill）で、幅の規則（PreviewRule.Layout）を満たすときだけ出す。
-// カーソルの近くの窓には出さない（窓を画面の幅まで広げると、カーソルの位置に結びつく窓でなくなるため）。
+// 出すかは internal/editor が決め、出すときだけ Float.Preview を渡すので、ここでは境目と比べずに分ける（PreviewRule.Split）。
+// 中央に置く窓（Center）か画面の全体の窓（Fill）だけに出し、カーソルの近くの窓には出さない
+// （窓を画面の幅まで広げると、カーソルの位置に結びつく窓でなくなるため）。
 func (r *Renderer) previewLayout(fl *Float) (window, preview int, ok bool) {
 	if fl.Preview == nil || (!fl.Center && !fl.Fill) {
 		return 0, 0, false
 	}
-	return fl.PreviewRule.Layout(r.Width, fl.Fill)
+	return fl.PreviewRule.Split(r.Width, fl.Fill)
 }
 
 // drawPreviewSeparator は、一覧とプレビューの間の縦の線を、列 col の row top から h 行に描く。

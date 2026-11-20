@@ -86,6 +86,21 @@ func (s *Server) openPopup(from string, view uint64, dir string, opts editor.Pop
 	}
 }
 
+// popupScreenWidth は、editor.Config.PopupScreenWidth である（FR-149）。元のペイン from の上にポップアップを出す端末の列数を返す。
+// 端末多重化ソフトの層が端末の幅を返せない（herdr。mux.ScreenWidther でない）か、端末多重化ソフトの外なら mux.ErrUnsupported を返す。
+//
+// req: FR-149
+func (s *Server) popupScreenWidth(from string) (int, error) {
+	m := mux.Detect(os.Getenv)
+	sw, ok := m.(mux.ScreenWidther)
+	if m.Kind() == mux.KindNone || !ok {
+		return 0, mux.ErrUnsupported
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), splitTimeout)
+	defer cancel()
+	return sw.ScreenWidth(ctx, from)
+}
+
 // popupOptions は、元のペイン from に開く中央のポップアップの大きさを返す。幅は opts.Width で、0 なら既定の popupWidth である。
 // 高さは popupHeight のままにする（#288 のオーナーの決めは幅だけ）。
 //

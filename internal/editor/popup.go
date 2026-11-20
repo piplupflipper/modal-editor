@@ -138,6 +138,11 @@ type floatState struct {
 	// 開いたときと view/update のたびに決め直す。preview は、カーソルの項目のプレビューの状態である（preview.go）。
 	hasPreview bool
 	preview    previewState
+	// screen は、中央のポップアップを端末多重化ソフトのポップアップに出すときに、その幅の百分率を数えた端末の列数である
+	// （Config.PopupScreenWidth。requestPopup）。0 なら、編集の client の画面に描く窓として、その画面の幅で数える。
+	// screenPending は、端末の列数を問い合わせている間であることを表す。その間はプレビューを出さない（previewShown）。
+	screen        int
+	screenPending bool
 }
 
 // popupDecorationOwner は、ポップアップの部品の色を付ける範囲を、バッファの構文の色に入れるときの持ち主の名前である。
