@@ -132,7 +132,7 @@ func assertGlibcDynamicELF(t *testing.T, path string) {
 			continue
 		}
 		b := make([]byte, p.Filesz)
-		if _, err := p.ReadAt(b, 0); err != nil {
+		if _, err = p.ReadAt(b, 0); err != nil {
 			t.Fatalf("%s の PT_INTERP を読めない: %v", path, err)
 		}
 		interp = strings.TrimRight(string(b), "\x00")
