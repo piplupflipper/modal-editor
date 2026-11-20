@@ -85,7 +85,9 @@ func actVisual(m Mode) actionFunc {
 // anchor をバッファの先頭に、head を最後の行の行末の後（ggvG$ の後のカーソルと同じ位置。visualCursor）に置くだけで、
 // その後の各キーの振る舞いはビジュアルモードの汎用の規則から決まる（visualState の doc。#263）。
 // 最後の行には改行が無いので、行末の後の端は改行を選ばない（charRegion）。
-// head を最後の文字でなく行末の後に置くので、> で行が伸びても、ggvG$> と同じく最後の文字が選択に残る（FR-77）。
+// head を最後の文字でなく行末の後に置くので、1 回目の > で行が伸びても、ggvG$> と同じく最後の文字が選択に残る（FR-77）。
+// > を重ねると、FR-77 が両端をずらす前のバイトの位置へ戻すので、2 回目から字下げ 1 段ごとに最後の文字が 1 文字ずつ選択から外れる
+// （Vim 9.1 の ggvG$>gv>gvy と同じ結果。PR #265 のレビュー）。
 //
 // req: FR-130
 func actSelectAll(s *State, _ editcmd.Command) error {

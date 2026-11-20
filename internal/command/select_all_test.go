@@ -187,9 +187,14 @@ func TestSelectAll(t *testing.T) {
 		{selectAllText, "<C-a>x", "", "0:0", ModeNormal, "", "v:abc\nde\nfghij"},
 		// c は全体を消してインサートモードに入る。
 		{selectAllText, "<C-a>cX<Esc>", "X", "0:0", ModeNormal, "", "v:abc\nde\nfghij"},
-		// > と < は全体をずらし、選択を保つ。カーソルは元の位置（FR-77）。最後の文字は選択に残る（ggvG$>y と同じ）。
+		// > と < は全体をずらし、選択を保つ。カーソルは元の位置（FR-77）。
+		// 1 回目の > の後は、最後の文字が選択に残る（Vim 9.1 の ggvG$>gvy と同じ）。
 		{selectAllText, "<C-a>>", "\tabc\n\tde\n\tfghij", "1:1", ModeVisual, "0:0-2:5", ""},
 		{selectAllText, "<C-a>>y", "\tabc\n\tde\n\tfghij", "1:1", ModeNormal, "", "v:\tabc\n\tde\n\tfghij"},
+		// > を重ねると、字下げはすべての行に入るが、2 回目から字下げ 1 段ごとに最後の文字が 1 文字ずつ選択から外れる
+		// （FR-77 が両端をずらす前のバイトの位置へ戻すため。Vim 9.1 の ggvG$>gv>gvy、ggvG$>gv>gv>gvy と同じ結果）。
+		{selectAllText, "<C-a>>>y", "\t\tabc\n\t\tde\n\t\tfghij", "1:1", ModeNormal, "", "v:\t\tabc\n\t\tde\n\t\tfghi"},
+		{selectAllText, "<C-a>>>>y", "\t\t\tabc\n\t\t\tde\n\t\t\tfghij", "1:1", ModeNormal, "", "v:\t\t\tabc\n\t\t\tde\n\t\t\tfgh"},
 		// モーションは、カーソルから動き、head をカーソルに合わせる。
 		{selectAllText, "<C-a>j", "abc\nde\nfghij", "2:1", ModeVisual, "0:0-2:1", ""},
 		{selectAllText, "<C-a>k", "abc\nde\nfghij", "0:1", ModeVisual, "0:0-0:1", ""},
