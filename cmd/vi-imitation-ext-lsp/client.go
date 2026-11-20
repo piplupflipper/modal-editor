@@ -185,17 +185,50 @@ func (c *client) change(e *server.BufferChangeEvent) {
 }
 
 // close は、バッファ id の写しを捨て、言語サーバーへ textDocument/didClose を送る。ループから呼ぶ。
+// 本体が buffer/close を送ったときに使う。本体はそのときバッファの診断を自分で消すので（基本設計 5.3）、空の診断は送らない。
 func (c *client) close(id ext.BufferID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.closeLocked(id)
+}
+
+// closeLocked は、mu を持った状態で、バッファ id の写しを捨てて textDocument/didClose を送る。写しを持っていたかを返す。
+func (c *client) closeLocked(id ext.BufferID) bool {
 	d, ok := c.docs[id]
 	if !ok {
-		return
+		return false
 	}
 	delete(c.docs, id)
 	if p := c.readyProc(); p != nil && p.sync.OpenClose {
 		c.notify(p, lspDidClose, didCloseParams{TextDocument: textDocumentIdentifier{URI: d.uri}})
 	}
+	return true
+}
+
+// detach は、本体が送り直したバッファ b（buffer/open。ファイルの種類かパスが変わったもの）を、この client から外す。ループから呼ぶ。
+// close と同じく写しを捨てて textDocument/didClose を送り、この client が送った診断を消すために、空の diagnostic/set を b の版で送る。
+//
+// 本体は、buffer/close と違い、送り直したバッファの診断を自分では消さない。
+// 空の一覧を送らないと、言語サーバーの無いファイルの種類に変えた後も、古い診断の印と下線が残り続ける（#267）。
+// 空の一覧は mu を持ったまま送るので、それより前に接続の読み取りの goroutine が送った診断（publishDiagnostics）の後に届く。
+// 写しを捨てた後に届く診断は、docByPath で文書が見つからないので捨てる。
+//
+// req: FR-30
+func (c *client) detach(b *server.Buffer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.closeLocked(b.ID()) {
+		return
+	}
+	c.x.setDiagnostics(ext.DiagnosticSetParams{Buffer: b.ID(), Version: b.Version(), Diagnostics: []ext.Diagnostic{}})
+}
+
+// syncs は、バッファ id をパス path の文書として同期しているかを返す。ループから呼ぶ。
+func (c *client) syncs(id ext.BufferID, path string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	d, ok := c.docs[id]
+	return ok && d.path == path
 }
 
 // didSave は、言語サーバーが保存の通知を求めていれば、textDocument/didSave を送る。ループから呼ぶ。

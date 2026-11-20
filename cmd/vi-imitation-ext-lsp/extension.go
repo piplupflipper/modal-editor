@@ -156,6 +156,13 @@ func (x *extension) initialize(_ context.Context, e *server.InitializeEvent) err
 
 // bufferOpen は、設定に言語サーバーのあるファイルの種類のバッファを、その client で同期する。
 // ファイルに対応しないバッファ（パスが空）は、言語サーバーへ URI で示せないので同期しない。
+//
+// 本体は、バッファのファイルの種類かパスが変わると、buffer/open を送り直す（:set filetype=、別名での保存。exthost の UpdateBuffer）。
+// 同期していた client と違う client になったか、パスが変わったら、前の client から外し（didClose）、その client の診断を消す（client.detach）。
+// その後、新しい client があれば、新しい文書として didOpen を送る。
+// パスが変わったときに外し直すのは、言語サーバーの文書は URI で区別されるので、全文の送り直しでは新しいパスに移せないためである。
+//
+// req: FR-30
 func (x *extension) bufferOpen(_ context.Context, e *server.BufferOpenEvent) {
 	b := e.Buffer
 	x.mu.Lock()
@@ -165,8 +172,8 @@ func (x *extension) bufferOpen(_ context.Context, e *server.BufferOpenEvent) {
 		c = nil
 	}
 	old := x.byBuffer[b.ID()]
-	if old != nil && old != c {
-		old.close(b.ID())
+	if old != nil && (old != c || !old.syncs(b.ID(), b.Path())) {
+		old.detach(b)
 		delete(x.byBuffer, b.ID())
 		old = nil
 	}

@@ -97,6 +97,9 @@ type hostOptions struct {
 	readOnly []string
 	// failEdit は、buffer/edit を断るファイルの名前である（editor/state では編集できると答える）。
 	failEdit []string
+	// secondFileType は、空でなければ、go とは別の client で fakels を言語サーバーにするファイルの種類である。
+	// その fakels は args を受け取り、ログを secondLogPath に書く。
+	secondFileType string
 }
 
 // simBuffer は、本体の役が持つバッファの状態である（editor/state、sim の buffer/edit）。
@@ -137,7 +140,15 @@ func startHost(t *testing.T, o hostOptions) *host {
 	for k, v := range o.extra {
 		gocfg[k] = v
 	}
-	settings := map[string]any{"servers": map[string]any{"go": gocfg}}
+	servers := map[string]any{"go": gocfg}
+	if o.secondFileType != "" {
+		servers[o.secondFileType] = map[string]any{
+			"command":    fakeLS,
+			"args":       append([]string{"-log", h.secondLogPath()}, o.args...),
+			"languageId": o.secondFileType,
+		}
+	}
+	settings := map[string]any{"servers": servers}
 	if o.maxRestarts >= 0 {
 		settings["maxRestarts"] = o.maxRestarts
 	}
@@ -413,10 +424,18 @@ type logEntry struct {
 	Value json.RawMessage `json:"value"`
 }
 
+// secondLogPath は、hostOptions.secondFileType の fakels のログのパスである。
+func (h *host) secondLogPath() string { return filepath.Join(h.dir, "fakels-second.log") }
+
 // readLog は、fakels のログを読む。
 func (h *host) readLog() []logEntry {
 	h.t.Helper()
-	f, err := os.Open(h.logPath)
+	return readLogFile(h.logPath)
+}
+
+// readLogFile は、パス path の fakels のログを読む。
+func readLogFile(path string) []logEntry {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
@@ -436,9 +455,15 @@ func (h *host) readLog() []logEntry {
 // waitLog は、fakels のログに cond を満たす行が現れるまで待ち、その行を返す。
 func (h *host) waitLog(what string, cond func(logEntry) bool) logEntry {
 	h.t.Helper()
+	return h.waitLogFile(h.logPath, what, cond)
+}
+
+// waitLogFile は、パス path の fakels のログについての waitLog である。
+func (h *host) waitLogFile(path, what string, cond func(logEntry) bool) logEntry {
+	h.t.Helper()
 	deadline := time.Now().Add(testTimeout)
 	for time.Now().Before(deadline) {
-		for _, e := range h.readLog() {
+		for _, e := range readLogFile(path) {
 			if cond(e) {
 				return e
 			}
@@ -653,6 +678,110 @@ func TestCloseAndReopen(t *testing.T) {
 		if e.Kind == lspDidOpen && strings.Contains(string(e.Value), "b.txt") {
 			t.Errorf("didOpen sent for a text file: %s", e.Value)
 		}
+	}
+}
+
+// TestFileTypeAndPathChange は、本体がファイルの種類かパスを変えて buffer/open を送り直したとき（:set filetype=、別名での保存）、
+// 前の文書の didClose を送り、空の diagnostic/set で診断を消すことを確かめる（#267）。
+// ファイルの種類を戻すと didOpen を送り直して診断が付き直すことと、パスが変わったら新しい URI の文書として開き直すことも確かめる。
+//
+// req: FR-30
+func TestFileTypeAndPathChange(t *testing.T) {
+	h := startHost(t, hostOptions{maxRestarts: -1})
+	path := h.open(1, "a.go", "a ERR")
+	checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+	reopen := func(p ext.BufferOpenParams) {
+		t.Helper()
+		if err := h.conn.Notify(ext.MethodBufferOpen, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	didClose := func(uri string) {
+		t.Helper()
+		h.waitLog("didClose of "+uri, func(e logEntry) bool {
+			return e.Kind == lspDidClose && decode[didCloseParams](t, e.Value).TextDocument.URI == uri
+		})
+	}
+	opened := func(uri string) int {
+		n := 0
+		for _, e := range h.readLog() {
+			if e.Kind == lspDidOpen && decode[didOpenParams](t, e.Value).TextDocument.URI == uri {
+				n++
+			}
+		}
+		return n
+	}
+
+	// 言語サーバーの無いファイルの種類に変えると、診断を消す。
+	reopen(ext.BufferOpenParams{Buffer: 1, Path: path, FileType: "text", Version: 1, Text: "a ERR"})
+	if got := h.diagnosticsAt(1, 1); len(got.Diagnostics) != 0 {
+		t.Errorf("diagnostics after changing the file type to text = %+v, want cleared", got.Diagnostics)
+	}
+	didClose(pathToURI(path))
+
+	// go に戻すと、新しい文書として didOpen を送り、診断が付き直す。
+	reopen(ext.BufferOpenParams{Buffer: 1, Path: path, FileType: "go", Version: 1, Text: "a ERR"})
+	checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+	if n := opened(pathToURI(path)); n != 2 {
+		t.Errorf("didOpen of %s sent %d times, want 2", path, n)
+	}
+
+	// 別名で保存してパスが変わると、前の URI の文書を閉じて診断を消し、新しい URI の文書を開く。
+	moved := filepath.Join(h.dir, "b.go")
+	reopen(ext.BufferOpenParams{Buffer: 1, Path: moved, FileType: "go", Version: 1, Text: "a ERR"})
+	if got := h.diagnosticsAt(1, 1); len(got.Diagnostics) != 0 {
+		t.Errorf("diagnostics after changing the path = %+v, want cleared", got.Diagnostics)
+	}
+	didClose(pathToURI(path))
+	checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+	if n := opened(pathToURI(moved)); n != 1 {
+		t.Errorf("didOpen of %s sent %d times, want 1", moved, n)
+	}
+
+	// 本体が閉じたバッファ（buffer/close）には、空の診断を送らない（本体が自分で消す。基本設計 5.3）。
+	if err := h.conn.Notify(ext.MethodBufferClose, ext.BufferCloseParams{Buffer: 1}); err != nil {
+		t.Fatal(err)
+	}
+	didClose(pathToURI(moved))
+	select {
+	case p := <-h.diags:
+		t.Errorf("diagnostic/set after buffer/close: %+v", p)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// TestFileTypeToAnotherServer は、言語サーバーのある別のファイルの種類（別の client）へ移したとき、
+// 前の client の言語サーバーへ didClose を送り、空の診断の後に新しい client の言語サーバーの診断が届くことを確かめる（#267）。
+// 前の言語サーバーが didClose の後に送る診断（fakels の -publish-on-close）は捨てる。
+//
+// req: FR-30
+func TestFileTypeToAnotherServer(t *testing.T) {
+	h := startHost(t, hostOptions{maxRestarts: -1, args: []string{"-publish-on-close"}, secondFileType: "go2"})
+	path := h.open(1, "a.go", "a ERR")
+	checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+	uri := pathToURI(path)
+
+	if err := h.conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Path: path, FileType: "go2", Version: 1, Text: "a ERR"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := receive(t, h.diags, "diagnostic/set"); got.Buffer != 1 || got.Version != 1 || len(got.Diagnostics) != 0 {
+		t.Errorf("first diagnostic/set after moving to go2 = %+v, want cleared", got)
+	}
+	h.waitLog("published on close", func(e logEntry) bool { return e.Kind == "published on close" })
+	open := h.waitLogFile(h.secondLogPath(), "didOpen in the second server", func(e logEntry) bool { return e.Kind == lspDidOpen })
+	if p := decode[didOpenParams](t, open.Value); p.TextDocument.URI != uri || p.TextDocument.LanguageID != "go2" {
+		t.Errorf("didOpen in the second server = %s", open.Value)
+	}
+	got := receive(t, h.diags, "diagnostic/set")
+	if got.Buffer != 1 || got.Version != 1 {
+		t.Fatalf("diagnostic/set from the second server = %+v", got)
+	}
+	checkDiagnostics(t, got, "a ERR")
+	// 前の言語サーバーが閉じた後に送った診断が届いていれば、もう 1 つ届く。
+	select {
+	case p := <-h.diags:
+		t.Errorf("extra diagnostic/set after moving to go2: %+v", p)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

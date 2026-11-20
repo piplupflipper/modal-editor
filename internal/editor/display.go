@@ -168,14 +168,37 @@ func (e *Editor) withheldBuffer(id ext.BufferID) bool {
 	return e.host != nil && e.host.Withheld(id)
 }
 
-// setDiagnostics は、diagnostic/set の一覧を、バージョン番号に応じてずらすか捨てて持つ（基本設計 6.7 の表）。
+// displayEdits は、拡張機能から届いた表示のデータ（診断、印）の一覧を持つかを、バージョン番号 v で決める（基本設計 6.7 の表）。
+// 持つなら、v から現在までの編集（ずらしに使う）と true を返す。
+//
+// 現在より新しい v は、空の一覧でも捨てる（拡張機能の誤り）。
+// 空の一覧（empty が true）は、v が覚えている編集の範囲より古くても受け付け、編集は返さない。
+// 空の一覧はずらす位置を持たないので、どの版から計算しても結果は同じだからである。
+// 捨てると、拡張機能は空の一覧を送り直さないので、古い一覧が残り続ける
+// （#267。:set filetype=text の直後にマクロで 100 を超える編集が続くと、LSP の拡張機能が送る空の診断が古い版になった）。
+// 空でない一覧は、覚えている編集の範囲より古ければ捨てる（editsSince）。
+//
+// req: FR-30
+func (bs *bufferState) displayEdits(v ext.Version, empty bool) ([]buffer.Edit, bool) {
+	if uint64(v) > bs.buf.Version() {
+		return nil, false
+	}
+	if empty {
+		return nil, true
+	}
+	return bs.editsSince(uint64(v))
+}
+
+// setDiagnostics は、diagnostic/set の一覧を、バージョン番号に応じてずらすか捨てて持つ（displayEdits、基本設計 6.7 の表）。
 // 空の一覧はその組の一覧を消す。持ったかを返す。拡張機能へ送っていないバッファの一覧は捨てる（withheldBuffer）。
+//
+// req: FR-30
 func (e *Editor) setDiagnostics(extID string, p ext.DiagnosticSetParams) bool {
 	bs := e.findBuffer(p.Buffer)
 	if bs == nil || e.withheldBuffer(p.Buffer) {
 		return false
 	}
-	eds, ok := bs.editsSince(uint64(p.Version))
+	eds, ok := bs.displayEdits(p.Version, len(p.Diagnostics) == 0)
 	if !ok {
 		return false
 	}
@@ -187,13 +210,13 @@ func (e *Editor) setDiagnostics(extID string, p ext.DiagnosticSetParams) bool {
 	return true
 }
 
-// setSigns は、sign/set の一覧を、diagnostic/set と同じ規則で持つ。
+// setSigns は、sign/set の一覧を、diagnostic/set と同じ規則で持つ（displayEdits）。
 func (e *Editor) setSigns(extID string, p ext.SignSetParams) bool {
 	bs := e.findBuffer(p.Buffer)
 	if bs == nil || e.withheldBuffer(p.Buffer) {
 		return false
 	}
-	eds, ok := bs.editsSince(uint64(p.Version))
+	eds, ok := bs.displayEdits(p.Version, len(p.Signs) == 0)
 	if !ok {
 		return false
 	}

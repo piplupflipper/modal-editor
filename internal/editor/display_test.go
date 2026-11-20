@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/piplupflipper/vi-imitation/ext"
@@ -39,6 +40,61 @@ func TestShiftPos(t *testing.T) {
 	}
 }
 
+// TestEmptyDisplayDataOutOfHistory は、本体が覚えている編集の範囲より古い番号の空の一覧（診断、印、色）を受け付けて、
+// その拡張機能の一覧を消すことを確かめる（基本設計 6.7 の表。#267）。
+// 再現の手順は、LSP の拡張機能が空の diagnostic/set を送った版のあと、それが本体に届く前に、
+// :set filetype=text<CR>50@b のようにマクロで maxHistory を超える編集が続く場合である。
+// ここでは、一覧を付けた版を覚えてから、1 行足すマクロを maxHistory より多く再生し、その版で空の一覧を送る。
+// 空でない一覧は、これまでどおり捨てる。
+//
+// req: FR-30
+func TestEmptyDisplayDataOutOfHistory(t *testing.T) {
+	h := start(t, Config{})
+	rng := ext.Range{Start: ext.Position{Line: 0}, End: ext.Position{Line: 0, Byte: 1}}
+	diags := []ext.Diagnostic{{Range: rng, Severity: ext.SeverityError, Message: "m"}}
+	signs := []ext.Sign{{Line: 0, Kind: ext.SignBreakpoint}}
+	decos := []ext.Decoration{{Range: rng, Style: "keyword"}}
+	h.keys("ia<Esc>")
+	h.settle()
+	var v ext.Version
+	h.e.do(func() {
+		e := h.e
+		bs := e.cur
+		v = ext.Version(bs.buf.Version())
+		e.setDiagnostics("x", ext.DiagnosticSetParams{Buffer: bs.id, Version: v, Diagnostics: diags})
+		e.setSigns("x", ext.SignSetParams{Buffer: bs.id, Version: v, Signs: signs})
+		e.setDecorations("x", ext.DecorationSetParams{Buffer: bs.id, Version: v, Decorations: decos})
+	})
+	h.keys(fmt.Sprintf("qbo//<Esc>q%d@b", maxHistory+20))
+	h.settle()
+	h.e.do(func() {
+		e := h.e
+		bs := e.cur
+		if _, ok := bs.editsSince(uint64(v)); ok {
+			t.Fatalf("版 %d がまだ覚えている編集の範囲にある（現在 %d）", v, bs.buf.Version())
+		}
+		if e.setDiagnostics("x", ext.DiagnosticSetParams{Buffer: bs.id, Version: v, Diagnostics: diags}) {
+			t.Error("覚えていない番号の空でない診断を持った")
+		}
+		if e.setSigns("x", ext.SignSetParams{Buffer: bs.id, Version: v, Signs: signs}) {
+			t.Error("覚えていない番号の空でない印を持った")
+		}
+		if len(bs.diagnostics["x"]) != 1 || len(bs.signs["x"]) != 1 {
+			t.Fatalf("空の一覧の前に一覧が消えた: %+v %+v", bs.diagnostics["x"], bs.signs["x"])
+		}
+		if !e.setDiagnostics("x", ext.DiagnosticSetParams{Buffer: bs.id, Version: v}) || len(bs.diagnostics["x"]) != 0 {
+			t.Errorf("覚えていない番号の空の診断で消えない: %+v", bs.diagnostics["x"])
+		}
+		if !e.setSigns("x", ext.SignSetParams{Buffer: bs.id, Version: v}) || len(bs.signs["x"]) != 0 {
+			t.Errorf("覚えていない番号の空の印で消えない: %+v", bs.signs["x"])
+		}
+		e.setDecorations("x", ext.DecorationSetParams{Buffer: bs.id, Version: v})
+		if _, ok := bs.decorations["x"]; ok {
+			t.Errorf("覚えていない番号の空の色で消えない: %+v", bs.decorations["x"])
+		}
+	})
+}
+
 // diagnostic/set は、現在のバージョン番号ならそのまま、覚えている範囲の古い番号ならずらして持ち、
 // それより古いか新しければ捨てる。持っている診断は、以後の編集でずれる。
 func TestDiagnosticVersions(t *testing.T) {
@@ -70,6 +126,15 @@ func TestDiagnosticVersions(t *testing.T) {
 		bs.history = bs.history[2:]
 		if set(before+1, 1) || bs.diagnostics["x"][0].Range.Start.Line != 0 {
 			t.Errorf("覚えていない番号を持った: %+v", bs.diagnostics["x"])
+		}
+	})
+	// 空の一覧は、新しい番号なら捨て、覚えていない古い番号なら受け付けて消す（TestEmptyDisplayDataOutOfHistory）。
+	h.e.do(func() {
+		e := h.e
+		bs := e.cur
+		v := bs.buf.Version()
+		if e.setDiagnostics("x", ext.DiagnosticSetParams{Buffer: bs.id, Version: ext.Version(v + 1)}) || len(bs.diagnostics["x"]) != 1 {
+			t.Errorf("新しい番号の空の一覧を受け付けた: %+v", bs.diagnostics["x"])
 		}
 	})
 	// 先頭に行を足すと、持っている診断は下へずれる。
