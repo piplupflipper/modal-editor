@@ -205,12 +205,14 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
-		// fake.exec は、引数の JSON（ext.EditorExecuteParams と、待つ時間の "delay"（ミリ秒）、すぐ送るかの "now"、2 回送るかの "twice"）
-		// を覚え、次の view/select の後に、待ってからその選択の番号で editor/execute を送る（selection を書けばその番号で送る）。
+		// fake.exec は、引数の JSON（ext.EditorExecuteParams と、テストが送らせるまで待つかの "hold"、すぐ送るかの "now"、
+		// 2 回送るかの "twice"）を覚え、次の view/select の後に、その選択の番号で editor/execute を送る（selection を書けばその番号で送る）。
+		// hold なら、テストが fakeReleasePath(本体のプロセス ID, "exec") のファイルを作るまで送らない。時間で遅らせると、
+		// 負荷でテストが打つキーと送る順が入れ替わるためである（#313）。
 		// now なら、選択を待たずにすぐ送る。成功したら "exec ok" と出す（PR #249 の再レビューと 3 回目の確認の検証）。
 		type fakeExec struct {
 			ext.EditorExecuteParams
-			Delay int  `json:"delay"`
+			Hold  bool `json:"hold"`
 			Now   bool `json:"now"`
 			Twice bool `json:"twice"`
 		}
@@ -219,7 +221,10 @@ func runFakeExt(mode string) int {
 			if x.Selection == 0 {
 				x.Selection = selection
 			}
-			time.Sleep(time.Duration(x.Delay) * time.Millisecond)
+			if x.Hold && !fakeWaitRelease(hostCtx, fakeReleasePath(os.Getppid(), "exec")) {
+				_ = s.ShowMessage(ext.MessageError, "exec: not released")
+				return
+			}
 			n := 1
 			if x.Twice {
 				n = 2
@@ -574,7 +579,8 @@ func fakeOpenedPath(pid int) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("vi-imitation-fake-%d-opened.txt", pid))
 }
 
-// fakeReleasePath は、テストの実行ファイル（プロセス ID が pid）が、fake.pane の項目 item（slow か late）を開かせる印のファイルのパスである。
+// fakeReleasePath は、テストの実行ファイル（プロセス ID が pid）が、差し止めた送り出しを進めさせる印のファイルのパスである。
+// item は、fake.pane の項目（slow か late）か、fake.exec の hold（exec）である。
 func fakeReleasePath(pid int, item string) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("vi-imitation-fake-%d-release-%s", pid, item))
 }

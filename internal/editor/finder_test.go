@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -334,15 +335,34 @@ func TestEditorExecuteGuard(t *testing.T) {
 
 	// 選んだ後に、届く前にキーを打ったら断る。インサートモードの x を文字として入れず（A）、:write を本文に入れず（Go）、
 	// 動いた先の行で x を実行しない（j。レビューの再現）。
+	// 届く前かは時間で決めない。拡張機能は hold で差し止め、打ったキーを処理し終えてから送らせる（#313）。
+	// 断った知らせは、前の回の知らせと取り違えないように、履歴の数が増えるのを待つ。
+	refusals := func() int {
+		n := 0
+		h.e.do(func() {
+			for _, m := range h.e.msgHistory {
+				if strings.Contains(m.Text, notSelected) {
+					n++
+				}
+			}
+		})
+		return n
+	}
+	t.Cleanup(func() { _ = os.Remove(fakeReleasePath(os.Getpid(), "exec")) })
 	for _, tt := range []struct{ x, after, want string }{
-		{`{"keys":"x","delay":300}`, "A", "alpha\nbeta"},
-		{`{"command":"write","delay":300}`, "Go", "alpha\nbeta\n"},
-		{`{"keys":"x","delay":300}`, "j", "alpha\nbeta"},
+		{`{"keys":"x","hold":true}`, "A", "alpha\nbeta"},
+		{`{"command":"write","hold":true}`, "Go", "alpha\nbeta\n"},
+		{`{"keys":"x","hold":true}`, "j", "alpha\nbeta"},
 	} {
 		selectWith(tt.x, "j<CR>")
 		h.eventually("選んで閉じた一覧", func() bool { return h.e.float == nil })
 		h.keys(tt.after)
-		h.waitMessage(notSelected)
+		h.settle()
+		before := refusals()
+		if err := os.WriteFile(fakeReleasePath(os.Getpid(), "exec"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h.eventuallyOff("断った知らせ", func() bool { return refusals() > before })
 		check(tt.x+" "+tt.after, tt.want)
 		h.keys("<Esc>")
 		if tt.after == "Go" {

@@ -5,24 +5,40 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/vi-imitation/internal/protocol"
 )
 
 // recvScreen は、c に届くメッセージを、画面に want を含む Draw が届くまで読み、その画面を返す。
+// 10 秒のうちに届かなければ、最後の画面を付けて落とす。本体の誤りで want が来ないときに、テストの実行の期限まで止まらないためである（#313）。
 func recvScreen(t *testing.T, c protocol.ClientConn, want string) string {
 	t.Helper()
+	type got struct {
+		m   protocol.ServerMessage
+		err error
+	}
 	var last string
+	deadline := time.After(10 * time.Second)
 	for {
-		m, err := c.Recv()
-		if err != nil {
-			t.Fatalf("%q を含む画面の前に Recv = %v。最後の画面:\n%s", want, err, last)
-		}
-		if d, ok := m.(protocol.Draw); ok {
-			last = d.Screen.Grid.String()
-			if strings.Contains(last, want) {
-				return last
+		ch := make(chan got, 1)
+		go func() {
+			m, err := c.Recv()
+			ch <- got{m, err}
+		}()
+		select {
+		case g := <-ch:
+			if g.err != nil {
+				t.Fatalf("%q を含む画面の前に Recv = %v。最後の画面:\n%s", want, g.err, last)
 			}
+			if d, ok := g.m.(protocol.Draw); ok {
+				last = d.Screen.Grid.String()
+				if strings.Contains(last, want) {
+					return last
+				}
+			}
+		case <-deadline:
+			t.Fatalf("%q を含む画面が 10 秒のうちに届かない。最後の画面:\n%s", want, last)
 		}
 	}
 }
