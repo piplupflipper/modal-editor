@@ -248,10 +248,59 @@ func TestParseSettingsMise(t *testing.T) {
 			t.Errorf("%s autoInstall = %v, want %v", ft, got, want)
 		}
 	}
-	for _, bad := range []string{"-g", "npm:pyright @1"} {
+	// 版の無い ID は誤りにする（npm の scope の "@" は版の区切りでない）。
+	for _, bad := range []string{"-g", "npm:pyright @1", "npm:pyright", "npm:pyright@", "npm:@vtsls/language-server", "@scope/pkg"} {
 		raw := fmt.Sprintf(`{"servers": {"python": {"command": "pyright-langserver", "mise": %q}}}`, bad)
 		if _, err := parseSettings(json.RawMessage(raw)); err == nil {
 			t.Errorf("mise %q: err = nil", bad)
+		}
+	}
+	for _, good := range []string{"npm:@vtsls/language-server@0.2.9", "aqua:tamasfe/taplo@0.10.0", "rust-analyzer@2025-11-17"} {
+		raw := fmt.Sprintf(`{"servers": {"x": {"command": "x", "mise": %q}}}`, good)
+		if _, err := parseSettings(json.RawMessage(raw)); err != nil {
+			t.Errorf("mise %q: %v", good, err)
+		}
+	}
+}
+
+// TestMiseDetail は、mise install が失敗したときにメッセージの行に含める行を確かめる。
+// npm が registry に接続できないときの行は、2026-11-20 に mise 2026.5.2 と node 26.1.0 で、
+// registry を接続できないアドレス（npm_config_registry）にして mise install npm:bash-language-server@5.6.0 を打った出力から写した（パスは省いた）。
+//
+// req: FR-143
+func TestMiseDetail(t *testing.T) {
+	npmOffline := []string{
+		"npm error code ECONNREFUSED",
+		"npm error syscall connect",
+		"npm error errno ECONNREFUSED",
+		"npm error FetchError: request to http://127.0.0.1:9/bash-language-server failed, reason: connect ECONNREFUSED 127.0.0.1:9",
+		"npm error A complete log of this run can be found in: ~/npm-cache/_logs/2026-11-20T06_38_48_666Z-debug-0.log",
+		"mise WARN  Failed to resolve tool version list for npm:bash-language-server: [--runtime] npm:bash-language-server@5.6.0: command [\"npm\", \"view\", \"bash-language-server\", \"versions\", \"time\", \"--json\"] exited with code 1",
+		"mise ERROR Failed to install npm:bash-language-server@5.6.0: command [\"npm\", \"view\", \"bash-language-server\", \"versions\", \"time\", \"--json\"] exited with code 1",
+		"mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information",
+	}
+	untrusted := []string{
+		"mise ERROR error parsing config file: ~/p/mise.toml",
+		"mise ERROR Config files in ~/p/mise.toml are not trusted.",
+		"Trust them with `mise trust`. See https://mise.en.dev/cli/trust.html for more information.",
+		"mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information",
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  []string
+	}{
+		{"npm offline", npmOffline, []string{npmOffline[0], npmOffline[6]}},
+		{"untrusted", untrusted, untrusted[1:3]},
+	} {
+		w := &lineWriter{line: func(string, time.Time) bool { return false }}
+		for _, l := range tc.lines {
+			if _, err := w.Write([]byte(l + "\n")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := miseDetail(w.cause(), w.tail()); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: detail = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

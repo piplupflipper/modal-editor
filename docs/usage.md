@@ -1360,17 +1360,22 @@ gopls は PATH から探す。
 }
 ```
 
+`mise` には版を書く。`npm:pyright` のように版を省くと、設定の誤りになる（省くと、自動で入れたときにその時点の最新版が入るため）。
+
 `command` が PATH で見つかれば、`mise` と `autoInstall` に関わらず、そのまま起動する。
+ただし、見つかったのが mise の shim で、`mise which <command>` が失敗する（版が決まっていない）ときは、見つからなかったものとして扱う。
 見つからないときの動きは、`autoInstall` で選ぶ。
 
 | `autoInstall` | 見つからないときの動き |
 |---|---|
-| `false`（既定） | メッセージの行に `言語サーバー pyright-langserver が見つからない。mise use -g npm:pyright@1.1.410 で入れられる` と出し、何も入れない。同じ言語サーバーの案内は、本体を起動している間に 2 回出さない。案内のとおりに入れた後、そのファイルの種類の別のファイルを開くと、言語サーバーを起動する（本体を起動し直してもよい） |
+| `false`（既定） | メッセージの行に `言語サーバー pyright-langserver が見つからない。mise use -g npm:pyright@1.1.410 で入れられる` と出し、何も入れない。同じ言語サーバーの案内は、LSP の拡張機能が動いている間に 2 回出さない（拡張機能が異常終了から起動し直すと、もう一度出しうる）。案内のとおりに入れた後、そのファイルの種類の別のファイルを開くと、言語サーバーを起動する（本体を起動し直してもよい） |
 | `true` | mise で道具を入れてから、`mise exec npm:pyright@1.1.410 -- pyright-langserver --stdio` で起動する。入れている間は、メッセージの行に `mise で npm:pyright@1.1.410 を入れている` と mise の出力の行を出す。mise が PATH に無ければ、案内に戻る |
 
 `autoInstall` は、`servers` の言語サーバーごとにも書け、そちらが優先する。
-`autoInstall` で入れた道具は mise の設定ファイルに書かれないので、`mise use -g` と違い、mise の外（PATH）からは使えない。
-入れるのに失敗したとき（ネットワークに出られない、プロジェクトの `mise.toml` を信頼していない、など）は、mise の出力をメッセージの行に出す。
+`autoInstall` で入れた道具は mise の設定ファイルに書かれない。
+mise の shim のディレクトリを PATH に置いていると、その道具の shim は PATH で見つかるが、版が決まっていないので起動できない（shim は `No version is set for shim` で終わる）。
+vi-imitation は上のとおり、そのような shim を使わずに `mise exec` で起動する。
+入れるのに失敗したとき（ネットワークに出られない、プロジェクトの `mise.toml` を信頼していない、など）は、mise と、mise が起動した npm などの誤りの行をメッセージの行に出す。
 信頼していない `mise.toml` で止まったときは、内容を確かめてから `mise trust` を打つ。vi-imitation は、利用者の代わりに信頼しない。
 
 ### DAP によるデバッグ

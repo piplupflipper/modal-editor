@@ -86,6 +86,8 @@ type client struct {
 	failed bool
 	// stopped は、拡張機能が終わるので、もう起動しないことを表す。
 	stopped bool
+	// miseDone は、動いている mise where か mise install（runMise）が終わったときに閉じる。動いていなければ nil か閉じている。
+	miseDone chan struct{}
 }
 
 func newClient(x *extension, fileType string, cfg *serverConfig, maxRestarts int) *client {
@@ -447,7 +449,7 @@ func (c *client) watch(p *proc) {
 
 // stop は、稼働中の言語サーバーへ shutdown と exit を送って止める。ctx の期限までに終わらなければ強制終了する。
 // 起動中（initialize の応答の前）の言語サーバーは、すぐに強制終了する。
-// mise に入れさせている途中なら、mise を終わらせる（c.ctx の取り消し）。
+// mise に入れさせている途中なら、mise を終わらせ（c.ctx の取り消し）、mise が終わるのを ctx の期限まで待つ。
 // これより後は起動しない。拡張機能が終わるときに呼ぶ。
 func (c *client) stop(ctx context.Context) {
 	c.cancel()
@@ -458,7 +460,16 @@ func (c *client) stop(ctx context.Context) {
 	if p != nil {
 		p.stopping = true
 	}
+	miseDone := c.miseDone
 	c.mu.Unlock()
+	if miseDone != nil {
+		// 入れている途中の mise は、c.ctx の取り消しで SIGINT を受け取り、npm などを終わらせてから終わる（runMise）。
+		// それを ctx の期限まで待つ。待たずに戻ると、拡張機能が先に終わり、mise の後始末の途中で本体に強制終了されうる。
+		select {
+		case <-miseDone:
+		case <-ctx.Done():
+		}
+	}
 	if p == nil {
 		return
 	}

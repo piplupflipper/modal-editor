@@ -29,15 +29,32 @@ const testTool = "test:fakels@1.2.3"
 
 // fakeMiseScript は、偽の mise である。%[1]s は状態のディレクトリで、次のとおりに動く。
 //
-//   - 呼ばれた引数を calls に 1 行で書き足す
+//   - mise の名前でなく呼ばれたら（shim へのシンボリックリンクから）、"shim <名前> <引数>" を calls に書き足す。
+//     versionset があれば bin の同じ名前のコマンドに置き換わり、無ければ本物の shim と同じく "No version is set" で終了コード 1
+//   - それ以外は、呼ばれた引数を calls に 1 行で書き足す
+//   - which <コマンド>: versionset があれば終了コード 0、無ければ終了コード 1
 //   - where: installed があれば終了コード 0、無ければ終了コード 1
 //   - install: fail があれば、その中身を標準エラー出力に書いて終了コード 1。
-//     無ければ、進み具合の行を書き、release ができるまで待ってから installed を作る。待っている間、自分の pid を install.pid に書いておく
+//     無ければ、進み具合の行を書き、release ができるまで待ってから installed を作る。待っている間、自分の pid を install.pid に書いておく。
+//     待つ前に、本物の mise が npm を起動するのと同じく、別のプロセスグループ（setsid）で孫プロセスを起こし、その pid を grandchild.pid に書く。
+//     SIGINT を受け取ると、本物の mise と同じく孫プロセスを終わらせてから終わる
 //   - exec <道具の ID> -- <コマンド>...: bin を PATH の先頭に足し、コマンドに置き換わる（本物の mise exec と同じく exec する）
 const fakeMiseScript = `#!/bin/sh
 state='%[1]s'
+name=$(basename "$0")
+if [ "$name" != mise ]; then
+	echo "shim $name $*" >> "$state/calls"
+	if [ -f "$state/versionset" ]; then exec "$state/bin/$name" "$@"; fi
+	echo "mise ERROR No version is set for shim: $name" >&2
+	exit 1
+fi
 echo "$*" >> "$state/calls"
 case "$1" in
+which)
+	if [ -f "$state/versionset" ]; then echo "$state/bin/$2"; exit 0; fi
+	echo "mise ERROR No version is set for shim: $2" >&2
+	exit 1
+	;;
 where)
 	if [ -f "$state/installed" ]; then echo "$state/installs/$2"; exit 0; fi
 	echo "mise ERROR $2 not installed" >&2
@@ -45,9 +62,14 @@ where)
 	;;
 install)
 	if [ -f "$state/fail" ]; then cat "$state/fail" >&2; exit 1; fi
+	setsid sleep 300 < /dev/null > /dev/null 2>&1 &
+	child=$!
+	trap 'kill -9 $child; exit 130' INT
+	echo $child > "$state/grandchild.pid"
 	echo $$ > "$state/install.pid"
 	echo "mise $2 [1/2] download" >&2
 	while [ ! -f "$state/release" ]; do sleep 0.02; done
+	kill -9 $child
 	echo "mise $2 [2/2] extract" >&2
 	: > "$state/installed"
 	exit 0
@@ -83,6 +105,29 @@ func newFakeMise(t *testing.T) *fakeMise {
 		t.Fatal(err)
 	}
 	return m
+}
+
+// shimDir は、missingCommand の名前の mise の shim（偽の mise へのシンボリックリンク）を置いたディレクトリを作って返す。
+func (m *fakeMise) shimDir() string {
+	m.t.Helper()
+	dir := filepath.Join(filepath.Dir(m.path), "shims")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		m.t.Fatal(err)
+	}
+	if err := os.Symlink(m.path, filepath.Join(dir, missingCommand)); err != nil {
+		m.t.Fatal(err)
+	}
+	return dir
+}
+
+// pid は、状態のディレクトリのファイル name ができるまで待ち、そこに書かれた pid を返す。
+func (m *fakeMise) pid(name string) int {
+	m.t.Helper()
+	pid, err := strconv.Atoi(strings.TrimSpace(m.waitFile(name)))
+	if err != nil {
+		m.t.Fatal(err)
+	}
+	return pid
 }
 
 // touch は、状態のディレクトリにファイル name を作る。
@@ -318,23 +363,27 @@ func TestMiseInstallFails(t *testing.T) {
 	}
 }
 
-// TestMiseInstallStop は、mise install の途中で拡張機能が終わるとき、待たずに止まり、mise を終わらせ、失敗を知らせないことを確かめる。
+// TestMiseInstallStop は、mise install の途中で拡張機能が終わるとき、mise に SIGINT を送り、mise が別のプロセスグループの孫プロセス
+// （本物の mise の npm に当たる）を終わらせてから終わるのを待って止まること、本体の期限の中で止まること、失敗を知らせないことを確かめる。
 //
 // req: FR-143
 func TestMiseInstallStop(t *testing.T) {
 	m := newFakeMise(t)
 	h := startHost(t, hostOptions{maxRestarts: -1, mise: m.path, extra: map[string]any{"command": missingCommand, "mise": testTool, "autoInstall": true}})
 	h.open(1, "a.go", "a")
-	pid, err := strconv.Atoi(strings.TrimSpace(m.waitFile("install.pid")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	grandchild := m.pid("grandchild.pid")
+	pid := m.pid("install.pid")
 	start := time.Now()
 	h.x.stop()
 	if d := time.Since(start); d >= stopTimeout {
 		t.Errorf("stop took %s while installing", d)
 	}
+	// stop は mise が終わるまで待つので、戻った時点で mise も孫プロセスも終わっている。
+	if !gone(pid) || !gone(grandchild) {
+		t.Errorf("after stop: mise gone = %v, grandchild gone = %v; want both gone", gone(pid), gone(grandchild))
+	}
 	waitGone(t, "mise install", pid)
+	waitGone(t, "the grandchild of mise install", grandchild)
 	for {
 		select {
 		case msg := <-h.msgs:
@@ -394,42 +443,7 @@ func TestKillLeavesNoServer(t *testing.T) {
 				server["mise"] = testTool
 				server["autoInstall"] = true
 			}
-			raw, err := json.Marshal(map[string]any{"servers": map[string]any{"go": server}})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			cmd := exec.Command(os.Args[0]) //nolint:gosec // テストの実行ファイルを拡張機能として動かす
-			cmd.Env = append(os.Environ(), envRunExtension+"=1",
-				"PATH="+filepath.Dir(m.path)+string(os.PathListSeparator)+os.Getenv("PATH"))
-			// 本体と同じく、拡張機能を新しいプロセスグループの先頭にする。
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			stdin, err := cmd.StdinPipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			stdout, err := cmd.StdoutPipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := cmd.Start(); err != nil {
-				t.Fatal(err)
-			}
-			conn := rpc.NewConn(stdout, stdin, rpc.HandlerFuncs{})
-			t.Cleanup(func() {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-				_ = conn.Close()
-			})
-			ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-			defer cancel()
-			var res ext.InitializeResult
-			if err := conn.Call(ctx, ext.MethodInitialize, ext.InitializeParams{APIVersion: ext.APIVersion, Settings: raw}, &res); err != nil {
-				t.Fatalf("initialize: %v", err)
-			}
-			path := filepath.Join(dir, "a.go")
-			if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Path: path, FileType: "go", Version: 1, Text: "a"}); err != nil {
-				t.Fatal(err)
-			}
+			cmd := startExtensionProcess(t, m, dir, server)
 			e := (&host{t: t}).waitLogFile(logPath, "start", func(e logEntry) bool { return e.Kind == "start" })
 			v := decode[map[string]int](t, e.Value)
 			if v["ppid"] != cmd.Process.Pid {
@@ -443,4 +457,125 @@ func TestKillLeavesNoServer(t *testing.T) {
 			waitGone(t, "language server", v["pid"])
 		})
 	}
+}
+
+// startExtensionProcess は、テストの実行ファイルを拡張機能として、本体と同じく新しいプロセスグループの先頭で起動する。
+// PATH の先頭には偽の mise（m）のディレクトリを足す。go の言語サーバーを server の設定にして initialize し、
+// dir の a.go を開く。拡張機能のプロセスは、テストの終わりにプロセスグループごと強制終了する。
+func startExtensionProcess(t *testing.T, m *fakeMise, dir string, server map[string]any) *exec.Cmd {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"servers": map[string]any{"go": server}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0]) //nolint:gosec // テストの実行ファイルを拡張機能として動かす
+	cmd.Env = append(os.Environ(), envRunExtension+"=1",
+		"PATH="+filepath.Dir(m.path)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	conn := rpc.NewConn(stdout, stdin, rpc.HandlerFuncs{})
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = conn.Close()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	var res ext.InitializeResult
+	if err := conn.Call(ctx, ext.MethodInitialize, ext.InitializeParams{APIVersion: ext.APIVersion, Settings: raw}, &res); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	path := filepath.Join(dir, "a.go")
+	if err := conn.Notify(ext.MethodBufferOpen, ext.BufferOpenParams{Buffer: 1, Path: path, FileType: "go", Version: 1, Text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	return cmd
+}
+
+// TestKillWhileInstalling は、mise install の途中で、本体が拡張機能のプロセスグループへ SIGKILL を送っても（server への kill -9 や
+// 本体の強制終了の形）、拡張機能のプロセスだけが SIGKILL で終わっても、mise が別のプロセスグループで起こした孫プロセス
+// （本物の mise の npm に当たる）が孤児で残らないことを確かめる（PR #281 のレビューの必須 1）。
+// mise は Pdeathsig の SIGINT を受け取り、孫プロセスを終わらせてから終わる。
+//
+// req: FR-143
+func TestKillWhileInstalling(t *testing.T) {
+	for _, group := range []bool{true, false} {
+		t.Run(fmt.Sprintf("group=%v", group), func(t *testing.T) {
+			m := newFakeMise(t)
+			server := map[string]any{"command": missingCommand, "mise": testTool, "autoInstall": true}
+			cmd := startExtensionProcess(t, m, t.TempDir(), server)
+			grandchild := m.pid("grandchild.pid")
+			pid := m.pid("install.pid")
+			target := cmd.Process.Pid
+			if group {
+				target = -target
+			}
+			if err := syscall.Kill(target, syscall.SIGKILL); err != nil {
+				t.Fatal(err)
+			}
+			_ = cmd.Wait()
+			waitGone(t, "mise install", pid)
+			waitGone(t, "the grandchild of mise install", grandchild)
+		})
+	}
+}
+
+// TestMiseShim は、PATH で見つかったコマンドが mise の shim で、版が決まっていない（mise which が失敗する）とき、
+// PATH のものとして起動せず、mise の道具の ID の扱いへ進むことを確かめる（PR #281 のレビューの必須 2）。
+// 自動で入れる設定なら mise exec で起動し、自動で入れない設定なら案内を出す。版が決まっていれば、shim をそのまま起動する。
+//
+// req: FR-143
+func TestMiseShim(t *testing.T) {
+	t.Run("autoInstall", func(t *testing.T) {
+		m := newFakeMise(t)
+		m.touch("installed", "")
+		t.Setenv("PATH", m.shimDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+		h := startHost(t, hostOptions{maxRestarts: -1, mise: m.path, extra: map[string]any{"command": missingCommand, "mise": testTool, "autoInstall": true}})
+		h.open(1, "a.go", "a ERR")
+		checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+		var kinds []string
+		for _, c := range m.calls() {
+			kinds = append(kinds, strings.Fields(c)[0])
+		}
+		if !slices.Equal(kinds, []string{"which", "where", "exec"}) {
+			t.Errorf("mise calls = %q, want which, where, exec (not the shim)", m.calls())
+		}
+	})
+	t.Run("guide", func(t *testing.T) {
+		m := newFakeMise(t)
+		shims := m.shimDir()
+		t.Setenv("PATH", shims+string(os.PathListSeparator)+os.Getenv("PATH"))
+		h := startHost(t, hostOptions{maxRestarts: -1, mise: m.path, extra: map[string]any{"command": missingCommand, "mise": testTool}})
+		h.open(1, "a.go", "a")
+		msg := receive(t, h.msgs, "message/show")
+		want := fmt.Sprintf("言語サーバー %s が見つからない。PATH の %s は mise の shim で、版が決まっていない。mise use -g %s で入れられる",
+			missingCommand, filepath.Join(shims, missingCommand), testTool)
+		if msg.Level != ext.MessageWarning || msg.Text != want {
+			t.Errorf("guide = %+v, want %q", msg, want)
+		}
+		if calls := m.calls(); !slices.Equal(calls, []string{"which " + missingCommand}) {
+			t.Errorf("mise calls = %q", calls)
+		}
+	})
+	t.Run("versionSet", func(t *testing.T) {
+		m := newFakeMise(t)
+		m.touch("versionset", "")
+		t.Setenv("PATH", m.shimDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+		h := startHost(t, hostOptions{maxRestarts: -1, mise: m.path, extra: map[string]any{"command": missingCommand, "mise": testTool, "autoInstall": true}})
+		h.open(1, "a.go", "a ERR")
+		checkDiagnostics(t, h.diagnosticsAt(1, 1), "a ERR")
+		calls := m.calls()
+		if len(calls) != 2 || calls[0] != "which "+missingCommand || !strings.HasPrefix(calls[1], "shim "+missingCommand+" -log ") {
+			t.Errorf("mise calls = %q, want which and the shim", calls)
+		}
+	})
 }

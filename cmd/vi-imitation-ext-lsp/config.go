@@ -142,8 +142,12 @@ func parseSettings(raw json.RawMessage) (*config, error) {
 			sc.LanguageID = ft
 		}
 		// mise の引数に置くので、オプションと読まれる形と空白を含む形は受け付けない。
-		if sc.Mise != "" && (strings.HasPrefix(sc.Mise, "-") || strings.ContainsFunc(sc.Mise, unicode.IsSpace)) {
+		switch {
+		case sc.Mise == "":
+		case strings.HasPrefix(sc.Mise, "-") || strings.ContainsFunc(sc.Mise, unicode.IsSpace):
 			errs = append(errs, fmt.Errorf("servers.%s.mise は mise の道具の ID（例: npm:pyright@1.1.410）でない: %q", ft, sc.Mise))
+		case !hasMiseVersion(sc.Mise):
+			errs = append(errs, fmt.Errorf("servers.%s.mise に版が無い（例: npm:pyright@1.1.410）: %q", ft, sc.Mise))
 		}
 		if sc.AutoInstall == nil {
 			sc.AutoInstall = &s.AutoInstall
@@ -153,6 +157,16 @@ func parseSettings(raw json.RawMessage) (*config, error) {
 		c.maxRestarts = max(*s.MaxRestarts, 0)
 	}
 	return c, errors.Join(errs...)
+}
+
+// hasMiseVersion は、mise の道具の ID が版（"@" の後ろ）を含むかを返す。
+//
+// 版を省くと、mise install はその時点の最新版を入れる（PR #281 のレビューで、mise 2026.5.2 の mise install --dry-run で確かめた）。
+// 道具の版を固定して、サプライチェーン攻撃に備える方針（#278 の背景）に合わせ、版の無い ID を設定の誤りにする。
+// npm の scope の "@"（"npm:@vtsls/language-server" の ":" と "/" の直後の "@"）は版の区切りとして数えない。
+func hasMiseVersion(tool string) bool {
+	i := strings.LastIndexByte(tool, '@')
+	return i > 0 && i < len(tool)-1 && tool[i-1] != ':' && tool[i-1] != '/'
 }
 
 // findRoot は、ファイル path のディレクトリから親へたどり、markers のどれかを含む最初のディレクトリを返す。
