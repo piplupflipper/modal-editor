@@ -220,12 +220,22 @@ func convertReplacement(rep string, pos int) (string, error) {
 // カーソルは、cmd が動かさなければ最後の印の行の先頭へ移る（Vim 9.1 と同じ）。
 // :g の中で :g は実行できない。
 //
-// req: FR-08, FR-09
-func runGlobal(c *execCtx, inv *invocation) error {
+// vglobal が true なら :v（一致しない行に印を付ける）を、false なら :g を実行する関数を返す。
+// :g と :v は、打った名前ではなく、表の行（どちらの関数か）で分ける。名前を付け替える別名（FR-150）で呼んでも、
+// 付け替えた先のコマンドの動作になるようにするためである。
+//
+// req: FR-08, FR-09, FR-150
+func runGlobal(vglobal bool) func(c *execCtx, inv *invocation) error {
+	return func(c *execCtx, inv *invocation) error {
+		return execGlobal(c, inv, vglobal || inv.bang)
+	}
+}
+
+// execGlobal は、:g（invert が true なら :v と :g!）を実行する（runGlobal）。
+func execGlobal(c *execCtx, inv *invocation, invert bool) error {
 	if c.inGlobal {
 		return errAt(inv.namePos, codeNoNestedGlobal, ":global は入れ子にできません")
 	}
-	invert := inv.bang || strings.HasPrefix(inv.name, "v")
 	delim, err := checkDelimiter(inv.arg, inv.argPos)
 	if err != nil {
 		return err

@@ -2,6 +2,8 @@ package ex
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/piplupflipper/vi-imitation/internal/option"
@@ -17,6 +19,7 @@ type alias struct {
 	min  int    // 省略できる最短の長さ
 	// target は、名前を付け替えるだけの項目の、正規のコマンドの名前である。
 	// 範囲、"!"、引数、"|" の扱いは、正規のコマンドの表の行のものをそのまま使う。
+	// 設定ファイルの別名（FR-150）では、拡張機能のコマンドの ID でもよい。そのときの扱いは拡張機能のコマンドと同じである（runExtCommand）。
 	target string
 	// expand は、変換を持つ項目の変換である。引数を読み、正規のコマンドの呼び出しを aliasCtx.call で 1 つずつ行う。
 	// 範囲と "!" は取らない（付ければ E481 と E477）。"|" の扱いは bar で決める。
@@ -24,12 +27,12 @@ type alias struct {
 	bar    barKind
 }
 
-// aliases は、Ex コマンドの別名の表である。
+// builtinAliases は、本体に書いた Ex コマンドの別名の行である。どの別名の表（Aliases）も、この行から始まる。
 // 変換が Execute を経由して表を参照するので、初期化の循環を避けるために init で作る（commands と同じ）。
-var aliases []alias
+var builtinAliases []alias
 
 func init() {
-	aliases = []alias{
+	builtinAliases = []alias{
 		// :se[t] は、Vim の :set の書き方の一部を :option.set と :option.get の呼び出しに変換する（expandSet）。
 		// 省略形は Vim と同じく :se までである（:s は :substitute）。
 		{name: "set", min: 2, expand: expandSet, bar: barSplit},
@@ -38,10 +41,122 @@ func init() {
 	}
 }
 
-// lookupAlias は、名前（省略形を含む）に当たる別名を返す。無ければ nil を返す。
-func lookupAlias(name string) *alias {
-	for i := range aliases {
-		a := &aliases[i]
+// Aliases は、Ex コマンドの別名の表である（FR-133、FR-150。基本設計 7.3）。
+// 本体に書いた行（:set、:nohlsearch）の後に、設定ファイルの別名（名前を付け替えるだけの行）を足した順に並べる。
+// 名前は表の順に引き、最初に当たった行を使う。本体の行と設定ファイルの行は、同じ表で同じ規則で引く。
+//
+// nil の *Aliases は、本体の行だけの表として使える（State.Aliases が nil のとき）。
+// 表は呼び出し側（internal/editor）が起動のときに 1 つ作り、その後は変えない。
+type Aliases struct {
+	rows []alias
+}
+
+// NewAliases は、本体の行だけを持つ別名の表を作る。設定ファイルの別名は Add で足す。
+func NewAliases() *Aliases {
+	return &Aliases{rows: slices.Clone(builtinAliases)}
+}
+
+// list は、表の行を返す。nil なら本体の行である。
+func (t *Aliases) list() []alias {
+	if t == nil {
+		return builtinAliases
+	}
+	return t.rows
+}
+
+// RenameAlias は、名前を付け替えるだけの別名の 1 行である（設定ファイルの commandAliases の 1 件。FR-150）。
+type RenameAlias struct {
+	// Name は、省略しない名前（"tabedit"）である。英字だけで書く。
+	Name string
+	// Min は、省略できる最短の長さ（"tabe" まで省略できるなら 4）である。1 から Name の長さまでで、Name の長さなら省略できない。
+	Min int
+	// Target は、付け替える先の、本体の Ex コマンドの省略しない名前（"edit"、"tab.new"）か、拡張機能のコマンドの ID（"finder.files"）である。
+	Target string
+}
+
+// Add は、名前を付け替えるだけの別名 a を、表の最後に足す（FR-150）。足せなければ、表を変えずに誤りを返す。
+// extCommands は、コマンドラインから呼べる拡張機能のコマンドの ID（State.ExtCommand が引ける ID）である。
+//
+// 次のときは足さない。
+//
+//   - 名前が英字だけでない（コマンドラインは英字の列をコマンドの名前として読むため。readName）
+//   - 省略できる最短の長さが 1 より小さいか、名前より長い
+//   - 名前か省略形が、本体の Ex コマンド、表の別名（本体の行と、先に足した行）と重なる。
+//     2 つの行が重なるのは、どちらの行にも当たる名前がある（共通の接頭辞の長さが、2 つの行の最短の長さの大きい方以上の）ときである
+//   - 名前か省略形が、拡張機能のコマンドの ID と同じ（別名が先に当たり、そのコマンドを呼べなくなるため）
+//   - 付け替える先が、本体の Ex コマンドの省略しない名前でも、拡張機能のコマンドの ID でもない（省略形、別名、知らない名前）
+//
+// req: FR-150
+func (t *Aliases) Add(a RenameAlias, extCommands []string) error {
+	// 名前の全体が、コマンドラインと同じ読み方（scanner.letters）で 1 つの名前として読めることを確かめる。
+	if a.Name == "" || len(a.Name) != len((&scanner{src: a.Name}).letters()) {
+		return fmt.Errorf("別名の名前 %q は英字だけで書く", a.Name)
+	}
+	if a.Min < 1 || a.Min > len(a.Name) {
+		return fmt.Errorf("省略できる最短の長さ %d は 1 から名前の長さ %d までにする", a.Min, len(a.Name))
+	}
+	overlap := func(name string, minLen int) (string, bool) {
+		n := max(a.Min, minLen)
+		if commonPrefixLen(a.Name, name) < n {
+			return "", false
+		}
+		return a.Name[:n], true
+	}
+	for _, c := range commands {
+		if s, ok := overlap(c.name, c.min); ok {
+			return fmt.Errorf("名前か省略形 %s が本体の Ex コマンド :%s と重なる", s, c.name)
+		}
+	}
+	for _, r := range t.rows {
+		if s, ok := overlap(r.name, r.min); ok {
+			return fmt.Errorf("名前か省略形 %s が別名 :%s と重なる", s, r.name)
+		}
+	}
+	for _, id := range extCommands {
+		if len(id) >= a.Min && strings.HasPrefix(a.Name, id) {
+			return fmt.Errorf("名前か省略形 %s が拡張機能のコマンド :%s と同じなので、そのコマンドを呼べなくなる", id, id)
+		}
+	}
+	switch cmd := lookup(a.Target); {
+	case cmd != nil && cmd.name == a.Target:
+	case slices.Contains(extCommands, a.Target):
+	case cmd != nil:
+		return fmt.Errorf("付け替える先 %s は省略しない名前（%s）で書く", a.Target, cmd.name)
+	case t.lookup(a.Target) != nil:
+		return fmt.Errorf("付け替える先 %s は別名なので、付け替える先にできない（正規のコマンドの名前を書く）", a.Target)
+	default:
+		return fmt.Errorf("付け替える先 %s は、本体の Ex コマンドの名前でも拡張機能のコマンドの ID でもない", a.Target)
+	}
+	t.rows = append(t.rows, alias{name: a.Name, min: a.Min, target: a.Target})
+	return nil
+}
+
+// Added は、Add で足した行を、足した順に返す（:help の節。internal/editor）。
+func (t *Aliases) Added() []RenameAlias {
+	rows := t.list()[len(builtinAliases):]
+	out := make([]RenameAlias, len(rows))
+	for i, r := range rows {
+		out[i] = RenameAlias{Name: r.name, Min: r.min, Target: r.target}
+	}
+	return out
+}
+
+// commonPrefixLen は、a と b の共通の接頭辞のバイト数を返す。
+func commonPrefixLen(a, b string) int {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return n
+}
+
+// lookup は、名前（省略形を含む）に当たる別名を、表の順に引いて返す。無ければ nil を返す。
+//
+// req: FR-133, FR-150
+func (t *Aliases) lookup(name string) *alias {
+	rows := t.list()
+	for i := range rows {
+		a := &rows[i]
 		if len(name) >= a.min && strings.HasPrefix(a.name, name) {
 			return a
 		}
@@ -49,16 +164,16 @@ func lookupAlias(name string) *alias {
 	return nil
 }
 
-// resolve は、名前（省略形を含む）に当たるコマンドを返す。Ex コマンドの表を先に引き、無ければ別名の表を引く。
-// 名前を付け替える別名は、付け替えた先の正規のコマンドを返す。
+// resolve は、名前（省略形を含む）に当たるコマンドを返す。Ex コマンドの表を先に引き、無ければ別名の表 t を引く。
+// 名前を付け替える別名は、付け替えた先の正規のコマンドを返す。付け替えた先が拡張機能のコマンドなら nil を返す（runExtCommand が引く）。
 // 変換を持つ別名は、範囲と "!" を取らず、変換を実行するコマンドの行を作って返す。どちらにも無ければ nil を返す。
 //
-// req: FR-133
-func resolve(name string) *command {
+// req: FR-133, FR-150
+func (t *Aliases) resolve(name string) *command {
 	if cmd := lookup(name); cmd != nil {
 		return cmd
 	}
-	a := lookupAlias(name)
+	a := t.lookup(name)
 	switch {
 	case a == nil:
 		return nil
@@ -68,6 +183,11 @@ func resolve(name string) *command {
 	return &command{name: a.name, min: a.min, rng: rangeNone, bar: a.bar, run: func(c *execCtx, inv *invocation) error {
 		return a.expand(&aliasCtx{c: c}, inv)
 	}}
+}
+
+// resolve は、名前に当たるコマンドを、State の別名の表（State.Aliases）で引く（Aliases.resolve）。
+func (c *execCtx) resolve(name string) *command {
+	return c.st.Aliases.resolve(name)
 }
 
 // aliasCtx は、変換を持つ別名が、正規のコマンドを呼ぶための口である。

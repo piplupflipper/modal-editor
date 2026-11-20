@@ -87,6 +87,7 @@ func TestLoadConfig(t *testing.T) {
   "extensions": { "syncTimeoutMs": 30, "startSyncTimeoutMs": 2500, "memoryLimitMb": 6144 },
   "registers": { "historySize": 7, "maxEntryBytes": 64, "deleteToHistory": false, "clipboard": "off" },
   "typo": 1,
+  "commandAliases": { "tabedit": { "command": "edit", "min": 4 }, "tabx": { "command": "nosuch" } },
 }`
 	if err := os.WriteFile(filepath.Join(dir, "config.jsonc"), []byte(text), 0o600); err != nil {
 		t.Fatal(err)
@@ -113,8 +114,13 @@ func TestLoadConfig(t *testing.T) {
 	if !cfg.NoClipboard {
 		t.Error(`clipboard が "off" なのに NoClipboard = false`)
 	}
-	if len(cfg.Problems) != 1 || !strings.HasPrefix(cfg.Problems[0].Error(), "config.jsonc:7:") {
-		t.Errorf("Problems = %v, want config.jsonc:7: で始まる 1 件", cfg.Problems)
+	// 付け替える先を知らない別名（FR-150）は、宣言ファイルを読んだ後に確かめ、設定ファイルの誤りとして位置の順に並べる。
+	if len(cfg.Problems) != 2 || !strings.HasPrefix(cfg.Problems[0].Error(), "config.jsonc:7:") ||
+		!strings.HasPrefix(cfg.Problems[1].Error(), "config.jsonc:8:67: commandAliases.tabx: 別名を使えない") {
+		t.Errorf("Problems = %v, want config.jsonc:7: と config.jsonc:8:67: で始まる 2 件", cfg.Problems)
+	}
+	if got := cfg.CommandAliases.Added(); len(got) != 1 || got[0].Name != "tabedit" || got[0].Min != 4 || got[0].Target != "edit" {
+		t.Errorf("CommandAliases.Added = %+v, want tabedit だけ", got)
 	}
 }
 

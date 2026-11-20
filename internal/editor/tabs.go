@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command"
 	"github.com/piplupflipper/vi-imitation/internal/command/ex"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
@@ -27,6 +28,18 @@ func (e *Editor) addTab(bs *bufferState) {
 	// 画面に出さないバッファを利用者がタブにしたら、保存の後に閉じる扱いを外す（FR-109。基本設計 4.4）。
 	bs.offscreen = false
 	bs.state.Viewport = viewport{r: e.renderer}
+}
+
+// newTab は、名前の無い空のバッファを作り、カーソルのあるタブの右に新しいタブとして開いて、そのタブへ移る（:tab.new。FR-151）。
+// バッファは起動したときの名前の無いバッファと同じもの（行の無い空のバッファ。種類は空）で、:w ファイル で名前を付け、
+// :set filetype= で種類を決められる。:e ファイル で開くタブと同じく、移る前の位置をジャンプリストに足し、裏のバッファにする（enter）。
+// カーソルのあるタブが起動したときの空のバッファでも、使い直さずに新しいタブを足す（Vim 9.1 の :tabnew と同じ）。
+//
+// req: FR-151
+func (e *Editor) newTab() {
+	b := buffer.New("")
+	b.SetFixEndOfLine(e.fixEOL)
+	e.enter(e.newBuffer(b, "", ""))
 }
 
 // withView は、client c を読み込んで f を呼び、元の client へ戻す。

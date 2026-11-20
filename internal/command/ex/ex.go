@@ -15,6 +15,8 @@
 //	:[range]x[it][!] [file]    変更があるか file を指定したときだけ ActionWrite を返し、続けて ActionQuit を返す
 //	:e[dit][!] [file]    Action の ActionEdit を返す。file が無く（読み直し）、! が無く、未保存の変更があれば E37 で失敗する。
 //	                     file を開くのは新しいタブなので（FR-113）、file があれば未保存の変更を確かめない
+//	:tab.new[!] [file]   file が無ければ、名前の無い空のバッファを新しいタブで開く ActionTabNew を返す（FR-151）。
+//	                     file があれば :e file と同じ ActionEdit を返す。名前は省略できない
 //	:tabm[ove] [N|+N|-N|$]  カーソルのあるタブを動かす ActionTabMove を返す（FR-65）
 //	:popu[p]             カーソルのあるタブをポップアップへ縮める ActionPopup（PopupShrink）を返す（FR-70。名前は仮）
 //	:tabop[en]           ポップアップをタブへ広げる ActionPopup（PopupExpand）を返す（FR-70。名前は仮。:tabo は Vim の :tabonly なので 5 文字）
@@ -53,6 +55,11 @@
 // 名前は commands の表を先に引き、無ければ別名の表を引く。別名の表の行は、名前を付け替えるだけの項目か、変換を持つ項目である。
 //
 //	:se[t] {引数} …     Vim の :set の書き方の一部を、:option.set と :option.get の呼び出しに変換する（expandSet）
+//	:noh[lsearch]        :search.clearHighlight に名前を付け替える
+//
+// 別名の表（Aliases）は、本体のこの 2 行の後に、設定ファイルの別名（名前を付け替えるだけの行。FR-150）を足したものである。
+// 呼び出し側が State.Aliases に入れる。設定ファイルの別名は、本体の別名と同じ表で同じ規則で引き、付け替える先には
+// 本体の Ex コマンドのほか、拡張機能のコマンドも書ける（付け替えた後は、拡張機能のコマンドと同じ規則で実行する）。
 //
 // 編集を禁止したバッファ（buffer.Buffer.ReadOnly）では、テキストを変えるコマンド（:s、:d、:r、:{range}!）を、
 // 範囲と引数を確かめる前に E21 で断る（FR-85。Vim 9.1 で 'modifiable' を切ったときと同じ）。:g と :v は断らず、cmd の中のコマンドが断られる。
@@ -177,6 +184,9 @@ const (
 	// ActionPopup は、ポップアップ（基本設計 1.4。FR-68、FR-70）の操作である。Popup に操作を入れる。
 	// ポップアップを持つのは呼び出し側である。
 	ActionPopup
+	// ActionTabNew は、名前の無い空のバッファを、カーソルのあるタブの右の新しいタブで開き、そのタブへ移る動作である（:tab.new。FR-151）。
+	// 引数にファイルを書いた :tab.new は、この動作ではなく ActionEdit を返す。
+	ActionTabNew
 )
 
 // PopupOp は、ActionPopup の操作である。
@@ -334,6 +344,9 @@ type State struct {
 	// Options は、設定の項目の値を読み書きする口である（:option.set、:option.get と、その別名の :set。FR-132）。
 	// nil なら、これらのコマンドは E319 にする。
 	Options Options
+	// Aliases は、Ex コマンドの別名の表である（本体の行に、設定ファイルの別名を足したもの。FR-150）。
+	// nil なら、本体の行（:set、:nohlsearch）だけを使う。
+	Aliases *Aliases
 }
 
 // Notice は、Ex コマンドが利用者に知らせる 1 行の通知である（"3 行をフィルターしました" など）。
@@ -560,7 +573,7 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 		if name == "" {
 			return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
 		}
-		cmd = resolve(name)
+		cmd = c.resolve(name)
 		if cmd == nil {
 			return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
 		}
@@ -673,17 +686,24 @@ func extCommandName(src string) string {
 // バッファの中で済むコマンド（:s/a/b/|acp.prompt）の後には置ける。
 // 引数は、ID の後の空白を除いた行末までで、"|" を区切りとしない（Vim の -bar を付けない利用者定義のコマンドと同じ）。
 //
-// req: FR-08, FR-11
+// 名前が、拡張機能のコマンドへ付け替える別名（設定ファイルの別名。FR-150）に当たれば、付け替えた先のコマンドを同じ規則で実行する。
+// 別名は拡張機能のコマンドの ID より先に引く（本体の別名と同じ）。
+//
+// req: FR-08, FR-11, FR-150
 func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) {
 	if c.st.ExtCommand == nil {
 		return false, nil
 	}
 	namePos := s.pos()
 	id := extCommandName(s.rest())
-	if id == "" || resolve(id) != nil {
+	if id == "" || c.resolve(id) != nil {
 		return false, nil
 	}
-	extID, ok := c.st.ExtCommand(id)
+	cmdID := id
+	if a := c.st.Aliases.lookup(id); a != nil && a.target != "" {
+		cmdID = a.target
+	}
+	extID, ok := c.st.ExtCommand(cmdID)
 	if !ok {
 		return false, nil
 	}
@@ -702,7 +722,7 @@ func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) 
 		return true, errAt(s.pos(), codeNoBang, "! は使えません")
 	}
 	s.skipBlanks()
-	c.actions = append(c.actions, Action{Kind: ActionExtCommand, Extension: extID, Command: id, Text: s.rest()})
+	c.actions = append(c.actions, Action{Kind: ActionExtCommand, Extension: extID, Command: cmdID, Text: s.rest()})
 	return true, nil
 }
 
@@ -712,7 +732,7 @@ func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) 
 func (c *execCtx) addrKindAt(src string) addrKind {
 	s := &scanner{src: src}
 	skipRange(s)
-	if cmd := resolve(readName(s)); cmd != nil && cmd.rng == rangeWindow {
+	if cmd := c.resolve(readName(s)); cmd != nil && cmd.rng == rangeWindow {
 		return addrWindows
 	}
 	return addrLines

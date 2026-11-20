@@ -15,6 +15,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command"
 	"github.com/piplupflipper/vi-imitation/internal/command/ex"
+	"github.com/piplupflipper/vi-imitation/internal/config"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/exthost"
 	"github.com/piplupflipper/vi-imitation/internal/input"
@@ -126,6 +127,10 @@ type Config struct {
 	// Options は、範囲がエディタ全体の設定の項目（option の表。基本設計 7.3）の初めの値である（設定ファイルから読んだもの。config.Config.Options）。
 	// 正規の名前から値への対応で、無い項目は表の既定値を使う。範囲がバッファごとの項目と、表に無い名前は使わない。
 	Options map[string]option.Value
+	// CommandAliases は、Ex コマンドの別名の表である（本体の別名に設定ファイルの commandAliases を足したもの。FR-150）。
+	// 作るのは呼び出し側で、CommandAliases（この関数に Extensions と同じ定義を渡す）で作り、設定の別名を足してから入れる。
+	// nil なら本体の別名だけを使う。
+	CommandAliases *ex.Aliases
 	// Extensions は、拡張機能の定義（検査済みの宣言ファイル）の一覧である。宣言ファイルを探して読むのは呼び出し側である。
 	Extensions []exthost.Spec
 	// Host は、exthost.Host の設定である。
@@ -233,8 +238,10 @@ type Editor struct {
 	log    *slog.Logger
 	host   *exthost.Host
 	keymap *input.Keymap
-	// exCommands は、コマンドラインから呼べる拡張機能のコマンドの ID から、宣言した拡張機能の ID への表である（buildExCommands）。
+	// exCommands は、コマンドラインから呼べる拡張機能のコマンドの ID から、宣言した拡張機能の ID への表である（commandLineTable）。
 	exCommands map[string]string
+	// aliases は、Ex コマンドの別名の表である（Config.CommandAliases。nil なら本体の行だけ）。バッファの ex.State.Aliases に入れる。
+	aliases *ex.Aliases
 	// leader は、<Leader> を置き換えたキーの列（Config.Leader を読んだもの。FR-97）である。キーの一覧（FR-90）で使う。
 	leader   []editcmd.Key
 	fileType map[string]string
@@ -538,14 +545,10 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	e.popupKeys, w4 = loadPopupKeys(cfg.Extensions, leader)
 	warnings = append(warnings, w4...)
 	var w3 []error
-	e.exCommands, w3 = buildExCommands(cfg.Extensions)
+	e.exCommands, w3 = commandLineTable(cfg.Extensions)
 	warnings = append(warnings, w3...)
-	if err := addExtManagerCommand(e.exCommands); err != nil {
-		warnings = append(warnings, err)
-	}
-	warnings = append(warnings, addHelpCommands(e.exCommands)...)
-	warnings = append(warnings, addMessagesCommand(e.exCommands)...)
 	warnings = append(warnings, removedCommandWarnings(cfg.Keymap, e.exCommands)...)
+	e.aliases = cfg.CommandAliases
 	warnings = append(warnings, e.startStatusExtensions()...)
 	var w2 []error
 	var remap *remapper
@@ -646,6 +649,39 @@ func buildExCommands(specs []exthost.Spec) (map[string]string, []error) {
 	}
 	providerExCommands(cmds, ms)
 	return cmds, errs
+}
+
+// commandLineTable は、コマンドラインから呼べる拡張機能のコマンドの表（exCommands）を作る。
+// 拡張機能が宣言したコマンドと provides の操作の名前（buildExCommands）に、本体が同じ口から呼ぶ :ext、:help、:keys、:messages を足す。
+func commandLineTable(specs []exthost.Spec) (map[string]string, []error) {
+	cmds, errs := buildExCommands(specs)
+	if err := addExtManagerCommand(cmds); err != nil {
+		errs = append(errs, err)
+	}
+	errs = append(errs, addHelpCommands(cmds)...)
+	errs = append(errs, addMessagesCommand(cmds)...)
+	return cmds, errs
+}
+
+// CommandAliases は、設定ファイルの別名（config.Config.CommandAliases。FR-150）を足していく Ex コマンドの別名の表と、
+// 1 件を表の最後に足す関数を返す。表は本体の別名の行（:set、:nohlsearch）から始まる。
+// 付け替える先にできる拡張機能のコマンドは、specs（Config.Extensions に渡すもの）が宣言したコマンドと、
+// 本体が拡張機能のコマンドと同じ口から呼ぶコマンド（:help、:keys、:ext、:messages、provides の操作の名前）である。
+// 呼び出し側（cmd/vi-imitation）は、誤りに位置を付けるために、足す関数を config.Config.CheckCommandAliases へ渡し、
+// その後に表を Config.CommandAliases に入れる。
+//
+// req: FR-150
+func CommandAliases(specs []exthost.Spec) (*ex.Aliases, func(config.CommandAlias) error) {
+	cmds, _ := commandLineTable(specs) // 重なりの誤りは New が知らせる
+	ids := make([]string, 0, len(cmds))
+	for id := range cmds {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	t := ex.NewAliases()
+	return t, func(a config.CommandAlias) error {
+		return t.Add(ex.RenameAlias{Name: a.Name, Min: a.Min, Target: a.Command}, ids)
+	}
 }
 
 // extCommand は、コマンドラインのコマンド名 id が拡張機能のコマンドなら、宣言した拡張機能の ID を返す（ex.State.ExtCommand）。
@@ -888,6 +924,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Ex.Options = optionAccess{e: e, bs: bs}
+	bs.state.Ex.Aliases = e.aliases
 	bs.state.Interrupted = e.interrupt.Load
 	bs.state.KeyHook = func(k editcmd.Key, insert bool) (bool, []editcmd.Key, error) { return e.popupStateKey(bs, k, insert) }
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{

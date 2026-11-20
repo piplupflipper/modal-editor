@@ -144,8 +144,11 @@ func (e *Editor) openHelp(word string) error {
 }
 
 // helpText は、:help に出す文書である。docs/usage.md の後に、本体のキーの節（helpKeyLines）と、
+// 設定ファイルの Ex コマンドの別名の節（FR-150。足した別名があるときだけ）と、
 // 読み込んだ拡張機能の操作の節（宣言ファイルの contributes の ID、種類、キー、description）を足す。
 // 拡張機能のキーの <Leader> は、キーの一覧と同じく設定の leader に置き換えて出す。
+//
+// req: FR-150
 func (e *Editor) helpText() string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimRight(docs.Usage, "\n"))
@@ -154,6 +157,13 @@ func (e *Editor) helpText() string {
 	sb.WriteString("括弧の中はモード（n はノーマル、v はビジュアル、o はオペレーターの後）である。\n\n")
 	sb.WriteString(strings.Join(helpKeyLines(e.keymap), "\n"))
 	sb.WriteString("\n")
+	if added := e.aliases.Added(); len(added) > 0 {
+		sb.WriteString("\n## 設定ファイルの Ex コマンドの別名\n\n")
+		sb.WriteString("設定ファイルの commandAliases で足した別名である。括弧の中は、打てる最も短い省略形である。\n\n")
+		for _, a := range added {
+			fmt.Fprintf(&sb, "- `:%s`: `:%s` の別名（`:%s`）\n", a.Name, a.Target, a.Name[:a.Min])
+		}
+	}
 	var lines []string
 	for _, s := range e.cfg.Extensions {
 		m := s.Manifest
