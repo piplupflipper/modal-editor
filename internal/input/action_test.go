@@ -205,8 +205,8 @@ func TestActionIDUnique(t *testing.T) {
 		"left": {"h", "<Left>"}, "down": {"j", "<Down>"}, "up": {"k", "<Up>"}, "right": {"l", "<Right>"},
 		"line-start": {"0", "<Home>"}, "line-end": {"$", "<End>"},
 		"delete": {"d", "x"}, "change": {"c", "s"}, "toggle-case": {"g~", "~"}, "lowercase": {"gu", "u"}, "uppercase": {"gU", "U"},
-		"change-lines": {"C", "S"},
-		"inner-paren":  {"i(", "i)", "ib"}, "a-paren": {"a(", "a)", "ab"}, "inner-bracket": {"i[", "i]"}, "a-bracket": {"a[", "a]"},
+		"change-lines": {"C", "S"}, "redo": {"U", "<C-r>"},
+		"inner-paren": {"i(", "i)", "ib"}, "a-paren": {"a(", "a)", "ab"}, "inner-bracket": {"i[", "i]"}, "a-bracket": {"a[", "a]"},
 		"inner-brace": {"i{", "i}", "iB"}, "a-brace": {"a{", "a}", "aB"},
 		"hover": {"<Leader>lh", "K"}, "definition": {"<Leader>lD", "<C-]>"},
 	}

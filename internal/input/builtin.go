@@ -35,7 +35,11 @@ type spec struct {
 // 有効なモードは、modes を書かない行では種類ごとの既定（defaultModes）である。
 // ビジュアルモードでは、オペレーター（d、c、y など）は選択を対象にする。ビジュアルモードだけの登録は modes に MapVisual を書く。
 //
-// req: FR-03
+// 英字 1 文字の大文字のキーは、同じモードの小文字のキーの操作の、向きを逆にしたもの（n と N）、単位を大きくしたもの（w と W）、
+// 行の端まで広げたもの（d と D）のどれかにする（FR-144）。例外は J（行をつなげる）と K（ホバー）だけである。
+// 大文字のキーを足すときは、TestUppercaseKeys の表にその関係を書く。
+//
+// req: FR-03, FR-144
 var (
 	builtinMotions = []spec{
 		{keys: "h", id: "left", desc: "左へ"},
@@ -144,14 +148,18 @@ var (
 		{keys: "x", id: "delete-char", desc: "カーソルの文字を消す"},
 		{keys: "X", id: "delete-char-before", desc: "カーソルの前の文字を消す"},
 		{keys: "r", id: "replace-char", takesChar: true, desc: "カーソルの文字を {文字} に置き換える"},
-		// 省略形のコマンド。D は d$、C は c$、S は cc、Y は yy に当たり、実行の側（internal/command）が
+		// 省略形のコマンド。D は d$、C は c$、S は cc、Y は y$ に当たり、実行の側（internal/command）が
 		// オペレーターと対象の組に置き換えて実行する。オペレーターの表ではなく操作の表に置くのは、
 		// 対象を待たずに 1 キーで完結するからである。ビジュアルモードの D、C、S、Y は、オペレーターの表のビジュアルモードだけの行である。
 		// ノーマルモードの s（cl）は、囲みの操作（sa、sd、sr）に使うので割り当てない（要件定義 1.1）。
+		// Y は、D と C にそろえて行の末尾までヤンクする（FR-146。Vim の Y は yy で、Neovim の既定は y$）。
+		// yy に当たる yank-line は既定のキーを持たず、設定の keymap で Y に割り当てれば Vim の Y に戻る。
+		// req: FR-146
 		{keys: "D", id: "delete-to-line-end", desc: "行の末尾まで消す（d$）"},
 		{keys: "C", id: "change-to-line-end", next: editcmd.ModeInsert, desc: "行の末尾まで消して入力する（c$）"},
 		{keys: "S", id: "substitute-line", next: editcmd.ModeInsert, desc: "行を消して入力する（cc）"},
-		{keys: "Y", id: "yank-line", desc: "行をヤンクする（yy）"},
+		{keys: "Y", id: "yank-to-line-end", desc: "行の末尾までヤンクする（y$）"},
+		{keys: "", id: "yank-line", desc: "行をヤンクする（yy）"},
 		// ノーマルモードの > と < は、Vim の >> と << と同じく、回数の行数だけ行をずらす（FR-76）。次のキーを待たないので、
 		// >> と打つと 2 回ずれる（#177 のコメントの決定）。
 		{keys: ">", id: "indent-line", desc: "行を右へずらす（>>。回数は行数）"},
@@ -167,7 +175,11 @@ var (
 		// I と A は、ビジュアルモードでは選んだ行ごとに同じ位置から同時に入力する（FR-141）。文字単位と行単位で同じである。
 		{keys: "I", id: "insert-line-start", next: editcmd.ModeInsert, modes: MapNormal | MapVisual, desc: "行の最初の空白でない文字の前から入力する（ビジュアルモードでは選んだ行ごと）"},
 		{keys: "A", id: "append-line-end", next: editcmd.ModeInsert, modes: MapNormal | MapVisual, desc: "行の末尾から入力する（ビジュアルモードでは選んだ行ごと）"},
+		// U は、u の向きを逆にしたリドゥである（FR-145）。Vim の U（最後に変えた 1 行をまとめて戻す）は本体に無い。
+		// ビジュアルモードの U（選択を大文字にする）は、オペレーターの表のビジュアルモードだけの行で、変えない。
+		// req: FR-145
 		{keys: "u", id: "undo", desc: "アンドゥ"},
+		{keys: "U", id: "redo", desc: "リドゥ"},
 		{keys: "<C-r>", id: "redo", desc: "リドゥ"},
 		// Ex コマンド（:w など）の一覧と解釈はコマンドラインの担当で、ここでは切り替えだけを持つ。
 		// ビジュアルモードの : は、選択した行の範囲（'<,'>）を入力した状態で始める。

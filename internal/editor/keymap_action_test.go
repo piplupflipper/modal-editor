@@ -463,3 +463,59 @@ func TestSelectAllConfig(t *testing.T) {
 
 // fst は、jumpList の最初の戻り値（ジャンプリストの並び）を返す。
 func fst(list string, _ int, _ string) string { return list }
+
+// 本体の既定の Y は行の末尾までをヤンクし、U はリドゥする（#280）。設定の keymap.normal で Y に yank-line を割り当てると、
+// Y は Vim と同じく行の全体をヤンクする。U と Y を割り当てても、ビジュアルモードの U（大文字にする）と Y（行をヤンクする）は変わらない。
+//
+// req: FR-145, FR-146
+func TestCaseKeysConfig(t *testing.T) {
+	head := func(h *harness) (r command.Register) {
+		h.settle()
+		h.e.do(func() { r, _ = h.e.cur.state.Registers().Head() })
+		return r
+	}
+	t.Run("既定", func(t *testing.T) {
+		dir := writeFiles(t, map[string]string{"a.txt": "alpha beta\ngamma\n"})
+		h := start(t, Config{WorkDir: dir}, "a.txt")
+		h.keys("wY")
+		if r := head(h); r.Text != "beta" || r.Linewise {
+			t.Errorf("Y の後のレジスター = %+v", r)
+		}
+		h.keys("xxuuU")
+		h.settle()
+		if got := h.text(); got != "alpha eta\ngamma" {
+			t.Errorf("xxuuU の後 = %q", got)
+		}
+		h.keys("2U")
+		h.settle()
+		if got := h.text(); got != "alpha ta\ngamma" {
+			t.Errorf("2U の後 = %q", got)
+		}
+		h.keys("u<C-r>")
+		h.settle()
+		if got := h.text(); got != "alpha ta\ngamma" {
+			t.Errorf("u<C-r> の後 = %q", got)
+		}
+		h.keys("0vlU<Esc>")
+		h.settle()
+		if got := h.text(); got != "ALpha ta\ngamma" {
+			t.Errorf("vlU の後 = %q", got)
+		}
+		h.keys("vY")
+		if r := head(h); r.Text != "ALpha ta" || !r.Linewise {
+			t.Errorf("vY の後のレジスター = %+v", r)
+		}
+	})
+	t.Run("Y を yank-line に戻す", func(t *testing.T) {
+		dir := writeFiles(t, map[string]string{"a.txt": "alpha beta\ngamma\n"})
+		h := start(t, Config{WorkDir: dir, KeymapActions: map[string]map[string]string{"normal": {"Y": "yank-line"}}}, "a.txt")
+		h.keys("wY")
+		if r := head(h); r.Text != "alpha beta" || !r.Linewise {
+			t.Errorf("Y の後のレジスター = %+v", r)
+		}
+		h.keys("jY")
+		if r := head(h); r.Text != "gamma" || !r.Linewise {
+			t.Errorf("jY の後のレジスター = %+v", r)
+		}
+	})
+}

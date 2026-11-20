@@ -40,6 +40,7 @@ var readOnlyCases = []struct {
 	{"<lt><lt>", true},
 	{"u", true},
 	{"<C-r>", true},
+	{"U", true},
 	{"i", true},
 	{"a", true},
 	{"I", true},

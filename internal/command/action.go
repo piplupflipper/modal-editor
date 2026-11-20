@@ -48,6 +48,9 @@ func init() {
 		"surround-delete":    actSurroundDelete,
 		"surround-replace":   actSurroundReplace,
 		"yank-line":          actShorthand("yank", editcmd.Target{Kind: editcmd.TargetLine}),
+		// Y の y$ は、D の d$ と同じく回数を y$ の回数として渡す（3Y は 3y$）。
+		// req: FR-146
+		"yank-to-line-end":   actShorthand("yank", editcmd.Target{Kind: editcmd.TargetMotion, Ref: editcmd.Ref{ID: "line-end"}}),
 		"toggle-case-char":   actToggleCase,
 		"join-lines":         actJoin,
 		"put-after":          actPut(true),
