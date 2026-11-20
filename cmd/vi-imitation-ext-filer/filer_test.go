@@ -478,9 +478,12 @@ func TestIgnoredMarkInTitle(t *testing.T) {
 
 	h.notify(ext.MethodViewKey, ext.ViewKeyParams{View: testView, ID: keyToggleIgnored, Item: filepath.Join(root, "a.txt")})
 	c := h.update("印のある見出し", func(c ext.ViewComponent) bool { return c.Title != title })
-	// 分割したペイン（150 列の端末の 30% で 45 列）の幅で切っても、印は残る。
-	if c.Title != ignoredMark+title {
-		t.Errorf("title with H = %q, want the mark followed by %q", c.Title, title)
+	// 分割したペイン（150 列の端末の 30% で 45 列）の幅で切っても、印は残る。印は短く、根との間に空白を置く。
+	if c.Title != ignoredMark+" "+title {
+		t.Errorf("title with H = %q, want the mark and a space followed by %q", c.Title, title)
+	}
+	if n := len(ignoredMark); n > 4 {
+		t.Errorf("the mark takes %d columns", n)
 	}
 	h.notify(ext.MethodViewKey, ext.ViewKeyParams{View: testView, ID: keyToggleIgnored, Item: filepath.Join(root, "a.txt")})
 	if c = h.update("印を外した見出し", func(c ext.ViewComponent) bool { return !strings.Contains(c.Title, ignoredMark) }); c.Title != title {

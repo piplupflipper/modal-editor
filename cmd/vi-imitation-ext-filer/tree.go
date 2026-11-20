@@ -33,6 +33,8 @@ import (
 // 端末多重化ソフトのフォーカスを元の client へ戻さない。前に開いたディレクトリの読み込みや git が遅いと、その後ろで待った choose が
 // この期限を過ぎていた（#292。PR #290 のレビューの推奨 2）。choose は木の状態（dirs など）を読まずに os.Stat で判定するので、
 // ops の操作と並んで動いてよい。opens も列にするのは、続けて選んだファイルを選んだ順に開くためである。
+// opens に積んでよいのは、木の状態を読まず、ops の操作との順を問わないものだけである。作ったファイルを開くなど、ops の操作の
+// 結果を前提にする editor/open は ops に積む（docs/basic-design.md のファイラの goroutine の行）。
 type tree struct {
 	f    *filer
 	root string
@@ -261,11 +263,12 @@ func cleanLabel(s string) string {
 	}, s)
 }
 
-// ignoredMark は、gitignore されたものも見せている間に見出しの先頭に置く印である。
-const ignoredMark = "（gitignore されたものも表示）"
+// ignoredMark は、gitignore されたものも見せている間に見出しの先頭に置く印である（切り替えるキーの H。意味は docs/usage.md に書く）。
+// <Space>E のペイン（150 列の端末で 45 列）でも根が見えるよう、3 列にとどめる（PR #311 のレビューの推奨 2）。
+const ignoredMark = "[H]"
 
 // title は、木の見出しである。根を、ホームディレクトリの下なら ~/ から書く。gitignore されたものも見せているときは、
-// その旨（ignoredMark）を根の前に置く。本体は見出しを窓の幅で末尾から切る（internal/ui の drawText）ので、
+// その旨の印（ignoredMark）を、空白 1 つで区切って根の前に置く。本体は見出しを窓の幅で末尾から切る（internal/ui の drawText）ので、
 // 根が長くても印が切れないようにするためである（#292。PR #290 のレビューの推奨 4）。
 //
 // req: FR-105
@@ -277,7 +280,7 @@ func (t *tree) title() string {
 		}
 	}
 	if t.showIgnored {
-		s = ignoredMark + s
+		s = ignoredMark + " " + s
 	}
 	return s
 }
