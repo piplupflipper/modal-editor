@@ -91,6 +91,19 @@ func (ic Icons) Lookup(fileType string, dir, open bool) (name string, icon Icon,
 	return name, icon, ok
 }
 
+// Width は、表のアイコンの表示幅の最大（アイコンの列の幅）を返す。表が空なら 1 を返す。
+// 一覧と木は、どのアイコンもこの幅まで空白で埋めて置くので、幅 2 のアイコンを書いた表でも表示の文字列の列がそろう
+// （PR #305 のレビューの推奨 2）。CheckIcon を通ったアイコンだけの表なら、1 か 2 である。
+//
+// req: FR-152
+func (ic Icons) Width() int {
+	w := 1
+	for _, icon := range ic {
+		w = max(w, StringWidth(icon.Text, DefaultTabStop))
+	}
+	return w
+}
+
 // WithIcons は、t を写したものに、ic の各アイコンの色を IconStyle の名前で足した対応を返す。
 // 描画は、アイコンの文字の範囲に付けた IconStyle の名前の色を、ほかの色の名前と同じく t から引く。t は変更しない。
 func (t Theme) WithIcons(ic Icons) Theme {
@@ -103,22 +116,25 @@ func (t Theme) WithIcons(ic Icons) Theme {
 }
 
 // CheckIcon は、アイコンの文字列 text を使えるかを確かめ、使えなければ理由を返す（設定の icons の検査。FR-152）。
-// 表示幅が 1 か 2 の文字列で、タブと制御文字を含めない（印の列の印と同じ規則。CheckSymbol）。
+// 1 つの文字（後に続く結合文字を含む。描画が 1 つのセルに置く単位）で、表示幅が 1 か 2 で、タブと制御文字でないものだけを通す。
+// 1 つの文字に限るのは、U+FFFF より大きいグリフを JSON の \u の 4 桁で書き損じたもの（\u の後に 5 桁の f0868 を書くと、U+F086 と "8" の 2 文字になる）を、
+// 誤りとして知らせるためである（PR #305 のレビューの推奨 3）。
 // Nerd Font のグリフ（私用領域の文字）は、本体は 1 列と数える（Vim の 'ambiwidth' の既定の single と同じ。width.go）。
 //
 // req: FR-152
 func CheckIcon(text string) error {
-	w := 0
-	for off := 0; off < len(text); {
-		gl := nextGlyph(text, off, w, DefaultTabStop)
-		if gl.kind != glyphText {
-			return errors.New("タブと制御文字は使えない")
-		}
-		w += gl.width
-		off += gl.size
+	if text == "" {
+		return errors.New("アイコンは 1 つの文字にする（空である）")
 	}
-	if w < 1 || w > 2 {
-		return fmt.Errorf("アイコンの表示幅は 1 か 2 にする（%d ある）", w)
+	gl := nextGlyph(text, 0, 0, DefaultTabStop)
+	switch {
+	case gl.kind != glyphText:
+		return errors.New("タブと制御文字は使えない")
+	case gl.size != len(text):
+		return fmt.Errorf("アイコンは 1 つの文字にする（%q の後に %q がある。U+FFFF より大きい文字は、サロゲートの組か文字そのもので書く）",
+			text[:gl.size], text[gl.size:])
+	case gl.width < 1 || gl.width > 2:
+		return fmt.Errorf("アイコンの表示幅は 1 か 2 にする（%d ある）", gl.width)
 	}
 	return nil
 }

@@ -26,8 +26,9 @@ func iconOf(t *testing.T, name string) string {
 }
 
 // iconLines は、エディタ h の今の設定で、部品 c の行と色を付ける範囲を作る（開いた木の項目は expanded）。
+// アイコンの列を置くかは、新しく開いた部品と同じく c の項目で決める。
 func iconLines(h *harness, c ext.ViewComponent, expanded map[string]bool) (lines []string, decs []ext.Decoration) {
-	h.e.do(func() { lines, _, decs = floatLines(c, expanded, h.e.itemIcons()) })
+	h.e.do(func() { lines, _, decs = floatLines(c, expanded, h.e.itemIcons(hasItemFile(c.Items))) })
 	return lines, decs
 }
 
@@ -102,6 +103,63 @@ func TestItemIcons(t *testing.T) {
 	list := ext.ViewComponent{Kind: ext.ViewFinder, Items: []ext.ViewItem{{ID: "d", Label: "sub/", File: &ext.ViewFile{Path: "sub", Dir: true}}}}
 	if lines, _ := iconLines(h, list, map[string]bool{"d": true}); !slices.Equal(lines, []string{iconOf(t, "directory") + "sub/"}) {
 		t.Errorf("a directory in a finder: %q", lines)
+	}
+}
+
+// ファインダーで絞り込んで、ファイルを指す項目が一覧から無くなっても、アイコンの列（空白）を置き続け、表示の文字列の列が動かない
+// （PR #305 のレビューの推奨 1。<Space>fb で [No Name] だけが残る絞り込み）。
+// アイコンの列を置くかは、開いてから一度でもファイルを指す項目が来たかで決まる。ファイルを指す項目が一度も来ない部品には置かない。
+//
+// req: FR-152
+func TestIconColumnStaysWhileFiltering(t *testing.T) {
+	h := start(t, Config{})
+	tabs := []ext.ViewItem{
+		{ID: "1", Label: "a.go", File: &ext.ViewFile{Path: "/w/a.go"}},
+		{ID: "2", Label: "[No Name]"},
+	}
+	var before, after, keys string
+	h.e.do(func() {
+		f := h.e.newFinderFloat(ext.ViewComponent{Kind: ext.ViewFinder, Items: tabs}, "")
+		before = f.list.buf.Line(1)
+		h.e.setFinderList(f, tabs[1:], true) // "Nam" で絞り込んだ結果
+		after = f.list.buf.Line(0)
+		g := h.e.newFinderFloat(ext.ViewComponent{Kind: ext.ViewFinder, Items: []ext.ViewItem{{ID: "k", Label: "gg"}}}, "")
+		h.e.setFinderList(g, []ext.ViewItem{{ID: "k", Label: "gg"}, {ID: "w", Label: ":write"}}, false)
+		keys = g.list.buf.Text()
+	})
+	if before != "  [No Name]" || after != before {
+		t.Errorf("[No Name] before filtering %q, after %q", before, after)
+	}
+	if keys != "gg\n:write" {
+		t.Errorf("a finder without files: %q", keys)
+	}
+}
+
+// 表示幅が 2 のアイコンを設定しても、アイコンの列の幅（表の最大の表示幅）まで空白で埋めるので、
+// 幅 1 のアイコンの行、幅 2 のアイコンの行、ファイルを指さない行で、表示の文字列が同じ列から始まる（PR #305 のレビューの推奨 2）。
+//
+// req: FR-152
+func TestWideIconColumn(t *testing.T) {
+	h := start(t, Config{Icons: ui.Icons{"fileTypes.jsonc": {Text: "あ"}}})
+	c := ext.ViewComponent{Kind: ext.ViewFinder, Items: []ext.ViewItem{
+		{ID: "j", Label: "conf.jsonc", File: &ext.ViewFile{Path: "conf.jsonc"}},
+		{ID: "g", Label: "a.go", File: &ext.ViewFile{Path: "a.go"}},
+		{ID: "n", Label: "[No Name]"},
+	}}
+	lines, decs := iconLines(h, c, nil)
+	want := []string{"あ conf.jsonc", strings.TrimSuffix(iconOf(t, "fileTypes.go"), " ") + "  a.go", "   [No Name]"}
+	if !slices.Equal(lines, want) {
+		t.Errorf("lines = %q, want %q", lines, want)
+	}
+	for i, l := range lines {
+		label := []string{"conf.jsonc", "a.go", "[No Name]"}[i]
+		if w := ui.StringWidth(strings.TrimSuffix(l, label), ui.DefaultTabStop); w != 3 {
+			t.Errorf("line %d: the label starts at column %d, want 3", i, w)
+		}
+	}
+	// アイコンの色の範囲は、アイコンの文字だけに付ける（埋めた空白には付けない）。
+	if len(decs) != 2 || decs[0].Range.End.Byte != len("あ") || decs[1].Range.End.Byte != len(ui.DefaultIcons()["fileTypes.go"].Text) {
+		t.Errorf("decorations = %+v", decs)
 	}
 }
 
@@ -270,7 +328,7 @@ func TestIconsBesidePreview(t *testing.T) {
 // 標準のファイラの拡張機能の木は、ディレクトリに開いたものと閉じたもののアイコンを、ファイルにファイルの種類のアイコンを付けて出す。
 // 開閉すると、ディレクトリのアイコンも替わる。
 //
-// req: FR-152, FR-105
+// req: FR-152
 func TestStandardFilerIcons(t *testing.T) {
 	spec := buildStdExt(t, "vi-imitation-ext-filer")
 	dir := filerDir(t)

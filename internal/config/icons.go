@@ -6,12 +6,13 @@ import "github.com/piplupflipper/vi-imitation/internal/option"
 //
 //	"icons": {
 //	  "show": true,
-//	  "directory": { "text": "", "fg": "#73cef4" },
-//	  "directoryOpen": { "text": "", "fg": "#73cef4" },
-//	  "file": { "text": "", "fg": "#6d8086" },
-//	  "fileTypes": { "go": { "text": "", "fg": "#00add8" } }
+//	  "directory": { "text": "D", "fg": "#73cef4" },
+//	  "directoryOpen": { "text": "O", "fg": "#73cef4" },
+//	  "file": { "text": "F", "fg": "#6d8086" },
+//	  "fileTypes": { "go": { "text": "G", "fg": "#00add8", "bold": true } }
 //	}
 //
+// text はふつう Nerd Font のグリフ（既定の表は internal/ui の icons_default.go）を、文字そのものか JSON の \u の書き方で書く。
 // show は設定の表（internal/option）の項目 icons.show で、ほかの項目はアイコンの表を名前ごとに置き換える。
 // 設定の表の項目の最上位の段は Parse のほかの項目と重ねない決まり（基本設計 7.3）だが、icons だけは、
 // 出すかどうかと表の項目を同じ所に書けるように、表の項目（show）とアイコンの表の項目を同じ段に置く。

@@ -147,14 +147,21 @@ func TestLoadConfigColorScheme(t *testing.T) {
 //
 // req: FR-152
 func TestIconsConfig(t *testing.T) {
+	// U+F0868 は、サロゲートの組で書けば 1 つの文字として読む。\u の 4 桁で書き損じた "\uf0868" は、U+F086 と "8" の 2 文字なので
+	// 誤りにする（PR #305 のレビューの推奨 3）。
 	src := "{\n  \"icons\": { \"directory\": { \"text\": \"D\", \"fg\": 4, \"bold\": true },\n" +
-		"    \"fileTypes\": { \"go\": { \"text\": \"wide\" } } }\n}"
+		"    \"fileTypes\": { \"go\": { \"text\": \"wide\" }, \"dockerfile\": { \"text\": \"\\udb82\\udc68\" },\n" +
+		"      \"make\": { \"text\": \"\\uf0868\" } } }\n}"
 	cfg, errs := config.Parse("config.jsonc", []byte(src))
 	errs = append(errs, cfg.CheckAppearance(appearanceCheck)...)
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "icons の fileTypes.go の text を使えない") {
+	if len(errs) != 2 || !strings.Contains(errs[0].Error(), "icons の fileTypes.go の text を使えない") ||
+		!strings.Contains(errs[1].Error(), "icons の fileTypes.make の text を使えない: アイコンは 1 つの文字にする") {
 		t.Errorf("errs = %v", errs)
 	}
-	want := ui.Icons{ui.IconDirectory: {Text: "D", Attr: ui.Attr{Fg: ui.Indexed(4), Bold: true}}}
+	want := ui.Icons{
+		ui.IconDirectory:              {Text: "D", Attr: ui.Attr{Fg: ui.Indexed(4), Bold: true}},
+		ui.IconFileType("dockerfile"): {Text: "\U000f0868"},
+	}
 	if got := uiIcons(cfg.Icons); !reflect.DeepEqual(got, want) {
 		t.Errorf("uiIcons = %+v, want %+v", got, want)
 	}

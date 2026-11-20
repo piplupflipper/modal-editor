@@ -6,7 +6,7 @@ import (
 )
 
 // 既定のアイコンの表は、ディレクトリ（開いたものと閉じたもの）と種類の分からないファイルのアイコンを持ち、
-// どのアイコンも CheckIcon を通る（表示幅が 1 か 2）。名前はどれもアイコンの名前の形で、色は文字の色を持つ。
+// どのアイコンも CheckIcon を通る（1 つの文字で、表示幅が 1 か 2）。名前はどれもアイコンの名前の形で、色は文字の色を持つ。
 //
 // req: FR-152
 func TestDefaultIcons(t *testing.T) {
@@ -35,7 +35,8 @@ func TestDefaultIcons(t *testing.T) {
 }
 
 // Lookup は、ディレクトリなら開閉で、ファイルならファイルの種類でアイコンを引き、種類が空か表に無ければ IconFile にする。
-// With は名前ごとに置き換え（既定の文字と色を混ぜない）、元の表を変えない。WithIcons は、アイコンの色を IconStyle の名前で足す。
+// With は名前ごとに置き換え（既定の文字と色を混ぜない）、元の表を変えない。Width は表のアイコンの表示幅の最大である。
+// WithIcons は、アイコンの色を IconStyle の名前で足す。
 //
 // req: FR-152
 func TestIconsLookup(t *testing.T) {
@@ -73,6 +74,17 @@ func TestIconsLookup(t *testing.T) {
 		t.Error("With が元の表を変えた")
 	}
 
+	// Width はアイコンの列の幅で、表のアイコンの表示幅の最大である。既定の表は、どのアイコンも 1 列である。
+	if w := ic.Width(); w != 1 {
+		t.Errorf("Width = %d", w)
+	}
+	if w := ic.With(Icons{IconFile: {Text: "あ"}}).Width(); w != 2 {
+		t.Errorf("Width with a wide icon = %d", w)
+	}
+	if w, d := (Icons{}).Width(), DefaultIcons().Width(); w != 1 || d != 1 {
+		t.Errorf("Width of an empty table = %d, of the default = %d", w, d)
+	}
+
 	th := DefaultTheme().WithIcons(ic)
 	if th[IconStyle(IconFileType("go"))] != ic[IconFileType("go")].Attr || IsStyleName(IconStyle(IconFile)) {
 		t.Errorf("WithIcons: %+v", th[IconStyle(IconFileType("go"))])
@@ -82,8 +94,8 @@ func TestIconsLookup(t *testing.T) {
 	}
 }
 
-// CheckIcon は、表示幅が 1 か 2 の文字列だけを通す。Nerd Font のグリフ（基本多言語面と補助の私用領域の文字）は 1 列と数える
-// （Vim の 'ambiwidth' の既定の single と同じ）。タブと制御文字は通さない。
+// CheckIcon は、1 つの文字（後に続く結合文字を含む）で表示幅が 1 か 2 のものだけを通す。Nerd Font のグリフ（基本多言語面と
+// 補助の私用領域の文字）は 1 列と数える（Vim の 'ambiwidth' の既定の single と同じ）。タブと制御文字は通さない。
 //
 // req: FR-152
 func TestCheckIcon(t *testing.T) {
@@ -91,16 +103,19 @@ func TestCheckIcon(t *testing.T) {
 		text string
 		want string // 誤りの文の一部。空なら通す
 	}{
-		{"", ""},
+		{"\U0000e627", ""},
 		{"\U000f0219", ""},
 		{"*", ""},
-		{"ab", ""},
 		{"あ", ""},
-		{"", "表示幅は 1 か 2"},
-		{"abc", "表示幅は 1 か 2"},
-		{"あa", "表示幅は 1 か 2"},
+		{"e\U00000301", ""}, // 結合文字は前の文字と 1 つの文字
+		{"", "1 つの文字にする（空である）"},
+		{"ab", "1 つの文字にする"},
+		{"あa", "1 つの文字にする"},
+		// U+F0868 を JSON の \u の書き方で 5 桁の f0868 と書き損じると、U+F086 と "8" の 2 文字になる（PR #305 のレビューの推奨 3）。
+		{"\U0000f086" + "8", "サロゲートの組か文字そのもの"},
 		{"\t", "タブと制御文字"},
-		{"a\x01", "タブと制御文字"},
+		{"\x01", "タブと制御文字"},
+		{"\U0000200b", "タブと制御文字"},
 	} {
 		err := CheckIcon(tt.text)
 		switch {
@@ -110,7 +125,7 @@ func TestCheckIcon(t *testing.T) {
 			t.Errorf("CheckIcon(%q) = %v, want %q", tt.text, err, tt.want)
 		}
 	}
-	for _, s := range []string{"", "", "", "\U000f031b", "\U000f0868"} {
+	for _, s := range []string{"\U0000e5ff", "\U0000e5fe", "\U0000f0f6", "\U000f031b", "\U000f0868"} {
 		if w := StringWidth(s, DefaultTabStop); w != 1 {
 			t.Errorf("StringWidth(%q) = %d, want 1", s, w)
 		}
