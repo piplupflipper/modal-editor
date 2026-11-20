@@ -46,6 +46,8 @@ var (
 		{keys: "j", id: "down", desc: "下の行へ"},
 		{keys: "k", id: "up", desc: "上の行へ"},
 		{keys: "l", id: "right", desc: "右へ"},
+		{keys: "gj", id: "display-down", desc: "見た目の行で 1 行下へ（行を折り返さないときは j と同じ）"},
+		{keys: "gk", id: "display-up", desc: "見た目の行で 1 行上へ（行を折り返さないときは k と同じ）"},
 		{keys: "w", id: "word-next", desc: "次の単語の先頭へ"},
 		{keys: "b", id: "word-prev", desc: "前の単語の先頭へ"},
 		{keys: "e", id: "word-end", desc: "単語の末尾へ"},

@@ -1,0 +1,22 @@
+## 選択と診断と範囲の色
+size 41x12 cursor 2,8 block
+   |  line1 short                            |
+   |  0123456789abcdefghij0123456789ABCDEFGHI|
+fx |                                     vvvv|
+   |  J0123456789abcdefghij0123456789ABCDEFGH|
+fx |  vvvvvv                                 |
+   |  IJ0123456789xyz                        |
+   |  あいうえおかきくけこさしすせそたちつて>|
+fg |........................................n|
+fx |                                      __ |
+   |  となにぬねのはひふへほまみむめも       |
+fx |  ______                                 |
+   |E abcdefghijklmnopqrstuvwxyzabcdefghijkl |
+fx |                                      ~~~|
+   |   TAB     x                             |
+fx |  ~~~                                    |
+   |  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|
+   |  a        X                             |
+   | VISUAL  [No Name]             2,46  Top |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                                         |

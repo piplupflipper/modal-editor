@@ -1,6 +1,7 @@
 package target
 
 import (
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -80,6 +81,78 @@ func up(b *buffer.Buffer, req Request) (Result, error) {
 func vertical(b *buffer.Buffer, req Request, line int) Result {
 	p := buffer.Position{Line: line, Byte: req.columns().ByteAt(b.Line(line), req.Want)}
 	return Result{Pos: p, Kind: Linewise, Want: req.Want}
+}
+
+// displayVertical は、gj（forward が true）と gk を返す（FR-157）。回数の見た目の行だけ下（上）へ動く。
+//
+// 行を折り返して描かないとき（req.Screen が nil か Wrap が false）は、j と k と同じく行単位で動く（Vim 9.1 の nv_down の 'nowrap' の扱い）。
+// 折り返して描くときは、Vim 9.1 の nv_screengo を、見た目の行の左の端からの列（x）で写した。
+//
+//   - 動く前の見た目の行と x は、望みの列（req.Want）のセルの位置から決める。望みの列が行の幅を超えていれば、最後の見た目の行の最後の列にする。
+//     望みの列が行末（WantEOL。$ の後）なら、カーソルの見た目の行の右の端にする
+//   - 見た目の行を 1 つずつ動き、行の端を越えたら隣の行の最初（上へなら最後）の見た目の行へ移る。x は変えない
+//   - 着いた見た目の行の x 列の文字へ移る。x がその見た目の行の最後の文字より右なら、最後の文字へ移る
+//   - 着いた文字がタブか制御文字で、カーソルを置く列が望みの列より右なら、1 つ左の文字へ移る（Vim の nv_screengo の oneleft と同じ。
+//     nvim 0.12.5 で、タブの最初の列を望みの列にした gk が、タブの前の文字へ移ることを確かめた）
+//   - 望みの列は、着いた見た目の行の x 列の表示の列にする（行の文字より右なら、右へ伸ばした列）。WantEOL は WantEOL のまま
+//   - 範囲は文字単位の Exclusive で、WantEOL なら Inclusive である（Vim と同じ）
+//
+// バッファの端で 1 行も動けなければ失敗する。回数の途中でバッファの端に着いたときは、着いた位置へ移って成功する。
+// Vim は着いた位置へ移ってから失敗する（ビープを鳴らし、オペレーターを取り消し、マクロを止める）ので、ここは Vim と違う（docs/vim-differences.md）。
+//
+// req: FR-157
+func displayVertical(forward bool) MotionFunc {
+	return func(b *buffer.Buffer, req Request) (Result, error) {
+		sl := req.Screen
+		if sl == nil || !sl.Wrap() {
+			if forward {
+				return down(b, req)
+			}
+			return up(b, req)
+		}
+		cols := req.columns()
+		line := req.Cursor.Line
+		s := b.Line(line)
+		eol := req.Want == WantEOL
+		var row, x int
+		if eol {
+			row, _ = sl.Locate(s, cols.Column(s, req.Cursor.Byte))
+			x = math.MaxInt
+		} else {
+			row, x = sl.Locate(s, req.Want)
+		}
+		moved := 0
+		for range req.count1() {
+			switch {
+			case forward && row+1 < sl.Rows(s):
+				row++
+			case forward && line+1 < b.LineCount():
+				line++
+				s, row = b.Line(line), 0
+			case !forward && row > 0:
+				row--
+			case !forward && line > 0:
+				line--
+				s = b.Line(line)
+				row = sl.Rows(s) - 1
+			default:
+				continue
+			}
+			moved++
+		}
+		if moved == 0 {
+			return Result{}, ErrNoTarget
+		}
+		p := buffer.Position{Line: line, Byte: sl.ByteAt(s, row, x)}
+		if eol {
+			return Result{Pos: p, Kind: Inclusive, Want: WantEOL}, nil
+		}
+		want := sl.Column(s, row, x)
+		if p.Byte > 0 && p.Byte < len(s) && (s[p.Byte] < 0x20 || s[p.Byte] == 0x7f) && cols.Column(s, p.Byte) > want {
+			p.Byte = prevCell(s, p.Byte)
+		}
+		return Result{Pos: p, Kind: Exclusive, Want: want}, nil
+	}
 }
 
 // wordForward は、w（big が true なら W）を返す。

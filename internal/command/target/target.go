@@ -102,6 +102,27 @@ func (CharColumns) ByteAt(line string, col int) int {
 	return byteOfColumn(line, col)
 }
 
+// ScreenLines は、行を画面の幅で折り返して描くときの、見た目の行の数え方である（gj と gk。FR-157）。
+//
+// 折り返しの位置は表示幅と画面の幅で決まり、その計算は internal/ui の担当なので、Columns と同じく呼び出し側から差し込む。
+// 列は Columns と同じく行の先頭から数えた表示の列で、x は見た目の行の左の端（本文の左の端）からの列である。
+// 続きの見た目の行の頭に記号（Vim の 'showbreak'）を描くときは、x はその記号の列も数える。
+type ScreenLines interface {
+	// Wrap は、行を折り返して描くかを返す。false なら gj と gk は j と k と同じに動く。
+	Wrap() bool
+	// Rows は、行 line を折り返した見た目の行の数（1 以上）を返す。
+	Rows(line string) int
+	// Locate は、行 line の表示の列 col のセルが、何番目の見た目の行（0 から数える）の、左の端から何列目にあるかを返す。
+	// col が行の表示幅以上なら、最後の見た目の行の、行末から col と表示幅の差だけ右の列を返す。列は見た目の行の幅から 1 を引いた数で止める。
+	Locate(line string, col int) (row, x int)
+	// Column は、行 line の見た目の row 行目の、左の端から x 列目の表示の列を返す。
+	// x がその見た目の行の文字より右なら、見た目の行の最初の文字の列から数えて右へ伸ばした列を返す。
+	Column(line string, row, x int) int
+	// ByteAt は、行 line の見た目の row 行目の、左の端から x 列目にある文字の位置を返す。
+	// x がその見た目の行の最後の文字より右なら、その見た目の行の最後の文字を返す。
+	ByteAt(line string, row, x int) int
+}
+
 // Request は、モーションとテキストオブジェクトへの入力である。
 //
 // Count と CountGiven は、internal/input の Command の同じ名前の欄をそのまま渡せる形にしてある。
@@ -118,6 +139,8 @@ type Request struct {
 	Want int
 	// Columns は、望みの列の数え方である。nil なら CharColumns を使う。
 	Columns Columns
+	// Screen は、見た目の行の数え方である（gj と gk）。nil なら行を折り返さないとして扱う。
+	Screen ScreenLines
 	// Last は、; と , が繰り返す直前の検索である。
 	Last Find
 	// Operator は、このモーションの前に入力されたオペレーターである。テキストオブジェクトは見ない。
@@ -221,6 +244,8 @@ var motions = map[string]MotionFunc{
 	"right":               right,                  // l
 	"down":                down,                   // j
 	"up":                  up,                     // k
+	"display-down":        displayVertical(true),  // gj
+	"display-up":          displayVertical(false), // gk
 	"word-next":           wordForward(false),     // w
 	"bigword-next":        wordForward(true),      // W
 	"word-prev":           wordBackward(false),    // b

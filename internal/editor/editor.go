@@ -958,6 +958,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Registers().SetConfig(e.cfg.Registers)
 	bs.state.Columns = e.renderer.Columns()
 	bs.state.Viewport = viewport{r: e.renderer}
+	bs.state.ScreenLines = screenLines{e: e, st: bs.state}
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand

@@ -137,6 +137,10 @@ type State struct {
 	// Columns は、望みの列の数え方である。nil なら target.CharColumns を使う。
 	// 表示幅で数える実装（internal/ui）は、呼び出し側が差し込む。
 	Columns target.Columns
+	// ScreenLines は、行を折り返して描くときの見た目の行の数え方である（gj と gk。FR-157）。nil なら折り返さないとして扱い、
+	// gj と gk は j と k と同じに動く。ページ単位のスクロール（<PageUp>、<PageDown>）も、行の高さをこれで数える。
+	// 画面の幅と設定（lineWrap.enabled）で決まるので、呼び出し側（internal/editor）が差し込む。
+	ScreenLines target.ScreenLines
 	// Extensions は、拡張機能が提供する操作の問い合わせ先である。nil なら、拡張機能の操作は失敗する。
 	Extensions Extensions
 	// Ex は、Ex コマンドの呼び出しをまたいで保つ状態である。Mark は New が '< と '> を返す関数にする。

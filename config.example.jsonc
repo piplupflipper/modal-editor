@@ -96,6 +96,11 @@
   // 列の幅は minWidth と、最後の行の番号の桁数に 1 を足した数の大きい方なので、5 にすると 9999 行までは幅が変わらず本文の位置がずれない
   "lineNumber": { "show": true, "minWidth": 5 },
 
+  // 長い行を本文の幅で折り返す（:set wrap に当たる。本体の既定は折り返さずに横にスクロールする。Vim と Neovim の既定は折り返す）。
+  // 見た目の行で上下に動くのは gj と gk（操作の ID は display-down と display-up）。j と k を見た目の行で動かすには、
+  // keymap の normal に "j": { "action": "display-down" }, "k": { "action": "display-up" } と書く
+  "lineWrap": { "enabled": true },
+
   // 直前の検索のパターンに一致する範囲に色を付ける（:set hlsearch に当たる。本体の既定は Vim と同じく付けない）。
   // 色は :nohlsearch で次の検索まで消せる。<C-l> で消すには、keymap の normal に "<C-l>": { "command": "search.clearHighlight" } と書く
   // / と ? は、打つたびに次の一致へ画面を動かして色を付ける（:set incsearch に当たり、常に行う）。

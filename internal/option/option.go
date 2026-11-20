@@ -133,6 +133,9 @@ const (
 	// LineNumberMinWidth は、行番号の列の最小の列数である（FR-136。Vim の 'numberwidth'）。
 	// 列の幅は、この値と、バッファの最後の行の番号の桁数に 1 を足した数の大きい方になる。範囲は Vim と同じく 1 から 20 である。
 	LineNumberMinWidth = "lineNumber.minWidth"
+	// LineWrapEnabled は、長い行を本文の幅で折り返して描くかである（FR-156。Vim の 'wrap'）。
+	// 本体の既定は折り返さない（Vim と Neovim の既定は折り返す。#300 のオーナーの決め）。描画が、描くたびにこの値を読む。
+	LineWrapEnabled = "lineWrap.enabled"
 	// SearchHighlight は、直前の検索のパターンに一致する範囲に色を付けるかである（FR-137。Vim の 'hlsearch'）。
 	// 描画が、描くたびにこの値と直前の検索のパターンを読む。
 	SearchHighlight = "search.highlight"
@@ -166,6 +169,7 @@ var defs = []Def{
 	{Name: FileType, Type: String, Scope: ScopeBuffer, Default: StringValue("")},
 	{Name: LineNumberShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: LineNumberMinWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}},
+	{Name: LineWrapEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: SearchHighlight, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	// 下限は、打つたびの検索をしない値（0）を作らないため 1 にした。上限は yank.highlightMs と同じ 10 秒にした。
 	{Name: SearchIncrementalTimeoutMs, Type: Int, Scope: ScopeEditor, Default: IntValue(500), Range: &IntRange{Min: 1, Max: 10000}},

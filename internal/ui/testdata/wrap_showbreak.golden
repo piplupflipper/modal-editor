@@ -1,0 +1,21 @@
+## 続きの行の記号
+size 41x12 cursor 0,0 block
+   |line1 short                              |
+   |0123456789abcdefghij0123456789ABCDEFGHIJ0|
+   |>>123456789abcdefghij0123456789ABCDEFGHIJ|
+fg |nn.......................................|
+   |>>0123456789xyz                          |
+fg |nn.......................................|
+   |あいうえおかきくけこさしすせそたちつてと>|
+fg |........................................n|
+   |>>なにぬねのはひふへほまみむめも         |
+fg |nn.......................................|
+   |abcdefghijklmnopqrstuvwxyzabcdefghijkl  T|
+   |>>AB     x                               |
+fg |nn.......................................|
+   |aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa |
+   |>>       X                               |
+fg |nn.......................................|
+   | NORMAL  [No Name]              1,1  Top |
+fx |SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS|
+   |                                         |

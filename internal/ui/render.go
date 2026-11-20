@@ -41,7 +41,8 @@ type Screen struct {
 // 出力の欄（Frame.Output）を開いていれば、ステータス行とコマンドラインの行の間に、欄の中身と欄の名前の行を置く（Vim の :copen の窓と同じ並び）。
 // バッファの表示領域の左には、印の列（印か診断があるときだけ 2 列）を置き、その右に行番号の列（Frame.LineNumbers）を置く（layout）。
 // GutterWidth で印の列の場所を空けておくこともできる。
-// バッファの行は折り返さず、長い行は横にスクロールして表示する（Vim の 'nowrap'）。出力の欄の行は折り返す。
+// バッファの行は、Frame.Wrap が false なら折り返さず、長い行は横にスクロールして表示する（Vim の 'nowrap'）。
+// true なら本文の幅で折り返す（wrap.go。FR-156）。出力の欄の行は折り返す。
 //
 // Renderer は、縦と横のスクロールの位置を、描画をまたいで持つ。
 // 表示領域の行数が変わったとき（出力の欄の開け閉め、端末の大きさの変更）は、カーソルの行が表示領域の中で同じ割合の位置に来るように縦の位置を決める（fitHeight）。
@@ -75,6 +76,20 @@ type Renderer struct {
 	// tabRows は、直前の Render でタブの行に使った行数（0 か 1）である。Render の外から読む表示領域の行数（TextRows）から除く。
 	tabRows int
 	left    int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
+	// skip は、行を折り返すとき、最初の行（top）を折り返した見た目の行のうち、表示領域より上に隠す行数である
+	// （Vim の w_skipcol を見た目の行で数えたもの）。最初の行が表示領域より高く、カーソルがその行にあるときだけ 0 でない（scrollWrapped）。
+	skip int
+
+	// wrap は、直前の layout の Frame.Wrap（行を折り返すか）である。
+	wrap bool
+	// center は、EnterBuffer の後の次の Render で、行を折り返すなら、カーソルの行を表示領域の中ほどに置き直すことを表す。
+	center bool
+	// view は、直前の Render の表示領域の行ごとの中身（見た目の行）である（buildView）。
+	view []viewRow
+	// bot は、直前の Render で、表示領域に最後まで描いた行の次の行の番号である（Vim の w_botline）。行を折り返すときのルーラーに使う。
+	bot int
+	// heights は、1 回の Render の中で数えた、行の見た目の行の数の覚え（行の番号から数）である。Render の始めに空にする。
+	heights map[int]int
 
 	// gutter、numWidth、outRows は、直前の Render（layout）で決めた、印の列の列数、行番号の列の列数（出さなければ 0）、
 	// 出力の欄の中身の行数である。
@@ -114,25 +129,26 @@ func (r *Renderer) Left() int { return r.left }
 // 次の Render は、この位置からカーソルが画面に収まるようにスクロールする。
 func (r *Renderer) SetScroll(top, left int) {
 	r.top, r.left = max(top, 0), max(left, 0)
-	r.topFill = 0
+	r.topFill, r.skip = 0, 0
 }
 
 // ScrollPos は、Renderer の表示の位置である。縦と横のスクロールの位置に加えて、見比べている間の最初の行の上の詰め物の行の数
-// （Vim の w_topfill）を含む。中身は描画の内部の値で、呼び出し側は ScrollPos で読んだ値を SetScrollPos で戻すだけに使う。
-// 表示の位置を決める値を足すとき（行を折り返したときの 1 行の途中から見せる位置など）は、ここに足す。
+// （Vim の w_topfill）と、行を折り返すときに最初の行の途中から見せる位置（Vim の w_skipcol。Renderer.skip）を含む。
+// 中身は描画の内部の値で、呼び出し側は ScrollPos で読んだ値を SetScrollPos で戻すだけに使う。
+// 表示の位置を決める値を足すときは、ここに足す。
 type ScrollPos struct {
-	top, left, topFill int
+	top, left, topFill, skip int
 }
 
 // ScrollPos は、今の表示の位置を返す。
 func (r *Renderer) ScrollPos() ScrollPos {
-	return ScrollPos{top: r.top, left: r.left, topFill: r.topFill}
+	return ScrollPos{top: r.top, left: r.left, topFill: r.topFill, skip: r.skip}
 }
 
-// SetScrollPos は、表示の位置を、前に ScrollPos で読んだ p に戻す。SetScroll と違い、詰め物の行の数も戻す。
+// SetScrollPos は、表示の位置を、前に ScrollPos で読んだ p に戻す。SetScroll と違い、詰め物の行の数と、最初の行の途中から見せる位置も戻す。
 // 次の Render は、この位置からカーソルが画面に収まるようにスクロールする。
 func (r *Renderer) SetScrollPos(p ScrollPos) {
-	r.top, r.left, r.topFill = max(p.top, 0), max(p.left, 0), max(p.topFill, 0)
+	r.top, r.left, r.topFill, r.skip = max(p.top, 0), max(p.left, 0), max(p.topFill, 0), max(p.skip, 0)
 }
 
 // EnterBuffer は、表示するバッファを替えたときに、スクロールの位置を、替えた先のバッファ（行数 lineCount）のカーソルの行 line に合わせて決め直す。
@@ -143,11 +159,15 @@ func (r *Renderer) SetScrollPos(p ScrollPos) {
 // Vim 9.1 の enter_buffer（最初の行を 1 にしてから、バッファに残したカーソルで scroll_cursor_halfway を呼ぶ）に合わせた。
 // 前のバッファの最初の行を使い続けると、定義へ移動して戻った（<C-o>）ときに、画面に収まる短いファイルの先頭の行が隠れる（#155）。
 // 値は、tmux の 33 行と 32 行の表示領域で、400 行、40 行、22 行のファイルのカーソルの行を変えて、別のバッファから戻ったときの line("w0") を測って合わせた。
+//
+// 行を折り返して描いていたら（直前の Render の Frame.Wrap）、行の高さはここでは分からないので、次の Render で、
+// 見た目の行の数でカーソルの行を中ほどに置き直す（scrollHalfway。Vim の scroll_cursor_halfway）。
 func (r *Renderer) EnterBuffer(lineCount, line int) {
 	h := r.textRows()
 	r.top = max(min(line-(h-1)/2, lineCount-h), 0)
 	r.left = 0
-	r.topFill = 0
+	r.topFill, r.skip = 0, 0
+	r.center = r.wrap
 }
 
 // Columns は、このレンダラーのタブ幅で数える Columns を返す。internal/command の State.Columns に差し込む。
@@ -192,6 +212,9 @@ type cursorPlace struct {
 	byte int // 行の中のバイト位置
 	col  int // カーソルを置く表示の列
 	end  int // カーソルの文字が占める最後の列の次の列。カーソルを画面に収める判定に使う
+	// row と x は、行を折り返すとき（Renderer.wrap）の、カーソルを置く見た目の行（行の中で何番目か）と、その行の左の端からの列である。
+	// 折り返さないときは 0 である。
+	row, x int
 }
 
 // Render は、f を描いた画面を返す。
@@ -217,50 +240,57 @@ func (r *Renderer) render(f *Frame) Screen {
 	}
 	g := NewGrid(r.Width, r.Height)
 	r.layout(f)
+	if r.heights == nil {
+		r.heights = map[int]int{}
+	}
+	clear(r.heights)
 	cur := r.placeCursor(text, f)
 	prevTop := r.top
-	resized := r.fitHeight(text.LineCount(), cur)
-	r.scroll(text.LineCount(), cur)
-	r.fitDiff(f, cur, prevTop)
+	resized := r.fitHeight(text, cur)
+	if r.center {
+		// EnterBuffer の後は、見た目の行の数でカーソルの行を中ほどに置き直す（折り返すときだけ。EnterBuffer の doc）。
+		r.center = false
+		if r.wrap && r.textRows() > 0 {
+			r.scrollHalfway(text, cur, r.textRows())
+		}
+	}
+	r.scroll(text, cur)
+	r.fitDiff(f, text, cur, prevTop)
 	if resized {
-		r.fracRow = cur.line - r.top + 1
+		r.fracRow = r.cursorRow(text, cur) + 1
 	}
 	r.rendered, r.rows = true, r.textRows()
 
 	rows := r.textRows()
+	r.buildView(text, f, rows)
 	d := drawer{r: r, g: g, theme: theme, text: text, f: f, cur: cur}
 	d.collectSpans(rows)
 	signs := d.signsByLine(rows)
-	// 見比べている間は、行の間に詰め物の行を描く（diff.go）。row は表示領域の中の行、n はバッファの行である。
-	row := 0
-	for ; row < r.topFill && row < rows; row++ {
-		d.drawFiller(row)
-	}
-	for n := r.top; row < rows; n++ {
-		if n > r.top {
-			for k := f.Diff.fill(n); k > 0 && row < rows; k-- {
-				d.drawFiller(row)
-				row++
-			}
-			if row >= rows {
-				break
-			}
-		}
-		if n >= text.LineCount() {
+	// 表示領域の行ごとの中身（見た目の行。buildView）を上から描く。見比べている間の詰め物の行（diff.go）、最終行より後の "~" の行、
+	// バッファの行の見た目の行がある。バッファの 1 行の見た目の行は、続けて 1 回の drawLine で描く。
+	for row := 0; row < rows; {
+		vr := r.view[row]
+		switch {
+		case vr.line < 0:
+			d.drawFiller(row)
+			row++
+		case vr.line >= text.LineCount():
 			g.set(row, 0, Cell{Text: "~", Width: 1, Attr: theme.attr(StyleNonText)})
 			row++
-			continue
+		default:
+			end := row + 1
+			for end < rows && r.view[end].line == vr.line {
+				end++
+			}
+			for i := row; i < end; i++ {
+				d.drawGutter(i, r.view[i], signs)
+			}
+			d.drawLine(row, vr.line, vr.k, end-row)
+			row = end
 		}
-		if signs != nil {
-			d.drawSign(row, signs[n-r.top])
-		}
-		if r.numWidth > 0 {
-			d.drawNumber(row, n)
-		}
-		d.drawLine(row, n)
-		row++
 	}
-	curRow := r.screenRow(f, cur.line)
+	d.drawMarks(rows)
+	curRow, curCol := r.cursorScreen(text, f, cur)
 	var listCursor *Cursor
 	switch {
 	case f.List != nil && rows > 0:
@@ -268,14 +298,14 @@ func (r *Renderer) render(f *Frame) Screen {
 			listCursor = &c
 		}
 	case f.Float != nil && rows > 0:
-		if c, ok := r.drawFloat(g, theme, f.Float, curRow, r.textLeft()+cur.col-r.left); ok {
+		if c, ok := r.drawFloat(g, theme, f.Float, curRow, curCol); ok {
 			listCursor = &c
 		}
 	default:
 		r.float, r.floatList, r.floatPreview = nil, nil, nil
 	}
 	screen := Screen{Grid: g, Cursor: Cursor{
-		Row: curRow, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,
+		Row: curRow, Col: curCol, Shape: CursorBlock,
 		Visible: rows > 0 && r.textWidth() > 0,
 	}}
 	switch {
@@ -320,7 +350,18 @@ func (r *Renderer) render(f *Frame) Screen {
 //
 // ノーマルモードとビジュアルモードでは、タブの上のカーソルをタブの最後の列に置く。インサートモードでは最初の列に置く（Vim と同じ）。
 // 行末より後ろ（インサートモードで行末に挿入するとき）は、行の表示幅の列に置く。
+// 行を折り返すとき（layout が決めた r.wrap）は、見た目の行と、その行の中の列も求める（wrapper.cursor）。
 func (r *Renderer) placeCursor(text Text, f *Frame) cursorPlace {
+	p := r.placeColumn(text, f)
+	if r.wrap {
+		w := r.wrapper().cursor(text.Line(p.line), p.byte, f.Mode != ModeInsert)
+		p.row, p.x = w.row, w.x
+	}
+	return p
+}
+
+// placeColumn は、placeCursor の、行の先頭からの表示の列を求める部分である。
+func (r *Renderer) placeColumn(text Text, f *Frame) cursorPlace {
 	line := min(max(f.Cursor.Line, 0), text.LineCount()-1)
 	s := text.Line(line)
 	b := min(max(f.Cursor.Byte, 0), len(s))
@@ -354,8 +395,14 @@ func (r *Renderer) placeCursor(text Text, f *Frame) cursorPlace {
 // 中ほどに置くときは、バッファの最終行より後ろの "~" の行が出ないように最初の行を詰める。
 //
 // 横は 'sidescroll' が 0 の既定に合わせ、カーソルの文字が画面の外に出たら、カーソルを画面の幅の半分の位置に置く。
-func (r *Renderer) scroll(lineCount int, cur cursorPlace) {
-	r.scrollRows(lineCount, cur, r.textRows())
+//
+// 行を折り返すとき（r.wrap）は、見た目の行で数える scrollWrapped に任せ、横にはスクロールしない。
+func (r *Renderer) scroll(text Text, cur cursorPlace) {
+	if r.wrap {
+		r.scrollWrapped(text, cur, r.textRows())
+		return
+	}
+	r.scrollRows(text.LineCount(), cur, r.textRows())
 	if w := r.textWidth(); w > 0 && (cur.col < r.left || cur.end > r.left+w) {
 		r.left = max(cur.col-w/2, 0)
 	}
@@ -394,23 +441,81 @@ func (r *Renderer) scrollRows(lineCount int, cur cursorPlace, h int) {
 //
 // この後の scroll が、カーソルが表示領域に収まるようにする。
 // 前の行数が 0 でない変更のとき（Render が、scroll の後のカーソルの画面の行を w_prev_fraction_row として記録するとき）に true を返す。
-func (r *Renderer) fitHeight(lineCount int, cur cursorPlace) bool {
+//
+// 行を折り返すときは、行と画面の行の代わりに見た目の行で数える（Vim の scroll_to_fraction も、行の高さを足して最初の行を決める）。
+// 最初の行は、カーソルの行から上へ、見た目の行の数が割合の位置に収まるところまで戻した行にし、行の途中からは見せない。
+// 折り返さないときは、どの行の高さも 1 なので、数え方は変わらない。
+func (r *Renderer) fitHeight(text Text, cur cursorPlace) bool {
 	h, prev := r.textRows(), r.rows
 	if !r.rendered || h == prev {
 		return false
 	}
 	if prev > 0 {
-		r.scrollRows(lineCount, cur, prev)
-		if wrow := cur.line - r.top; prev > 1 && wrow+1 != r.fracRow {
+		if r.wrap {
+			r.scrollWrapped(text, cur, prev)
+		} else {
+			r.scrollRows(text.LineCount(), cur, prev)
+		}
+		if wrow := r.cursorRow(text, cur); prev > 1 && wrow+1 != r.fracRow {
 			// 最初の行と最後の行のカーソルは、その行の真ん中にあるとして数える（Vim の set_fraction）。
 			r.fraction = (wrow*fractionMult + fractionMult/2) / prev
 		}
 	}
-	if h > 0 && (h < lineCount || r.top > 0) {
+	if h > 0 && (h < r.contentRows(text, h) || r.top > 0) {
 		wrow := (r.fraction*h - 1) / fractionMult
-		r.top = min(max(cur.line-wrow, 0), max(lineCount-1, 0))
+		top, above := cur.line, cur.row
+		for top > 0 && above+r.height(text, top-1) <= wrow {
+			top--
+			above += r.height(text, top)
+		}
+		r.top, r.skip = top, 0
 	}
 	return prev > 0
+}
+
+// height は、行 n を描く表示領域の行数を返す。折り返さなければ 1 で、折り返すなら見た目の行の数である（1 回の Render の中で覚える）。
+func (r *Renderer) height(text Text, n int) int {
+	if !r.wrap || n < 0 || n >= text.LineCount() {
+		return 1
+	}
+	if h, ok := r.heights[n]; ok {
+		return h
+	}
+	h := r.wrapper().rows(text.Line(n))
+	if r.heights != nil {
+		r.heights[n] = h
+	}
+	return h
+}
+
+// contentRows は、バッファの全体を描く表示領域の行数を返す。limit より多いと分かったら、数えるのをやめて limit+1 を返す。
+// 折り返さなければ行数である。
+func (r *Renderer) contentRows(text Text, limit int) int {
+	n := text.LineCount()
+	if !r.wrap || n > limit {
+		return n
+	}
+	sum := 0
+	for i := range n {
+		sum += r.height(text, i)
+		if sum > limit {
+			return limit + 1
+		}
+	}
+	return sum
+}
+
+// cursorRow は、カーソルを置く見た目の行の、表示の最初の行（top の skip 番目の見た目の行）からの行数を返す。見比べの詰め物の行は数えない。
+// 折り返さなければ、カーソルの行と最初の行の差である。
+func (r *Renderer) cursorRow(text Text, cur cursorPlace) int {
+	if !r.wrap || cur.line < r.top {
+		return cur.line - r.top
+	}
+	row := cur.row - r.skip
+	for n := r.top; n < cur.line; n++ {
+		row += r.height(text, n)
+	}
+	return row
 }
 
 // span は、1 行の中の、属性を重ねるバイトの範囲 [start, end) である。
@@ -544,9 +649,10 @@ func (w *sweep) attr(base Attr) Attr {
 
 // prepare は、表示領域の row 行目（バッファの line 行目、テキスト s）の構文の色、見比べの色、診断、検索の一致、
 // 範囲の色（Frame.Highlights）の範囲を sweep に詰める。
+// visible は、その行で表示の範囲に掛かる文字のバイトの範囲を返す関数で、検索の一致を集めるとき（searchSpans）だけ呼ぶ。
 //
 // req: FR-35, FR-137, FR-140
-func (d *drawer) prepare(row, line int, s string) {
+func (d *drawer) prepare(row, line int, s string, visible func() (from, to int)) {
 	ln := len(s)
 	w := &d.sweep
 	w.reset()
@@ -562,7 +668,7 @@ func (d *drawer) prepare(row, line int, s string) {
 	n := len(w.spans)
 	w.spans = append(append(w.spans, d.diags[row]...), d.diffSpans(line, ln)...)
 	if d.f.Search != nil {
-		from, to := d.visibleBytes(s)
+		from, to := visible()
 		w.spans = d.searchSpans(w.spans, s, from, to)
 	}
 	w.spans = append(w.spans, d.hls[row]...)
@@ -587,17 +693,22 @@ func (d *drawer) attrAt(row, line, off, size int, base Attr) Attr {
 	return a
 }
 
-// drawLine は、バッファの line 行目を、表示領域の row 行目に描く。
+// drawLine は、バッファの line 行目を、表示領域の row 行目から描く。
+// 行を折り返すときは、行の見た目の行のうち k 番目から n 行を描く（drawWrapped）。折り返さないときは k は 0、n は 1 である。
 //
 // 行の先頭から文字の列を数え直すので、時間は行の長さ（表示の左の端より左の部分を含む）に比例する。
 // 文字ごとの割り当ては、^A などの表記を作るときと、行頭の結合文字だけである。
 // 見比べている間は、詰め物の行の分だけ row が line - top より大きくなる。診断と選択の範囲は line - top で引く。
-func (d *drawer) drawLine(row, line int) {
+func (d *drawer) drawLine(row, line, k, n int) {
+	if d.r.wrap {
+		d.drawWrapped(row, line, k, n)
+		return
+	}
 	s := d.text.Line(line)
 	left, w, x0 := d.r.left, d.r.textWidth(), d.r.textLeft()
 	tabStop := tabStopOr(d.r.TabStop)
 	idx := line - d.r.top
-	d.prepare(idx, line, s)
+	d.prepare(idx, line, s, func() (int, int) { return d.visibleBytes(s) })
 	put := func(x int, c Cell) {
 		if x >= 0 && x < w {
 			d.g.set(row, x0+x, c)
@@ -648,7 +759,122 @@ func (d *drawer) drawLine(row, line int) {
 			put(col-left, blank(a))
 		}
 	}
-	d.diffFillRest(row, line, col+1)
+	d.diffFillRest(row, line, col+1-left)
+}
+
+// drawWrapped は、行を折り返すとき（FR-156）の drawLine である。バッファの line 行目の見た目の行のうち、k 番目から n 行を、
+// 表示領域の row 行目から描く。文字の置き方は wrapper.place で決め、色は折り返さないときと同じく、バイトの範囲（prepare と attrAt）で重ねる。
+// 全角文字を次の見た目の行へ送った列には ">" を、続きの見た目の行の頭には記号（SymbolShowBreak）を、どちらも StyleNonText で描く。
+// 時間は、行の先頭から、描く最後の見た目の行までの長さに比例する。
+//
+// req: FR-156
+func (d *drawer) drawWrapped(row, line, k, n int) {
+	s := d.text.Line(line)
+	w := d.r.wrapper()
+	x0 := d.r.textLeft()
+	idx := line - d.r.top
+	d.prepare(idx, line, s, func() (int, int) { return w.span(s, k, k+n) })
+	nonText := d.theme.attr(StyleNonText)
+	put := func(p wrapPos, c Cell) {
+		if i := p.row - k; i >= 0 && i < n && p.x >= 0 && p.x < w.width {
+			d.g.set(row+i, x0+p.x, c)
+		}
+	}
+	p := wrapPos{}
+	col := 0
+	done := true
+	for off := 0; off < len(s); {
+		gl := nextGlyph(s, off, col, w.tabStop)
+		col += gl.width
+		off += gl.size
+		start := p
+		first, pad, padded := w.place(&p, gl)
+		if first.row >= k+n {
+			done = false
+			break
+		}
+		if p.row < k {
+			d.sweep.advance(gl.off, gl.size)
+			continue
+		}
+		var base Attr
+		if gl.kind == glyphSpecial {
+			base = d.theme.attr(StyleSpecialKey)
+		}
+		a := d.attrAt(idx, line, gl.off, gl.size, base)
+		if padded {
+			put(pad, Cell{Text: ">", Width: 1, Attr: nonText})
+		}
+		switch gl.kind {
+		case glyphTab, glyphSpecial:
+			// セルごとに、place と同じく右の端で次の見た目の行へ分けて置く。
+			c := start
+			for i := range gl.width {
+				if c.x >= w.width {
+					w.nextRow(&c)
+				}
+				cell := blank(a)
+				if gl.kind == glyphSpecial {
+					cell = Cell{Text: gl.text[i : i+1], Width: 1, Attr: a}
+				}
+				put(c, cell)
+				c.x++
+			}
+		case glyphText:
+			switch {
+			case gl.width < 2:
+				put(first, Cell{Text: gl.text, Width: 1, Attr: a})
+			case first.x+1 >= w.width:
+				// 見た目の行の幅が 1 列しかなく、全角文字が収まらない。折り返さないときの右の端と同じく ">" を出す。
+				put(first, Cell{Text: ">", Width: 1, Attr: a.Over(nonText)})
+			default:
+				put(first, Cell{Text: gl.text, Width: 2, Attr: a})
+				put(wrapPos{row: first.row, x: first.x + 1}, Cell{Width: 0, Attr: a})
+			}
+		}
+	}
+	if done {
+		e := w.eol(p)
+		if a := d.attrAt(idx, line, len(s), 0, Attr{}); a != (Attr{}) {
+			put(e, blank(a))
+		}
+		if i := e.row - k; i >= 0 && i < n {
+			d.diffFillRest(row+i, line, e.x+1)
+		}
+	}
+	if w.sbw > 0 {
+		sb := d.r.symbol(SymbolShowBreak)
+		for i := max(k, 1) - k; i < n; i++ {
+			d.r.drawText(d.g, row+i, x0, x0+w.sbw, sb, nonText)
+		}
+	}
+}
+
+// drawMarks は、行を折り返すときの表示領域の端の印を描く（wrap.go の doc）。
+// 最初の行を途中の見た目の行から描いていれば、最初の行の左の 3 列に "<<<" を出す。
+// 最後の行に描いた行が収まりきらず、その行が表示領域の最初の行でなければ、最後の行の右の 3 列に "@@@" を出す。
+//
+// req: FR-156
+func (d *drawer) drawMarks(rows int) {
+	r := d.r
+	if !r.wrap || rows <= 0 {
+		return
+	}
+	a := d.theme.attr(StyleNonText)
+	if r.skip > 0 {
+		x1 := min(len(skipMark), max(r.Width, 0))
+		clearSplit(d.g, 0, 0, x1)
+		r.drawText(d.g, 0, 0, x1, skipMark[:x1], a)
+	}
+	last := r.view[rows-1]
+	if last.line < 0 || last.line >= d.text.LineCount() || last.line == r.top {
+		return
+	}
+	if last.k+1 < r.height(d.text, last.line) {
+		x := max(r.Width-len(lastLineMark), 0)
+		clearSplit(d.g, rows-1, x, r.Width)
+		r.drawText(d.g, rows-1, x, r.Width, lastLineMark[:r.Width-x], a)
+	}
 }
 
 // drawText は、row 行目の col 列から、列 limit の手前まで s を描き、描き終えた次の列を返す。
@@ -682,9 +908,13 @@ func (r *Renderer) drawText(g *Grid, row, col, limit int, s string, a Attr) int 
 }
 
 // position は、表示している範囲の位置を、Vim のルーラーと同じ形（All、Top、Bot、NN%）で返す。
+// 行を折り返すときは、表示領域に最後まで描いた行の次の行（r.bot。Vim の w_botline）から下の行数を数える。
 func (r *Renderer) position(lineCount int) string {
 	above := r.top
 	below := max(lineCount-(r.top+r.textRows()), 0)
+	if r.wrap {
+		below = max(lineCount-r.bot, 0)
+	}
 	switch {
 	case above == 0 && below == 0:
 		return "All"

@@ -59,16 +59,18 @@ func (r *Renderer) DiffTop() (line, fill int) { return r.top, r.topFill }
 // 次の Render は、カーソルが表示領域に収まらなければ、この位置からスクロールする。
 func (r *Renderer) SetDiffTop(line, fill int) {
 	r.top, r.topFill = max(line, 0), max(fill, 0)
+	r.skip = 0
 }
 
-// screenRow は、行 line（表示の最初の行より後ろ）を描く、表示領域の中の行の番号を返す。詰め物の行を数に入れる。
-func (r *Renderer) screenRow(f *Frame, line int) int {
-	if f.Diff == nil {
+// screenRow は、行 line（表示の最初の行より後ろ）の最初の見た目の行を描く、表示領域の中の行の番号を返す。詰め物の行を数に入れる。
+// 行を折り返すときは、行の高さ（見た目の行の数）を足す。最初の行の途中から描いていれば、隠した見た目の行を引く。
+func (r *Renderer) screenRow(text Text, f *Frame, line int) int {
+	if f.Diff == nil && !r.wrap {
 		return line - r.top
 	}
-	row := r.topFill
+	row := r.topFill - r.skip
 	for n := r.top; n < line; n++ {
-		row += 1 + f.Diff.fill(n+1)
+		row += r.height(text, n) + f.Diff.fill(n+1)
 	}
 	return row
 }
@@ -78,7 +80,7 @@ func (r *Renderer) screenRow(f *Frame, line int) int {
 //
 // 最初の行が変わったか、見比べを始めたら、その上の詰め物は見せない。ただし最初の行が 0 行目なら全部を見せる（Vim でファイルの先頭まで戻ったときと同じ）。
 // 詰め物の行のためにカーソルの行が表示領域の下に出たら、出なくなるまで 1 行ずつ下へスクロールする。
-func (r *Renderer) fitDiff(f *Frame, cur cursorPlace, prevTop int) {
+func (r *Renderer) fitDiff(f *Frame, text Text, cur cursorPlace, prevTop int) {
 	if f.Diff == nil {
 		r.topFill, r.diffOn = 0, false
 		return
@@ -92,8 +94,9 @@ func (r *Renderer) fitDiff(f *Frame, cur cursorPlace, prevTop int) {
 	}
 	r.topFill = min(r.topFill, f.Diff.fill(r.top))
 	rows := r.textRows()
-	for rows > 0 && r.top < cur.line && r.screenRow(f, cur.line) >= rows {
+	for rows > 0 && r.top < cur.line && r.screenRow(text, f, cur.line)+r.height(text, cur.line)-1 >= rows {
 		// 1 画面の行ずつ送る。次の行へ進んだら、その上の詰め物を全部見せた状態から送る。
+		// 行を折り返すときは、カーソルの行の最後の見た目の行が入るまで送る（scrollWrapped と同じく、カーソルの行の全体を見せる）。
 		if r.topFill > 0 {
 			r.topFill--
 		} else {
@@ -141,8 +144,8 @@ func (d *drawer) diffSpans(line, ln int) []span {
 }
 
 // diffFillRest は、差分の色のある line 行目の、行末のセルの右から右の端までを、行の色で埋める（Vim と同じ）。
-// col は、行末のセルの次の表示の列である。
-func (d *drawer) diffFillRest(row, line, col int) {
+// from は、表示領域の row 行目の、行末のセルの次のセルの、本文の左の端からの列である。
+func (d *drawer) diffFillRest(row, line, from int) {
 	if d.f.Diff == nil {
 		return
 	}
@@ -152,7 +155,7 @@ func (d *drawer) diffFillRest(row, line, col int) {
 	}
 	a := d.theme.attr(dl.Style)
 	w, x0 := d.r.textWidth(), d.r.textLeft()
-	for x := max(col-d.r.left, 0); x < w; x++ {
+	for x := max(from, 0); x < w; x++ {
 		d.g.set(row, x0+x, blank(a))
 	}
 }
