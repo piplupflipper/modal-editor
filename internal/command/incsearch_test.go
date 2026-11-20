@@ -29,8 +29,8 @@ func TestIncSearchQuery(t *testing.T) {
 		t.Errorf("q = %+v, %v, want %+v", q, ok, want)
 	}
 	feedKeys(s, "<C-g><C-g><C-t>o/e")
-	if q, _ := s.IncSearch(); q.Steps != 1 || q.Search.Pattern != "foo" {
-		t.Errorf("<C-g><C-g><C-t> とオフセットの後の q = %+v", q)
+	if q1, _ := s.IncSearch(); q1.Steps != 1 || q1.Search.Pattern != "foo" {
+		t.Errorf("<C-g><C-g><C-t> とオフセットの後の q = %+v", q1)
 	}
 	if s.CommandLine() != "foo/e" {
 		t.Errorf("<C-g> と <C-t> がコマンドラインに入った: %q", s.CommandLine())
