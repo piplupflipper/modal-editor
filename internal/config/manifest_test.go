@@ -237,6 +237,8 @@ func TestLoadExtensionsSettingsFileType(t *testing.T) {
         "python": { "fileTypes": ["python", "", 3, "python"] },
         "broken": { "fileTypes": "notalist" },
         "nofield": {},
+        "empty": { "fileTypes": [] },
+        "numbers": { "fileTypes": [3] },
       } },
       "plain": { "fileType": "toml" },
     },
@@ -247,11 +249,17 @@ func TestLoadExtensionsSettingsFileType(t *testing.T) {
 		t.Fatal(errs)
 	}
 	exts, problems := LoadExtensions([]string{dir}, cfg)
-	// "*" が当たった nofield に fileTypes が無いことを、設定の treesitter の位置で知らせる（綴りの誤りで起動しないことに気づけるように）。
+	// "*" が当たった nofield に fileTypes が無いこと、empty と numbers の fileTypes が文字列を 1 つも含まないことを、
+	// 設定の treesitter の位置で、項目の名前の順に知らせる（綴りや値の誤りで起動しないことに気づけるように）。
 	ps := problemsOf(t, problems)
-	if len(ps) != 1 || ps[0].Path != "config.jsonc" || ps[0].Line != 4 ||
-		!strings.Contains(ps[0].Msg, "extensions.settings.treesitter.parsers.nofield.fileTypes が無い") {
+	if len(ps) != 3 {
 		t.Fatalf("problems = %v", problems)
+	}
+	for i, name := range []string{"empty", "nofield", "numbers"} {
+		if ps[i].Path != "config.jsonc" || ps[i].Line != 4 ||
+			!strings.Contains(ps[i].Msg, "extensions.settings.treesitter.parsers."+name+".fileTypes が無いか、文字列か文字列を含む配列でない") {
+			t.Errorf("problems[%d] = %v", i, ps[i])
+		}
 	}
 	got := map[string][]ext.Activation{}
 	for _, e := range exts {
@@ -259,7 +267,7 @@ func TestLoadExtensionsSettingsFileType(t *testing.T) {
 	}
 	settings := ext.Activation{On: ext.ActivationSettingsFileType, Pattern: "/parsers/*/fileTypes"}
 	want := map[string][]ext.Activation{
-		// 項目の名前の順（broken、nofield、python、rust）に、文字列だけを 1 回ずつ足す。指した値が文字列（broken）なら、その 1 つを足す。
+		// 項目の名前の順（broken、empty、nofield、numbers、python、rust）に、文字列だけを 1 回ずつ足す。指した値が文字列（broken）なら、その 1 つを足す。
 		"treesitter": {
 			{On: ext.ActivationFileType, Pattern: "go"},
 			settings,

@@ -198,7 +198,7 @@ func LoadExtensions(dirs []string, cfg Config) (exts []Extension, problems []err
 			if pos, ok := cfg.extPos[m.ID]; ok {
 				e = &Error{Path: pos.Path, Line: pos.Line, Column: pos.Column}
 			}
-			e.Msg = fmt.Sprintf("extensions.settings.%s.%s が無いか、文字列とその配列でないので、拡張機能 %s の起動の契機を作らない", m.ID, name, m.ID)
+			e.Msg = fmt.Sprintf("extensions.settings.%s.%s が無いか、文字列か文字列を含む配列でないので、拡張機能 %s の起動の契機を作らない", m.ID, name, m.ID)
 			problems = append(problems, e)
 		}
 		acts = append(acts, cfg.ExtensionActivation[m.ID]...)
@@ -237,7 +237,7 @@ func LoadExtensions(dirs []string, cfg Config) (exts []Extension, problems []err
 // 同じ名前は 1 回だけ足し、空の名前は足さない。
 // settings が無いか JSON として読めないとき、Pattern の指す値が無いか文字列とその配列でないときは、何も足さない。
 // 設定の中身の誤りを知らせるのは、設定を解釈する拡張機能である。
-// ただし、Pattern の "*" が当たった項目の下に、その先の値が無いか、文字列とその配列でないときは、
+// ただし、Pattern の "*" が当たった項目の下に、その先の値が無いか、文字列か文字列を含む配列でないとき（[] や [3] を含む）は、
 // その場所の名前（点で区切ったもの）を missing に返す。項目の名前を誤ると（fileTypes を filetypes と書くなど）、
 // 契機が作られず拡張機能が起動しないので、拡張機能からは知らせられないためである（PR #282 のレビュー）。
 func expandSettingsActivation(acts []ext.Activation, settings json.RawMessage) (out []ext.Activation, missing []string) {
@@ -284,7 +284,7 @@ func pointerStrings(v any, ptr string) []string {
 type pointerWalk struct {
 	// found は、指した値の文字列である。
 	found []string
-	// missing は、"*" が当たった項目の下で、その先の値が無いか、文字列とその配列でない場所の、点で区切った名前である。
+	// missing は、"*" が当たった項目の下で、その先の値が無いか、文字列か文字列を含む配列でない場所の、点で区切った名前である。
 	// 利用者が設定の項目の名前を誤ったとき（fileTypes を filetypes と書いたなど）に知らせるのに使う。
 	missing []string
 }
@@ -301,10 +301,16 @@ func (w *pointerWalk) walk(v any, ptr, at string, wild bool) {
 			w.found = append(w.found, x)
 			return
 		case []any:
+			n := 0
 			for _, e := range x {
 				if s, ok := e.(string); ok {
 					w.found = append(w.found, s)
+					n++
 				}
+			}
+			// 文字列を 1 つも含まない配列（[] や [3]）も、契機を 1 つも作らないので知らせる。
+			if n == 0 && wild {
+				w.missing = append(w.missing, at)
 			}
 			return
 		}

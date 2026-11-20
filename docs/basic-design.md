@@ -2213,7 +2213,7 @@ ACP の `fs/*` と MCP のツールが受け取るパスも絶対パスなので
 | `saveHook` | 宣言ファイル | true なら、稼働中のときに `buffer/willSave` を受け取る | LSP |
 | `args` | 宣言ファイル | `command` に渡す引数の列。本体は解決せずにそのまま渡す。相対パスの引数は、拡張機能が環境変数 `VI_IMITATION_EXTENSION_DIR` の宣言ファイルのディレクトリから解決する（5.1） | スクリプト |
 | 拡張機能ごとの `activation` の追加 | 利用者の設定 | 宣言ファイルの `activation` に `filetype` の契機を足す | LSP |
-| `activation` の `settingsFileType` の契機 | 宣言ファイル | `pattern` は、拡張機能に向けた設定（`extensions.settings.<ID>`）の中を指す JSON Pointer で、参照トークン `*` はオブジェクトのすべての項目か配列のすべての要素に当たる。指した値が文字列ならその 1 つを、配列ならその中の文字列のすべてを、ファイルの種類の名前とする。本体（`internal/config` の `LoadExtensions`）は、宣言ファイルと設定を読んだときに、この契機の直後にそれらの `filetype` の契機を足す。この契機そのものでは起動しない。`*` が当たった項目の下にその先の値が無いか、文字列とその配列でないときは（`fileTypes` を `filetypes` と綴ったなど）、契機を作らず、設定の誤りとして知らせる（拡張機能が起動しないので、拡張機能からは知らせられない）（#277） | tree-sitter（`/parsers/*/fileTypes`。6.1） |
+| `activation` の `settingsFileType` の契機 | 宣言ファイル | `pattern` は、拡張機能に向けた設定（`extensions.settings.<ID>`）の中を指す JSON Pointer で、参照トークン `*` はオブジェクトのすべての項目か配列のすべての要素に当たる。指した値が文字列ならその 1 つを、配列ならその中の文字列のすべてを、ファイルの種類の名前とする。本体（`internal/config` の `LoadExtensions`）は、宣言ファイルと設定を読んだときに、この契機の直後にそれらの `filetype` の契機を足す。この契機そのものでは起動しない。`*` が当たった項目の下にその先の値が無いか、文字列か文字列を含む配列でないときは（`fileTypes` を `filetypes` と綴った、`[]` や `[3]` を書いたなど）、契機を作らず、設定の誤りとして知らせる（拡張機能が起動しないので、拡張機能からは知らせられない）（#277） | tree-sitter（`/parsers/*/fileTypes`。6.1） |
 | ファイルの種類の対応表 | 利用者の設定 | 拡張子とファイル名から、ファイルの種類の名前への対応を足す | すべて |
 
 `settingsFileType` の契機は、利用者が拡張機能の設定に書いたファイルの種類を、`extensions.activation` にもう一度書かずに済ませるために足した（#277）。
