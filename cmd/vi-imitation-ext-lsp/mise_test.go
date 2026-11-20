@@ -37,7 +37,10 @@ const testTool = "test:fakels@1.2.3"
 //   - install: fail があれば、その中身を標準エラー出力に書いて終了コード 1。
 //     無ければ、進み具合の行を書き、release ができるまで待ってから installed を作る。待っている間、自分の pid を install.pid に書いておく。
 //     待つ前に、本物の mise が npm を起動するのと同じく、別のプロセスグループ（setsid）で孫プロセスを起こし、その pid を grandchild.pid に書く。
-//     SIGINT を受け取ると、本物の mise と同じく孫プロセスを終わらせてから終わる
+//     SIGINT を受け取ると、本物の mise と同じく孫プロセスを終わらせてから終わる。
+//     kill は SIGKILL を送るだけで、孫が終わるのを待たないので、wait で孫が終わる（回収する）のを待ってから終わる。
+//     待たずに終わると、拡張機能の stop が戻った時点で孫がまだ終わり切っていないことがあった（CI の run 44699381364。
+//     -race -count=50 で 2 回再現し、孫の /proc/<pid>/stat は直後にゾンビになっていた）
 //   - exec <道具の ID> -- <コマンド>...: bin を PATH の先頭に足し、コマンドに置き換わる（本物の mise exec と同じく exec する）
 const fakeMiseScript = `#!/bin/sh
 state='%[1]s'
@@ -64,7 +67,7 @@ install)
 	if [ -f "$state/fail" ]; then cat "$state/fail" >&2; exit 1; fi
 	setsid sleep 300 < /dev/null > /dev/null 2>&1 &
 	child=$!
-	trap 'kill -9 $child; exit 130' INT
+	trap 'kill -9 $child; wait $child; exit 130' INT
 	echo $child > "$state/grandchild.pid"
 	echo $$ > "$state/install.pid"
 	echo "mise $2 [1/2] download" >&2
@@ -379,8 +382,9 @@ func TestMiseInstallStop(t *testing.T) {
 		t.Errorf("stop took %s while installing", d)
 	}
 	// stop は mise が終わるまで待つので、戻った時点で mise も孫プロセスも終わっている。
-	if !gone(pid) || !gone(grandchild) {
-		t.Errorf("after stop: mise gone = %v, grandchild gone = %v; want both gone", gone(pid), gone(grandchild))
+	// 判定と表示で同じ値を使う（読み直すと、その間に終わって両方 true と表示されうる）。
+	if miseGone, childGone := gone(pid), gone(grandchild); !miseGone || !childGone {
+		t.Errorf("after stop: mise gone = %v, grandchild gone = %v; want both gone", miseGone, childGone)
 	}
 	waitGone(t, "mise install", pid)
 	waitGone(t, "the grandchild of mise install", grandchild)
