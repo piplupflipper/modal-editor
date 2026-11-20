@@ -63,7 +63,16 @@ func Checkout(ctx context.Context, src, repo, version, pinned string, opts Check
 // Start は、cmd を、Sync が git と go を起動するのと同じ形で起動する。
 // 子プロセスを別のプロセスグループにし、呼び出したプロセスが終わったら（SIGKILL で終わったときも）SIGKILL を受け取るようにし、
 // cmd を作った ctx が終わったらプロセスグループ全体へ SIGKILL を送る（Linux の場合。procattr_linux.go の start）。
-// tree-sitter の拡張機能が C コンパイラを起動するのに使う（FR-142）。cmd.Wait は呼び出し側が呼ぶ。
+// cmd.Wait は呼び出し側が呼ぶ。
 func Start(cmd *exec.Cmd) error {
 	return start(cmd)
+}
+
+// StartTerm は、Start の、呼び出したプロセスが終わったときと取り消しのときのシグナルを SIGKILL から SIGTERM にしたものである。
+// 取り消しでは、cmd.WaitDelay を過ぎても終わらなければ、os/exec が子プロセスを SIGKILL で止める。
+// シグナルを受けて後始末をする子プロセスに使う。
+// tree-sitter の拡張機能が C コンパイラを起動するのに使う（FR-142）。gcc の driver は SIGKILL では一時ファイル（/tmp の cc*.s）を消せないが、
+// SIGTERM では消す（PR #282 のレビューで確かめた）。cmd.Wait は呼び出し側が呼ぶ。
+func StartTerm(cmd *exec.Cmd) error {
+	return startTerm(cmd)
 }

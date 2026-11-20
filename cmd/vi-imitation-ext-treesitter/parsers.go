@@ -186,6 +186,8 @@ func (p *preparer) prepare(ctx context.Context, spec parserSpec) (*language, err
 		return nil, err
 	}
 	defer unlock()
+	// flock を取ったので、ほかにビルドしている者はいない。前に途中で止まったビルドの一時ディレクトリを消す。
+	removeStaleBuilds(p.env.dataDir)
 	lock, err := readParserLock(p.env.lockPath)
 	if err != nil {
 		return nil, err
@@ -383,14 +385,29 @@ func loadBuilt(name, dir string) (*language, error) {
 	return newGrammarLanguage(name, grammar, highlightsFileName, highlights)
 }
 
+// removeStaleBuilds は、置き場所の parsers/<名前>/ の下に残ったビルドの一時ディレクトリ（.build-*）を消す。
+// 拡張機能がビルドの途中で SIGKILL で終わると、build の後始末（defer）が走らずに残る。置き場所の flock を取ってから呼ぶ。
+// 消せなくても、次のビルドは別の一時ディレクトリを使うので、誤りにしない。
+func removeStaleBuilds(dataDir string) {
+	stale, _ := filepath.Glob(filepath.Join(dataDir, "parsers", "*", ".build-*"))
+	for _, d := range stale {
+		_ = os.RemoveAll(d)
+	}
+}
+
 // exists は、path にファイルかディレクトリがあるかを返す。
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-// runChild は、dir で name を子プロセスとして実行する（extmgr.Start。拡張機能が SIGKILL で終わっても子プロセスが残らない）。
+// runChild は、dir で C コンパイラ name を子プロセスとして実行する。
 // 失敗したときは、標準エラー出力を誤りの文言に含める。
+//
+// extmgr.StartTerm で、別のプロセスグループで起動し、拡張機能が終わったら（SIGKILL で終わったときも）SIGTERM を受け取るようにする。
+// ctx の取り消し（拡張機能の正常な終了など）では、プロセスグループ全体へ SIGTERM を送り、WaitDelay を過ぎたら SIGKILL で止める。
+// SIGKILL でなく SIGTERM にするのは、gcc の driver が SIGTERM を受けると一時ファイル（/tmp の cc*.s）を消すためである（PR #282 のレビュー）。
+// 拡張機能が SIGKILL で終わったときは、SIGTERM が届くのは直接の子（driver）だけで、孫（cc1 など）はそのコンパイルを終えるまで動く。
 func runChild(ctx context.Context, dir string, env []string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: 起動するのは利用者が設定した C コンパイラで、引数はこの拡張機能が組み立てたもの
 	cmd.Dir = dir
@@ -398,7 +415,7 @@ func runChild(ctx context.Context, dir string, env []string, name string, args .
 	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stderr, &stderr
-	err := extmgr.Start(cmd)
+	err := extmgr.StartTerm(cmd)
 	if err == nil {
 		err = cmd.Wait()
 	}

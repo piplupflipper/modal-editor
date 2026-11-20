@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -398,6 +399,11 @@ func TestUserParserFetchBuildAndReuse(t *testing.T) {
 	}
 
 	// 版を変えたら、取得し直してビルドし、ロックファイルを替え、前のビルドを消す。
+	// 拡張機能が SIGKILL で終わって残ったビルドの一時ディレクトリも、次の用意で消す。
+	stale := filepath.Join(env.dataDir, "parsers", "myjson", ".build-stale")
+	if err = os.MkdirAll(stale, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	v2 := repo.commit(map[string]string{"README": "v2\n"})
 	repo.git("tag", "v2")
 	conn3, got3, msgs3 := connectParsers(t, env, settingsJSON(t, "", map[string]map[string]any{
@@ -412,6 +418,36 @@ func TestUserParserFetchBuildAndReuse(t *testing.T) {
 	built2, err := filepath.Glob(filepath.Join(env.dataDir, "parsers", "myjson", "*", libraryFileName))
 	if err != nil || len(built2) != 1 || built2[0] == built[0] {
 		t.Errorf("built after v2 = %v, before %v", built2, built)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("残ったビルドの一時ディレクトリを消していない: %v", err)
+	}
+}
+
+// TestRunChildCancelSendsTerm は、C コンパイラの取り消しで、プロセスグループ全体へ SIGTERM を送ることを確かめる。
+// gcc の driver は SIGTERM を受けると一時ファイルを消す（SIGKILL では消せない）。
+// スクリプトは、SIGTERM を受けたら印のファイルを書き、待っている子（sleep）も同じプロセスグループなので SIGTERM で終わる。
+//
+// req: FR-142
+func TestRunChildCancelSendsTerm(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "cc")
+	mark := filepath.Join(dir, "mark")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntrap 'echo term > \"$1\"; exit 1' TERM\nsleep 30 &\nwait\n"), 0o700); err != nil { //nolint:gosec // G306: テストが実行するスクリプト
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(500*time.Millisecond, cancel)
+	start := time.Now()
+	err := runChild(ctx, dir, nil, script, mark)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("runChild = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > 4*time.Second {
+		t.Errorf("runChild took %v after the cancel; SIGTERM did not stop the group", d)
+	}
+	if b, err := os.ReadFile(mark); err != nil || strings.TrimSpace(string(b)) != "term" {
+		t.Errorf("SIGTERM を受け取っていない: %q, %v", b, err)
 	}
 }
 

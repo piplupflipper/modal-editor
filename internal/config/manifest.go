@@ -191,7 +191,18 @@ func LoadExtensions(dirs []string, cfg Config) (exts []Extension, problems []err
 			continue
 		}
 		settings := cfg.ExtensionSettings[m.ID]
-		m.Activation = append(expandSettingsActivation(m.Activation, settings), cfg.ExtensionActivation[m.ID]...)
+		acts, missing := expandSettingsActivation(m.Activation, settings)
+		for _, name := range missing {
+			// 位置は、extensions.settings に書いた拡張機能の ID の位置を使う（値の中の位置は、RawMessage にした後は分からない）。
+			e := &Error{Path: p}
+			if pos, ok := cfg.extPos[m.ID]; ok {
+				e = &Error{Path: pos.Path, Line: pos.Line, Column: pos.Column}
+			}
+			e.Msg = fmt.Sprintf("extensions.settings.%s.%s が無いか、文字列とその配列でないので、拡張機能 %s の起動の契機を作らない", m.ID, name, m.ID)
+			problems = append(problems, e)
+		}
+		acts = append(acts, cfg.ExtensionActivation[m.ID]...)
+		m.Activation = acts
 		exts = append(exts, Extension{Manifest: m, Dir: dir, Settings: settings})
 	}
 
@@ -226,9 +237,12 @@ func LoadExtensions(dirs []string, cfg Config) (exts []Extension, problems []err
 // 同じ名前は 1 回だけ足し、空の名前は足さない。
 // settings が無いか JSON として読めないとき、Pattern の指す値が無いか文字列とその配列でないときは、何も足さない。
 // 設定の中身の誤りを知らせるのは、設定を解釈する拡張機能である。
-func expandSettingsActivation(acts []ext.Activation, settings json.RawMessage) []ext.Activation {
+// ただし、Pattern の "*" が当たった項目の下に、その先の値が無いか、文字列とその配列でないときは、
+// その場所の名前（点で区切ったもの）を missing に返す。項目の名前を誤ると（fileTypes を filetypes と書くなど）、
+// 契機が作られず拡張機能が起動しないので、拡張機能からは知らせられないためである（PR #282 のレビュー）。
+func expandSettingsActivation(acts []ext.Activation, settings json.RawMessage) (out []ext.Activation, missing []string) {
 	if !slices.ContainsFunc(acts, func(a ext.Activation) bool { return a.On == ext.ActivationSettingsFileType }) {
-		return acts
+		return acts, nil
 	}
 	var root any
 	if len(settings) > 0 {
@@ -236,14 +250,17 @@ func expandSettingsActivation(acts []ext.Activation, settings json.RawMessage) [
 			root = nil
 		}
 	}
-	out := make([]ext.Activation, 0, len(acts))
+	out = make([]ext.Activation, 0, len(acts))
 	seen := map[string]bool{}
 	for _, a := range acts {
 		out = append(out, a)
 		if a.On != ext.ActivationSettingsFileType || root == nil {
 			continue
 		}
-		for _, ft := range pointerStrings(root, a.Pattern) {
+		var w pointerWalk
+		w.walk(root, a.Pattern, "", false)
+		missing = append(missing, w.missing...)
+		for _, ft := range w.found {
 			if ft == "" || seen[ft] {
 				continue
 			}
@@ -251,38 +268,61 @@ func expandSettingsActivation(acts []ext.Activation, settings json.RawMessage) [
 			out = append(out, ext.Activation{On: ext.ActivationFileType, Pattern: ft})
 		}
 	}
-	return out
+	return out, missing
 }
 
 // pointerStrings は、v の中で JSON Pointer ptr が指す値の文字列を返す（ext.ActivationSettingsFileType の doc）。
 // 参照トークン "*" は、オブジェクトのすべての項目（名前の順）か配列のすべての要素に当たる。
 // 指した値が文字列ならその 1 つ、配列ならその中の文字列のすべてを返し、それ以外の値は除く。
 func pointerStrings(v any, ptr string) []string {
+	var w pointerWalk
+	w.walk(v, ptr, "", false)
+	return w.found
+}
+
+// pointerWalk は、JSON Pointer で値を辿った結果である。
+type pointerWalk struct {
+	// found は、指した値の文字列である。
+	found []string
+	// missing は、"*" が当たった項目の下で、その先の値が無いか、文字列とその配列でない場所の、点で区切った名前である。
+	// 利用者が設定の項目の名前を誤ったとき（fileTypes を filetypes と書いたなど）に知らせるのに使う。
+	missing []string
+}
+
+// walk は、v（at の位置の値）から ptr を辿る。wild は、ここまでに "*" が当たったかどうかである。
+func (w *pointerWalk) walk(v any, ptr, at string, wild bool) {
 	rest, ok := strings.CutPrefix(ptr, "/")
 	if !ok {
 		if ptr != "" {
-			return nil
+			return
 		}
 		switch x := v.(type) {
 		case string:
-			return []string{x}
+			w.found = append(w.found, x)
+			return
 		case []any:
-			var out []string
 			for _, e := range x {
 				if s, ok := e.(string); ok {
-					out = append(out, s)
+					w.found = append(w.found, s)
 				}
 			}
-			return out
+			return
 		}
-		return nil
+		if wild {
+			w.missing = append(w.missing, at)
+		}
+		return
 	}
 	tok, next, found := strings.Cut(rest, "/")
 	if found {
 		next = "/" + next
 	}
 	tok = strings.NewReplacer("~1", "/", "~0", "~").Replace(tok)
-	var children []any
+	type child struct {
+		name string
+		v    any
+	}
+	var children []child
 	switch x := v.(type) {
 	case map[string]any:
 		if tok == "*" {
@@ -292,21 +332,32 @@ func pointerStrings(v any, ptr string) []string {
 			}
 			slices.Sort(keys)
 			for _, k := range keys {
-				children = append(children, x[k])
+				children = append(children, child{k, x[k]})
 			}
 		} else if c, ok := x[tok]; ok {
-			children = append(children, c)
+			children = append(children, child{tok, c})
 		}
 	case []any:
 		if tok == "*" {
-			children = x
+			for i, c := range x {
+				children = append(children, child{strconv.Itoa(i), c})
+			}
 		} else if i, err := strconv.Atoi(tok); err == nil && i >= 0 && i < len(x) && tok == strconv.Itoa(i) {
-			children = append(children, x[i])
+			children = append(children, child{tok, x[i]})
 		}
 	}
-	var out []string
-	for _, c := range children {
-		out = append(out, pointerStrings(c, next)...)
+	if len(children) == 0 && tok != "*" && wild {
+		w.missing = append(w.missing, joinName(at, tok))
 	}
-	return out
+	for _, c := range children {
+		w.walk(c.v, next, joinName(at, c.name), wild || tok == "*")
+	}
+}
+
+// joinName は、点で区切った名前 at の後ろに name を足す。
+func joinName(at, name string) string {
+	if at == "" {
+		return name
+	}
+	return at + "." + name
 }

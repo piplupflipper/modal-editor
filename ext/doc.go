@@ -74,4 +74,7 @@ package ext
 // editor/state の workDir を足した（#246。FR-106、FR-107）。
 // 古い本体は finder の popup/open を知らない部品として誤りで断り、editor/list と editor/execute に method not found で応答する。
 // #248 が先に 0.8.0 でマージされたので、0.9.0 にした。
+// #277 で宣言ファイルの起動の契機の種類 settingsFileType（ActivationSettingsFileType）を足したが、バージョンは上げていない。
+// メッセージの形は変えておらず、古い本体は知らない契機を警告にして無視し、宣言ファイルを拒まない（Manifest.Validate）ためである。
+// ただし古い本体では、この契機から作るファイルの種類の契機が無いので、利用者が設定で足したファイルの種類では拡張機能を起動しない。
 const APIVersion = "0.9.0"

@@ -247,7 +247,10 @@ func TestLoadExtensionsSettingsFileType(t *testing.T) {
 		t.Fatal(errs)
 	}
 	exts, problems := LoadExtensions([]string{dir}, cfg)
-	if len(problems) != 0 {
+	// "*" が当たった nofield に fileTypes が無いことを、設定の treesitter の位置で知らせる（綴りの誤りで起動しないことに気づけるように）。
+	ps := problemsOf(t, problems)
+	if len(ps) != 1 || ps[0].Path != "config.jsonc" || ps[0].Line != 4 ||
+		!strings.Contains(ps[0].Msg, "extensions.settings.treesitter.parsers.nofield.fileTypes が無い") {
 		t.Fatalf("problems = %v", problems)
 	}
 	got := map[string][]ext.Activation{}

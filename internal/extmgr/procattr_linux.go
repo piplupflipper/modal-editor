@@ -19,9 +19,21 @@ import (
 // Pdeathsig は、子プロセスを起動したスレッドが終わったときにも送られる（golang/go#27505）。
 // このため、起動は、ロックしたまま終わらない 1 つのスレッド（onSpawnThread）の上で行う。
 func start(cmd *exec.Cmd) error {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+	return startWith(cmd, syscall.SIGKILL)
+}
+
+// startTerm は、start の SIGKILL を SIGTERM にしたものである（StartTerm の doc）。
+// 取り消しではプロセスグループ全体へ SIGTERM を送り、cmd.WaitDelay を過ぎても終わらなければ、os/exec が子プロセスを SIGKILL で止める。
+func startTerm(cmd *exec.Cmd) error {
+	return startWith(cmd, syscall.SIGTERM)
+}
+
+// startWith は、子プロセスを別のプロセスグループで起動し、呼び出したプロセスが終わったら sig を受け取るようにし、
+// 取り消しではプロセスグループ全体へ sig を送る。
+func startWith(cmd *exec.Cmd, sig syscall.Signal) error {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: sig}
 	cmd.Cancel = func() error {
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		return syscall.Kill(-cmd.Process.Pid, sig)
 	}
 	return onSpawnThread(cmd.Start)
 }

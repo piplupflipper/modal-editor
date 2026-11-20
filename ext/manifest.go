@@ -89,6 +89,7 @@ type ActivationKind string
 // 指した値が文字列ならその 1 つを、配列ならその中の文字列のすべてを、ファイルの種類の名前とする。それ以外の値は無視する。
 // 本体（internal/config の LoadExtensions）は、宣言ファイルと設定を読んだときに、この契機を ActivationFileType の契機に置き換える。
 // 利用者が設定に書いたファイルの種類を、設定の extensions.activation にもう一度書かずに済ませるためのものである。
+// "*" が当たった項目の下にその先の値が無いか、文字列とその配列でなければ、本体はその項目を設定の誤りとして知らせる（項目の名前の綴りの誤りのため）。
 // 例: tree-sitter の拡張機能の {"on": "settingsFileType", "pattern": "/parsers/*/fileTypes"}。
 const (
 	ActivationOperator         ActivationKind = "operator"
