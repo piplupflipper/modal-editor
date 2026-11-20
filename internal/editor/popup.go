@@ -125,6 +125,13 @@ type floatState struct {
 	listSeq uint64
 	// pendingSelect は、今の入力に答えた一覧が届く前に <CR> を打ったので、届いたら選ぶことを表す（finderKey）。
 	pendingSelect bool
+	// closeOnSelect は、pane/open の CloseOnSelect で、中央のポップアップに出したときに、項目を選んだら閉じることを表す
+	// （FR-147。selectFloat）。分割したペイン（pane）では読まない。
+	closeOnSelect bool
+	// shownTab と shownPath は、分割したペインの部品で、元の client のカーソルのあるタブとして最後に知らせた（開いたときはその時点の）
+	// タブとそのパスである（view/tabChange。notifyPaneTabs）。
+	shownTab  *bufferState
+	shownPath string
 }
 
 // popupDecorationOwner は、ポップアップの部品の色を付ける範囲を、バッファの構文の色に入れるときの持ち主の名前である。
@@ -529,6 +536,7 @@ func floatItem(f *floatState) string {
 }
 
 // popupKey は、拡張機能のポップアップ f で、k までのキーの列が持ち主の contributes.popupKeys のキーに当たれば view/key を送る（FR-69）。
+// action が select のキーなら、view/key を送らずに <CR> と同じく選ぶ（selectFloat。FR-105）。
 // キーの列の途中なら覚えて true を返す。当たらなければ、覚えていたキーを held で返す。State は held を通常のキーとして解釈してから
 // k を解釈する（command.State.KeyHook。Vim のマッピングの途中で当たらなかったキーと同じ扱い。PR #242 の再レビューの必須）。
 // このため、g で始まる popupKeys（gx）を宣言しても、gg は先頭へ移る。
@@ -543,6 +551,15 @@ func (e *Editor) popupKey(f *floatState, k editcmd.Key) (bool, []editcmd.Key) {
 	prefix := false
 	for _, pk := range keys {
 		switch {
+		case slices.Equal(pk.keys, seq) && pk.selects:
+			// action が select のキー（ファイラの l）は、<CR> と同じく選ぶか開閉する（ext.PopupKeySelect。FR-105）。
+			f.pending = nil
+			if f.kind == floatFinder {
+				e.finderKey(f, editcmd.Special(editcmd.CodeEnter), false)
+			} else {
+				e.selectFloat(f)
+			}
+			return true, nil
 		case slices.Equal(pk.keys, seq):
 			f.pending = nil
 			p := ext.ViewKeyParams{View: ext.ViewID(f.id), ID: pk.id}
@@ -573,6 +590,8 @@ func (e *Editor) popupKey(f *floatState, k editcmd.Key) (bool, []editcmd.Key) {
 type popupKeyBinding struct {
 	keys []editcmd.Key
 	id   string
+	// selects は、action が select（ext.PopupKeySelect）で、view/key の代わりに <CR> と同じく選ぶことを表す。
+	selects bool
 }
 
 // loadPopupKeys は、拡張機能の宣言ファイルの contributes.popupKeys を、拡張機能ごとのキーの列の表にする（FR-69）。
@@ -591,7 +610,7 @@ func loadPopupKeys(specs []exthost.Spec, leader []editcmd.Key) (map[string][]pop
 				errs = append(errs, fmt.Errorf("拡張機能 %s の popupKeys の %s のキー %q を読めない: %w", m.ID, c.ID, c.Keys, err))
 				continue
 			}
-			out[m.ID] = append(out[m.ID], popupKeyBinding{keys: ks, id: c.ID})
+			out[m.ID] = append(out[m.ID], popupKeyBinding{keys: ks, id: c.ID, selects: c.Action == ext.PopupKeySelect})
 		}
 	}
 	return out, errs
@@ -609,6 +628,7 @@ func (e *Editor) selectFloat(f *floatState) {
 		e.notifyView(f, ext.MethodViewSelect, ext.ViewSelectParams{
 			View: ext.ViewID(f.id), Item: floatItem(f), Input: f.bs.buf.Line(0), Selection: e.selectionFor(f),
 		})
+		e.closeSelected(f)
 		return
 	}
 	row := f.bs.state.Cursor().Line
@@ -620,7 +640,7 @@ func (e *Editor) selectFloat(f *floatState) {
 		// 開閉は本体が持ち、拡張機能へ view/expand で知らせる。子を後から読む項目（HasChildren）は、拡張機能が子を view/update で送る。
 		open := !f.expanded[r.id]
 		f.expanded[r.id] = open
-		e.setFloatContent(f, ext.ViewComponent{Kind: ext.ViewTree, Items: f.tree})
+		e.drawFloatContent(f, ext.ViewComponent{Kind: ext.ViewTree, Items: f.tree})
 		e.notifyView(f, ext.MethodViewExpand, ext.ViewExpandParams{View: ext.ViewID(f.id), Item: r.id, Expanded: open})
 		return
 	}
@@ -629,6 +649,25 @@ func (e *Editor) selectFloat(f *floatState) {
 		return
 	}
 	e.notifyView(f, ext.MethodViewSelect, ext.ViewSelectParams{View: ext.ViewID(f.id), Item: r.id, Selection: e.selectionFor(f)})
+	e.closeSelected(f)
+}
+
+// closeSelected は、項目を選んだ（view/select を送った）後に、pane/open の CloseOnSelect で中央のポップアップに出した f を閉じる（FR-147）。
+// 分割したペインと、CloseOnSelect の無いものは閉じない。閉じるのは選んだキーの処理の中なので、再生でも選んだ後のキーは元の client のタブで続く
+// （popupStateKey の command.ErrBufferSwitched）。
+// 閉じたことは view/closed で知らせるが、選んだ選択への editor/execute の許し（grantExecute）は残す。
+// 拡張機能が選んだ項目への応答として、閉じた後に editor/execute を送れるようにするためである（利用者か本体が閉じたときの revokeExecute の例外）。
+//
+// req: FR-147
+func (e *Editor) closeSelected(f *floatState) {
+	if !f.closeOnSelect || f.pane || e.float != f {
+		return
+	}
+	g, granted := e.execGrants[f.ext]
+	e.closeFloat(true)
+	if granted {
+		e.execGrants[f.ext] = g
+	}
 }
 
 // selectionFor は、拡張機能のポップアップ f で利用者が一覧か木かファインダーの項目を選んだときに、view/select に付ける選択の番号を返す。
@@ -790,6 +829,13 @@ func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent) {
 		initExpanded(c.Items, f.expanded, m)
 		f.expanded = m
 	}
+	e.drawFloatContent(f, c)
+}
+
+// drawFloatContent は、setFloatContent の、木の開閉の状態（f.expanded）を c から決め直さない形である。
+// 利用者が木の項目を開閉した後に、今の開閉の状態で行を作り直すのに使う（selectFloat）。
+// c の Expanded を読み直すと、前の view/update で拡張機能が書いた Expanded で、利用者の開閉を戻してしまうためである（#286 で見つかった）。
+func (e *Editor) drawFloatContent(f *floatState, c ext.ViewComponent) {
 	cursor := f.bs.state.Cursor()
 	curID := ""
 	if cursor.Line < len(f.rows) {
@@ -807,6 +853,10 @@ func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent) {
 	}
 	if i := slices.IndexFunc(rows, func(r floatRow) bool { return r.id == curID }); curID != "" && i >= 0 {
 		// 一覧と木では、カーソルのあった項目の行へカーソルを置く（行が増減しても同じ項目を指す）。
+		line = i
+	}
+	if i := cursorRow(c, rows); i >= 0 {
+		// 拡張機能がカーソルを置く項目を指定した（ext.ViewComponent.Cursor。ファイラの今のファイル、h の親）。
 		line = i
 	}
 	f.bs.state.SetCursor(buffer.Position{Line: line, Byte: min(cursor.Byte, len(f.bs.buf.Line(line)))})
@@ -853,7 +903,19 @@ func (e *Editor) newComponentFloat(c ext.ViewComponent, extID string) *floatStat
 	if f.kind == floatInput {
 		f.bs.state.SetCursor(buffer.Position{Byte: len(c.Text)})
 	}
+	if i := cursorRow(c, rows); i >= 0 {
+		f.bs.state.SetCursor(buffer.Position{Line: i})
+	}
 	return f
+}
+
+// cursorRow は、一覧と木の部品 c の Cursor（ext.ViewComponent.Cursor）の項目の行の番号を rows から返す。
+// 一覧と木でないか、Cursor が空か、その項目が rows に無い（閉じた木の項目の子にある）なら -1 を返す。
+func cursorRow(c ext.ViewComponent, rows []floatRow) int {
+	if c.Cursor == "" || (c.Kind != ext.ViewList && c.Kind != ext.ViewTree) {
+		return -1
+	}
+	return slices.IndexFunc(rows, func(r floatRow) bool { return r.id == c.Cursor })
 }
 
 // finderBufferName は、ファインダーの入力の行と一覧のバッファの名前である（仮）。

@@ -22,6 +22,8 @@ import "fmt"
 //   - view/key（本体 → 拡張機能、通知）: 宣言ファイルの contributes.popupKeys のキーを、その拡張機能のポップアップの中で打ったことを
 //     知らせる（ViewKeyParams。FR-69）
 //   - view/expand（本体 → 拡張機能、通知）: 木の項目を利用者が開閉したことを知らせる（ViewExpandParams）
+//   - view/tabChange（本体 → 拡張機能、通知）: 分割したペインを開いた元の client のカーソルのあるタブが替わったことを知らせる
+//     （ViewTabChangeParams。API 0.10.0 で足した）
 //
 // 本体は、閉じた後や知らない ID の view/update と view/close を黙って捨てる（閉じた知らせと行き違いうるため）。
 const (
@@ -43,6 +45,8 @@ const (
 	MethodViewKey = "view/key"
 	// MethodViewExpand は、本体から拡張機能への通知である。params は ViewExpandParams。
 	MethodViewExpand = "view/expand"
+	// MethodViewTabChange は、本体から拡張機能への通知である。params は ViewTabChangeParams。
+	MethodViewTabChange = "view/tabChange"
 )
 
 // ViewID は、本体が開いたポップアップに付けた番号である。本体の中で一意で、使い回さない。0 は使わない。
@@ -97,6 +101,12 @@ type ViewComponent struct {
 	Highlights []Decoration `json:"highlights,omitempty"`
 	// Items は、ViewList、ViewTree、ViewFinder の項目である。ViewTree では Children で木にする。
 	Items []ViewItem `json:"items,omitempty"`
+	// Cursor は、ViewList と ViewTree で、カーソルを置く項目の ID である（API 0.10.0 で足した）。
+	// 開いたとき（popup/open、pane/open）と view/update で、その項目の行へカーソルを置く。
+	// 空のときと、その項目が画面に出ていない（ID が無いか、閉じた木の項目の子にある）ときは、カーソルを置く行を変えない
+	// （view/update では、前にカーソルのあった項目を追う）。
+	// ファイラの「今のファイルの場所まで開いてカーソルを置く」と、h で親の項目へ移るのに使う（FR-105）。他の種類では読まない。
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // ViewItem は、一覧か木の項目 1 つである。
@@ -127,6 +137,20 @@ type ViewExpandParams struct {
 	Item string `json:"item"`
 	// Expanded は、開いたなら true、閉じたなら false である。
 	Expanded bool `json:"expanded"`
+}
+
+// ViewTabChangeParams は、view/tabChange の params である（API 0.10.0 で足した）。
+// 本体は、pane/open で分割したペインに出した部品の持ち主へ、そのペインを開いた元の client のカーソルのあるタブ
+// （中央のポップアップにフォーカスがあれば、それを開いたときのタブ）が替わるたびに、替わった後のタブを知らせる。
+// ペインを開いた時点のタブは知らせない（拡張機能は editor/state で知る）。
+// ファイラが、出しっぱなしにしたペインの木を今のファイルへ追従させる（nvim の neo-tree の follow_current_file。FR-105）のに使う。
+// 中央のポップアップ（ペインに代えて出したものを含む）では送らない。開いている間はそれだけを操作するので、タブが替わらないためである。
+type ViewTabChangeParams struct {
+	View ViewID `json:"view"`
+	// Buffer は、替わった後のタブのバッファの番号である。
+	Buffer BufferID `json:"buffer"`
+	// Path は、そのバッファのファイルの絶対パスである。ファイルでないバッファでは空である。
+	Path string `json:"path,omitempty"`
 }
 
 // ViewSpan は、項目の表示の文字列の中の、色を付けるバイトの範囲 [Start, End) である。
@@ -238,7 +262,20 @@ const (
 	PaneDown PaneDirection = "down"
 )
 
-// PaneOpenParams は、pane/open の params である（基本設計 1.2、1.3、5.3。FR-115、FR-123）。
+// PanePlacement は、pane/open で部品を出す場所である（FR-147。API 0.10.0 で足した）。
+type PanePlacement string
+
+// pane/open で部品を出す場所。
+const (
+	// PaneSplit は、元の client のペインを端末多重化ソフトで分割したペインである（既定）。
+	// 端末多重化ソフトの外と、ペインを開けなかったときは、中央のポップアップに出す（FR-123）。
+	PaneSplit PanePlacement = "split"
+	// PaneCenter は、中央のポップアップである。popup/open の PopupCenter と同じく、tmux と herdr の中では端末多重化ソフトの
+	// ポップアップの中の部品の client が描き、外では元の client の画面の中央に描く。開いている間はそれだけを操作し、<Esc> で閉じる。
+	PaneCenter PanePlacement = "center"
+)
+
+// PaneOpenParams は、pane/open の params である（基本設計 1.2、1.3、5.3。FR-115、FR-123、FR-147）。
 //
 // 本体は、その拡張機能へ最後に問い合わせを始めた client（元の client）のペインを、端末多重化ソフト（tmux、herdr）で分割し、
 // 新しいペインの中で部品を描く client（ペインの部品の client）を起動する。拡張機能は端末多重化ソフトを直接操作しない。
@@ -246,11 +283,20 @@ const (
 // ペインの中の <Esc> はペインを閉じない（ポップアップと違う）。利用者が端末多重化ソフトでペインを閉じるか、ペインの中で :q を打つと閉じ、
 // view/closed を送る。
 //
-// 端末多重化ソフトの外（FR-60）と、ペインを開けなかったとき（herdr のプラグインを登録していないなど）は、ペインに代えて
-// 元の client の画面の中央のポップアップに出す（FR-123）。このときは PopupCenter のポップアップと同じく <Esc> で閉じる。
+// Placement が PaneCenter のときと、端末多重化ソフトの外（FR-60）と、ペインを開けなかったとき（herdr のプラグインを登録していないなど）は、
+// ペインに代えて元の client の画面の中央のポップアップに出す（FR-123、FR-147）。このときは PopupCenter のポップアップと同じく <Esc> で閉じる。
 // どちらでも応答の View は同じ扱いで、拡張機能は違いを知らずに view/update と view/close を送れる。
+// 分割したペインに出したときは、元の client のカーソルのあるタブが替わるたびに view/tabChange を送る（ViewTabChangeParams）。
 type PaneOpenParams struct {
 	Component ViewComponent `json:"component"`
+	// Placement は、出す場所である。省くと PaneSplit である（API 0.10.0 で足した。古い本体は読まずに分割したペインに出す）。
+	Placement PanePlacement `json:"placement,omitempty"`
+	// CloseOnSelect は、中央のポップアップに出したとき（Placement が PaneCenter か、ペインに代えて中央のポップアップに出したとき）に、
+	// 一覧と木の項目を選んだら（view/select を送った後に）本体がポップアップを閉じることを表す（FR-147。API 0.10.0 で足した）。
+	// 閉じたら view/closed を送る。木の子を持つ項目の <CR> は開閉なので閉じない。
+	// 分割したペインは選んでも閉じない（ファイラのように、出しっぱなしにしたペインから選び続けるため）。
+	// 閉じるのは選んだキーの処理の中なので、マクロの再生でも、選んだ後のキーは元の client のタブで続く。
+	CloseOnSelect bool `json:"closeOnSelect,omitempty"`
 	// Direction は、分割の向きである。省くと PaneRight である。
 	Direction PaneDirection `json:"direction,omitempty"`
 	// Size は、新しいペインの大きさを、元のペインの分割の向きの大きさに対する百分率（1〜99）で表す。0 なら端末多重化ソフトの既定である。
@@ -260,8 +306,13 @@ type PaneOpenParams struct {
 	Focus bool `json:"focus,omitempty"`
 }
 
-// Validate は、Component、Direction、Size を検査する。
+// Validate は、Component、Placement、Direction、Size を検査する。
 func (p *PaneOpenParams) Validate() error {
+	switch p.Placement {
+	case "", PaneSplit, PaneCenter:
+	default:
+		return fmt.Errorf("placement %q は知らない出す場所である", p.Placement)
+	}
 	switch p.Direction {
 	case "", PaneRight, PaneDown:
 	default:

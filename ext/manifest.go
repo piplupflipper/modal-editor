@@ -149,6 +149,26 @@ type Contribution struct {
 	// Description は、操作の説明文である（基本設計 5.1）。本体はキーの一覧（FR-90）とヘルプ（:help）に出す。無ければ省く。
 	// 足したのは API 0.4.0 の後だが、版は上げていない（APIVersion の doc）。
 	Description string `json:"description,omitempty"`
+	// Action は、Contributes.PopupKeys の項目で、キーを打ったときに view/key を送る代わりに本体がする操作である（API 0.10.0 で足した）。
+	// 省くと view/key を送る。ほかの種類の操作では読まない。
+	Action PopupKeyAction `json:"action,omitempty"`
+}
+
+// PopupKeyAction は、contributes.popupKeys のキーで、view/key の代わりに本体がする操作の名前である。
+type PopupKeyAction string
+
+// popupKeys のキーの操作。
+const (
+	// PopupKeySelect は、一覧と木の <CR> と同じく、カーソルの行の項目を選ぶ（view/select）。木の子を持つ項目なら開閉する（view/expand）。
+	// ファイラの l（ディレクトリを開閉し、ファイルを開く。nvim の neo-tree の open。FR-105）に使う。
+	// <CR> と同じ経路なので、選んだら閉じる中央のポップアップ（PaneOpenParams.CloseOnSelect）を閉じ、
+	// 分割したペインで選んだ後の editor/open は端末多重化ソフトのフォーカスを元の client へ戻す（基本設計 1.2）。
+	PopupKeySelect PopupKeyAction = "select"
+)
+
+// Known は、a がこの版の API の知っている popupKeys の操作の名前か、空（view/key を送る）かを返す。
+func (a PopupKeyAction) Known() bool {
+	return a == "" || a == PopupKeySelect
 }
 
 // KnownActivation は、Activation のうち種類が既知の契機だけを返す。
@@ -209,7 +229,7 @@ func (m *Manifest) HandlesFileType(ft string) bool {
 //   - Contributes.StatusLine の各部品の ID が、拡張機能の ID と "." で始まり、その後が空でなく "." を含まず、空白を含まず、重複しないこと
 //   - Contributes.PopupKeys の各項目の ID とキーが空でなく、ID が PopupKeys の中で重複しないこと
 //
-// 未知の種類の契機と、未知の操作の名前の provides は、誤りにせず、warnings に 1 件ずつ返す。
+// 未知の種類の契機と、未知の操作の名前の provides と、Contributes.PopupKeys の未知の Action は、誤りにせず、warnings に 1 件ずつ返す。
 // API の後の版で契機の種類を足しても、古い本体が新しい拡張機能の宣言ファイルを丸ごと拒まないようにするためである。
 // 本体は未知の契機だけを無視する（KnownActivation）。
 // 契機がすべて未知なら、その拡張機能は起動しないが、誤りにはしない。
@@ -269,6 +289,8 @@ func (m *Manifest) Validate() (warnings []error, err error) {
 			errs = append(errs, fmt.Errorf("%s.id %q が重複する", path, c.ID))
 		case c.Keys == "":
 			errs = append(errs, fmt.Errorf("%s.keys が空である", path))
+		case !c.Action.Known():
+			warnings = append(warnings, fmt.Errorf("%s.action %q は未知の操作なので無視する（view/key を送る）", path, c.Action))
 		}
 		popupIDs[c.ID] = true
 	}

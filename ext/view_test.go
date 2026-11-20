@@ -123,4 +123,33 @@ func TestManifestPopupKeys(t *testing.T) {
 			t.Errorf("popupKeys %+v: err = %v, want %q", tt.keys, err, tt.want)
 		}
 	}
+	// action は select を知っていて、知らない操作は誤りにせずに警告にする（後の版で操作を足しても、古い本体が拒まないため）。
+	m := base
+	m.Contributes.PopupKeys = []Contribution{{ID: "a", Keys: "l", Action: PopupKeySelect}, {ID: "b", Keys: "m", Action: "rename"}}
+	warns, err := m.Validate()
+	if err != nil || len(warns) != 1 || !strings.Contains(warns[0].Error(), "未知の操作") {
+		t.Errorf("popupKeys action: warnings %v, err %v", warns, err)
+	}
+	roundTrip(t, Contribution{ID: "a", Keys: "l", Action: PopupKeySelect}, `{"id":"a","keys":"l","action":"select"}`)
+}
+
+// pane/open の出す場所と、選んだら閉じる指定（FR-147）、部品のカーソルの項目、view/tabChange の JSON の形と検査。
+func TestPaneOpenPlacement(t *testing.T) {
+	c := ViewComponent{Kind: ViewTree, Cursor: "a", Items: []ViewItem{{ID: "a", Label: "A"}}}
+	for _, tt := range []struct {
+		p  PaneOpenParams
+		ok bool
+	}{
+		{PaneOpenParams{Component: c}, true},
+		{PaneOpenParams{Component: c, Placement: PaneSplit}, true},
+		{PaneOpenParams{Component: c, Placement: PaneCenter, CloseOnSelect: true}, true},
+		{PaneOpenParams{Component: c, Placement: "float"}, false},
+	} {
+		if err := tt.p.Validate(); (err == nil) != tt.ok {
+			t.Errorf("%+v: %v", tt.p, err)
+		}
+	}
+	roundTrip(t, PaneOpenParams{Component: c, Placement: PaneCenter, CloseOnSelect: true},
+		`{"component":{"kind":"tree","items":[{"id":"a","label":"A"}],"cursor":"a"},"placement":"center","closeOnSelect":true}`)
+	roundTrip(t, ViewTabChangeParams{View: 3, Buffer: 2, Path: "/a"}, `{"view":3,"buffer":2,"path":"/a"}`)
 }

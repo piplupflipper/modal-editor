@@ -61,9 +61,13 @@ const (
 	ViewKey
 	// ViewExpanded は、view/expand である。Item に開閉した木の項目の ID が、Expanded に開いたかどうかが入る。
 	ViewExpanded
+	// ViewTabChanged は、view/tabChange である（API 0.10.0 で足した）。分割したペインを開いた元の client のカーソルのあるタブが替わった。
+	// Buffer にそのタブのバッファの番号が、Item にそのファイルの絶対パス（ファイルでなければ空）が入る（ext.ViewTabChangeParams）。
+	ViewTabChanged
 )
 
-// ViewEvent は、本体からポップアップの利用者の操作の知らせ（view/closed、view/select、input/change、view/key）を受け取ったことを表す。
+// ViewEvent は、本体からポップアップの利用者の操作の知らせ（view/closed、view/select、input/change、view/key、view/expand、
+// view/tabChange）を受け取ったことを表す。
 type ViewEvent struct {
 	Kind ViewEventKind
 	// View は、ポップアップの ID である。
@@ -81,6 +85,8 @@ type ViewEvent struct {
 	Input string
 	// Selection は、ViewSelected のときの選択の番号である（ext.ViewSelectParams.Selection）。Execute に渡す。
 	Selection uint64
+	// Buffer は、ViewTabChanged のときの、替わった後のタブのバッファの番号である。
+	Buffer ext.BufferID
 }
 
 // ListEditor は、本体へ editor/list を送り、本体が持つ一覧（タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリスト）の 1 つを
@@ -138,6 +144,10 @@ func (s *Server) viewNotification(ctx context.Context, n *rpc.Notification) {
 		var p ext.ViewExpandParams
 		err = decodeParams(n, &p)
 		e = ViewEvent{Kind: ViewExpanded, View: p.View, Item: p.Item, Expanded: p.Expanded}
+	case ext.MethodViewTabChange:
+		var p ext.ViewTabChangeParams
+		err = decodeParams(n, &p)
+		e = ViewEvent{Kind: ViewTabChanged, View: p.View, Item: p.Path, Buffer: p.Buffer}
 	default:
 		return
 	}

@@ -1,0 +1,19 @@
+{
+  "id": "filer",
+  "command": "./vi-imitation-ext-filer",
+  "activation": [
+    { "on": "command", "id": "filer.popup" },
+    { "on": "command", "id": "filer.pane" }
+  ],
+  "contributes": {
+    "commands": [
+      { "id": "filer.popup", "keys": "<Leader>e", "description": "ファイルの木を中央のポップアップに出す（選んだら閉じる）" },
+      { "id": "filer.pane", "keys": "<Leader>E", "description": "ファイルの木を分割したペインに出しっぱなしにする（もう一度で閉じる）" }
+    ],
+    "popupKeys": [
+      { "id": "filer.open", "keys": "l", "action": "select", "description": "ディレクトリを開閉するか、ファイルを開く" },
+      { "id": "filer.close", "keys": "h", "description": "ディレクトリを閉じるか、親のディレクトリを閉じてそこへ移る" },
+      { "id": "filer.toggleIgnored", "keys": "H", "description": "gitignore されたものを見せるかを切り替える" }
+    ]
+  }
+}

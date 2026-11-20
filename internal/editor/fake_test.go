@@ -189,11 +189,18 @@ func runFakeExt(mode string) int {
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
 		// fake.pane は、引数（list、tree、input、text）の部品を pane/open でペインに開く（#244）。
+		// 引数の前に "center " を付けると中央のポップアップに、"closing " を付けると分割したペインに、どちらも closeOnSelect を付けて開く（FR-147）。
 		s.Command("fake.pane", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			var a struct{ Text string }
 			_ = json.Unmarshal(p.Args, &a)
+			kind, center := strings.CutPrefix(a.Text, "center ")
+			kind, closing := strings.CutPrefix(kind, "closing ")
+			params := ext.PaneOpenParams{Component: fakePopup(kind).Component, Direction: ext.PaneDown, Size: 30, CloseOnSelect: center || closing}
+			if center {
+				params.Placement = ext.PaneCenter
+			}
 			go func() {
-				r, err := s.OpenPane(hostCtx, ext.PaneOpenParams{Component: fakePopup(a.Text).Component, Direction: ext.PaneDown, Size: 30})
+				r, err := s.OpenPane(hostCtx, params)
 				_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("pane %d err=%v", r.View, err))
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil

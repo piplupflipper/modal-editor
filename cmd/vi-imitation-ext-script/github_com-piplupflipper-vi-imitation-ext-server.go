@@ -23,6 +23,7 @@ func init() {
 		"ViewInputChanged":   reflect.ValueOf(server.ViewInputChanged),
 		"ViewKey":            reflect.ValueOf(server.ViewKey),
 		"ViewSelected":       reflect.ValueOf(server.ViewSelected),
+		"ViewTabChanged":     reflect.ValueOf(server.ViewTabChanged),
 
 		// type definitions
 		"AsyncBufferWillSaveHandler": reflect.ValueOf((*server.AsyncBufferWillSaveHandler)(nil)),

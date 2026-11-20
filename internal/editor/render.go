@@ -196,6 +196,7 @@ func (e *Editor) render() {
 	e.refreshDiffs()
 	e.eachView(func(*clientView) {
 		e.expireFloat()
+		e.notifyPaneTabs()
 		e.renderView()
 		e.renderComponents()
 	})
