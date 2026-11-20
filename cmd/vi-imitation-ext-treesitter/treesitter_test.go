@@ -250,6 +250,41 @@ func TestStyleFor(t *testing.T) {
 	}
 }
 
+// TestNewHighlighterDuplicateFileType は、1 つのファイルの種類を表（languages）に 2 回以上書くと、
+// newHighlighter が種類の名前を含む誤りを返し、途中まで用意した言語を解放する経路（h.close）が落ちないことを確かめる。
+// 別の言語に書いた重なりと、同じ言語の中の重なりの両方を確かめる。
+func TestNewHighlighterDuplicateFileType(t *testing.T) {
+	orig := languages
+	t.Cleanup(func() { languages = orig })
+	goSpec, jsonSpec := orig[0], orig[1]
+	if goSpec.name != "go" || jsonSpec.name != "json" {
+		t.Fatalf("languages = %v, %v; want go and json first", goSpec.name, jsonSpec.name)
+	}
+	tests := []struct {
+		name      string
+		fileTypes []string
+		dup       string
+	}{
+		{"across languages", []string{"json", "go"}, "go"},
+		{"within a language", []string{"json", "json"}, "json"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := jsonSpec
+			spec.fileTypes = tt.fileTypes
+			languages = []languageSpec{goSpec, spec}
+			h, err := newHighlighter()
+			if err == nil {
+				h.close()
+				t.Fatalf("newHighlighter with fileTypes %v = nil error, want an error for %q", tt.fileTypes, tt.dup)
+			}
+			if want := fmt.Sprintf("file type %q", tt.dup); !strings.Contains(err.Error(), want) {
+				t.Errorf("newHighlighter error = %q, want it to contain %q", err, want)
+			}
+		})
+	}
+}
+
 // TestQueriesMapCaptures は、公式のクエリのキャプチャ名のうち、色を付けないものが想定のものだけであることを確かめる。
 // 文法の版を上げてキャプチャ名が変わったときに気付くためである。
 func TestQueriesMapCaptures(t *testing.T) {

@@ -77,7 +77,7 @@ type highlighter struct {
 }
 
 // newHighlighter は、languages のすべての言語のパーサーとクエリを 1 つずつ用意し、言語の fileTypes のどの種類からも引けるようにする。
-// クエリを解釈できないなど、用意できない言語があるか、1 つの種類が複数の言語に書かれていれば誤りを返す。
+// クエリを解釈できないなど、用意できない言語があるか、1 つの種類が表に 2 回以上（別の言語にでも、同じ言語の中にでも）書かれていれば誤りを返す。
 func newHighlighter() (*highlighter, error) {
 	h := &highlighter{
 		langs:    map[string]*language{},
@@ -100,7 +100,7 @@ func newHighlighter() (*highlighter, error) {
 		for _, ft := range spec.fileTypes {
 			if _, dup := h.langs[ft]; dup {
 				h.close()
-				return nil, fmt.Errorf("file type %q is listed in more than one language", ft)
+				return nil, fmt.Errorf("file type %q is listed more than once in languages", ft)
 			}
 			h.langs[ft] = l
 		}
