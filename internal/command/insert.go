@@ -487,7 +487,7 @@ func (s *State) typeRune(r rune) error {
 
 // finishInsert は、インサートモードを抜ける（<Esc>）。
 //
-// 回数つきで入った場合（3ix、3o）は、入力したテキストを残りの回数だけ続けて入れる。o と O は、そのたびに行を開く。
+// 回数つきで入った場合（3ix、3o）は、入力したテキストを残りの回数だけ続けて入れる（typeRepeated）。o と O は、そのたびに行を開く。
 // 同時の入力（FR-141）の間なら、残りの回数もすべての位置に入れる（typeInput。Vim 9.1 の矩形選択の 2I と同じ）。
 // カーソルを 1 文字左へ戻し、アンドゥのグループを閉じ、入力の記録を値の Inserted に埋めてドットリピートに記録する（FR-06）。
 // 同時の入力のすべての位置の変更は、この 1 つのアンドゥのグループに入る。
@@ -506,20 +506,8 @@ func (s *State) finishInsert() {
 			n = 0
 		}
 		open := in.cmd.Action.Builtin() && (in.cmd.Action.ID == "open-below" || in.cmd.Action.ID == "open-above")
-		for range n {
-			if open {
-				s.cursor = s.lineEnd(s.cursor.Line)
-				if err := s.typeRune('\n'); err != nil {
-					s.fail(err)
-					break
-				}
-			}
-			for _, x := range in.text {
-				if err := s.typeInput(x); err != nil {
-					s.fail(err)
-					break
-				}
-			}
+		if err := s.typeRepeated(in.text, n, open); err != nil {
+			s.fail(err)
 		}
 	}
 	s.mode = ModeNormal
@@ -537,4 +525,73 @@ func (s *State) finishInsert() {
 		s.recordInsertDot(cmd, in.lines)
 	}
 	s.insert = insertState{}
+}
+
+// typeRepeated は、入力の記録 text を n 回続けて行う（finishInsert の回数による繰り返し）。open なら、各回の前に行末で行を開く（o と O）。
+//
+// 続けて並んだ文字（改行を除く）は、回の区切りをまたいでまとめ、1 つの編集で入れる（typeText）。
+// 削除の操作と改行は、1 件ずつ typeInput で行う。結果のテキストと位置は、記録を 1 件ずつ typeInput で行ったときと同じである。
+// 1 件ずつ入れると、編集のたびに行の全体を作り直し、カーソルの表示の列を行の先頭から数え直すので、
+// 長い行になる繰り返し（100000afoo xy <Esc>）は行の長さの 2 乗の時間を要し、変更の記録も文字の数だけ溜まった（#279）。
+// Vim 9.1 も、先に届いている文字を 100 バイト（INPUT_BUFLEN）までまとめて行に入れる（src/edit.c の insertchar）。
+// ここでは記録の全体が手元にあるので、まとめる長さに上限を置かない（入れる量は finishInsert が maxPutBytes で抑える）。
+//
+// 途中で失敗すれば、そこで止めて誤りを返す。それまでに入れたテキストは残る。
+//
+// req: FR-02, FR-141
+func (s *State) typeRepeated(text []editcmd.InsertInput, n int, open bool) error {
+	var run strings.Builder
+	flush := func() error {
+		if run.Len() == 0 {
+			return nil
+		}
+		str := run.String()
+		run.Reset()
+		return s.typeText(str)
+	}
+	for range n {
+		if open {
+			if err := flush(); err != nil {
+				return err
+			}
+			s.cursor = s.lineEnd(s.cursor.Line)
+			if err := s.typeRune('\n'); err != nil {
+				return err
+			}
+		}
+		for _, x := range text {
+			if x.Op == editcmd.InsertRune && x.Rune != '\n' {
+				run.WriteRune(x.Rune)
+				continue
+			}
+			if err := flush(); err != nil {
+				return err
+			}
+			if err := s.typeInput(x); err != nil {
+				return err
+			}
+		}
+	}
+	return flush()
+}
+
+// typeText は、改行を含まないテキスト str を、カーソルの位置に入れる（typeRepeated）。
+// 同時の入力（FR-141）の間は、すべての位置に入れる。str の文字を 1 つずつ typeInput で入れたときと同じ結果になる。
+// どの位置の編集もその位置の行の中に収まるので、同時の入力は終えない（typeAtSites）。
+//
+// req: FR-141
+func (s *State) typeText(str string) error {
+	sites := append([]buffer.Position{s.cursor}, s.insert.others...)
+	edits := make([]buffer.Edit, len(sites))
+	for i, p := range sites {
+		edits[i] = buffer.Edit{Range: emptyRange(p), Text: str}
+		sites[i] = pos(p.Line, p.Byte+len(str))
+	}
+	if err := s.apply(edits...); err != nil {
+		return err
+	}
+	s.cursor = sites[0]
+	copy(s.insert.others, sites[1:])
+	s.updateWant()
+	return nil
 }
