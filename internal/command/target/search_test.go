@@ -64,9 +64,38 @@ func TestSearchMotions(t *testing.T) {
 	if !errors.Is(err, ErrNoPattern) {
 		t.Errorf("n without pattern = %v", err)
 	}
-	word, _ := LookupMotion("search-word-forward")
-	_, err = word(buffer.New("  \n"), Request{Cursor: buffer.Position{}, Count: 1})
-	if !errors.Is(err, ErrNoString) {
+}
+
+// * と # のパターンは、カーソルの単語に全体で一致するもので、空白だけの行では ErrNoString になる。
+// * と # はモーションではない（カーソルを動かさない操作。FR-139）ので、モーションの表に無い。
+//
+// req: FR-139
+func TestWordPattern(t *testing.T) {
+	tests := []struct {
+		line string
+		at   int
+		want string
+	}{
+		{"foo bar", 0, `\bfoo\b`},
+		{"foo bar", 3, `\bbar\b`},
+		{"a.b", 1, `\bb\b`},
+		{"x +++ y", 2, `\by\b`},
+		{"+++ ", 0, `\+\+\+`},
+		{"日本語b", 0, "日本語"},
+		{"foo_bar", 4, `\bfoo_bar\b`},
+	}
+	for _, tt := range tests {
+		got, err := WordPattern(buffer.New(tt.line+"\n"), buffer.Position{Byte: tt.at})
+		if err != nil || got != tt.want {
+			t.Errorf("WordPattern(%q, %d) = %q, %v, want %q", tt.line, tt.at, got, err, tt.want)
+		}
+	}
+	if _, err := WordPattern(buffer.New("  \n"), buffer.Position{}); !errors.Is(err, ErrNoString) {
 		t.Errorf("* on blank = %v", err)
+	}
+	for _, id := range []string{"search-word-forward", "search-word-backward"} {
+		if _, ok := LookupMotion(id); ok {
+			t.Errorf("LookupMotion(%q) が見つかる（* と # はモーションではない）", id)
+		}
 	}
 }

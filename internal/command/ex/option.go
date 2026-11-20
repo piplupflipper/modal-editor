@@ -16,6 +16,8 @@ type Options interface {
 	Get(d option.Def) option.Value
 	// Set は、項目 d の値を v にする。v の型は d.Type と同じである。
 	Set(d option.Def, v option.Value) error
+	// Revision は、項目 d に値を設定した回数（option.Values.Revision）を返す。同じ値を設定し直しても増える。
+	Revision(d option.Def) uint64
 }
 
 // 設定の Ex コマンドの名前。点を含む正規の名前で、省略できない（拡張機能のコマンドの ID と同じ）。

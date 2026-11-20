@@ -33,6 +33,8 @@ func init() {
 		// :se[t] は、Vim の :set の書き方の一部を :option.set と :option.get の呼び出しに変換する（expandSet）。
 		// 省略形は Vim と同じく :se までである（:s は :substitute）。
 		{name: "set", min: 2, expand: expandSet, bar: barSplit},
+		// :noh[lsearch] は :search.clearHighlight に名前を付け替えるだけの別名である（FR-138）。省略形は Vim と同じく :noh までである。
+		{name: "nohlsearch", min: 3, target: clearHighlightName},
 	}
 }
 
@@ -95,6 +97,7 @@ var vimOptionNames = map[string]string{
 	"filetype":    option.FileType,
 	"number":      option.LineNumberShow,
 	"numberwidth": option.LineNumberMinWidth,
+	"hlsearch":    option.SearchHighlight,
 }
 
 // vimOption は、:set の Vim の名前 name の項目を返す。無ければ ok は false である。

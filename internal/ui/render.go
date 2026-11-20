@@ -511,10 +511,11 @@ func (w *sweep) attr(base Attr) Attr {
 	return base
 }
 
-// prepare は、表示領域の row 行目（バッファの line 行目、長さ ln）の構文の色と診断の範囲を sweep に詰める。
+// prepare は、表示領域の row 行目（バッファの line 行目、テキスト s）の構文の色、見比べの色、診断、検索の一致の範囲を sweep に詰める。
 //
-// req: FR-35
-func (d *drawer) prepare(row, line, ln int) {
+// req: FR-35, FR-137
+func (d *drawer) prepare(row, line int, s string) {
+	ln := len(s)
 	w := &d.sweep
 	w.reset()
 	w.decos = d.f.Decorations.appendLine(w.decos[:0], line)
@@ -526,9 +527,10 @@ func (d *drawer) prepare(row, line, ln int) {
 		}
 		w.spans = append(w.spans, span{start: start, end: end, order: ds.order, attr: a})
 	}
-	ds := d.diffSpans(line, ln)
-	if dg := d.diags[row]; len(dg) > 0 || len(ds) > 0 {
-		w.spans = append(append(w.spans, dg...), ds...)
+	n := len(w.spans)
+	w.spans = append(append(w.spans, d.diags[row]...), d.diffSpans(line, ln)...)
+	w.spans = d.searchSpans(w.spans, s)
+	if len(w.spans) > n {
 		slices.SortStableFunc(w.spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
 	}
 }
@@ -557,7 +559,7 @@ func (d *drawer) drawLine(row, line int) {
 	left, w, x0 := d.r.left, d.r.textWidth(), d.r.textLeft()
 	tabStop := tabStopOr(d.r.TabStop)
 	idx := line - d.r.top
-	d.prepare(idx, line, len(s))
+	d.prepare(idx, line, s)
 	put := func(x int, c Cell) {
 		if x >= 0 && x < w {
 			d.g.set(row, x0+x, c)

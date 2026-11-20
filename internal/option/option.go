@@ -133,6 +133,9 @@ const (
 	// LineNumberMinWidth は、行番号の列の最小の列数である（FR-136。Vim の 'numberwidth'）。
 	// 列の幅は、この値と、バッファの最後の行の番号の桁数に 1 を足した数の大きい方になる。範囲は Vim と同じく 1 から 20 である。
 	LineNumberMinWidth = "lineNumber.minWidth"
+	// SearchHighlight は、直前の検索のパターンに一致する範囲に色を付けるかである（FR-137。Vim の 'hlsearch'）。
+	// 描画が、描くたびにこの値と直前の検索のパターンを読む。
+	SearchHighlight = "search.highlight"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -141,6 +144,7 @@ var defs = []Def{
 	{Name: FileType, Type: String, Scope: ScopeBuffer, Default: StringValue("")},
 	{Name: LineNumberShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: LineNumberMinWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}},
+	{Name: SearchHighlight, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 }
 
 // Defs は、設定の表の写しを表の順に返す（設定ファイルの読み込みと、後に作るコマンドラインの補完の一覧）。
@@ -264,6 +268,8 @@ func ParseInt(text string) (int, error) {
 // 範囲は呼び出し側が決める（エディタ全体の Values には ScopeEditor の項目だけを、バッファの Values には ScopeBuffer の項目だけを入れる）。
 type Values struct {
 	m map[string]Value
+	// sets は、項目ごとに Set で値を入れた回数である（Revision）。
+	sets map[string]uint64
 }
 
 // Get は、項目 name の今の値を返す。表に無い名前ならゼロ値を返す。
@@ -281,8 +287,19 @@ func (vs *Values) Set(d Def, v Value) error {
 		return err
 	}
 	if vs.m == nil {
-		vs.m = map[string]Value{}
+		vs.m, vs.sets = map[string]Value{}, map[string]uint64{}
 	}
 	vs.m[d.Name] = v
+	vs.sets[d.Name]++
 	return nil
+}
+
+// Revision は、項目 name に Set で値を入れた回数を返す。前と同じ値を入れても数える。誤りで入れなかった Set は数えない。
+// 値が同じままでも「設定し直した」ことを、使う側が見分けるための数である。
+// 一致の色を消した状態（internal/command/ex の :search.clearHighlight。FR-138）は、消したときの search.highlight の回数を覚えておき、
+// 回数が変われば（:set hlsearch を打ち直せば）消した状態を効かなくする。項目の名前によらず、どの項目も数える。
+//
+// req: FR-138
+func (vs *Values) Revision(name string) uint64 {
+	return vs.sets[name]
 }

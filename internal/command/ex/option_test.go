@@ -36,6 +36,17 @@ func (f *fakeOptions) Set(d option.Def, v option.Value) error {
 	return nil
 }
 
+// Revision は、項目 d を Set した回数を返す。
+func (f *fakeOptions) Revision(d option.Def) uint64 {
+	var n uint64
+	for _, s := range f.sets {
+		if strings.HasPrefix(s, d.Name+"=") {
+			n++
+		}
+	}
+	return n
+}
+
 // withTestOptions は、本体の表に無い型（真偽と整数）の項目を、設定の表と :set の Vim の名前の対応に足す。
 // 足した項目は test.flag（真偽。:set では flag）と test.count（整数。:set では count）である。
 func withTestOptions(t *testing.T) {
@@ -295,7 +306,8 @@ func TestNamesIncludeAliases(t *testing.T) {
 	if len(names) != len(commands)+len(aliases) {
 		t.Fatalf("len = %d, want %d", len(names), len(commands)+len(aliases))
 	}
-	if got := names[len(commands):]; !slices.Equal(got, []Name{{Full: "set", Short: "se"}, {Full: "xdelete", Short: "xd"}}) {
+	want := []Name{{Full: "set", Short: "se"}, {Full: "nohlsearch", Short: "noh"}, {Full: "xdelete", Short: "xd"}}
+	if got := names[len(commands):]; !slices.Equal(got, want) {
 		t.Errorf("別名の行 = %+v", got)
 	}
 	if names[0] != (Name{Full: "write", Short: "w"}) {

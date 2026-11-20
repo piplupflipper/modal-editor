@@ -317,6 +317,11 @@ type State struct {
 	// ノーマルモードの / と n と共有する前提で、呼び出し側が書き換えてもよい。
 	// コンパイルに失敗したパターンは記録しない。
 	LastPattern string
+	// ClearedHighlight は、:search.clearHighlight（別名 :nohlsearch）で一致の色を消した状態である（FR-138）。
+	// nil なら消していない。パターンを使う操作（UsePattern）が nil に戻す。
+	// 値は、消したときの設定の search.highlight の回数で、設定し直せば回数が変わって消した状態が効かなくなる（HighlightPattern）。
+	// 設定の値ではないので、消しても search.highlight の値は変わらない。
+	ClearedHighlight *ClearedHighlight
 	// LastSubstitute は、直前の :s のパターン、置換の文字列、フラグである。:s を一度も実行していなければ nil である。
 	// 置換の文字列の ~ はこの Replacement に置き換わる。& と :&& は未実装だが、この値を使う想定である。
 	LastSubstitute *Substitution

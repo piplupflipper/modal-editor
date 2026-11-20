@@ -63,13 +63,11 @@ var (
 		{keys: "{", id: "paragraph-prev", desc: "前の段落へ"},
 		{keys: "}", id: "paragraph-next", desc: "次の段落へ"},
 		// 検索。/ と ? は、実行の側（internal/command）がコマンドラインでパターンを受け取ってから移る。
-		// n と N は直前の検索を繰り返し、* と # はカーソルの位置の単語を検索する。
+		// n と N は直前の検索を繰り返す。* と # は移らない操作なので、操作の表（builtinActions）にある。
 		{keys: "/", id: "search-forward", desc: "前方へ検索する"},
 		{keys: "?", id: "search-backward", desc: "後方へ検索する"},
 		{keys: "n", id: "search-next", desc: "直前の検索を同じ向きに繰り返す"},
 		{keys: "N", id: "search-prev", desc: "直前の検索を逆向きに繰り返す"},
-		{keys: "*", id: "search-word-forward", desc: "カーソルの単語を前方へ検索する"},
-		{keys: "#", id: "search-word-backward", desc: "カーソルの単語を後方へ検索する"},
 		// 矢印キーと Home、End は、Vim 9.1 の既定（'whichwrap' に < > が無い）と同じく h、j、k、l、0、$ と同じ働きにする。
 		// 修飾キーの付いたもの（<S-Right> の w、<C-Home> の gg など）は登録しない。
 		{keys: "<Left>", id: "left", desc: "左へ"},
@@ -216,6 +214,10 @@ var (
 		// do と dp は、Vim と同じく d のオペレーターの後の o と p として Parser が読む（Parser.match）ので、表には置かない。
 		{keys: "]c", id: "diff-next", modes: MapNormal, desc: "見比べで、次の差分へ"},
 		{keys: "[c", id: "diff-prev", modes: MapNormal, desc: "見比べで、前の差分へ"},
+		// * と # は、カーソルの単語を検索のパターンと向きにするだけで、カーソルを動かさない（FR-139）。次の一致へは n で移る。
+		// 移らないのでモーションでなく操作にし、オペレーターの後には使えない（d* は誤りになる）。ID はモーションだったときのまま変えない。
+		{keys: "*", id: "search-word-forward", modes: MapNormal | MapVisual, desc: "カーソルの単語を前方への検索のパターンにする（移らない）"},
+		{keys: "#", id: "search-word-backward", modes: MapNormal | MapVisual, desc: "カーソルの単語を後方への検索のパターンにする（移らない）"},
 	}
 
 	// builtinInsert は、インサートモードのカーソルの移動と削除の操作である（FR-127）。internal/command の State.insertAction が実装を引く。

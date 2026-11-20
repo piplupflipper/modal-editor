@@ -49,6 +49,7 @@ type replaySnapshot struct {
 type repeatState struct {
 	lastPattern    string
 	searchBackward bool
+	cleared        *ex.ClearedHighlight
 	lastSubstitute *ex.Substitution
 	lastFind       target.Find
 	dot            *editcmd.Command
@@ -61,7 +62,7 @@ type repeatState struct {
 // repeatState は、s の repeatState を返す。
 func (s *State) repeatState() repeatState {
 	return repeatState{
-		lastPattern: s.Ex.LastPattern, searchBackward: s.searchBackward, lastSubstitute: s.Ex.LastSubstitute,
+		lastPattern: s.Ex.LastPattern, searchBackward: s.searchBackward, cleared: s.Ex.ClearedHighlight, lastSubstitute: s.Ex.LastSubstitute,
 		lastFind: s.lastFind, dot: s.dot, lastChange: s.lastChange, dotVisual: s.dotVisual, dotLines: s.dotLines,
 		lastPlayed: s.lastPlayed,
 	}
@@ -70,6 +71,7 @@ func (s *State) repeatState() repeatState {
 // setRepeatState は、r を s に戻す。
 func (s *State) setRepeatState(r repeatState) {
 	s.Ex.LastPattern, s.searchBackward, s.Ex.LastSubstitute = r.lastPattern, r.searchBackward, r.lastSubstitute
+	s.Ex.ClearedHighlight = r.cleared
 	s.lastFind, s.dot, s.lastChange, s.dotVisual, s.lastPlayed = r.lastFind, r.dot, r.lastChange, r.dotVisual, r.lastPlayed
 	s.dotLines = r.dotLines
 }

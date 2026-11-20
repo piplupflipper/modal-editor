@@ -47,6 +47,13 @@ func (o optionAccess) Set(d option.Def, v option.Value) error {
 	return nil
 }
 
+// Revision は、項目 d に値を設定した回数を返す（option.Values.Revision。:search.clearHighlight が覚える。FR-138）。
+//
+// req: FR-138
+func (o optionAccess) Revision(d option.Def) uint64 {
+	return o.values(d).Revision(d.Name)
+}
+
 // notifyBufferAttrs は、拡張機能へ bs の属性（パスとファイルの種類）を知らせ直す（exthost.Host.UpdateBuffer）。
 // 稼働中の拡張機能へ buffer/open を送り直し、新しいファイルの種類の契機が成り立つ未起動の拡張機能を起動する（FR-14）。
 // 別名での保存と、バッファごとの設定の項目の変更で呼ぶ。属性が変わっていなければ、exthost は何も送らない。

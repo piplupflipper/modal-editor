@@ -271,6 +271,8 @@ type Editor struct {
 	// shared は、レジスターなどの client の間で共有する状態（command.State.TakeOverShared）を最後に持った State である。
 	// キーを打つ client が替わったら、その client のカーソルのあるバッファの State へ引き継ぐ（useClient）。
 	shared *command.State
+	// searchRegexp は、検索の一致の色付け（uiSearch）が直前にコンパイルしたパターンである。
+	searchRegexp searchRegexp
 	// asker は、確認の問いか選択肢の問いを出している client である。問いが無ければ nil（syncAsker）。
 	asker *clientView
 	// extClient は、拡張機能の ID から、その拡張機能へ最後に問い合わせ（command/execute、provider/invoke など）を始めた client への表である。

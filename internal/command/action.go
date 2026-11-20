@@ -83,6 +83,9 @@ func init() {
 		"diff-obtain":        actDiff(ex.DiffObtain),
 		"diff-put":           actDiff(ex.DiffPut),
 		"popup-focus":        actPopupFocus,
+		// * と # は、移らずに検索のパターンと向きを決める（FR-139。search.go）。
+		"search-word-forward":  actSearchWord(false),
+		"search-word-backward": actSearchWord(true),
 	}
 }
 

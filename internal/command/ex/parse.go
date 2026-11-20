@@ -317,9 +317,10 @@ func (c *execCtx) markLine(s *scanner, pos int) (int, error) {
 
 // compile は、パターンを Go の regexp（RE2）の文法でコンパイルする（FR-09）。
 // pat が空なら直前のパターン（State.LastPattern）を使う。ignoreCase なら大文字と小文字を区別しない。
-// コンパイルに成功したら、使ったパターンを直前のパターンとして記録する。失敗したパターンは記録しない（Vim と同じ）。
+// コンパイルに成功したら、使ったパターンを直前のパターンとして記録し、一致の色を消した状態を解く（State.UsePattern。FR-138）。
+// 一致が無くても解く。失敗したパターンは記録しない（Vim と同じ）。
 //
-// req: FR-09
+// req: FR-09, FR-138
 func (c *execCtx) compile(pat string, ignoreCase bool, pos int) (*regexp.Regexp, error) {
 	if pat == "" {
 		if c.st.LastPattern == "" {
@@ -335,7 +336,7 @@ func (c *execCtx) compile(pat string, ignoreCase bool, pos int) (*regexp.Regexp,
 	if err != nil {
 		return nil, errAt(pos, codeInvalidPattern, "正規表現が正しくありません（Go の regexp の文法で書きます）: %s: %v", pat, err)
 	}
-	c.st.LastPattern = pat
+	c.st.UsePattern(pat)
 	return re, nil
 }
 

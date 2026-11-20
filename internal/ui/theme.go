@@ -31,6 +31,9 @@ const (
 	StyleSpecialKey = "specialkey"
 	// StyleLineNr は、行番号の列（Frame.LineNumbers。FR-135）である。数字と、右の空けた 1 列を含む列の全体に付ける（Vim の LineNr）。
 	StyleLineNr = "linenr"
+	// StyleSearch は、直前の検索のパターンに一致する範囲（Frame.Search。FR-137）である（Vim の Search）。
+	// 構文の色、見比べの色、診断の上に重ね、選択の色（StyleVisual）の下に置く。
+	StyleSearch = "search"
 	// StyleMessageInfo、StyleMessageWarning、StyleMessageError は、コマンドラインの行に出すメッセージである。
 	StyleMessageInfo    = "message.info"
 	StyleMessageWarning = "message.warning"
@@ -90,7 +93,7 @@ const (
 var styleNames = []string{
 	StyleComment, StyleKeyword, StyleString, StyleNumber, StyleConstant, StyleFunction, StyleType, StyleVariable,
 	StyleOperator, StylePunctuation,
-	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleLineNr,
+	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleLineNr, StyleSearch,
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
 	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch,
@@ -148,7 +151,9 @@ func DefaultTheme() Theme {
 		StyleNonText:    {Fg: Indexed(12)},
 		StyleSpecialKey: {Fg: Indexed(12)},
 		// 行番号は、Vim 9.1 の暗い背景の既定（2026-11-20 に TERM=xterm-256color、background=dark の :hi LineNr で確かめた ctermfg=11）と同じ番号にした。
-		StyleLineNr:         {Fg: Indexed(11)},
+		StyleLineNr: {Fg: Indexed(11)},
+		// 検索の一致は、Vim 9.1 の暗い背景の既定（2026-11-20 に同じ起動の :hi Search で確かめた ctermfg=0 ctermbg=11）と同じ番号にした。
+		StyleSearch:         {Fg: Indexed(0), Bg: Indexed(11)},
 		StyleMessageWarning: {Fg: Indexed(11)},
 		StyleMessageError:   {Fg: Indexed(15), Bg: Indexed(1)},
 
