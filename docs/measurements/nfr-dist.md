@@ -144,5 +144,12 @@ vi-imitation-<版>-linux-amd64/
 ## 2026-11-20 の結果
 
 ブランチ `feat/277-parser-fetch` を Ubuntu（glibc 2.43、gcc 15.2.0）でビルドし、`make build-check` と `make dist-check` が成功した。
-`make dist-smoke` は手元では実行していない（手元の Docker にイメージを足さないため）。
-CI の `make dist-smoke` で確かめる。
+`make dist-smoke` は手元では実行せず（手元の Docker にイメージを足さないため）、GitHub Actions の CI（`ubuntu-latest`）で実行して成功した。
+tree-sitter の拡張機能の結果は次のとおりだった。本体、中継コマンド、ほかの拡張機能、スクリプトの実行環境は、4 種類のイメージの全てで起動した。
+
+| イメージ | tree-sitter の拡張機能 |
+|---|---|
+| `debian:13.7-slim` | 起動し、Go のソースを解析した |
+| `almalinux:8.10-minimal` | 起動しない（想定どおり） |
+| `alpine:3.24.1` | 起動しない（想定どおり） |
+| `busybox:1.36.1` | 起動し、Go のソースを解析した |
