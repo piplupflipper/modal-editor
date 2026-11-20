@@ -18,6 +18,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/exthost"
 	"github.com/piplupflipper/vi-imitation/internal/input"
+	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
@@ -122,6 +123,9 @@ type Config struct {
 	// FileTypes は、ファイルの種類の対応表に足す項目である（基本設計 6.7 のファイルの種類の判定）。
 	// キーは拡張子（".md"）かファイル名（"Makefile"）、値はファイルの種類の名前である。既定の表より優先する。
 	FileTypes map[string]string
+	// Options は、範囲がエディタ全体の設定の項目（option の表。基本設計 7.3）の初めの値である（設定ファイルから読んだもの。config.Config.Options）。
+	// 正規の名前から値への対応で、無い項目は表の既定値を使う。範囲がバッファごとの項目と、表に無い名前は使わない。
+	Options map[string]option.Value
 	// Extensions は、拡張機能の定義（検査済みの宣言ファイル）の一覧である。宣言ファイルを探して読むのは呼び出し側である。
 	Extensions []exthost.Spec
 	// Host は、exthost.Host の設定である。
@@ -234,6 +238,8 @@ type Editor struct {
 	// leader は、<Leader> を置き換えたキーの列（Config.Leader を読んだもの。FR-97）である。キーの一覧（FR-90）で使う。
 	leader   []editcmd.Key
 	fileType map[string]string
+	// options は、範囲がエディタ全体の設定の項目の値である（options.go。初めの値は Config.Options）。
+	options option.Values
 	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
 	fixEOL bool
 	// popupKeys は、拡張機能の ID から、その拡張機能の contributes.popupKeys のキーへの表である（FR-69。popup.go）。
@@ -394,7 +400,8 @@ type bufferState struct {
 	buf       *buffer.Buffer
 	state     *command.State
 	path      string
-	fileType  string
+	// options は、範囲がバッファごとの設定の項目の値である（options.go。ファイルの種類は fileType で読む）。
+	options option.Values
 	// title は、ファイルでないバッファ（:help のヘルプ、キーの一覧。help.go）の名前である。タブの行、ステータス行、:ls に
 	// path の代わりに出す。ファイルのバッファと、名前の無いバッファ（[No Name]）では空である。
 	title string
@@ -507,6 +514,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		e.fileType[k] = v
 	}
 	e.fixEOL = cfg.FixEndOfLine == nil || *cfg.FixEndOfLine
+	e.options = editorOptions(cfg.Options)
 	warnings := slices.Clone(cfg.Problems)
 	leader, err := leaderKeys(cfg.Leader)
 	if err != nil {
@@ -838,12 +846,12 @@ func (e *Editor) newBuffer(b *buffer.Buffer, path, fileType string) *bufferState
 		id:          e.nextID,
 		buf:         b,
 		path:        path,
-		fileType:    fileType,
 		sent:        b.Version(),
 		decorations: map[string]decorationSet{},
 		diagnostics: map[string][]ext.Diagnostic{},
 		signs:       map[string][]ext.Sign{},
 	}
+	bs.setFileType(fileType)
 	e.nextID++
 	e.initState(bs)
 	e.bufs = append(e.bufs, bs)
@@ -869,10 +877,11 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand
+	bs.state.Ex.Options = optionAccess{e: e, bs: bs}
 	bs.state.Interrupted = e.interrupt.Load
 	bs.state.KeyHook = func(k editcmd.Key, insert bool) (bool, []editcmd.Key, error) { return e.popupStateKey(bs, k, insert) }
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{
-		ID: bs.id, Path: bs.path, FileType: bs.fileType, Version: b.Version(), Text: b.Text(),
+		ID: bs.id, Path: bs.path, FileType: bs.fileType(), Version: b.Version(), Text: b.Text(),
 		NoFinalNewline: !finalNewline(b),
 	}); err != nil {
 		e.log.Error("buffer/open を送れない", "err", err)
@@ -960,7 +969,8 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	if focus && reusable(prev) {
 		// Vim 9.1 と同じく、移る前の位置（1 行目）をジャンプリストに足す。番号が同じなので、開いたファイルの 1 行目を指す。
 		e.markJumpAt(prev, prev.state.Cursor())
-		prev.path, prev.fileType = abs, e.detectFileType(abs)
+		prev.path = abs
+		prev.setFileType(e.detectFileType(abs))
 		e.replaceBuffer(prev, b)
 		prev.setDisk(st)
 		return prev, nil
@@ -981,7 +991,7 @@ func reusable(bs *bufferState) bool {
 
 // replaceBuffer は、バッファ bs の内容を b に置き換える。番号は変えず、拡張機能へは同じ番号で buffer/close と buffer/open を送り直す。
 // バージョン番号は b のもの（読み込んだばかりなら 0）から数え直し、アンドゥの履歴と、診断と印と色は消す。
-// エディタ全体に 1 つの状態（command.State.TakeOver）とカーソルの位置は引き継ぐ。bs.path と bs.fileType は、呼ぶ前に新しい値にしておく。
+// エディタ全体に 1 つの状態（command.State.TakeOver）とカーソルの位置は引き継ぐ。bs.path とファイルの種類（setFileType）は、呼ぶ前に新しい値にしておく。
 func (e *Editor) replaceBuffer(bs *bufferState, b *buffer.Buffer) {
 	if err := e.host.CloseBuffer(bs.id); err != nil {
 		e.log.Error("buffer/close を送れない", "err", err)

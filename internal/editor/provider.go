@@ -45,9 +45,10 @@ func providerParams(id, text string) (ext.Operation, json.RawMessage) {
 
 // provider は、操作 op を、カーソルのあるバッファ（x.bs）で引き受ける拡張機能を返す（exthost.Host.Provider）。
 func (x *extQuery) provider(op ext.Operation) (string, error) {
-	id, ok := x.e.host.Provider(op, x.bs.fileType)
+	ft := x.bs.fileType()
+	id, ok := x.e.host.Provider(op, ft)
 	if !ok {
-		return "", errNoProvider(op, x.bs.fileType)
+		return "", errNoProvider(op, ft)
 	}
 	return id, nil
 }

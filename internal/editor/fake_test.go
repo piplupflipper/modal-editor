@@ -426,6 +426,11 @@ func runFakeExt(mode string) int {
 			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("b%d finalNewline=%v", b.ID(), b.FinalNewline()))
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
+		// fake.ft は、複製のパスの名前とファイルの種類（buffer/open の path と fileType）を表示する。
+		s.Command("fake.ft", func(_ context.Context, b *server.Buffer, _ *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+			_ = s.ShowMessage(ext.MessageInfo, fmt.Sprintf("b%d %s ft=%s", b.ID(), filepath.Base(b.Path()), b.FileType()))
+			return ext.CommandExecuteResult{OK: true}, nil
+		})
 		// fake.env は、本体から受け取った環境変数 ext.EnvMCPSocket の値を表示する。
 		s.Command("fake.env", func(context.Context, *server.Buffer, *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
 			v, ok := os.LookupEnv(ext.EnvMCPSocket)
@@ -620,7 +625,7 @@ func fakeSpecs(t *testing.T) []exthost.Spec {
 					contrib("fake.env", `\v`), contrib("fake.empty", `\z`), contrib("fake.lines", `\n`),
 					contrib("fake.endofline", `\o`), contrib("fake.echo", ""), contrib("fake.openlater", ""), contrib("fake.save", `\w`),
 					contrib("fake.bufs", `\b`), contrib("fake.ask3", `\3`), contrib("fake.askseq", `\4`),
-					contrib("fake.write", ""), contrib("fake.touch", ""),
+					contrib("fake.write", ""), contrib("fake.touch", ""), contrib("fake.ft", `\y`),
 					contrib("fake.popup", ""), contrib("fake.headdiff", ""), contrib("fake.pane", ""), contrib("fake.list", ""),
 					contrib("fake.exec", ""),
 				},

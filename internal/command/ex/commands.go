@@ -105,6 +105,10 @@ func init() {
 		{name: "diffthis", min: 5, rng: rangeNone, run: runDiff(DiffThis)},
 		{name: "diffoff", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffOff)},
 		{name: "diffupdate", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffUpdate)},
+		// 設定の読み書き（基本設計 7.3。FR-132）。点を含む正規の名前で、省略できない。
+		// :option.set の値は "|" を含めて行末までなので barNone にする。
+		{name: optionSetName, min: len(optionSetName), rng: rangeNone, bar: barNone, run: runOptionSet},
+		{name: optionGetName, min: len(optionGetName), rng: rangeNone, run: runOptionGet},
 	}
 }
 

@@ -37,6 +37,7 @@ import (
 
 	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/option"
 )
 
 // Config は、設定ファイルから読んだ値である（基本設計 7 章。項目の名前は仮）。
@@ -67,6 +68,9 @@ import (
 //	  "tabline": { "show": "always", "left": ["tabs"], "right": ["mrreview.status"] },
 //	  "elevateCommand": ["sudo"]
 //	}
+//
+// 設定の表（internal/option）の、範囲がエディタ全体の項目は、点で区切った名前を入れ子のキーにして書き、Options に入る
+// （lineNumber.show なら "lineNumber": { "show": true }。基本設計 7.3）。
 type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
 	// モードの名前（"normal"、"visual"、"insert"、"commandLine"）から、キーの列の表記から展開するキーの列の表記への対応である。
@@ -161,6 +165,10 @@ type Config struct {
 	// （基本設計 4.7。FR-79。項目の名前は仮）。項目が無いか誤りなら nil で、editor の既定（["sudo"]）を使う。
 	// editor.Config.ElevateCommand にそのまま渡す。
 	ElevateCommand []string
+	// Options は、設定の表（option の表。基本設計 7.3。FR-131）の、範囲がエディタ全体の項目の値である。
+	// 正規の名前から値への対応で、書かなかった項目と誤りのある項目は入らない（表の既定値を使う）。項目が無ければ nil である。
+	// editor.Config.Options にそのまま渡す。
+	Options map[string]option.Value
 
 	// pos は、見た目の設定の項目を書いた位置である（CheckAppearance）。
 	pos appearancePos
@@ -266,7 +274,10 @@ func Parse(path string, data []byte) (Config, []error) {
 		case "elevateCommand":
 			cfg.ElevateCommand = s.elevateCommand(m.value)
 		default:
-			s.report(m.nameOff, "未知の項目 %s を無視する", join("", m.name))
+			// 上の項目でなければ、設定の表（option）の項目として読む。表の項目の名前の最上位の段は、上の項目と重ねない。
+			if !s.option(m, "", option.Defs(), &cfg) {
+				s.report(m.nameOff, "未知の項目 %s を無視する", join("", m.name))
+			}
 		}
 	}
 	return cfg, s.problems

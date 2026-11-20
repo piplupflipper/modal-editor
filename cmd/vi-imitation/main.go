@@ -470,6 +470,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		StartSyncTimeout: cfg.StartSyncTimeout,
 		FileTypes:        cfg.FileTypes,
 		FixEndOfLine:     cfg.FixEndOfLine,
+		Options:          cfg.Options,
 		ReadOnlyPaths:    cfg.ReadOnlyPaths,
 		ColorScheme:      uiColors(cfg.SchemeColors),
 		Colors:           uiColors(cfg.Colors),
