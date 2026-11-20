@@ -1,7 +1,6 @@
 package target
 
 import (
-	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -86,16 +85,20 @@ func vertical(b *buffer.Buffer, req Request, line int) Result {
 // displayVertical は、gj（forward が true）と gk を返す（FR-157）。回数の見た目の行だけ下（上）へ動く。
 //
 // 行を折り返して描かないとき（req.Screen が nil か Wrap が false）は、j と k と同じく行単位で動く（Vim 9.1 の nv_down の 'nowrap' の扱い）。
-// 折り返して描くときは、Vim 9.1 の nv_screengo を、見た目の行の左の端からの列（x）で写した。
+// 折り返して描くときは、Neovim 0.12.5 の nv_screengo（src/nvim/normal.c）をそのまま写した。列は req.Columns の列で、
+// 呼び出し側は折り返すとき、見た目の n 番目の行の左の端を n × Width とする数え方を渡す（ScreenLines の doc）。W は sl.Width() である。
 //
-//   - 動く前の見た目の行と x は、望みの列（req.Want）のセルの位置から決める。望みの列が行の幅を超えていれば、最後の見た目の行の最後の列にする。
-//     望みの列が行末（WantEOL。$ の後）なら、カーソルの見た目の行の右の端にする
-//   - 見た目の行を 1 つずつ動き、行の端を越えたら隣の行の最初（上へなら最後）の見た目の行へ移る。x は変えない
-//   - 着いた見た目の行の x 列の文字へ移る。x がその見た目の行の最後の文字より右なら、最後の文字へ移る
-//   - 着いた文字がタブか制御文字で、カーソルを置く列が望みの列より右なら、1 つ左の文字へ移る（Vim の nv_screengo の oneleft と同じ。
-//     nvim 0.12.5 で、タブの最初の列を望みの列にした gk が、タブの前の文字へ移ることを確かめた）
-//   - 望みの列は、着いた見た目の行の x 列の表示の列にする（行の文字より右なら、右へ伸ばした列）。WantEOL は WantEOL のまま
+//   - 望みの列が行末（WantEOL。$ の後）なら、望みの列をカーソルの見た目の行の右の端の列にする。そうでなければ、行の最後の見た目の行の
+//     右の端の列で止める
+//   - 下へは、望みの列に W を足して行の最後の見た目の行を越えなければ足し、越えるなら次の行へ移って望みの列を W で割った余りにする。
+//     上へは、望みの列が W 以上なら W を引き、そうでなければ前の行へ移って、望みの列にその行の最後の見た目の行の左の端の列を足す
+//   - 望みの列の文字へ移る（Columns.ByteAt。">" の列は、送った全角文字の列として数える）
+//   - 着いた文字の列（タブは最後の列）が望みの列より右で、望みの列が見た目の行の右半分にあるなら、1 つ前の文字へ移る
+//     （nv_screengo の末尾の補正。送った全角文字の ">" の列に着いたときに、その見た目の行に留まる）。続きの行の記号の列は引いて比べる
+//   - 望みの列は、動いた後の望みの列にする（文字より右でもそのまま保つ）。WantEOL は WantEOL のまま
 //   - 範囲は文字単位の Exclusive で、WantEOL なら Inclusive である（Vim と同じ）
+//
+// nv_screengo の、表示できない全角の文字（c > 255）に着いたときに 1 つ右へ移す補正は写していない（本体はその文字を <200b> の形で描く）。
 //
 // バッファの端で 1 行も動けなければ失敗する。回数の途中でバッファの端に着いたときは、着いた位置へ移って成功する。
 // Vim は着いた位置へ移ってから失敗する（ビープを鳴らし、オペレーターを取り消し、マクロを止める）ので、ここは Vim と違う（docs/vim-differences.md）。
@@ -111,51 +114,85 @@ func displayVertical(forward bool) MotionFunc {
 			return up(b, req)
 		}
 		cols := req.columns()
+		w1 := max(sl.Width(), 1)
+		w2 := w1
 		line := req.Cursor.Line
 		s := b.Line(line)
-		eol := req.Want == WantEOL
-		var row, x int
-		if eol {
-			row, _ = sl.Locate(s, cols.Column(s, req.Cursor.Byte))
-			x = math.MaxInt
-		} else {
-			row, x = sl.Locate(s, req.Want)
+		// linelen は、行の最後の文字の次の列（Vim の linetabsize）で、行を移ったときだけ数え直す（数えるのは行の長さに比例する）。
+		linelen := cols.Column(s, len(s))
+		// limit は、行の最後の見た目の行の右の端の次の列である。
+		limit := func(linelen int) int {
+			if linelen > w1 {
+				return ((linelen-w1-1)/w2+1)*w2 + w1
+			}
+			return w1
 		}
-		// 行の見た目の行の数は、行を移ったときだけ数え直す（数えるのは行の長さに比例する）。
-		rows := -1
+		atend := req.Want == WantEOL
+		want := req.Want
+		if atend {
+			want = w1 - 1
+			if vc := cols.Column(s, req.Cursor.Byte); vc > want {
+				want += ((vc-want-1)/w2 + 1) * w2
+			}
+		} else {
+			want = min(want, limit(linelen)-1)
+		}
 		moved := 0
 		for range req.count1() {
-			if forward && rows < 0 {
-				rows = sl.Rows(s)
-			}
-			switch {
-			case forward && row+1 < rows:
-				row++
-			case forward && line+1 < b.LineCount():
-				line++
-				s, row, rows = b.Line(line), 0, -1
-			case !forward && row > 0:
-				row--
-			case !forward && line > 0:
-				line--
-				s = b.Line(line)
-				rows = sl.Rows(s)
-				row = rows - 1
-			default:
-				continue
+			if forward {
+				if want+w2 < limit(linelen) {
+					want += w2
+				} else {
+					if line+1 >= b.LineCount() {
+						break
+					}
+					line++
+					s = b.Line(line)
+					want %= w2
+					if want >= w1 {
+						want -= w2
+					}
+					linelen = cols.Column(s, len(s))
+				}
+			} else {
+				if want >= w1 {
+					want -= w2
+				} else {
+					if line == 0 {
+						break
+					}
+					line--
+					s = b.Line(line)
+					linelen = cols.Column(s, len(s))
+					if linelen > w1 {
+						want += ((linelen-w1-1)/w2 + 1) * w2
+					}
+				}
 			}
 			moved++
 		}
 		if moved == 0 {
 			return Result{}, ErrNoTarget
 		}
-		p := buffer.Position{Line: line, Byte: sl.ByteAt(s, row, x)}
-		if eol {
-			return Result{Pos: p, Kind: Inclusive, Want: WantEOL}, nil
+		p := buffer.Position{Line: line, Byte: cols.ByteAt(s, max(want, 0))}
+		var right bool
+		if want < w1 {
+			right = want > w1/2
+		} else {
+			right = (want-w1)%w2 > w2/2
 		}
-		want := sl.Column(s, row, x)
-		if p.Byte > 0 && p.Byte < len(s) && (s[p.Byte] < 0x20 || s[p.Byte] == 0x7f) && cols.Column(s, p.Byte) > want {
-			p.Byte = prevCell(s, p.Byte)
+		// 着いた文字の列は、望みの列が右半分のときだけ数える（数えるのは行の長さに比例する）。
+		if p.Byte > 0 && right {
+			vc := cols.Column(s, p.Byte)
+			if sbw := sl.BreakWidth(); vc > w1 && sbw > 0 {
+				vc -= sbw
+			}
+			if vc > want {
+				p.Byte = prevCell(s, p.Byte)
+			}
+		}
+		if atend {
+			return Result{Pos: p, Kind: Inclusive, Want: WantEOL}, nil
 		}
 		return Result{Pos: p, Kind: Exclusive, Want: want}, nil
 	}

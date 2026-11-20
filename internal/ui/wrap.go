@@ -22,8 +22,10 @@ package ui
 //     行の見た目の行の数は増やさない）
 //   - 折り返すときは横にスクロールしない
 //
-// タブの幅は、行の先頭からの表示の列で決める（折り返さないときと同じ）。Vim は 'showbreak' の列もタブの幅の計算に入れるので、
-// SymbolShowBreak が空でないときは、続きの行のタブの幅が Vim と違うことがある（docs/vim-differences.md）。
+// 折り返すときの表示の列は、Vim の vcol と同じく「見た目の行の番号 × 本文の幅 + 見た目の行の中の列」で数える（wrapper.vcolAt）。
+// 全角文字を送った ">" の列と、続きの行の記号の列も数える。タブの幅、望みの列（WrapLines の Column と ByteAt。internal/command の
+// State.Columns に差し込む）、ルーラーの表示の列は、どれもこの列で数える。">" の列を数えないと、その後のタブの幅が nvim と 1 列ずれ、
+// gj と gk が見た目の行を飛ばす（PR #310 のレビューの必須 1、3）。折り返さないときは、今までどおり行の先頭からの表示の列で数える。
 
 const (
 	// lastLineMark は、表示領域の最後に収まりきらない行の、最後の行の右の端に出す印である（Vim の 'display' の lastline。'fillchars' の lastline の既定）。
@@ -108,138 +110,117 @@ func (w wrapper) eol(p wrapPos) wrapPos {
 	return p
 }
 
+// vcolAt は、次のセルを p から置くときの、そのセルの表示の列（Vim の vcol）を返す。
+// 表示の列は「見た目の行の番号 × 本文の幅 + 見た目の行の中の列」で、">" の列と続きの行の記号の列も数える。
+// p が見た目の行の右の端を越えていれば、次の見た目の行の、文字を置き始める列の表示の列にする。
+// タブの幅（nextGlyph の列）はこの列で決める（nvim 0.12.5 と同じ）。
+func (w wrapper) vcolAt(p wrapPos) int {
+	if p.x >= w.width {
+		return (p.row+1)*w.width + w.sbw
+	}
+	return p.row*w.width + p.x
+}
+
+// vcol は、セルの位置 p の表示の列を返す。p.x が本文の幅に等しい（行末の位置が右の端を越えた）ときも、そのまま数える。
+func (w wrapper) vcol(p wrapPos) int {
+	return p.row*w.width + p.x
+}
+
+// next は、行 s の off から始まる文字を、p から置いたときの配置を返す（タブの幅は、置く位置の表示の列で決める）。
+func (w wrapper) next(s string, off int, p wrapPos) glyph {
+	return nextGlyph(s, off, w.vcolAt(p), w.tabStop)
+}
+
 // rows は、行 s を折り返した見た目の行の数（1 以上）を返す。空の行は 1 行である。
 // 行末の位置が次の見た目の行に出る（ちょうど幅で終わる）ときも、その行は数えない。
 func (w wrapper) rows(s string) int {
 	p := wrapPos{}
-	col := 0
 	for off := 0; off < len(s); {
-		gl := nextGlyph(s, off, col, w.tabStop)
+		gl := w.next(s, off, p)
 		w.place(&p, gl)
-		col += gl.width
 		off += gl.size
 	}
 	return p.row + 1
 }
 
-// locate は、行 s の表示の列 col（行の先頭から数える。Columns の列）のセルの位置を返す。
-// col が行の表示幅以上なら、行末の位置から右へ col と表示幅の差だけ進めた位置を返す。x は見た目の行の幅を超えない（width-1 で止める）。
-// これは Vim の nv_screengo が、望みの列を最後の見た目の行の最後の列で止めるのと同じである。
-func (w wrapper) locate(s string, col int) wrapPos {
+// column は、行 s の byteOff の文字の表示の列（vcol）を返す。タブは最後のセルの列（Vim のノーマルモードのカーソルの列）、
+// ほかの文字は最初のセルの列である。全角文字を次の見た目の行へ送ったときは、送った先の列である。
+// byteOff が行の長さ以上なら、最後の文字の次の列（Vim の linetabsize）を返す。
+func (w wrapper) column(s string, byteOff int) int {
 	p := wrapPos{}
-	c := 0
 	for off := 0; off < len(s); {
-		gl := nextGlyph(s, off, c, w.tabStop)
-		q := p
+		gl := w.next(s, off, p)
 		first, _, _ := w.place(&p, gl)
-		if col < gl.col+gl.width {
-			if gl.kind == glyphText {
-				return wrapPos{row: first.row, x: min(first.x+max(col-gl.col, 0), w.width-1)}
+		if byteOff < off+gl.size {
+			if gl.kind == glyphTab {
+				return w.vcol(p) - 1
 			}
-			for range max(col-gl.col, 0) + 1 {
-				if q.x >= w.width {
-					w.nextRow(&q)
-				}
-				q.x++
-			}
-			q.x--
-			return q
+			return w.vcol(first)
 		}
-		c += gl.width
 		off += gl.size
 	}
-	p.x = min(p.x+col-c, w.width-1)
-	return p
+	return w.vcol(p)
+}
+
+// byteAt は、行 s で表示の列 col にある文字の位置を返す。列が文字の手前の ">" の列か、続きの行の記号の列なら、その後の文字である
+// （Vim の coladvance と同じく、送った全角文字と記号の列は、その後の文字の列として数える）。
+// col が行の最後の文字の列より右なら最後の文字を、空の行では 0 を返す。
+func (w wrapper) byteAt(s string, col int) int {
+	p := wrapPos{}
+	last := 0
+	for off := 0; off < len(s); {
+		gl := w.next(s, off, p)
+		w.place(&p, gl)
+		if col < w.vcol(p) {
+			return off
+		}
+		last = off
+		off += gl.size
+	}
+	return last
 }
 
 // cursor は、行 s の byteOff の文字にカーソルを置く位置を返す。tabLast なら、タブの最後のセルにする（ノーマルモード）。
 // byteOff が行の長さ以上なら、行末の位置（eol）を返す。
 func (w wrapper) cursor(s string, byteOff int, tabLast bool) wrapPos {
+	_, p := w.cursorAt(s, byteOff, tabLast)
+	return p
+}
+
+// cursorAt は、cursor と同じ位置と、その文字の最初のバイトの位置（行末なら行の長さ）を返す。
+func (w wrapper) cursorAt(s string, byteOff int, tabLast bool) (int, wrapPos) {
+	off, p, _ := w.cursorRows(s, byteOff, tabLast)
+	return off, p
+}
+
+// cursorRows は、cursorAt の結果に加えて、行の見た目の行の数（rows）も、行を 1 回だけ数えて返す。
+func (w wrapper) cursorRows(s string, byteOff int, tabLast bool) (at int, cur wrapPos, rows int) {
 	p := wrapPos{}
-	col := 0
+	at = -1
 	for off := 0; off < len(s); {
-		gl := nextGlyph(s, off, col, w.tabStop)
+		gl := w.next(s, off, p)
 		first, _, _ := w.place(&p, gl)
-		if byteOff < off+gl.size {
+		if at < 0 && byteOff < off+gl.size {
+			at, cur = off, first
 			if tabLast && gl.kind == glyphTab {
-				return wrapPos{row: p.row, x: p.x - 1}
+				cur = wrapPos{row: p.row, x: p.x - 1}
 			}
-			return first
 		}
-		col += gl.width
 		off += gl.size
 	}
-	return w.eol(p)
-}
-
-// rowCol は、行 s の見た目の row 行目の、最初のセルの表示の列（行の先頭から数える）を返す。
-// row が見た目の行の数以上なら、行の表示幅を返す。
-func (w wrapper) rowCol(s string, row int) int {
-	if row <= 0 {
-		return 0
+	if at < 0 {
+		at, cur = len(s), w.eol(p)
 	}
-	p := wrapPos{}
-	col := 0
-	for off := 0; off < len(s); {
-		gl := nextGlyph(s, off, col, w.tabStop)
-		if gl.kind == glyphText {
-			if first, _, _ := w.place(&p, gl); first.row >= row {
-				return gl.col
-			}
-		} else {
-			for i := range gl.width {
-				if p.x >= w.width {
-					w.nextRow(&p)
-				}
-				if p.row >= row {
-					return gl.col + i
-				}
-				p.x++
-			}
-		}
-		col += gl.width
-		off += gl.size
-	}
-	return col
-}
-
-// byteAt は、行 s の見た目の row 行目の x 列にある文字の位置を返す。
-// x がその見た目の行の最後の文字より右（全角文字を送った ">" の列を含む）なら、その見た目の行の最後の文字を返し、
-// 続きの行の記号の列なら、その見た目の行の最初の文字を返す。row が見た目の行の数以上なら、行の最後の文字を返す。空の行は 0 である。
-func (w wrapper) byteAt(s string, row, x int) int {
-	p := wrapPos{}
-	col, best, last := 0, -1, 0
-	for off := 0; off < len(s); {
-		gl := nextGlyph(s, off, col, w.tabStop)
-		first, _, _ := w.place(&p, gl)
-		if first.row > row {
-			break
-		}
-		if p.row >= row {
-			// この文字のセルが row 行目に掛かる。最後のセルが x 以上か、次の行まで続くなら、x はこの文字の上か左にある。
-			if p.row > row || p.x-1 >= x {
-				return off
-			}
-			best = off
-		}
-		last = off
-		col += gl.width
-		off += gl.size
-	}
-	if best >= 0 {
-		return best
-	}
-	return last
+	return at, cur, p.row + 1
 }
 
 // span は、行 s のうち、見た目の k0 行目から k1 行目の手前までに掛かる文字のバイトの範囲 [from, to) を返す。
 // 検索の一致を集める範囲（searchSpans）に使う。
 func (w wrapper) span(s string, k0, k1 int) (from, to int) {
 	p := wrapPos{}
-	col := 0
 	from = -1
 	for off := 0; off < len(s); {
-		gl := nextGlyph(s, off, col, w.tabStop)
+		gl := w.next(s, off, p)
 		first, _, _ := w.place(&p, gl)
 		if first.row >= k1 {
 			return max(from, off), off
@@ -247,7 +228,6 @@ func (w wrapper) span(s string, k0, k1 int) (from, to int) {
 		if from < 0 && p.row >= k0 {
 			from = off
 		}
-		col += gl.width
 		off += gl.size
 	}
 	if from < 0 {
@@ -256,11 +236,12 @@ func (w wrapper) span(s string, k0, k1 int) (from, to int) {
 	return from, len(s)
 }
 
-// WrapLines は、行を折り返して描くときの見た目の行の数え方である（gj と gk。FR-157）。Renderer.WrapLines で作る。
-// internal/command の State.ScreenLines（target.ScreenLines）の、折り返しの位置の計算に使う（internal/editor がつなぐ）。
-// internal/command とは同じ層なので、インターフェースを import せずに、同じ形のメソッドを持たせる。
+// WrapLines は、行を折り返して描くときの見た目の行の数え方と表示の列の数え方である（gj と gk。FR-157）。Renderer.WrapLines で作る。
+// internal/command の State.ScreenLines（target.ScreenLines）と、折り返すときの State.Columns（target.Columns）に使う
+// （internal/editor がつなぐ）。internal/command とは同じ層なので、インターフェースを import せずに、同じ形のメソッドを持たせる。
 //
-// 列は、Columns と同じく行の先頭から数えた表示の列で、x は見た目の行の左の端（本文の左の端）からの列である。
+// 列は、描画と同じ wrapper.vcolAt で数える表示の列（Vim の vcol）で、全角文字を送った ">" の列と続きの行の記号の列も数える。
+// このため、見た目の行の n 番目の行の左の端の列は、どの行でも n × Width である（Vim の nv_screengo が前提にする数え方）。
 type WrapLines struct {
 	w wrapper
 }
@@ -270,25 +251,22 @@ func (r *Renderer) WrapLines() WrapLines {
 	return WrapLines{w: r.wrapper()}
 }
 
+// Width は、見た目の行の列数（本文の幅）を返す。
+func (l WrapLines) Width() int { return l.w.width }
+
+// BreakWidth は、続きの見た目の行の頭に描く記号（SymbolShowBreak）の列数を返す。付けないなら 0 である。
+func (l WrapLines) BreakWidth() int { return l.w.sbw }
+
 // Rows は、行 line を折り返した見た目の行の数（1 以上）を返す。
 func (l WrapLines) Rows(line string) int { return l.w.rows(line) }
 
-// Locate は、行 line の表示の列 col のセルが、何番目の見た目の行の、左の端から何列目にあるかを返す。
-// col が行の表示幅以上なら、最後の見た目の行の、行末から col と表示幅の差だけ右の列を返す。列は見た目の行の幅から 1 を引いた数で止める。
-func (l WrapLines) Locate(line string, col int) (row, x int) {
-	p := l.w.locate(line, col)
-	return p.row, p.x
-}
+// Column は、行 line の byteOff の位置の文字の表示の列を返す。タブはタブが占める最後の列、ほかの文字は最初の列である
+// （Columns.Column と同じ）。byteOff が行の長さ以上なら、最後の文字の次の列を返す。
+func (l WrapLines) Column(line string, byteOff int) int { return l.w.column(line, byteOff) }
 
-// Column は、行 line の見た目の row 行目の、左の端から x 列目の表示の列を返す。
-// x がその見た目の行の文字より右なら、見た目の行の最初の文字の列から数えて右へ伸ばした列を返す（望みの列に使う）。
-func (l WrapLines) Column(line string, row, x int) int {
-	return l.w.rowCol(line, row) + max(x-l.w.rowStart(row), 0)
-}
-
-// ByteAt は、行 line の見た目の row 行目の、左の端から x 列目にある文字の位置を返す。
-// x がその見た目の行の最後の文字より右なら、その見た目の行の最後の文字を返す（全角文字を送った ">" の列も同じ）。
-func (l WrapLines) ByteAt(line string, row, x int) int { return l.w.byteAt(line, row, x) }
+// ByteAt は、行 line で表示の列 col を占める文字の位置を返す。">" の列と続きの行の記号の列は、その後の文字の列として数える。
+// col が行の最後の文字より右なら最後の文字を、空の行では 0 を返す（Columns.ByteAt と同じ）。
+func (l WrapLines) ByteAt(line string, col int) int { return l.w.byteAt(line, max(col, 0)) }
 
 // viewRow は、表示領域の 1 行に描く中身（見た目の行）である（Renderer.view）。
 // 行番号の列、印の列、本文は、この行ごとの中身から描くので、折り返すかどうかで描き方を分けない。

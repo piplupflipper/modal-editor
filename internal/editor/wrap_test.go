@@ -110,6 +110,62 @@ func TestDisplayLineMotion(t *testing.T) {
 	}
 }
 
+// gj と gk が、全角文字を送った ">" の列と、タブを通るときの行き先である（PR #310 のレビューの必須 1、2、3）。
+// 期待値は、2026-11-20 に nvim 0.12.5 を --headless で :set columns=41 number numberwidth=5（本文は 36 列）にして :normal でキーを打ち、
+// line(".") と col(".") を読んだ値である（位置は 0 から数えた行とバイト）。レビューの Vim 9.1 の結果とも同じである。
+//
+//   - 2 行目は x と全角文字 17 文字で 35 列を使い、36 列目に ">" を出す。">" の列を通る gj と gk は、見た目の行を飛ばさない
+//   - 着いたタブは、望みの列が見た目の行の左半分なら、タブの前の文字へ戻さない（nv_screengo の末尾の補正）。タブで字下げした行で j と同じ列へ動く
+//   - 4 行目（a から q の 17 文字をタブでつないだ行）の、見た目の行の境目をまたぐタブにも着く
+//   - ">" の後のタブの幅は、">" の列を数えた列で決める（11 行目の 2 つ目の見た目の行は "つa b       c"）。ルーラーの表示の列も同じ列で数える
+//
+// req: FR-156, FR-157
+func TestDisplayLinePadAndTab(t *testing.T) {
+	tabs := strings.Join(strings.Split("abcdefghijklmnopq", ""), "\t")
+	text := strings.Join([]string{
+		strings.Repeat("a", 40), "xあいうえおかきくけこさしすせそたちつてと", "next line", tabs, "foo bar baz",
+		"func main() {", "\t\tx := 1", "\t\ty := 2", "\treturn", "}", "xあいうえおかきくけこさしすせそたちつa\tb\tc",
+	}, "\n") + "\n"
+	dir := writeFiles(t, map[string]string{"a.txt": text})
+	term := newFakeTerm()
+	term.w, term.h = 41, 20
+	h := startTerm(t, term, Config{WorkDir: dir, Options: map[string]option.Value{
+		option.LineWrapEnabled: option.BoolValue(true), option.LineNumberShow: option.BoolValue(true),
+		option.LineNumberMinWidth: option.IntValue(5),
+	}}, "a.txt")
+	h.settle()
+	tests := []struct {
+		keys, pos string
+	}{
+		{"gg35lgjgj", "1:49"},
+		{"gg35lgjgjgj", "1:58"},
+		{"gg35lgjgjgk", "0:39"},
+		{"6G010lgj", "6:1"},
+		{"6G010lgjgj", "7:1"},
+		{"6G010lj", "6:1"},
+		{"5G0gk", "3:27"},
+		{"5G05lgk", "3:29"},
+		{"5G06lgk", "3:29"},
+	}
+	for _, tt := range tests {
+		h.keys("<Esc>" + tt.keys)
+		h.settle()
+		var pos string
+		h.e.do(func() { pos = h.e.cur.state.Cursor().String() })
+		if pos != tt.pos {
+			t.Errorf("%s: カーソル = %s, want %s", tt.keys, pos, tt.pos)
+		}
+	}
+	h.keys("<Esc>gg35lgjgjgj")
+	h.settle()
+	h.eventually("ルーラーの表示の列は > の列を数える", func() bool { return strings.Contains(h.statusRow(), "2,59-41") })
+	h.keys("11G")
+	h.settle()
+	h.eventually("> の後のタブの幅", func() bool {
+		return strings.Contains(h.term.screen(), "\n     つa b       c")
+	})
+}
+
 // 回数の途中でバッファの端に着いたら、着いた位置へ移って成功する（Vim は移ってから失敗する）。1 行も動けなければ失敗する。
 // 折り返さないとき（:set nowrap）は、j と k と同じく行単位で動き、オペレーターの後は行単位になる。:set wrap! で切り替えられる。
 //

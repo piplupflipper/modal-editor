@@ -81,6 +81,9 @@ func (r *Renderer) OutputRows() int { return r.outRows }
 // TextRows は、直前の Render でバッファの表示領域に使った行数を返す。
 func (r *Renderer) TextRows() int { return r.textRows() }
 
+// TextWidth は、直前の Render でバッファのテキストを描いた列数（本文の幅）を返す。まだ描いていなければ 0 である。
+func (r *Renderer) TextWidth() int { return r.textWidth() }
+
 // FloatRenderer は、直前の Render でポップアップ（Frame.Float）の窓の中を描いた子の Renderer を返す。窓が無ければ nil である。
 // 窓の中のバッファのページ単位のスクロール（command.State.Viewport）を、窓の表示領域につなぐのに使う（internal/editor）。
 func (r *Renderer) FloatRenderer() *Renderer { return r.float }

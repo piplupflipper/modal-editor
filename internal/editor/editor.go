@@ -956,9 +956,9 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state = command.New(b, input.NewParser(e.keymap))
 	// レジスターはバッファを切り替えるたびに TakeOver で引き継ぐので、ここでの設定は最初のバッファのものが全体に残る。
 	bs.state.Registers().SetConfig(e.cfg.Registers)
-	bs.state.Columns = e.renderer.Columns()
 	bs.state.Viewport = viewport{r: e.renderer}
 	bs.state.ScreenLines = screenLines{e: e, st: bs.state}
+	bs.state.Columns = wrapColumns{sl: screenLines{e: e, st: bs.state}, plain: e.renderer.Columns()}
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand

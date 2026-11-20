@@ -187,7 +187,10 @@ func (e *Editor) lineWrap() bool {
 // その State の表示領域（State.Viewport）を描く描画の部品につなぐ口である（FR-157）。
 // client の画面のバッファ（viewport）と、ポップアップのプレビューの中身（previewViewport）は、設定（lineWrap.enabled）が true なら折り返して数える。
 // ほかのポップアップの中のバッファ（floatViewport）は折り返して描かないので、折り返さないとして数える。
-// 表示領域の幅は、その描画の部品の直前の描画の本文の幅である。
+// 表示領域の幅は、その描画の部品の直前の描画の本文の幅で、まだ描いていない（幅が 0）なら折り返さないとして数える。
+//
+// 同じ口で、State の望みの列の数え方（command.State.Columns。wrapColumns）も、折り返して数えるときは描画と同じ列（ui.WrapLines）にする。
+// Vim も 'wrap' のときは、j と k の望みの列（curswant）を、全角文字を送った ">" の列を含む列で数える。
 type screenLines struct {
 	e  *Editor
 	st *command.State
@@ -198,15 +201,17 @@ func (s screenLines) lines() (l ui.WrapLines, ok bool) {
 	if !s.e.lineWrap() {
 		return l, false
 	}
+	var r *ui.Renderer
 	switch v := s.st.Viewport.(type) {
 	case viewport:
-		return v.r.WrapLines(), true
+		r = v.r
 	case previewViewport:
-		if r := v.sub(); r != nil {
-			return r.WrapLines(), true
-		}
+		r = v.sub()
 	}
-	return l, false
+	if r == nil || r.TextWidth() <= 0 {
+		return l, false
+	}
+	return r.WrapLines(), true
 }
 
 // Wrap は、行を折り返して数えるかを返す。
@@ -215,28 +220,45 @@ func (s screenLines) Wrap() bool {
 	return ok
 }
 
+// Width は、ui.WrapLines.Width である。
+func (s screenLines) Width() int {
+	l, _ := s.lines()
+	return l.Width()
+}
+
+// BreakWidth は、ui.WrapLines.BreakWidth である。
+func (s screenLines) BreakWidth() int {
+	l, _ := s.lines()
+	return l.BreakWidth()
+}
+
 // Rows は、ui.WrapLines.Rows である。
 func (s screenLines) Rows(line string) int {
 	l, _ := s.lines()
 	return l.Rows(line)
 }
 
-// Locate は、ui.WrapLines.Locate である。
-func (s screenLines) Locate(line string, col int) (row, x int) {
-	l, _ := s.lines()
-	return l.Locate(line, col)
+// wrapColumns は、State の望みの列の数え方（command.State.Columns）である。行を折り返して数えるとき（screenLines）は
+// 描画と同じ列（ui.WrapLines の Column と ByteAt）で、そうでなければ行の先頭からの表示の列（ui.Columns）で数える。
+type wrapColumns struct {
+	sl    screenLines
+	plain ui.Columns
 }
 
-// Column は、ui.WrapLines.Column である。
-func (s screenLines) Column(line string, row, x int) int {
-	l, _ := s.lines()
-	return l.Column(line, row, x)
+// Column は、target.Columns の Column である。
+func (c wrapColumns) Column(line string, byteOff int) int {
+	if l, ok := c.sl.lines(); ok {
+		return l.Column(line, byteOff)
+	}
+	return c.plain.Column(line, byteOff)
 }
 
-// ByteAt は、ui.WrapLines.ByteAt である。
-func (s screenLines) ByteAt(line string, row, x int) int {
-	l, _ := s.lines()
-	return l.ByteAt(line, row, x)
+// ByteAt は、target.Columns の ByteAt である。
+func (c wrapColumns) ByteAt(line string, col int) int {
+	if l, ok := c.sl.lines(); ok {
+		return l.ByteAt(line, col)
+	}
+	return c.plain.ByteAt(line, col)
 }
 
 // hitEnter は、改行を含むメッセージを出していて、Vim の hit-enter の問いと同じくキーを待っているかを返す。

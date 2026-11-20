@@ -90,6 +90,9 @@ type Renderer struct {
 	bot int
 	// heights は、1 回の Render の中で数えた、行の見た目の行の数の覚え（行の番号から数）である。Render の始めに空にする。
 	heights map[int]int
+	// curMemo は、1 回の描画の中で求めたカーソルの配置（placeCursor）の覚えである。本文とタブの行（ルーラーの部品）が
+	// 同じ Frame のカーソルを求めるので、長い行を 2 回数えないようにする。render の始めに空にする。
+	curMemo cursorMemo
 
 	// gutter、numWidth、outRows は、直前の Render（layout）で決めた、印の列の列数、行番号の列の列数（出さなければ 0）、
 	// 出力の欄の中身の行数である。
@@ -244,6 +247,7 @@ func (r *Renderer) render(f *Frame) Screen {
 		r.heights = map[int]int{}
 	}
 	clear(r.heights)
+	r.curMemo = cursorMemo{}
 	cur := r.placeCursor(text, f)
 	prevTop := r.top
 	resized := r.fitHeight(text, cur)
@@ -351,13 +355,40 @@ func (r *Renderer) render(f *Frame) Screen {
 // ノーマルモードとビジュアルモードでは、タブの上のカーソルをタブの最後の列に置く。インサートモードでは最初の列に置く（Vim と同じ）。
 // 行末より後ろ（インサートモードで行末に挿入するとき）は、行の表示幅の列に置く。
 // 行を折り返すとき（layout が決めた r.wrap）は、見た目の行と、その行の中の列も求める（wrapper.cursor）。
+// そのときの表示の列（ルーラーに出す列）は、">" の列も数える折り返すときの列（wrapper.vcolAt の doc）にする（Vim と同じ）。
+// 折り返すときは、行の先頭から 1 回だけ数える（行の先頭からの表示の列は使わないので数えない）。
+// 同じ Render の中で同じ Frame と同じ並び（折り返すか、本文の幅）なら、前に求めた配置を返す（curMemo）。
 func (r *Renderer) placeCursor(text Text, f *Frame) cursorPlace {
-	p := r.placeColumn(text, f)
-	if r.wrap {
-		w := r.wrapper().cursor(text.Line(p.line), p.byte, f.Mode != ModeInsert)
-		p.row, p.x = w.row, w.x
+	key := cursorMemo{ok: true, f: f, wrap: r.wrap, width: r.textWidth()}
+	if m := r.curMemo; m.ok && m.f == key.f && m.wrap == key.wrap && m.width == key.width {
+		return m.p
 	}
+	var p cursorPlace
+	if r.wrap {
+		line := min(max(f.Cursor.Line, 0), text.LineCount()-1)
+		w := r.wrapper()
+		// 行の見た目の行の数も同じ 1 回で数えて覚える（スクロールがカーソルの行の高さを数え直さないため）。
+		off, c, rows := w.cursorRows(text.Line(line), max(f.Cursor.Byte, 0), f.Mode != ModeInsert)
+		p = cursorPlace{line: line, byte: off, row: c.row, x: c.x, col: w.vcol(c)}
+		p.end = p.col + 1
+		if r.heights != nil && f.Text != nil {
+			r.heights[line] = rows
+		}
+	} else {
+		p = r.placeColumn(text, f)
+	}
+	key.p = p
+	r.curMemo = key
 	return p
+}
+
+// cursorMemo は、placeCursor の覚えである（Renderer.curMemo）。
+type cursorMemo struct {
+	ok    bool
+	f     *Frame
+	wrap  bool
+	width int
+	p     cursorPlace
 }
 
 // placeColumn は、placeCursor の、行の先頭からの表示の列を求める部分である。
@@ -781,11 +812,9 @@ func (d *drawer) drawWrapped(row, line, k, n int) {
 		}
 	}
 	p := wrapPos{}
-	col := 0
 	done := true
 	for off := 0; off < len(s); {
-		gl := nextGlyph(s, off, col, w.tabStop)
-		col += gl.width
+		gl := w.next(s, off, p)
 		off += gl.size
 		start := p
 		first, pad, padded := w.place(&p, gl)

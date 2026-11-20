@@ -163,11 +163,23 @@ func TestWrapper(t *testing.T) {
 	if p := w.cursor(s, 13, false); p != (wrapPos{row: 1, x: 0}) {
 		t.Errorf("cursor(お) = %+v, want 1,0", p)
 	}
-	if b := w.byteAt(s, 0, 9); b != 10 {
-		t.Errorf("byteAt(0, 9) = %d, want 10（> の列は、その行の最後の文字）", b)
+	// 表示の列は ">" の列（9 列目）も数えるので、お は 10 列目、か は 12 列目である。">" の列は、その後の お の列として数える。
+	l := WrapLines{w: w}
+	for _, tt := range []struct{ off, col int }{{0, 0}, {10, 7}, {13, 10}, {16, 12}, {len(s), 14}} {
+		if c := l.Column(s, tt.off); c != tt.col {
+			t.Errorf("Column(%d) = %d, want %d", tt.off, c, tt.col)
+		}
 	}
-	if b := w.byteAt(s, 1, 3); b != 16 {
-		t.Errorf("byteAt(1, 3) = %d, want 16", b)
+	for _, tt := range []struct{ col, off int }{{8, 10}, {9, 13}, {10, 13}, {11, 13}, {12, 16}, {100, 16}} {
+		if b := l.ByteAt(s, tt.col); b != tt.off {
+			t.Errorf("ByteAt(%d) = %d, want %d", tt.col, b, tt.off)
+		}
+	}
+	// ">" の後のタブの幅も、">" の列を数えた列で決める（nvim 0.12.5 と同じ。PR #310 のレビューの必須 3）。
+	// b は 12 列目、タブは 13 列目から 16 列目の手前までの 3 列で、c は 16 列目（2 行目の 6 列目）。
+	padTab := "aあいうえおb\tc"
+	if p := w.cursor(padTab, len(padTab)-1, false); p != (wrapPos{row: 1, x: 6}) {
+		t.Errorf("cursor(c) = %+v, want 1,6", p)
 	}
 	tab := "012345678\tx"
 	// タブの最後のセル（15 列目）は 2 行目の 5 列目。x は 16 列目で 2 行目の 6 列目。
@@ -177,27 +189,25 @@ func TestWrapper(t *testing.T) {
 	if p := w.cursor(tab, 9, false); p != (wrapPos{row: 0, x: 9}) {
 		t.Errorf("cursor(タブ, 最初のセル) = %+v, want 0,9", p)
 	}
-	if p := w.locate(tab, 12); p != (wrapPos{row: 1, x: 2}) {
-		t.Errorf("locate(12) = %+v, want 1,2", p)
-	}
-	if c := w.rowCol(tab, 1); c != 10 {
-		t.Errorf("rowCol(1) = %d, want 10", c)
-	}
-	// 望みの列が行の幅を超えれば、最後の行の最後の列で止める。
-	if p := w.locate("0123456789ab", 100); p != (wrapPos{row: 1, x: 9}) {
-		t.Errorf("locate(100) = %+v, want 1,9", p)
+	if c := l.Column(tab, 9); c != 15 {
+		t.Errorf("Column(タブ) = %d, want 15（最後のセル）", c)
 	}
 
 	sb := wrapper{width: 10, sbw: 2, tabStop: 8}
-	// 続きの行は 2 列目から 8 列ずつ。
+	// 続きの行は 2 列目から 8 列ずつ。表示の列は記号の列も数える。
 	if got := sb.rows("0123456789abcdefghij"); got != 3 {
 		t.Errorf("記号ありの rows = %d, want 3", got)
 	}
 	if p := sb.cursor("0123456789abcdefghij", 18, false); p != (wrapPos{row: 2, x: 2}) {
 		t.Errorf("記号ありの cursor(18) = %+v, want 2,2", p)
 	}
-	if c := (WrapLines{w: sb}).Column("0123456789abcdefghij", 2, 0); c != 18 {
-		t.Errorf("記号の列の Column = %d, want 18", c)
+	if c := (WrapLines{w: sb}).Column("0123456789abcdefghij", 18); c != 22 {
+		t.Errorf("記号ありの Column(18) = %d, want 22", c)
+	}
+	// 記号の後のタブの幅も、記号の列を数えた列で決める（nvim 0.12.5 の showbreak=>> と同じ）。
+	// 2 行目の a は 12 列目から、タブは 15 列目から 16 列目の手前までの 1 列、Y は 16 列目（2 行目の 6 列目）。
+	if p := sb.cursor("0123456789aaa\tY", 14, false); p != (wrapPos{row: 1, x: 6}) {
+		t.Errorf("記号の後のタブ: cursor(Y) = %+v, want 1,6", p)
 	}
 }
 
