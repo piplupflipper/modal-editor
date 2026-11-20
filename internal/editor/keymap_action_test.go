@@ -62,7 +62,7 @@ func runInsertCases(t *testing.T, km *input.Keymap, cases []insertCase) {
 func emacsKeymap(t *testing.T) *input.Keymap {
 	t.Helper()
 	km := input.DefaultKeymap()
-	if errs := applyKeymapActions(km, map[string]map[string]string{"insert": emacsInsertKeys}, editcmd.MustParseKeys("<Space>"), nil); len(errs) != 0 {
+	if errs := applyKeymapActions(km, userKeymap{actions: map[string]map[string]string{"insert": emacsInsertKeys}}, editcmd.MustParseKeys("<Space>"), nil); len(errs) != 0 {
 		t.Fatal(errs)
 	}
 	return km

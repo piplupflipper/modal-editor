@@ -76,13 +76,18 @@ type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
 	// モードの名前（"normal"、"visual"、"insert"、"commandLine"）から、キーの列の表記から展開するキーの列の表記への対応である。
 	// 未知のモードと、editcmd.ParseKeysLeader で読めない表記の項目は除いてある。<Leader> は置き換えずに残す。
-	// 右辺がオブジェクト（{ "action": "<ID>" }）の項目は、ここではなく KeymapActions に入る。
+	// 右辺がオブジェクト（{ "action": "<ID>" }、{ "command": "<名前>" }）の項目は、ここではなく KeymapActions か KeymapCommands に入る。
 	Keymap map[string]map[string]string
 	// KeymapActions は、keymap の項目のうち右辺がオブジェクト（{ "action": "<ID>" }）のもので、editor.Config.KeymapActions に渡す（FR-126）。
 	// モードの名前（"normal"、"visual"、"insert"）から、キーの列の表記から操作の ID への対応である。
 	// 形の誤り（知らない項目、action が無い、commandLine に書いた）のある項目は除いてある。操作の ID とモードと左辺が使えるかは、
 	// CheckKeymapActions で確かめる。項目が無ければ nil である。
 	KeymapActions map[string]map[string]string
+	// KeymapCommands は、keymap の項目のうち右辺が Ex コマンドのオブジェクト（{ "command": "<正規の名前>", "args": "<引数>" }）のもので、
+	// editor.Config.KeymapCommands に渡す（FR-154）。モードの名前（"normal"、"visual"、"insert"）から、キーの列の表記から Ex コマンドへの対応である。
+	// 形の誤り（知らない項目、action と command の両方がある、args だけがある、commandLine に書いた）のある項目は除いてある。
+	// コマンドの名前とモードと左辺が使えるかは、CheckKeymapCommands で確かめる。項目が無ければ nil である。
+	KeymapCommands map[string]map[string]KeymapCommand
 	// Leader は leader の値で、キーの表記の <Leader> に当たるキーの列の表記である（基本設計 7.2。FR-97）。
 	// editor.Config.Leader にそのまま渡す。項目が無いか誤りなら空で、editor の既定（editcmd.DefaultLeader）を使う。
 	Leader string
@@ -178,7 +183,8 @@ type Config struct {
 	// pos は、見た目の設定の項目を書いた位置である（CheckAppearance）。
 	pos appearancePos
 
-	// keymapPos は、KeymapActions の各項目の右辺を書いた位置である（CheckKeymapActions）。
+	// keymapPos は、KeymapActions と KeymapCommands の各項目の右辺を書いた位置である（CheckKeymapActions、CheckKeymapCommands）。
+	// 1 つのモードの 1 つの左辺は、どちらか一方にだけ入る。
 	keymapPos map[string]map[string]*Error
 
 	// aliasPos は、CommandAliases の各別名の名前を書いた位置で、CommandAliases と同じ順に並べる（CheckCommandAliases）。
@@ -294,7 +300,8 @@ func Parse(path string, data []byte) (Config, []error) {
 }
 
 // keymap は、keymap の値を読む。右辺が文字列の項目を Keymap に、オブジェクトの項目（{ "action": "<ID>" }。FR-126）を
-// KeymapActions に入れる。操作の ID は、ここでは空でないことだけを確かめ、使えるかは CheckKeymapActions で確かめる。
+// KeymapActions に、Ex コマンドのオブジェクトの項目（{ "command": "<名前>" }。FR-154）を KeymapCommands に入れる（keymapAction）。
+// 操作の ID とコマンドの名前は、ここでは空でないことだけを確かめ、使えるかは CheckKeymapActions と CheckKeymapCommands で確かめる。
 //
 // req: FR-126
 func (s *source) keymap(v *hujson.Value, cfg *Config) {
@@ -338,53 +345,91 @@ func (s *source) keymap(v *hujson.Value, cfg *Config) {
 	}
 }
 
-// keymapAction は、keymap のモード mode の、右辺がオブジェクトの項目 e を読み、KeymapActions に入れる（FR-126）。
-// オブジェクトの項目は action（操作の ID の文字列）だけで、知らない項目と action の無いオブジェクトは誤りにして、項目ごと使わない。
-// commandLine には操作を書けない（コマンドラインの入力は操作の表を通らない）。
+// KeymapCommand は、keymap の右辺に書いた Ex コマンド（{ "command": "<正規の名前>", "args": "<引数>" }）の 1 件である（FR-154）。
+type KeymapCommand struct {
+	// Name は command の値で、空でない。正規の名前かは CheckKeymapCommands で確かめる。
+	Name string
+	// Args は args の値で、書かなければ空である。
+	Args string
+}
+
+// keymapAction は、keymap のモード mode の、右辺がオブジェクトの項目 e を読み、KeymapActions か KeymapCommands に入れる。
+// オブジェクトは、本体の操作（{ "action": "<ID>" }。FR-126）か、Ex コマンド（{ "command": "<名前>", "args": "<引数>" }。FR-154）である。
+// action と command はどちらか一方を書き、args は command と一緒にだけ書ける。値はどれも文字列で、action と command は空にできない。
+// 知らない項目、action と command の両方、どちらも無いオブジェクト、command の無い args は誤りにして、項目ごと使わない。
+// commandLine には書けない（コマンドラインの入力は操作の表を通らない）。
 //
-// req: FR-126
+// req: FR-126, FR-154
 func (s *source) keymapAction(cfg *Config, mode string, e member) {
 	path := join(join("keymap", mode), e.name)
 	if mode == "commandLine" {
-		s.report(e.value.StartOffset, "%s: commandLine には操作を書けない（キーの列の文字列を書く）", path)
+		s.report(e.value.StartOffset, "%s: commandLine には操作もコマンドも書けない（キーの列の文字列を書く）", path)
 		return
 	}
 	obj, _ := e.value.Value.(*hujson.Object)
-	id, found, bad := "", false, false
+	vals := map[string]string{}
+	bad := false
 	for _, m := range s.members(obj, path) {
-		if m.name != "action" {
+		switch m.name {
+		case "action", "command", "args":
+		default:
 			s.report(m.nameOff, "%s: 未知の項目 %s がある。この割り当てを使わない", path, m.name)
 			bad = true
 			continue
 		}
-		v, ok := s.str(m.value, join(path, "action"))
+		v, ok := s.str(m.value, join(path, m.name))
 		if !ok {
 			bad = true
 			continue
 		}
-		if v == "" {
-			s.report(m.value.StartOffset, "%s: 操作の ID が空である", join(path, "action"))
+		if v == "" && m.name != "args" {
+			msg := map[string]string{"action": "操作の ID が空である", "command": "コマンドの名前が空である"}[m.name]
+			s.report(m.value.StartOffset, "%s: %s", join(path, m.name), msg)
 			bad = true
 			continue
 		}
-		id, found = v, true
+		vals[m.name] = v
 	}
-	if !found && !bad {
-		s.report(e.value.StartOffset, "%s: 操作の ID（action）が無い", path)
+	_, hasAction := vals["action"]
+	_, hasCommand := vals["command"]
+	_, hasArgs := vals["args"]
+	switch {
+	case bad:
+		return
+	case hasAction && hasCommand:
+		s.report(e.value.StartOffset, "%s: action と command は一方だけを書く。この割り当てを使わない", path)
+		return
+	case hasArgs && !hasCommand:
+		s.report(e.value.StartOffset, "%s: args は command と一緒に書く。この割り当てを使わない", path)
+		return
+	case !hasAction && !hasCommand:
+		s.report(e.value.StartOffset, "%s: 操作の ID（action）か Ex コマンド（command）が無い", path)
+		return
 	}
-	if !found || bad {
+	if cfg.keymapPos == nil {
+		cfg.keymapPos = map[string]map[string]*Error{}
+	}
+	if cfg.keymapPos[mode] == nil {
+		cfg.keymapPos[mode] = map[string]*Error{}
+	}
+	cfg.keymapPos[mode][e.name] = s.at(e.value.StartOffset, "")
+	if hasCommand {
+		if cfg.KeymapCommands == nil {
+			cfg.KeymapCommands = map[string]map[string]KeymapCommand{}
+		}
+		if cfg.KeymapCommands[mode] == nil {
+			cfg.KeymapCommands[mode] = map[string]KeymapCommand{}
+		}
+		cfg.KeymapCommands[mode][e.name] = KeymapCommand{Name: vals["command"], Args: vals["args"]}
 		return
 	}
 	if cfg.KeymapActions == nil {
 		cfg.KeymapActions = map[string]map[string]string{}
-		cfg.keymapPos = map[string]map[string]*Error{}
 	}
 	if cfg.KeymapActions[mode] == nil {
 		cfg.KeymapActions[mode] = map[string]string{}
-		cfg.keymapPos[mode] = map[string]*Error{}
 	}
-	cfg.KeymapActions[mode][e.name] = id
-	cfg.keymapPos[mode][e.name] = s.at(e.value.StartOffset, "")
+	cfg.KeymapActions[mode][e.name] = vals["action"]
 }
 
 // CheckKeymapActions は、KeymapActions の各項目（モードの名前、左辺の表記、操作の ID）を check で確かめ、使えない項目を除いて、
@@ -398,6 +443,26 @@ func (c *Config) CheckKeymapActions(check func(mode, lhs, id string) error) []er
 		for lhs, id := range maps {
 			if err := check(mode, lhs, id); err != nil {
 				errs = append(errs, c.keymapPos[mode][lhs].with("%s: 操作 %s を使えない: %v", join(join("keymap", mode), lhs), id, err))
+				delete(maps, lhs)
+			}
+		}
+	}
+	SortErrors(errs)
+	return errs
+}
+
+// CheckKeymapCommands は、KeymapCommands の各項目（モードの名前、左辺の表記、Ex コマンド）を check で確かめ、使えない項目を除いて、
+// 位置と内容を誤りとして返す（FR-154）。書ける Ex コマンドの名前は、拡張機能の宣言ファイルと Ex コマンドの別名の表（設定の commandAliases を
+// 足したもの）で決まり、このパッケージは同じ層の internal/command を import しないので、呼び出し側（cmd/vi-imitation）が宣言ファイルを読み、
+// 別名を足した後に、確かめる関数（editor.KeymapCommandCheck）を渡して 1 回呼ぶ（CheckCommandAliases と同じ形）。
+//
+// req: FR-154
+func (c *Config) CheckKeymapCommands(check func(mode, lhs string, cmd KeymapCommand) error) []error {
+	var errs []error
+	for mode, maps := range c.KeymapCommands {
+		for lhs, cmd := range maps {
+			if err := check(mode, lhs, cmd); err != nil {
+				errs = append(errs, c.keymapPos[mode][lhs].with("%s: コマンド %s を使えない: %v", join(join("keymap", mode), lhs), cmd.Name, err))
 				delete(maps, lhs)
 			}
 		}

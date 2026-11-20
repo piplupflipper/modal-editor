@@ -112,6 +112,9 @@ func (s *State) deferredReady(d Deferred) bool {
 		return s.mode == ModeNormal
 	case d.mode.visual():
 		return s.mode == d.mode && s.visual.anchor == d.anchor && s.visual.head == d.head
+	case d.mode == ModeInsert:
+		// インサートモードで保留するのは、keymap の Ex コマンド（FR-154）で呼んだ拡張機能のコマンドだけである。
+		return s.mode == ModeInsert
 	default:
 		return s.mode == ModeNormal
 	}

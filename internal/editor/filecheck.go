@@ -83,6 +83,9 @@ func (e *Editor) promptKey(k editcmd.Key) {
 // 動作が失敗したら誤りを知らせ、残りを捨てて false を返す（Vim は :w が失敗すると右のコマンドを実行しない）。
 // :w が外での変更を見つけたら、書き込むかを問い（askWrite）、残りの動作は答えが y のときに行う。このときも false を返す。
 func (e *Editor) runActions(bs *bufferState, acts []ex.Action) bool {
+	// 動作は、利用者のキーで実行したコマンド（Ex コマンド）のものである。移る理由をキーからの実行にする（switchTo。FR-154）。
+	e.keyActions++
+	defer func() { e.keyActions-- }()
 	for i, a := range acts {
 		err := e.doAction(bs, a)
 		var pe *permissionError

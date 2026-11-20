@@ -523,6 +523,8 @@ func loadConfig(logger *slog.Logger) editor.Config {
 	aliases, addAlias := editor.CommandAliases(specs)
 	if pathErr == nil {
 		cfgErrs = append(cfgErrs, cfg.CheckCommandAliases(addAlias)...)
+		// keymap の右辺に書いた Ex コマンド（FR-154）は、拡張機能のコマンドと別名の名前で書けるかが決まるので、別名を足した後に確かめる。
+		cfgErrs = append(cfgErrs, cfg.CheckKeymapCommands(editor.KeymapCommandCheck(cfg.Leader, specs, aliases))...)
 		config.SortErrors(cfgErrs)
 		problems = append(problems, cfgErrs...)
 		// 配色のファイルの誤りは、設定ファイルの誤りの後に知らせる（最初の 1 件は設定ファイルの誤りにする）。
@@ -546,6 +548,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		CheckInterval:    interval,
 		Keymap:           cfg.Keymap,
 		KeymapActions:    cfg.KeymapActions,
+		KeymapCommands:   cfg.KeymapCommands,
 		Leader:           cfg.Leader,
 		SyncTimeout:      cfg.SyncTimeout,
 		StartSyncTimeout: cfg.StartSyncTimeout,

@@ -111,6 +111,8 @@ func init() {
 		// :option.set の値は "|" を含めて行末までなので barNone にする。
 		{name: optionSetName, min: len(optionSetName), rng: rangeNone, bar: barNone, run: runOptionSet},
 		{name: optionGetName, min: len(optionGetName), rng: rangeNone, run: runOptionGet},
+		// 真偽の項目を反転する（FR-155）。:set 名前! の別名もこれを呼ぶ。
+		{name: optionToggleName, min: len(optionToggleName), rng: rangeNone, run: runOptionToggle},
 		// 検索の一致の色を消す（FR-138）。点を含む正規の名前で、省略できない。Vim の :noh[lsearch] は別名の表にある。
 		{name: clearHighlightName, min: len(clearHighlightName), rng: rangeNone, run: runClearHighlight},
 	}

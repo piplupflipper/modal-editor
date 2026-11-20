@@ -372,8 +372,12 @@ func (e *Editor) editorOpen(p ext.EditorOpenParams) (*bufferState, bool, error) 
 	// 別のバッファへ移るときと、使い直したときは、openFile か enter が移る前の位置を記録するので、移った先のバッファの中の移動は記録しない。
 	jump := prev == bs && !reused
 	if p.Focus && e.cur != bs {
-		if e.cur.state.Mode() == command.ModeInsert || e.cur.state.Mode() == command.ModeCommandLine {
-			// 入力の途中のバッファからは移さない。開くことと、そのバッファのカーソルを動かすことだけを行う。
+		mode := e.cur.state.Mode()
+		inputting := mode == command.ModeCommandLine || (mode == command.ModeInsert && e.keyActions == 0)
+		if inputting {
+			// 外からの要求（拡張機能の editor/open）では、入力の途中のバッファからは移さない。開くことと、そのバッファのカーソルを動かすことだけを行う。
+			// 利用者のキーで呼んだコマンドの結果の Open（keymap の Ex コマンドをインサートモードで呼んだとき。doPendingOpens と openFromCommand。FR-154）は、
+			// :tab.new と同じく移り、インサートモードを移った先で続ける（switchTo。Vim 9.1 の <Cmd>buffer b.txt<CR> と同じ）。
 			e.message = infoMessage(fmt.Sprintf("%s を開きました", displayName(bs)))
 		} else {
 			e.enter(bs)

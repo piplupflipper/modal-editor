@@ -151,15 +151,16 @@ func (s *State) applyExResult(res ex.Result, err error) {
 			pushed = true
 		}
 	}
+	// インサートモードで実行するのは、設定の keymap に書いた Ex コマンドだけである（keymapCommand。FR-154）。
 	switch res.Move {
 	case ex.CursorFirstNonBlank:
-		s.setCursorNormal(s.firstNonBlankPos(min(res.Cursor, s.lastLine())))
+		s.setCursorAfterEx(s.firstNonBlankPos(min(res.Cursor, s.lastLine())))
 	case ex.CursorLineStart:
-		s.setCursorNormal(pos(min(res.Cursor, s.lastLine()), 0))
+		s.setCursorAfterEx(pos(min(res.Cursor, s.lastLine()), 0))
 	case ex.CursorKeepColumn:
-		s.setCursorNormal(pos(min(res.Cursor, s.lastLine()), s.cursor.Byte))
+		s.setCursorAfterEx(pos(min(res.Cursor, s.lastLine()), s.cursor.Byte))
 	case ex.CursorUnchanged:
-		s.setCursorNormal(s.cursor)
+		s.setCursorAfterEx(s.cursor)
 	}
 	if err != nil {
 		s.fail(err)
