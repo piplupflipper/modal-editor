@@ -11,6 +11,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/config"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/input"
 	"github.com/piplupflipper/vi-imitation/internal/option"
@@ -147,7 +148,7 @@ func (e *Editor) openHelp(word string) error {
 
 // helpText は、:help に出す文書である。docs/usage.md の後に、本体のキーの節（helpKeyLines）と、
 // 設定ファイルの Ex コマンドの別名の節（FR-150。足した別名があるときだけ）と、
-// 読み込んだ拡張機能の操作の節（宣言ファイルの contributes の ID、種類、キー、description）を足す。
+// 読み込んだ拡張機能の操作の節（宣言ファイルの contributes の ID、種類、キー、description）を足す。コマンドの ID は : を付けて書く。
 // 拡張機能のキーの <Leader> は、キーの一覧と同じく設定の leader に置き換えて出す。
 //
 // req: FR-150
@@ -172,15 +173,18 @@ func (e *Editor) helpText() string {
 		groups := []struct {
 			kind string
 			cs   []ext.Contribution
+			// colon は、ID の前に : を付けて書くことを表す。コマンドはコマンドラインから :ID で呼ぶので、
+			// 本体の Ex コマンドと同じく :ID の形で書き、:help :ID でも :help ID でも引けるようにする（PR #309 のレビューの必須 1）。
+			colon string
 		}{
-			{"オペレーター", m.Contributes.Operators},
-			{"モーション", m.Contributes.Motions},
-			{"テキストオブジェクト", m.Contributes.TextObjects},
-			{"コマンド", m.Contributes.Commands},
+			{"オペレーター", m.Contributes.Operators, ""},
+			{"モーション", m.Contributes.Motions, ""},
+			{"テキストオブジェクト", m.Contributes.TextObjects, ""},
+			{"コマンド", m.Contributes.Commands, ":"},
 		}
 		for _, g := range groups {
 			for _, c := range g.cs {
-				line := fmt.Sprintf("- `%s`（拡張機能 %s の%s", c.ID, m.ID, g.kind)
+				line := fmt.Sprintf("- `%s%s`（拡張機能 %s の%s", g.colon, c.ID, m.ID, g.kind)
 				if c.Keys != "" {
 					keys := c.Keys
 					if ks, err := editcmd.ParseKeysLeader(c.Keys, e.leader); err == nil {
@@ -448,11 +452,17 @@ func (h *helpIndex) find(word string) (int, bool) {
 //
 //   - キー: :help の「本体のキー」の節のキー（helpKeyLines。LSP と DAP の操作の既定のキーと、回数などの Parser が先に読むキーを含む）と、
 //     読み込んだ拡張機能の宣言ファイルの操作の既定のキー（keys。<Leader> は設定の leader にする）
-//   - Ex コマンド: コマンドの一覧（listCommands。本体の Ex コマンド、別名、拡張機能のコマンド）の名前に : を付けたもの
-//   - 設定の名前: 実行中に変えられる設定の表（internal/option）の名前
+//   - Ex コマンド: コマンドの一覧（listCommands。本体の Ex コマンド、別名、拡張機能のコマンド）の名前に : を付けたもの。
+//     拡張機能のコマンドは、:help の「読み込んだ拡張機能の操作」の節に :ID の形で書く（helpText）ので、同梱でない拡張機能のものも引ける
+//   - 設定の名前: 実行中に変えられる設定の表（internal/option）の名前と、設定ファイルの最上位の項目の名前（config.TopLevelNames）
 //   - 操作の ID: 設定の keymap に書ける操作の ID（input.Actions）
+//   - 拡張機能の操作の ID: 読み込んだ拡張機能のオペレーター、モーション、テキストオブジェクトの ID（:help の「読み込んだ拡張機能の操作」の節）
 //
-// 説明は、見つかった行を 1 行の要約にしたもの（helpSummary）である。文書は :help と同じもの（helpText）を 1 回だけ読む。
+// 説明は、その語を定めた所の説明文である。キーは「本体のキー」の節の行の説明か宣言ファイルの description、拡張機能のコマンドと操作は
+// 宣言ファイルの description、操作の ID は操作の表の説明文である。定めた所に説明文が無い語（本体の Ex コマンド、設定の名前、
+// description の無い拡張機能の操作）だけ、:help で見つかった行を 1 行の要約にしたもの（helpSummary）にする。
+// :help で見つかった行は、語の説明でない行（プレビューの表の行など）のことがあるためである（PR #309 のレビューの推奨 3）。
+// 文書は :help と同じもの（helpText）を 1 回だけ読む。
 //
 // req: FR-148
 func (e *Editor) listHelpWords() []ext.ListHelpWord {
@@ -460,38 +470,64 @@ func (e *Editor) listHelpWords() []ext.ListHelpWord {
 	idx := newHelpIndex(lines)
 	var out []ext.ListHelpWord
 	seen := map[string]bool{}
-	add := func(word, kind string) {
+	// add は、語 word を、説明 desc（空なら :help で見つかった行の要約）で一覧に足す。
+	add := func(word, kind, desc string) {
 		if word == "" || seen[word] {
 			return
 		}
 		seen[word] = true
-		if i, ok := idx.find(word); ok {
-			out = append(out, ext.ListHelpWord{Word: word, Kind: kind, Description: helpSummary(lines[i], word)})
+		i, ok := idx.find(word)
+		if !ok {
+			return
 		}
+		if desc == "" {
+			desc = helpSummary(lines[i], word)
+		}
+		out = append(out, ext.ListHelpWord{Word: word, Kind: kind, Description: desc})
 	}
 	for _, l := range helpKeyLines(e.keymap) {
 		if spans := codeSpans(l); len(spans) > 0 {
-			add(spans[0], ext.HelpKindKey)
+			_, desc, _ := strings.Cut(l, "`"+spans[0]+"`: ")
+			add(spans[0], ext.HelpKindKey, desc)
 		}
 	}
+	type contribution struct {
+		c       ext.Contribution
+		command bool
+	}
+	var contribs []contribution
 	for _, s := range e.cfg.Extensions {
 		c := s.Manifest.Contributes
-		for _, cs := range [][]ext.Contribution{c.Operators, c.Motions, c.TextObjects, c.Commands} {
+		for _, cs := range [][]ext.Contribution{c.Operators, c.Motions, c.TextObjects} {
 			for _, x := range cs {
-				if ks, err := editcmd.ParseKeysLeader(x.Keys, e.leader); err == nil && len(ks) > 0 {
-					add(editcmd.KeysString(ks), ext.HelpKindKey)
-				}
+				contribs = append(contribs, contribution{c: x})
 			}
+		}
+		for _, x := range c.Commands {
+			contribs = append(contribs, contribution{c: x, command: true})
+		}
+	}
+	for _, x := range contribs {
+		if ks, err := editcmd.ParseKeysLeader(x.c.Keys, e.leader); err == nil && len(ks) > 0 {
+			add(editcmd.KeysString(ks), ext.HelpKindKey, x.c.Description)
 		}
 	}
 	for _, c := range e.listCommands() {
-		add(":"+c.Name, ext.HelpKindCommand)
+		add(":"+c.Name, ext.HelpKindCommand, c.Description)
 	}
 	for _, d := range option.Defs() {
-		add(d.Name, ext.HelpKindOption)
+		add(d.Name, ext.HelpKindOption, "")
+	}
+	for _, n := range config.TopLevelNames() {
+		add(n, ext.HelpKindOption, "")
 	}
 	for _, a := range input.Actions() {
-		add(a.ID, ext.HelpKindAction)
+		add(a.ID, ext.HelpKindAction, a.Description)
+	}
+	for _, x := range contribs {
+		if !x.command {
+			add(x.c.ID, ext.HelpKindOperation, x.c.Description)
+		}
 	}
 	return out
 }

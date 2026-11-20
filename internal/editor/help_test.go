@@ -183,8 +183,14 @@ func TestHelpExtensions(t *testing.T) {
 	// 宣言の <Leader> は、キーの一覧と同じく設定の leader に置き換えて出す。
 	h.keys(":help fake.leader<CR>")
 	h.settle()
-	if got, want := h.wrappedLine(2), "- `fake.leader`（拡張機能 fake のコマンド。キーは `,z`）"; !strings.HasPrefix(got, want) {
+	if got, want := h.wrappedLine(2), "- `:fake.leader`（拡張機能 fake のコマンド。キーは `,z`）"; !strings.HasPrefix(got, want) {
 		t.Errorf(":help fake.leader: cursor line %q (message %q)", got, h.message())
+	}
+	// コマンドは :ID の形で書くので、本体の Ex コマンドと同じく :help :ID でも引ける（PR #309 のレビューの必須 1）。
+	h.keys("<Esc>:help :fake.leader<CR>")
+	h.settle()
+	if got, want := h.wrappedLine(2), "- `:fake.leader`（拡張機能 fake のコマンド。キーは `,z`）"; !strings.HasPrefix(got, want) {
+		t.Errorf(":help :fake.leader: cursor line %q (message %q)", got, h.message())
 	}
 }
 

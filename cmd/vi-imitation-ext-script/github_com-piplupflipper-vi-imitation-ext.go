@@ -27,6 +27,7 @@ func init() {
 		"HelpKindAction":             reflect.ValueOf(constant.MakeFromLiteral("\"action\"", token.STRING, 0)),
 		"HelpKindCommand":            reflect.ValueOf(constant.MakeFromLiteral("\"command\"", token.STRING, 0)),
 		"HelpKindKey":                reflect.ValueOf(constant.MakeFromLiteral("\"key\"", token.STRING, 0)),
+		"HelpKindOperation":          reflect.ValueOf(constant.MakeFromLiteral("\"operation\"", token.STRING, 0)),
 		"HelpKindOption":             reflect.ValueOf(constant.MakeFromLiteral("\"option\"", token.STRING, 0)),
 		"ListCommands":               reflect.ValueOf(ext.ListCommands),
 		"ListHelp":                   reflect.ValueOf(ext.ListHelp),

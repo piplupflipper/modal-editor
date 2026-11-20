@@ -125,6 +125,8 @@ const (
 	HelpKindCommand = "command"
 	HelpKindOption  = "option"
 	HelpKindAction  = "action"
+	// HelpKindOperation は、読み込んだ拡張機能のオペレーター、モーション、テキストオブジェクトの ID である（宣言ファイルの contributes）。
+	HelpKindOperation = "operation"
 )
 
 // ListHelpWord は、:help で引ける語 1 つである（FR-148）。本体は、:help でその語の説明の行が見つかる語だけを返す。
@@ -134,9 +136,12 @@ type ListHelpWord struct {
 	// editor/execute の help に渡すと、その語の :help を開く。
 	Word string `json:"word"`
 	// Kind は、語の種類である。HelpKindKey（キー）、HelpKindCommand（Ex コマンドと拡張機能のコマンド。Word は : で始まる）、
-	// HelpKindOption（:option.set で変える設定の名前）、HelpKindAction（設定の keymap に書く操作の ID）のどれかである。
+	// HelpKindOption（:option.set で変える設定の名前と、設定ファイルの最上位の項目の名前）、HelpKindAction（設定の keymap に書く操作の ID）、
+	// HelpKindOperation（拡張機能のオペレーター、モーション、テキストオブジェクトの ID）のどれかである。
 	Kind string `json:"kind"`
-	// Description は、:help でその語を引いたときの説明の行から、Markdown の記号と語そのものを除いた 1 行である。無ければ空。
+	// Description は、語の 1 行の説明である。キー、操作の ID、拡張機能のコマンドと操作は、それを定めた所の説明文
+	// （キーの一覧、操作の表、宣言ファイルの description）で、それが無い語は、:help でその語を引いたときの説明の行から
+	// Markdown の記号と語そのものを除いた 1 行である。無ければ空。
 	Description string `json:"description,omitempty"`
 }
 
