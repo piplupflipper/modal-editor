@@ -229,8 +229,8 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `open-above` | 操作 | `normal` | 上に行を足して入力する |
 | `insert` | 操作 | `normal` | カーソルの前から入力する |
 | `append` | 操作 | `normal` | カーソルの後から入力する |
-| `insert-line-start` | 操作 | `normal` | 行の最初の空白でない文字の前から入力する |
-| `append-line-end` | 操作 | `normal` | 行の末尾から入力する |
+| `insert-line-start` | 操作 | `normal`、`visual` | 行の最初の空白でない文字の前から入力する（ビジュアルモードでは選んだ行ごと） |
+| `append-line-end` | 操作 | `normal`、`visual` | 行の末尾から入力する（ビジュアルモードでは選んだ行ごと） |
 | `undo` | 操作 | `normal` | アンドゥ |
 | `redo` | 操作 | `normal` | リドゥ |
 | `command-line` | 操作 | `normal`、`visual` | コマンドラインに入る |
