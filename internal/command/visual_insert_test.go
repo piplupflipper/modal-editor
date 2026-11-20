@@ -87,8 +87,11 @@ func TestVisualInsert(t *testing.T) {
 		{"a|bc", "A,<End>;<Esc>u", "abc,", "0:3", ModeNormal},
 		// 改行は位置の行の中に収まらないので、同時の入力を終え、カーソルの位置だけに入る。
 		{"  abc\n  def", "VjIX<CR>Y<Esc>", "  X\nYabc\n  Xdef", "1:0", ModeNormal},
-		// 行の先頭の <BS>（前の行とつなぐ）も行の中に収まらない。最初の行の <BS> はバッファの先頭で何もしない。
-		{"ab\ncd", "VjI<BS>X<Esc>", "Xab\ncd", "0:0", ModeNormal},
+		// 行の先頭の <BS>（前の行とつなぐ）も行の中に収まらない。Vim の <C-v>jI<BS>X<Esc> と同じテキスト。
+		{"xx\nab\ncd", "jVjI<BS>X<Esc>", "xxXab\ncd", "0:2", ModeNormal},
+		// カーソルの位置がバッファの先頭なら、<BS> はカーソルの位置で何もしないので、記録せず、同時の入力も終えない（#289）。
+		// Vim の <C-v>jI<BS>X<Esc> と同じテキスト。
+		{"ab\ncd", "VjI<BS>X<Esc>", "Xab\nXcd", "0:0", ModeNormal},
 		// 行末の <Del>（次の行をつなぐ）も同じ。
 		{"ab\ncd\nef", "VjA<Del>X<Esc>", "abXcd\nef", "0:2", ModeNormal},
 		// 1 回のアンドゥで、すべての位置が戻る。カーソルは Vim 9.1 の <C-v>4j$AX<Esc>u と同じく最初の行の最後の文字。

@@ -32,6 +32,19 @@ func TestCountInsertRepeat(t *testing.T) {
 		{"|abc\ndef", "Vj3Ixy<Esc>", "xyxyxyabc\nxyxyxydef", "0:5"},
 		{"|abc\ndef", "Vj3Aab<BS>c<Esc>", "abcacacac\ndefacacac", "0:8"},
 		{"|abc\ndef", "Vj2Axy<CR>z<Esc>", "abcxy\nzxy\nz\ndefxy", "2:0"},
+		// まとめている文字を消す <BS>（#289）。まとめている文字より前を消す <BS> と、改行の後の <BS> を含む。
+		{"|abc", "3axy<BS>z<Esc>", "axzxzxzbc", "0:6"},
+		{"|abc", "3iあい<BS>う<Esc>", "あうあうあうabc", "0:15"},
+		{"a|bc", "3ix<BS><BS>y<Esc>", "ybc", "0:0"},
+		{"|abc", "3ixy<BS>z<CR>w<BS><BS>q<Esc>", "xzqxzqxzqabc", "0:8"},
+		{"|abc\ndef", "Vj3Axy<BS>z<Esc>", "abcxzxzxz\ndefxzxzxz", "0:8"},
+		// 何もしなかった <BS> は記録しない（#289）。記録すると、繰り返しの <BS> が前の回に入れた文字を消す。
+		{"|abc", "3ia<BS><BS>b<Esc>", "bbbabc", "0:2"},
+		{"|abc", "3i<BS>x<Esc>", "xxxabc", "0:2"},
+		{"|", "3i<BS>x<Esc>", "xxx", "0:2"},
+		{"|abc", "2ia<BS><BS><BS>b<CR>c<Esc>", "b\ncb\ncabc", "2:0"},
+		{"a|bc", "2ia<BS><BS><BS>b<CR>c<Esc>", "b\nb\ncbc", "2:0"},
+		{"|abc\ndef", "Vj3Ia<BS><BS>b<Esc>", "bbbabc\nbbbdef", "0:2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.text+"/"+tt.keys, func(t *testing.T) {
@@ -81,5 +94,109 @@ func TestCountInsertLongLine(t *testing.T) {
 	feedKeys(s, "u")
 	if got := s.buf.Text(); got != "" {
 		t.Errorf("after u: text has %d bytes", len(got))
+	}
+}
+
+// <BS> を挟む回数付きの挿入も、まとめている文字を <BS> で落として 1 つの変更にする（#289）。
+// 前は <BS> を 1 件ずつ行い、そのたびにまとめた文字を入れたので、100000axy<BS>z<Esc> は行の長さの 2 乗の時間（11.4 秒）を要し、
+// 変更（拡張機能への buffer/change）を回数の 2 倍だけ溜めた。ここでは回数を 2000 にし、変更の数で確かめる（まとめなければ 3999 個）。
+// Vim 9.1 では、100000axy<BS>z<Esc> が xz を 100000 個並べた 1 行を作り、カーソルは最後の文字に来る。
+//
+// req: FR-02, FR-07
+func TestCountInsertBackspaceLongLine(t *testing.T) {
+	const count = 2000
+	s := setup(t, "")
+	feedKeys(s, strconv.Itoa(count)+"axy<BS>z")
+	res := s.Feed(editcmd.MustParseKeys("<Esc>")[0])
+	want := strings.Repeat("xz", count)
+	if got := s.buf.Text(); got != want {
+		t.Fatalf("text has %d bytes, want %d", len(got), len(want))
+	}
+	if got := s.Cursor().String(); got != pos(0, len(want)-1).String() {
+		t.Errorf("cursor = %s, want 0:%d", got, len(want)-1)
+	}
+	if n := len(res.Changes); n != 1 {
+		t.Errorf("<Esc> made %d changes, want 1", n)
+	}
+	feedKeys(s, "u")
+	if got := s.buf.Text(); got != "" {
+		t.Errorf("after u: text has %d bytes", len(got))
+	}
+}
+
+// ドットリピートの再実行の 1 回目も、回数による繰り返しと同じく、続けて並んだ文字をまとめて 1 つの変更で入れる（#289）。
+// 前は記録を 1 件ずつ入れたので、長いテキストを入れた後の . は、文字の数だけの変更を作り、行の長さの 2 乗の時間を要した。
+// <BS> と改行を挟む記録で、テキスト、カーソル、u と <C-r> の結果も確かめる。
+//
+// req: FR-06
+func TestDotRepeatLongInsert(t *testing.T) {
+	const count = 2000
+	typed := strings.Repeat("foo xy<BS> ", count)
+	s := setup(t, "")
+	feedKeys(s, "i"+typed+"<Esc>")
+	res := feedKeys(s, ".")
+	once := strings.Repeat("foo x ", count)
+	// . は、最後の文字（空白）の前から入れる。
+	want := once[:len(once)-1] + once + " "
+	if got := s.buf.Text(); got != want {
+		t.Fatalf("text has %d bytes, want %d", len(got), len(want))
+	}
+	if got := s.Cursor().String(); got != pos(0, 2*len(once)-2).String() {
+		t.Errorf("cursor = %s, want 0:%d", got, 2*len(once)-2)
+	}
+	if n := len(res[0].Changes); n != 1 {
+		t.Errorf(". made %d changes, want 1", n)
+	}
+	feedKeys(s, "u")
+	if got := s.buf.Text(); got != once {
+		t.Errorf("after u: text has %d bytes, want %d", len(got), len(once))
+	}
+	feedKeys(s, "<C-r>")
+	if got := s.buf.Text(); got != want {
+		t.Errorf("after <C-r>: text has %d bytes, want %d", len(got), len(want))
+	}
+
+	s = setup(t, "|abc")
+	feedKeys(s, "ixy<BS>z<CR>w<BS>q<Esc>.")
+	if got, want := s.buf.Text(), "xz\nxz\nqqabc"; got != want {
+		t.Errorf("text = %q, want %q", got, want)
+	}
+	if got := s.Cursor().String(); got != "2:0" {
+		t.Errorf("cursor = %s, want 2:0", got)
+	}
+}
+
+// 位置の前を消す操作（<BS>、<C-w>、<C-u>）が何もしなかったとき（バッファの先頭など）は、入力の記録に入れない（#289）。
+// 記録すると、回数による繰り返しとドットリピートで、その操作が前の回に入れた文字を消す。
+// カーソルキーで区切った後に何もしなかったときは、入力を始め直さず、. は区切る前の入力を繰り返す。
+// 期待値は Vim 9.1（vim -Nu NONE -n --not-a-term、set bs=indent,eol,start）で確かめた（2026-11-21）。
+//
+// req: FR-06, FR-07, FR-127
+func TestInsertNoopDeleteNotRecorded(t *testing.T) {
+	tests := []struct {
+		text, keys   string
+		want, cursor string
+	}{
+		{"|abc", "100ia<BS><BS>b<Esc>", strings.Repeat("b", 100) + "abc", "0:99"},
+		{"|abc", "ia<BS><BS>b<Esc>3.", "bbbbabc", "0:2"},
+		{"|abc", "3ia<BS><BS>bc<Esc>.", "bcbcbbcbcbccabc", "0:10"},
+		{"|abc", "ixy<Left><Left><Left><BS><Esc>.", "xyxyabc", "0:1"},
+		{"|abc", "3i<C-w>x<Esc>", "xxxabc", "0:2"},
+		{"|abc", "3i<C-u>x<Esc>", "xxxabc", "0:2"},
+		{"|abc", "3ia<C-w><C-w>b<Esc>", "babc", "0:0"},
+		// 位置の後ろを消す <Del> は、何もしなくても記録する（Vim 9.1 の ins_del と同じ）。繰り返しでも何もしない。
+		{"ab|c", "3a<Del>x<Esc>", "abcxxx", "0:5"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.text+"/"+tt.keys, func(t *testing.T) {
+			s := setupInsertKeys(t, tt.text)
+			feedKeys(s, tt.keys)
+			if got := s.buf.Text(); got != tt.want {
+				t.Errorf("text = %q, want %q", got, tt.want)
+			}
+			if got := s.Cursor().String(); got != tt.cursor {
+				t.Errorf("cursor = %s, want %s", got, tt.cursor)
+			}
+		})
 	}
 }

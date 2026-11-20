@@ -721,6 +721,10 @@ client の接続ごとの読み取りは別の goroutine で行い、キーを�
 インサートモードの入力の記録（ドットリピートの値の `editcmd.Command.Inserted`）は、文字と削除の操作（`insert.delete-prev-char`、`insert.delete-char`、`insert.delete-to-line-end`、`insert.delete-prev-word`、`insert.delete-to-line-start`）を別の種類（`editcmd.InsertInput` の `Op`）として持つ列である（後の 2 つは #260。FR-128）。
 このため、アンドゥの単位、ドットリピート、回数による繰り返し（`3i`）、マクロの再生で、5 つの削除は同じ扱いになり、
 キーの列の展開などから入った制御文字（`\b`、`\x0b`、`\x7f`）は削除と取り違えずに文字として入る（PR #258 のレビュー。それまでは記録が文字列で、`<BS>` を `\b` として持っていた）。
+位置の前を消す 3 つの操作（`insert.delete-prev-char`、`insert.delete-prev-word`、`insert.delete-to-line-start`）が何もしなかったとき（バッファの先頭など）は、記録に入れない（#289）。
+記録すると、回数による繰り返しとドットリピートで、その操作が前の回に入れた文字を消し、`100ia<BS><BS>b<Esc>` が Vim 9.1 と違う結果になった。
+Vim 9.1 も、消すものの無い `<BS>`、`<C-w>`、`<C-u>` は、記録に入れる（`AppendCharToRedobuff`）前に戻る（[src/edit.c の `ins_bs`](https://github.com/vim/vim/blob/v9.1.0000/src/edit.c#L3993-L4018)）。
+位置の後ろを消す 2 つの操作は、何もしなくても記録する（Vim 9.1 の [`ins_del`](https://github.com/vim/vim/blob/v9.1.0000/src/edit.c#L3919-L3950) も、消せなくても記録する）。何もしないのは位置がバッファの末尾にあるときだけで、入力の間に位置の後ろのテキストは増えないので、繰り返しでも何もしない。
 
 段階 3 では、キーの列の解釈の途中の状態（`d2` まで受け取った状態など）とモードは編集の client ごとに持つ（仮）。
 部品の client で受けたキーは、元の client（1.2）の操作として扱う。
@@ -869,7 +873,15 @@ Go の文字列の連結（`+`）は、片方が空ならもう片方をその�
 インサートモードの回数による繰り返し（`3ix<Esc>`）は、記録の中で続けて並んだ文字（改行を除く）を 1 つの編集にまとめて入れる（`internal/command` の `typeRepeated`）。
 Vim 9.1 も、先に届いている文字を 100 バイト（`INPUT_BUFLEN`）までまとめて行へ入れる（[src/edit.c の `insertchar`](https://github.com/vim/vim/blob/v9.1.0000/src/edit.c#L2192-L2218)）。
 こちらは記録の全体が手元にあるので、まとめる長さに上限を置かない（入れるテキストの量は `maxPutBytes` で抑える）。
-削除の操作と改行は、1 件ずつ行う。
+まとめている途中の文字を消す `<BS>`（`insert.delete-prev-char`）は、まとめている文字の最後の 1 文字を落として済ませる（#289）。
+それ以外の削除の操作と改行は、まとめた文字を入れてから 1 件ずつ行う。
+ドットリピートの再実行の 1 回目も、同じ関数で記録を入れる（#289）。
+
+この `<BS>` のまとめ方の前（2026-11-21 の時点の main）は、`<BS>` を 1 件ずつ行っていたので、`100000axy<BS>z<Esc>` は `<BS>` のたびに行を作り直し、カーソルの表示の列を行の先頭から数え直した。
+CPU のプロファイル（回数 40000）では、68% が表示の列の数え直し（`updateWant` の `utf8.RuneCountInString`）、10% が行の作り直し（`Buffer.Apply`）で、残りの多くが GC だった。
+`internal/command` で 11.4 秒（Vim 9.1 は 1.6 秒）を要し、拡張機能への `buffer/change` を回数の 2 倍だけ送った。
+マクロの再生と、キーを 1 つずつ打つ入力は、今も 1 件ずつの編集である。
+
 
 ### 4.4 バッファの切り替えとジャンプリスト
 
