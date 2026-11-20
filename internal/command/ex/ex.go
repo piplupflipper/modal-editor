@@ -1,6 +1,6 @@
 // Package ex は、コマンドラインモードで確定した Ex コマンドの文字列を解析し、実行する（FR-08、FR-09）。
 //
-// 基本設計 2 章の internal/command の下にあり、internal/buffer だけを import する。
+// 基本設計 2 章の internal/command の下にあり、土台の層の internal/buffer と internal/option だけを import する。
 // バッファを編集するコマンド（:s、:g、:v、:d）は、バッファへ直接トランザクションを適用する。
 // 保存、終了、ファイルを開くといったエディタの状態に関わるコマンド（:w、:q、:wq、:x、:e）は、
 // Action の値として呼び出し側へ返し、このパッケージではファイルを読み書きしない。
@@ -44,6 +44,15 @@
 //	:!{cmd}              端末を子プロセスへ渡して cmd を実行する（FR-80。Result.Shell の Terminal を true にして返す）
 //	:[N]r[ead] !{cmd}    cmd の出力を N 行目（省くとカーソルの行）の後に入れる。:0r は 1 行目の前に入れる（FR-81。:r! も同じ）
 //	:reado[nly]          バッファの編集の禁止を切り替え、切り替えた後の状態を Notice で知らせる（FR-86。Vim に無い本体のコマンド。名前は仮）
+//	:option.set <名前> <値>  設定の項目の値を変える（State.Options。FR-132）。名前は省略できない
+//	:option.get <名前>   設定の項目の今の値を "<名前>=<値>" の形で Notice に出す（FR-132）
+//
+// # 別名
+//
+// Ex コマンドの別名は、commands とは別の表（aliases）に置き、コマンドラインを正規のコマンドの呼び出しに変換する（FR-133）。
+// 名前は commands の表を先に引き、無ければ別名の表を引く。別名の表の行は、名前を付け替えるだけの項目か、変換を持つ項目である。
+//
+//	:se[t] {引数} …     Vim の :set の書き方の一部を、:option.set と :option.get の呼び出しに変換する（expandSet）
 //
 // 編集を禁止したバッファ（buffer.Buffer.ReadOnly）では、テキストを変えるコマンド（:s、:d、:r、:{range}!）を、
 // 範囲と引数を確かめる前に E21 で断る（FR-85。Vim 9.1 で 'modifiable' を切ったときと同じ）。:g と :v は断らず、cmd の中のコマンドが断られる。
@@ -317,6 +326,9 @@ type State struct {
 	// ExtCommand は、コマンドの ID が拡張機能のコマンド（宣言ファイルの contributes.commands）であれば、
 	// それを宣言した拡張機能の ID と true を返す。nil なら、拡張機能のコマンドは呼べない（E492 にする）。
 	ExtCommand func(id string) (extension string, ok bool)
+	// Options は、設定の項目の値を読み書きする口である（:option.set、:option.get と、その別名の :set。FR-132）。
+	// nil なら、これらのコマンドは E319 にする。
+	Options Options
 }
 
 // Notice は、Ex コマンドが利用者に知らせる 1 行の通知である（"3 行をフィルターしました" など）。
@@ -440,6 +452,8 @@ type execCtx struct {
 	jumped bool
 	// notice は、最後に通知を出したコマンドの通知である（Result.Notice）。
 	notice Notice
+	// optionText は、:option.get が最後に出した通知の文言である。続けて読んだ値を同じ通知に足すかを決めるのに使う（runOptionGet）。
+	optionText string
 	// shell は、外部のコマンドの実行を求めたときの求めである（Result.Shell）。
 	shell *ShellRequest
 }
@@ -537,11 +551,11 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 		s.next()
 		name, cmd = "!", &filterCommand
 	} else {
-		name = s.letters()
+		name = readName(s)
 		if name == "" {
 			return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
 		}
-		cmd = lookup(name)
+		cmd = resolve(name)
 		if cmd == nil {
 			return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
 		}
@@ -622,6 +636,17 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 	return inv.next, inv.nextPos, inv.hasNext, nil
 }
 
+// readName は、s の位置から本体のコマンドの名前を読む（runOne と addrKindAt）。
+// 点を含む正規の名前（:option.set）は、拡張機能のコマンドの ID と同じく、空白、"|"、"!" の手前までを名前として読み、
+// Ex コマンドの表にあるときだけその名前にする。それ以外は、続く英字の列を名前にする（:w、:se）。
+func readName(s *scanner) string {
+	if id := extCommandName(s.rest()); strings.Contains(id, ".") && lookup(id) != nil {
+		s.i += len(id)
+		return id
+	}
+	return s.letters()
+}
+
 // extCommandName は、拡張機能のコマンドの ID として読む、コマンド名の位置から続く文字列を返す。
 // 空白、"|"、"!" の手前までである。ID が空白を含むコマンドは、コマンドラインからは呼べない。
 func extCommandName(src string) string {
@@ -650,7 +675,7 @@ func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) 
 	}
 	namePos := s.pos()
 	id := extCommandName(s.rest())
-	if id == "" || lookup(id) != nil {
+	if id == "" || resolve(id) != nil {
 		return false, nil
 	}
 	extID, ok := c.st.ExtCommand(id)
@@ -682,7 +707,7 @@ func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) 
 func (c *execCtx) addrKindAt(src string) addrKind {
 	s := &scanner{src: src}
 	skipRange(s)
-	if cmd := lookup(s.letters()); cmd != nil && cmd.rng == rangeWindow {
+	if cmd := resolve(readName(s)); cmd != nil && cmd.rng == rangeWindow {
 		return addrWindows
 	}
 	return addrLines

@@ -42,6 +42,9 @@ const (
 	codePositiveCount    = "E939" // 回数が 1 以上でない
 	codeInvalidArgument  = "E475" // 引数が正しくない
 	codeArgRequired      = "E471" // 引数が要る
+	codeInvalidArg       = "E474" // 引数が正しくない（Vim の :set で、真偽の項目に値を書いた、真偽でない項目に no を付けた）
+	codeUnknownOption    = "E518" // 知らない設定
+	codeNumberRequired   = "E521" // 数の要る設定に数でない値を書いた
 )
 
 // CodeNoWrite は、未保存の変更があるので :q や :e を実行できないことを表すエラー番号である。

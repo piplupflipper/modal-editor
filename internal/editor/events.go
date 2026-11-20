@@ -291,7 +291,7 @@ func (e *Editor) editorState() ext.EditorStateResult {
 	}
 	for _, bs := range e.bufs {
 		res.Buffers = append(res.Buffers, ext.BufferInfo{
-			Buffer: bs.id, Path: bs.path, FileType: bs.fileType,
+			Buffer: bs.id, Path: bs.path, FileType: bs.fileType(),
 			Version: ext.Version(bs.buf.Version()), Modified: bs.buf.Modified(),
 			ReadOnly: bs.buf.ReadOnly(), ChangedOnDisk: bs.path != "" && writeConflict(bs) != nil,
 		})

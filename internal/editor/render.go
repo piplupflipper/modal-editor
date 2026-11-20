@@ -40,7 +40,7 @@ func (e *Editor) frame() *ui.Frame {
 		Name:            bufferTitle(cur),
 		Modified:        cur.buf.Modified(),
 		ReadOnly:        cur.buf.ReadOnly(),
-		FileType:        cur.fileType,
+		FileType:        cur.fileType(),
 		Mode:            uiMode(st.Mode()),
 		Cursor:          bs.state.Cursor(),
 		CommandLine:     st.CommandLine(),

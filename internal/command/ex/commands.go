@@ -105,6 +105,10 @@ func init() {
 		{name: "diffthis", min: 5, rng: rangeNone, run: runDiff(DiffThis)},
 		{name: "diffoff", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffOff)},
 		{name: "diffupdate", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffUpdate)},
+		// 設定の読み書き（基本設計 7.3。FR-132）。点を含む正規の名前で、省略できない。
+		// :option.set の値は "|" を含めて行末までなので barNone にする。
+		{name: optionSetName, min: len(optionSetName), rng: rangeNone, bar: barNone, run: runOptionSet},
+		{name: optionGetName, min: len(optionGetName), rng: rangeNone, run: runOptionGet},
 	}
 }
 
@@ -114,11 +118,15 @@ type Name struct {
 	Full, Short string
 }
 
-// Names は、対応する Ex コマンドの名前を、表の順に返す（拡張機能の editor/list のコマンドの一覧。FR-107）。
+// Names は、コマンドラインから呼べる本体の Ex コマンドの名前を返す（拡張機能の editor/list のコマンドの一覧。FR-107）。
+// Ex コマンドの表の行を表の順に並べ、その後に別名の表の行（:set など。FR-133）を表の順に並べる。
 func Names() []Name {
-	out := make([]Name, len(commands))
-	for i, c := range commands {
-		out[i] = Name{Full: c.name, Short: c.name[:c.min]}
+	out := make([]Name, 0, len(commands)+len(aliases))
+	for _, c := range commands {
+		out = append(out, Name{Full: c.name, Short: c.name[:c.min]})
+	}
+	for _, a := range aliases {
+		out = append(out, Name{Full: a.name, Short: a.name[:a.min]})
 	}
 	return out
 }

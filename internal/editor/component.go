@@ -509,7 +509,7 @@ func (e *Editor) paneComponentFrame(p *floatState) *ui.Frame {
 		Name:            bufferTitle(p.bs),
 		Modified:        p.bs.buf.Modified(),
 		ReadOnly:        p.bs.buf.ReadOnly(),
-		FileType:        p.bs.fileType,
+		FileType:        p.bs.fileType(),
 		Mode:            uiMode(st.Mode()),
 		CommandLine:     st.CommandLine(),
 		CommandLineType: st.CommandLineType(),

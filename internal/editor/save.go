@@ -198,6 +198,7 @@ func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
 // write は、:w を行う。
 // 引数が無いか、バッファのファイルと同じなら保存の流れ（基本設計 6.7）を通す。
 // 名前の無いバッファに名前を付けて書くと、そのファイルのバッファにする（Vim と同じ）。
+// ファイルの種類は、空のときだけ新しい名前から判定する（:set filetype= で決めた種類は残す。Vim 9.1 と同じ）。
 // 別のファイルへ書くときは、保存の流れを通さずに書き出すだけにし、バッファは保存済みにしない。
 // バッファのファイルへ書くときは、! が無ければ、読み込んだ後にファイルが外で変わっていないかを先に確かめる（writeConflict）。
 // 変わっていれば errChangedOnDisk を返し、呼び出し側が書き込むかを問う。
@@ -230,10 +231,11 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 			return nil
 		}
 		bs.path = path
-		bs.fileType = e.detectFileType(path)
-		if err := e.host.UpdateBuffer(bs.id, bs.path, bs.fileType); err != nil {
-			e.log.Error("buffer/open を送り直せない", "err", err)
+		// ファイルの種類を :set filetype= などで決めてあれば、それを残す（Vim 9.1 も、'filetype' が空のときだけ判定し直す）。
+		if bs.fileType() == "" {
+			bs.setFileType(e.detectFileType(path))
 		}
+		e.notifyBufferAttrs(bs)
 	}
 	if !a.Force {
 		if err := writeConflict(bs); err != nil {
@@ -357,7 +359,14 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 	}
 	// Vim 9.1 と同じく、:e の読み直しもジャンプとして記録する。
 	e.markJumpAt(bs, bs.state.Cursor())
-	return e.reloadFile(bs)
+	if err := e.reloadFile(bs); err != nil {
+		return err
+	}
+	// ファイルを開き直したので、バッファごとの設定の項目を初めの値に戻す（Vim 9.1 の :e と :e! も 'filetype' を判定し直す）。
+	// 外での変更の読み直し（autoread と W11 の (L)oad File）では戻さない（Vim 9.1 の buf_reload も 'filetype' を残す）。
+	e.resetBufferOptions(bs)
+	e.notifyBufferAttrs(bs)
+	return nil
 }
 
 // reload は、バッファ bs の内容を、読み直した b の内容にする。バッファの番号は変えない（Vim の :e と同じ）。
