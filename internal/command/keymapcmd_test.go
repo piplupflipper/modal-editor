@@ -54,6 +54,7 @@ func newKeymapCommandState(t *testing.T, text string) (*State, *toggleOptions, *
 		{input.MapInsert, "<C-n>", "option.toggle lineNumber.show"},
 		{input.MapNormal, "<C-e>", "option.toggle filetype"},
 		{input.MapNormal, "<C-d>", "dup.line x"},
+		{input.MapInsert, "<C-d>", "dup.line x"},
 	} {
 		err := km.Override(input.Binding{
 			Kind: input.BindAction, Modes: b.modes, Keys: editcmd.MustParseKeys(b.keys),
@@ -214,6 +215,28 @@ func TestKeymapCommandInsert(t *testing.T) {
 	feedKeys(s, "x<Esc>")
 	if got := s.buf.Text(); got != "ax\nb" {
 		t.Errorf("A<C-n>x: text = %q", got)
+	}
+}
+
+// インサートモードで呼んだ拡張機能のコマンドが期限までに応えず保留されても（ErrDeferred）、届いた結果は、
+// インサートモードのままでバッファとカーソルが変わっていなければ適用する（ノーマルモードの保留と同じ規則）。
+//
+// req: FR-154
+func TestKeymapCommandInsertDeferred(t *testing.T) {
+	s, _, ext := newKeymapCommandState(t, "ab")
+	ext.deferring = true
+	r := feedKeys(s, "Afoo<C-d>")
+	d := r[len(r)-1].Deferred
+	if d == nil || s.Mode() != ModeInsert {
+		t.Fatalf("Deferred = %v, mode = %v", d, s.Mode())
+	}
+	res := s.ApplyDeferred(*d, &fakeExt{})
+	if res.Err != nil || s.buf.Text() != "abfoo\nabfoo" || s.Mode() != ModeInsert {
+		t.Errorf("ApplyDeferred: err = %v, text = %q, mode = %v", res.Err, s.buf.Text(), s.Mode())
+	}
+	feedKeys(s, "!<Esc>")
+	if got := s.buf.Text(); got != "abfoo!\nabfoo" {
+		t.Errorf("続けて入力した後の text = %q", got)
 	}
 }
 

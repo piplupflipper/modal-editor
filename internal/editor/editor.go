@@ -251,6 +251,9 @@ type Editor struct {
 	keymap *input.Keymap
 	// exCommands は、コマンドラインから呼べる拡張機能のコマンドの ID から、宣言した拡張機能の ID への表である（commandLineTable）。
 	exCommands map[string]string
+	// keyActions は、利用者のキーで実行したコマンドの動作（Ex コマンドの Result.Actions）を行っている入れ子の深さである（runActions と
+	// navigator.RunActions）。0 でなければ、その間にバッファを移る理由はキーからの実行で、switchTo はインサートモードを移った先へ持ち込む（FR-154）。
+	keyActions int
 	// aliases は、Ex コマンドの別名の表である（Config.CommandAliases。nil なら本体の行だけ）。バッファの ex.State.Aliases に入れる。
 	aliases *ex.Aliases
 	// leader は、<Leader> を置き換えたキーの列（Config.Leader を読んだもの。FR-97）である。キーの一覧（FR-90）で使う。
@@ -973,14 +976,20 @@ func (e *Editor) syncFinalNewline(bs *bufferState) {
 // 別のバッファへ移るときは、画面の位置を、bs に残したカーソルを中ほどに置く位置に決め直す（ui.Renderer.EnterBuffer。Vim 9.1 の enter_buffer）。
 // 移った後に呼び出し側がカーソルを動かせば（<C-o> の移り先、定義へ移動）、次の描画がその位置から画面に収める。
 //
-// Vim と同じくモードはエディタ全体に 1 つとして扱う（command.State.SuspendMode と ResumeMode）。
-// インサートモードのまま移ったら（keymap の Ex コマンドの :tab.new。FR-154）、移る前のバッファの入力を終えて、移った先でインサートモードを続け、
-// ビジュアルモードのまま移ったら、移る前のバッファの選択を抜ける。
+// Vim と同じくモードはエディタ全体に 1 つとして扱い、移る前のバッファのインサートモードの入力とビジュアルモードの選択は終える
+// （command.State.SuspendMode）。移った先へインサートモードを持ち込むかは、移る理由で決める（FR-154）。
+//
+//   - 利用者のキーで実行したコマンドの動作（Ex コマンドの Result.Actions を行っている間。keyActions）で移ったときは、
+//     移った先でインサートモードを続ける（command.State.ResumeMode。Vim 9.1 の <Cmd>tabnew<CR> と同じ）
+//   - 外からの要求（待つだけの client が開いたファイルなど）で移ったときは、持ち込まず、どちらのバッファもノーマルモードにする
+//     （Vim 9.1 の --remote-wait-silent で開いたときと同じ）
 func (e *Editor) switchTo(bs *bufferState) {
 	if e.cur != nil && e.cur != bs {
 		carry := e.cur.state.SuspendMode()
 		bs.state.TakeOver(e.cur.state)
-		bs.state.ResumeMode(carry)
+		if e.keyActions > 0 {
+			bs.state.ResumeMode(carry)
+		}
 		e.renderer.EnterBuffer(bs.buf.LineCount(), bs.state.Cursor().Line)
 		if e.shared == e.cur.state {
 			e.shared = bs.state

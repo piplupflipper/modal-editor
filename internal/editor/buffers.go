@@ -219,6 +219,9 @@ func (n navigator) Navigate(a ex.Action, cursor buffer.Position) (buffer.Positio
 func (n navigator) RunActions(acts []ex.Action) (err error) {
 	e, bs := n.e, n.bs
 	e.syncChanges(bs, n.st.PendingChanges())
+	// 動作は、再生したキーで実行したコマンドのものである。移る理由をキーからの実行にする（switchTo。FR-154）。
+	e.keyActions++
+	defer func() { e.keyActions-- }()
 	defer func() {
 		if bs.state != n.st {
 			bs.replacedInReplay = true

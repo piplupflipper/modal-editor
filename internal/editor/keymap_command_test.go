@@ -1,8 +1,12 @@
 package editor
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/command"
@@ -188,6 +192,92 @@ func TestKeymapCommandModes(t *testing.T) {
 	h.settle()
 	if got := h.text(); got != "foobar" {
 		t.Errorf(". の後の text = %q", got)
+	}
+}
+
+// 外からの要求（待つだけの client が開いたファイル。FR-83）でバッファを移ったときは、インサートモードを移った先へ持ち込まず、
+// 移る前のバッファの入力と選択も終える。Vim 9.1 の --remote-wait-silent と同じく、どちらのバッファもノーマルモードになる
+// （PR #303 のレビューの必須 1。前は開いたファイルがインサートモードで始まり、ZZ が ZZx になった）。
+//
+// req: FR-154
+func TestExternalSwitchKeepsNormal(t *testing.T) {
+	for _, tc := range []struct{ name, keys, want string }{
+		{"インサートモード", "Afoo", "abcfoo"},
+		{"ビジュアルモード", "vl", "abc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": "abc\n", "x.txt": "x\n"})
+			h := start(t, Config{WorkDir: dir}, "a.txt")
+			h.keys(tc.keys)
+			h.settle()
+			var first *bufferState
+			h.e.do(func() { first = h.e.cur })
+			done := make(chan string, 1)
+			if _, err := h.e.Wait(context.Background(), WaitInfo{Files: []string{filepath.Join(dir, "x.txt")}, Done: func(r string) { done <- r }}); err != nil {
+				t.Fatal(err)
+			}
+			h.settle()
+			var cur *bufferState
+			var curMode, firstMode command.Mode
+			var firstText string
+			h.e.do(func() {
+				cur, curMode, firstMode = h.e.cur, h.e.cur.state.Mode(), first.state.Mode()
+				firstText = strings.TrimSuffix(first.buf.Text(), "\n")
+			})
+			if cur == first || filepath.Base(cur.path) != "x.txt" {
+				t.Fatalf("移った先 = %q", cur.path)
+			}
+			if curMode != command.ModeNormal || firstMode != command.ModeNormal || firstText != tc.want {
+				t.Errorf("x.txt %v、a.txt %v %q", curMode, firstMode, firstText)
+			}
+			// 続けて打ったキーはノーマルモードのキーとして効き、:q で開いたファイルを閉じて、待つだけの client が終わる。
+			h.keys(":q<CR>")
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatalf(":q で閉じない（x.txt の text %q）", h.text())
+			}
+		})
+	}
+}
+
+// インサートモードの keymap の Ex コマンドで開いたフォーカスのあるポップアップ（ファインダーと同じ形の一覧）で選ぶと、
+// 拡張機能の editor/open で選んだファイルへ移る（:tab.new と同じく、キーで呼んだコマンドの結果として移る。PR #303 のレビューの推奨 1）。
+// ポップアップへフォーカスを入れるときに開いたタブの入力を終えるので、開いたタブはノーマルモードに戻り、移った先もノーマルモードである。
+//
+// req: FR-154
+func TestKeymapCommandPopupFromInsert(t *testing.T) {
+	opened := fakeOpenedPath(os.Getpid())
+	if err := os.WriteFile(opened, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(opened) })
+	dir := writeFiles(t, map[string]string{"a.txt": "abc\n"})
+	h := start(t, Config{
+		WorkDir: dir, Extensions: fakeSpecs(t),
+		KeymapCommands: map[string]map[string]config.KeymapCommand{
+			"insert": {"<C-p>": {Name: "fake.popup", Args: "files"}},
+		},
+	}, "a.txt")
+	var first *bufferState
+	h.e.do(func() { first = h.e.cur })
+	h.keys("Afoo<C-p>")
+	h.eventually("ポップアップ", func() bool { return h.e.float != nil && h.e.float.focused })
+	var baseMode command.Mode
+	h.e.do(func() { baseMode = first.state.Mode() })
+	if baseMode != command.ModeNormal {
+		t.Errorf("ポップアップを開いた後の a.txt のモード = %v", baseMode)
+	}
+	h.keys("gg<CR>")
+	h.eventually("選んだファイルへ移る", func() bool { return h.e.cur.path == opened })
+	var curMode command.Mode
+	var text string
+	h.e.do(func() {
+		curMode, baseMode = h.e.cur.state.Mode(), first.state.Mode()
+		text = strings.TrimSuffix(first.buf.Text(), "\n")
+	})
+	if curMode != command.ModeNormal || baseMode != command.ModeNormal || text != "abcfoo" {
+		t.Errorf("移った先 %v、a.txt %v %q", curMode, baseMode, text)
 	}
 }
 
