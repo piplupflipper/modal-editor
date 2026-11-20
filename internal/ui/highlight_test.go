@@ -91,6 +91,27 @@ func TestRenderHighlightLayers(t *testing.T) {
 	}
 }
 
+// 既定の配色（反転の選択）でも、ヤンクした範囲の色と選択が重なったところは、選択だけのところとも、ヤンクの色だけのところとも
+// 違う属性になる（PR #287 のレビューの推奨 1。ヤンクの色が反転だと、反転の選択と重ねても見分けられなかった）。
+//
+// req: FR-140
+func TestRenderHighlightOverVisualDefault(t *testing.T) {
+	b := buffer.New("abcdef\n")
+	r := &Renderer{Width: 20, Height: 8}
+	s := r.Render(&Frame{
+		Text: b, Cursor: pos(0, 5),
+		Highlights: []Highlight{{Range: buffer.Range{Start: pos(0, 0), End: pos(0, 3)}, Style: StyleYank}},
+		Selection:  Selection{Active: true, Start: pos(0, 2), End: pos(0, 4)},
+	})
+	yankOnly, both, visOnly := s.Grid.At(0, 0).Attr, s.Grid.At(0, 2).Attr, s.Grid.At(0, 3).Attr
+	if yankOnly == both || visOnly == both || yankOnly == visOnly {
+		t.Errorf("ヤンクだけ %+v、重なり %+v、選択だけ %+v のどれかが同じ", yankOnly, both, visOnly)
+	}
+	if yankOnly.Reverse {
+		t.Errorf("既定のヤンクの色が反転 = %+v", yankOnly)
+	}
+}
+
 // 浮かべた窓の中には、範囲の色を付けない（行番号と検索の一致の色と同じ）。
 //
 // req: FR-140

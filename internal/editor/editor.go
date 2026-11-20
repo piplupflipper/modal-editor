@@ -319,11 +319,15 @@ type Editor struct {
 	extStopped map[string]bool
 	resizeCh   chan struct{}
 	// inspect は、別の goroutine から関数をイベントループの goroutine で実行させる。テストが状態を読むのと（do）、
-	// :ext sync の進み具合と結果を渡すのに使う（extsync.go）。
+	// :ext sync の進み具合と結果を渡すのと（extsync.go）、一時的な色付けの時間が来たタイマーが色を外すのに使う（flash.go の addFlash）。
+	// 受け取った関数を実行した後に描き直す（Run）ので、外した色は次の描画で画面から消える。
 	inspect chan func()
 	// afterFunc は、時間が来たら f を別の goroutine で呼ぶタイマーを掛け、止める関数を返す（flash.go）。既定は time.AfterFunc で、
 	// テストが時間を待たずに確かめるために差し替える。
 	afterFunc func(d time.Duration, f func()) (stop func() bool)
+	// flash は、決まった時間が過ぎたら消える色付け（ヤンクした範囲の色。FR-140）である。本体の全体で 1 つだけ持つ（flash.go）。
+	// 無ければ nil。
+	flash *flash
 	// decoDone は、別の goroutine で作り終えた構文の色の表を、イベントループへ渡す（rebuildDecorations）。
 	decoDone chan decoBuilt
 	// checkDone は、別の goroutine で確かめた外での変更の結果を、イベントループへ渡す（startCheck）。
@@ -426,8 +430,6 @@ type bufferState struct {
 	decoView    *ui.Decorations
 	diagnostics map[string][]ext.Diagnostic
 	signs       map[string][]ext.Sign
-	// flashes は、決まった時間が過ぎたら消える色付けである（flash.go。ヤンクした範囲の色。FR-140）。付けた順に並べる。
-	flashes []*flash
 
 	// decoBuilding は、decoView を別の goroutine で作っている途中かである（rebuildDecorations）。
 	decoBuilding bool

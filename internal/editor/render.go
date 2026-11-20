@@ -100,7 +100,7 @@ func (e *Editor) frame() *ui.Frame {
 }
 
 // bufferFrame は、client の画面（バッファの表示領域のある画面）の描画の入力を作る。frame に行番号の列の出し方、検索の一致のパターン、
-// 一時的な色付け（タブのバッファの flashHighlights。FR-140）を足したものである。
+// 一時的な色付け（タブのバッファのものなら。flashHighlights。FR-140）を足したものである。
 // 行番号を出すかは、この 1 か所で決める。部品の client の画面とポップアップの窓の中の Frame は、ここを通らないので行番号が載らない。
 //
 // req: FR-135, FR-140
@@ -108,7 +108,7 @@ func (e *Editor) bufferFrame() *ui.Frame {
 	f := e.frame()
 	f.LineNumbers = e.uiLineNumbers()
 	f.Search = e.uiSearch()
-	f.Highlights = e.tab().flashHighlights()
+	f.Highlights = e.flashHighlights(e.tab())
 	return f
 }
 

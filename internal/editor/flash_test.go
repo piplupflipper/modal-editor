@@ -129,10 +129,46 @@ func TestYankHighlight(t *testing.T) {
 	ft.fire(ft.count() - 1)
 	h.eventually("時間が来たら消す", func() bool { return flashRows(h) == "||" })
 	h.e.do(func() {
-		if n := len(h.e.cur.flashes); n != 0 {
-			t.Errorf("flashes = %d", n)
+		if h.e.flash != nil {
+			t.Error("時間が来た後も色付けが残る")
 		}
 	})
+}
+
+// 一時的な色付けは本体の全体で 1 つだけなので、別のバッファでヤンクすると前のバッファの色を外す（nvim 0.12.5 の vim.hl.on_yank と同じ。
+// PR #287 のレビューの推奨 2）。色を描くのは、色付けのバッファをタブに出している画面だけである。
+//
+// req: FR-140
+func TestYankHighlightOnePerEditor(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abc def\n", "b.txt": "ghi jkl\n"})
+	h := start(t, Config{
+		WorkDir: dir, Colors: map[string]ui.Attr{ui.StyleYank: flashAttr},
+		Options: map[string]option.Value{option.YankHighlightMs: option.IntValue(300)},
+	}, "a.txt", "b.txt")
+	ft := &fakeTimers{}
+	h.e.do(func() { h.e.afterFunc = ft.after })
+	h.settle()
+	// 起動したときのタブ（最初のバッファ）と、<Tab> で移る別のタブのバッファの 1 行目。
+	var first string
+	h.eventually("起動", func() bool { first = h.screenRow(1); return first == "abc def" || first == "ghi jkl" })
+	second := map[string]string{"abc def": "ghi jkl", "ghi jkl": "abc def"}[first]
+	h.keys("yy")
+	h.settle()
+	h.eventually("最初のバッファの yy", func() bool { return flashRows(h) == "^^^^^^^||" })
+	h.keys("<Tab>")
+	h.settle()
+	h.eventually("別のバッファには前のバッファの色を描かない", func() bool { return h.screenRow(1) == second && flashRows(h) == "||" })
+	h.keys("wyiw")
+	h.settle()
+	h.eventually("別のバッファの yiw", func() bool { return flashRows(h) == "    ^^^||" })
+	h.keys("<Tab>")
+	h.settle()
+	h.eventually("最初のバッファの色は外れた", func() bool { return h.screenRow(1) == first && flashRows(h) == "||" })
+	ft.mu.Lock()
+	if len(ft.stopped) != 2 || !ft.stopped[0] || ft.stopped[1] {
+		t.Errorf("タイマーを止めたか = %v, want [true false]", ft.stopped)
+	}
+	ft.mu.Unlock()
 }
 
 // ヤンクした範囲の色は、そのバッファが変わったら（本体の編集、外からの編集、アンドゥ）、時間が来る前でも消す。
@@ -221,5 +257,5 @@ func TestYankHighlightExpires(t *testing.T) {
 	h.settle()
 	h.keys("yy")
 	h.settle()
-	h.eventually("時間が来たら消す", func() bool { return flashRows(h) == "||" && len(h.e.cur.flashes) == 0 })
+	h.eventually("時間が来たら消す", func() bool { return flashRows(h) == "||" && h.e.flash == nil })
 }
