@@ -3050,18 +3050,27 @@ ID は一意にし、`internal/input` のテスト（`TestActionIDUnique`）が�
 | 段 | 担うもの |
 |---|---|
 | 形（`internal/config`） | オブジェクトの項目は `action`、`command`、`args` で、値はどれも文字列にする。`action` と `command` はどちらか一方を書き、`args` は `command` と一緒にだけ書ける。`action` と `command` は空にできない。誤りのある項目は位置付きで知らせて使わない。右辺が `command` の項目は `config.Config.KeymapCommands` に入る |
-| 名前（`internal/command/ex` の `KeymapCommandLine`） | 本体の Ex コマンドの正規の名前（点を含み、省略しない名前。`option.set`、`search.clearHighlight`、`tab.new`）と、拡張機能のコマンドの ID（宣言ファイルの `contributes.commands` と `provides` の操作の名前）だけを通し、名前と `args` を空白でつないだコマンドラインを返す。別名（`set`、`nohlsearch`、設定ファイルの別名）、正規の名前の無いコマンドとその省略形（`write`、`w`。`:help`、`:keys`、`:ext`、`:messages` も含む）、本体の名前に隠れる拡張機能のコマンドの ID、知らない名前は誤りにする。`args` は確かめない |
+| 名前（`internal/command/ex` の `KeymapCommandLine`） | 本体の Ex コマンドの正規の名前（点を含み、省略しない名前。`option.set`、`search.clearHighlight`、`tab.new`）と、拡張機能のコマンドの ID（宣言ファイルの `contributes.commands` と `provides` の操作の名前）だけを通し、名前と `args` を空白でつないだコマンドラインを返す。別名（`set`、`nohlsearch`、設定ファイルの別名）、正規の名前の無いコマンドとその省略形（`write`、`w`。`:help`、`:keys`、`:ext`、`:messages` も含む）、本体の名前に隠れる拡張機能のコマンドの ID、知らない名前は誤りにする。実行するのは 1 つのコマンドだけで、`|` で次のコマンドへ続ける本体のコマンド（`barSplit`）の `args` に、`\` の付かない `|` を書くと誤りにする（書けない名前のコマンドを `|` の後ろで呼ぶ抜け道を塞ぐため）。`|` を引数の一部として読むコマンド（`:option.set`）と拡張機能のコマンドは、コマンドラインと同じく `|` を引数として渡す。`args` のそれ以外の中身は確かめない |
 | 位置付きの誤り（`config.Config.CheckKeymapCommands`） | 書ける名前は宣言ファイルと別名の表（設定の `commandAliases` を足した後）で決まるので、呼び出し側（`cmd/vi-imitation`）が別名を足した後に、`internal/editor` の `KeymapCommandCheck` を渡して呼ぶ（`CheckCommandAliases` と同じ形） |
 | 登録（`internal/editor` の `applyKeymapActions`） | 操作の項目と同じく操作の表（`input.Keymap`）へ `Override` で登録する。登録は、`Ref.Extension` を `command.ExCommandExtension`（空白を含む値で、拡張機能の ID と重ならない）、`Ref.ID` を実行するコマンドラインにした操作である。左辺の規則（インサートモードでは 1 つのキー、回数として先に読まれるキーで始めない）と、キーの列の項目や操作の項目との重なりの扱いは、操作の項目と同じである |
-| 実行（`internal/command` の `State.keymapCommand`） | キーで呼ばれた操作の `Ref.Extension` が `command.ExCommandExtension` なら、`Ref.ID` のコマンドラインを `runCommandLine` で実行する |
+| 実行（`internal/command` の `State.keymapCommand`） | キーで呼ばれた操作の `Ref.Extension` が `command.ExCommandExtension` なら、モードを変えずに、`Ref.ID` のコマンドラインを `runCommandLine` で実行する。インサートモードとビジュアルモードでは、Ex コマンドの後のカーソルを行末の位置にも置けるようにした（`State.setCursorAfterEx`。ノーマルモードの動作は変えていない） |
 
-モードごとの扱いは次のとおりにした。
+モードの扱いは、Vim 9.1 の `<Cmd>` の割り当て（`:inoremap <C-x> <Cmd>tabnew<CR>` など）を基準にした（PR #303 の未確認事項へのオーケストレータの決定）。
+どれも 2026-11-20 に `vim -Nu NONE -n --not-a-term` で確かめた。
 
-| モード | 扱い | 理由 |
+| モード | 扱い | Vim 9.1 で確かめたこと |
 |---|---|---|
 | `normal` | 回数とレジスターは使わない | 書ける名前のコマンドは、どれも範囲を取らない |
-| `visual` | 選択を抜けてから（`'<` と `'>` は記録する）、範囲を付けずに実行する | `:` で打つ形（Vim の `:'<,'>`）にすると、範囲を取らないコマンドは Vim 9.1 と同じく `E481` になり、ビジュアルモードの割り当てが使えない（2026-11-20 に Vim 9.1 で `xnoremap <C-k> :nohlsearch<CR>` が `E481` になることを確かめた）。選択を抜けるのは、`:` で打ったときと同じにするためである（Vim の `<Cmd>` の割り当ては選択を残す） |
-| `insert` | インサートモードのまま、入力を区切らずに実行する。カーソルは行末の位置にも置いたままにする | Vim 9.1 の `<Cmd>` の割り当てと同じにした。`ifoo<C-l>bar<Esc>` の `u` は `foobar` を一度に戻し、`.` は `foobar` を入れる（2026-11-20 に Vim 9.1 で確かめた） |
+| `visual` | 選択を残したまま、範囲を付けずに実行する。行末の位置のカーソルも動かさない | `<Cmd>` の中の `mode()` は `v` で、実行の後も選択が残る。`:` で打つ形（`:'<,'>`）では、範囲を取らないコマンドが `E481` になる（`xnoremap <C-k> :nohlsearch<CR>` が `E481` で止まった） |
+| `insert` | インサートモードのまま、入力を区切らずに実行する。カーソルは行末の位置にも置いたままにする | `ifoo<C-l>bar<Esc>` の `u` は `foobar` を一度に戻し、`.` は `foobar` を入れる |
+
+コマンドが別のタブへ移ったとき（`:tab.new`）は、Vim がモードをエディタ全体に 1 つ持つのに合わせ、`internal/editor` の `switchTo`（カーソルのあるバッファを移す処理）が、移る前の State の `SuspendMode` と移った先の State の `ResumeMode` を呼ぶ。
+`command` のための分岐ではなく、バッファを移るときの規則である。
+
+| 移る前のモード | 移る前のバッファ | 移った先 | Vim 9.1 で確かめたこと |
+|---|---|---|---|
+| `insert` | 入力をアンドゥの 1 単位として閉じ、ノーマルモードに戻る。カーソルはノーマルモードの位置に丸めるだけにし、`<Esc>` のように左へ戻さない | インサートモードを続ける。回数の繰り返しとドットリピートの記録は、移る前の入力と合わせて、移った先で入力を終えたときに行う | `abcd` の行で `3ifoo<C-x>bar<Esc>`（`<C-x>` は `<Cmd>tabnew<CR>`）を打つと、元のバッファは `fooabcd` でカーソルは `a`、移った先は `barfoobarfoobar`、`.` のレジスターは `foobar` になる。`u` はそれぞれのバッファの入力だけを戻す |
+| `visual` | 選択を抜ける（`'<` と `'>` を記録する） | ノーマルモード | `<Cmd>tabnew<CR>` の後の `mode()` は `n` で、元のバッファの `'<` と `'>` は選択の行になる |
 
 ドットリピートには記録しない。
 コマンドラインの Ex コマンドも記録しないためで、テキストを変えない `action` の割り当て（`hover` など）とも同じである。

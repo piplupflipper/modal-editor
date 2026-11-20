@@ -108,22 +108,77 @@ func TestKeymapCommandNormal(t *testing.T) {
 	}
 }
 
-// ビジュアルモードで呼ぶと、選択を抜けてから、範囲を付けずに実行する（'< と '> は記録する）。
+// ビジュアルモードで呼ぶと、選択を残したまま、範囲を付けずに実行する（Vim 9.1 の <Cmd> の割り当てと同じ）。
+// 行末の位置のカーソル（vj$）も動かさない。
 //
 // req: FR-154
 func TestKeymapCommandVisual(t *testing.T) {
-	s, opts, _ := newKeymapCommandState(t, "ab\ncd\nef")
-	r := feedKeys(s, "vj<C-n>")
+	s, opts, _ := newKeymapCommandState(t, "abc\ndefgh\nij")
+	r := feedKeys(s, "lvj$<C-n>")
 	if err := r[len(r)-1].Err; err != nil || !slices.Equal(opts.sets, []string{"lineNumber.show=true"}) {
 		t.Fatalf("err = %v, sets = %q", err, opts.sets)
 	}
-	if s.Mode() != ModeNormal {
-		t.Errorf("mode = %v", s.Mode())
+	start, end, _, ok := s.Selection()
+	if s.Mode() != ModeVisual || !ok || start != (buffer.Position{Line: 0, Byte: 1}) || end.Line != 1 {
+		t.Errorf("mode = %v, selection = %v-%v %v", s.Mode(), start, end, ok)
 	}
-	if l, ok := s.mark('<'); !ok || l != 0 {
-		t.Errorf("'< = %d %v", l, ok)
+	if c := s.Cursor(); c.Line != 1 || c.Byte < 4 {
+		t.Errorf("cursor = %v", c)
 	}
-	if l, ok := s.mark('>'); !ok || l != 1 {
+	// 続けて選択を操作できる（$ で行末を越えて選んだので、改行も消す。Vim と同じ）。
+	feedKeys(s, "d")
+	if got := s.buf.Text(); got != "aij" {
+		t.Errorf("d: text = %q", got)
+	}
+}
+
+// インサートモードのまま別のバッファへ移ったら（keymap の Ex コマンドの :tab.new）、移る前のバッファの入力を終え、
+// 移った先でインサートモードを続ける（SuspendMode と ResumeMode。Vim 9.1 の <Cmd>tabnew<CR> と同じ）。
+// 移る前のバッファはノーマルモードに戻り、カーソルは左へ戻さない。回数の繰り返しとドットリピートは、移る前の入力と合わせて行う。
+// ビジュアルモードのまま移ったら、選択を抜ける。
+//
+// req: FR-154
+func TestKeymapCommandSwitchMode(t *testing.T) {
+	// 期待値は、2026-11-20 に Vim 9.1 で 3ifoo<C-x>bar<Esc>（<C-x> は <Cmd>tabnew<CR>）を abcd の行で打った結果である。
+	old := New(newBuffer("abcd"), input.NewParser(input.DefaultKeymap()))
+	next := New(newBuffer(""), input.NewParser(input.DefaultKeymap()))
+	feedKeys(old, "3ifoo")
+	carry := old.SuspendMode()
+	next.TakeOver(old)
+	next.ResumeMode(carry)
+	if old.Mode() != ModeNormal || next.Mode() != ModeInsert {
+		t.Fatalf("mode: old %v, next %v", old.Mode(), next.Mode())
+	}
+	if c := old.Cursor(); c != (buffer.Position{Line: 0, Byte: 3}) {
+		t.Errorf("old cursor = %v", c)
+	}
+	feedKeys(next, "bar<Esc>")
+	if got, want := next.buf.Text(), "barfoobarfoobar"; got != want {
+		t.Errorf("next text = %q, want %q", got, want)
+	}
+	if got := old.buf.Text(); got != "fooabcd" {
+		t.Errorf("old text = %q", got)
+	}
+	feedKeys(old, "u")
+	feedKeys(next, "u")
+	if old.buf.Text() != "abcd" || next.buf.Text() != "" {
+		t.Errorf("u: old %q, next %q", old.buf.Text(), next.buf.Text())
+	}
+	feedKeys(next, ".")
+	if got := next.buf.Text(); got != "foobarfoobarfoobar" {
+		t.Errorf(". = %q", got)
+	}
+
+	// ビジュアルモードのまま移ると、選択を抜けて '< と '> を記録する。移った先はノーマルモードのままである。
+	v := New(newBuffer("ab\ncd"), input.NewParser(input.DefaultKeymap()))
+	feedKeys(v, "vj")
+	carry = v.SuspendMode()
+	other := New(newBuffer("x"), input.NewParser(input.DefaultKeymap()))
+	other.ResumeMode(carry)
+	if v.Mode() != ModeNormal || other.Mode() != ModeNormal {
+		t.Errorf("visual: mode %v, other %v", v.Mode(), other.Mode())
+	}
+	if l, ok := v.mark('>'); !ok || l != 1 {
 		t.Errorf("'> = %d %v", l, ok)
 	}
 }

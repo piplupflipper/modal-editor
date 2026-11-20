@@ -122,6 +122,75 @@ func TestKeymapCommandConfig(t *testing.T) {
 	}
 }
 
+// keymap の Ex コマンドで別のタブへ移ると、Vim 9.1 の <Cmd>tabnew<CR> と同じく、インサートモードは移った先で続き、
+// 移る前のバッファはノーマルモードに戻る。ビジュアルモードでは選択を残したまま実行し、タブを移ったときは選択を抜ける。
+// args にコマンドの区切りの | を書いた項目は、起動のときに設定の誤りとして知らせる。
+//
+// req: FR-154
+func TestKeymapCommandModes(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "abcd\nefgh\n"})
+	h := start(t, Config{
+		WorkDir: dir,
+		KeymapCommands: map[string]map[string]config.KeymapCommand{
+			"normal": {"<C-b>": {Name: "option.toggle", Args: "lineNumber.show|w"}},
+			"insert": {"<C-t>": {Name: "tab.new"}},
+			"visual": {"<C-t>": {Name: "tab.new"}, "<C-n>": {Name: "option.toggle", Args: "lineNumber.show"}},
+		},
+	}, "a.txt")
+	if msg := h.message(); !strings.Contains(msg, "args に、コマンドの区切りになる | を書けない") {
+		t.Errorf("起動の message = %q", msg)
+	}
+	modeOf := func(bs *bufferState) command.Mode {
+		var m command.Mode
+		h.e.do(func() { m = bs.state.Mode() })
+		return m
+	}
+	var first *bufferState
+	h.e.do(func() { first = h.e.cur })
+
+	// ビジュアルモードの <C-n> は選択を残す。
+	h.keys("vj<C-n>")
+	h.settle()
+	var shown bool
+	h.e.do(func() { shown = h.e.options.Get(option.LineNumberShow).Bool() })
+	if !shown || modeOf(first) != command.ModeVisual {
+		t.Errorf("visual <C-n>: lineNumber.show %v, mode %v", shown, modeOf(first))
+	}
+	// ビジュアルモードのまま :tab.new で移ると、元のバッファの選択を抜ける。
+	h.keys("<C-t>")
+	h.settle()
+	var second *bufferState
+	h.e.do(func() { second = h.e.cur })
+	if second == first || modeOf(first) != command.ModeNormal || modeOf(second) != command.ModeNormal {
+		t.Errorf("visual <C-t>: mode %v → %v", modeOf(first), modeOf(second))
+	}
+
+	// インサートモードのまま :tab.new で移ると、移った先でインサートモードが続き、元のバッファはノーマルモードに戻る。
+	h.keys(":b a.txt<CR>ggAfoo<C-t>")
+	h.settle()
+	var third *bufferState
+	h.e.do(func() { third = h.e.cur })
+	if third == first || third == second || modeOf(third) != command.ModeInsert || modeOf(first) != command.ModeNormal {
+		t.Fatalf("insert <C-t>: mode %v → %v", modeOf(first), modeOf(third))
+	}
+	h.keys("bar<Esc>")
+	h.settle()
+	if got := h.text(); got != "bar" {
+		t.Errorf("移った先の text = %q", got)
+	}
+	var oldText string
+	h.e.do(func() { oldText = strings.TrimSuffix(first.buf.Text(), "\n") })
+	if oldText != "abcdfoo\nefgh" {
+		t.Errorf("元のバッファの text = %q", oldText)
+	}
+	// 移った先の . は、移る前の入力と合わせた foobar を入れる（Vim 9.1 の . のレジスターと同じ）。
+	h.keys("u.")
+	h.settle()
+	if got := h.text(); got != "foobar" {
+		t.Errorf(". の後の text = %q", got)
+	}
+}
+
 // KeymapCommandCheck は、keymap の Ex コマンドの名前を、拡張機能の宣言ファイルと Ex コマンドの別名の表（設定の別名を足した後）で確かめる。
 // 拡張機能のコマンドと provides の操作の名前は書けるが、本体が拡張機能のコマンドと同じ口から呼ぶ :help などは、
 // 正規の名前の無いコマンドなので書けない。モードと左辺は、操作の項目と同じ規則で確かめる。

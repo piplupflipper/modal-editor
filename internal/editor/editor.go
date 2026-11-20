@@ -972,9 +972,15 @@ func (e *Editor) syncFinalNewline(bs *bufferState) {
 // Vim でエディタ全体に 1 つの状態は引き継ぐ（command.State.TakeOver）。
 // 別のバッファへ移るときは、画面の位置を、bs に残したカーソルを中ほどに置く位置に決め直す（ui.Renderer.EnterBuffer。Vim 9.1 の enter_buffer）。
 // 移った後に呼び出し側がカーソルを動かせば（<C-o> の移り先、定義へ移動）、次の描画がその位置から画面に収める。
+//
+// Vim と同じくモードはエディタ全体に 1 つとして扱う（command.State.SuspendMode と ResumeMode）。
+// インサートモードのまま移ったら（keymap の Ex コマンドの :tab.new。FR-154）、移る前のバッファの入力を終えて、移った先でインサートモードを続け、
+// ビジュアルモードのまま移ったら、移る前のバッファの選択を抜ける。
 func (e *Editor) switchTo(bs *bufferState) {
 	if e.cur != nil && e.cur != bs {
+		carry := e.cur.state.SuspendMode()
 		bs.state.TakeOver(e.cur.state)
+		bs.state.ResumeMode(carry)
 		e.renderer.EnterBuffer(bs.buf.LineCount(), bs.state.Cursor().Line)
 		if e.shared == e.cur.state {
 			e.shared = bs.state
