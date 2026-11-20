@@ -375,7 +375,11 @@ func (s *State) lineSites(first, last int, place func(line string) int) []buffer
 //   - 編集が置き換えた範囲の内側にあった位置（inside）。行を消す編集や行を丸ごと書き換える編集は、範囲の中の位置を範囲の始まりへ寄せる。
 //     寄せた位置はもとの文字との対応が無く、カーソルと違って画面に出ないので、残すと利用者の気づかない場所（行の先頭や前の行の行末）に入る
 //   - バッファの外へ出た位置
-//   - カーソルか、上の行にあった位置と同じ行へ寄った位置。1 行に 1 つの位置を保つ（typeAtSites の前提）
+//   - カーソルか、下の行にあった位置と同じ行へ寄った位置。1 行に 1 つの位置を保つ（typeAtSites の前提）
+//
+// 同じ行へ寄ったときに下の行にあった位置を残すのは、範囲の始まりにちょうどある位置が内側に数えられないからである。
+// 列 0 の位置（字下げの無い行の I）の行を消す編集（その行の先頭から次の行の先頭まで）では、消した行の位置は範囲の始まりにあって残り、
+// 次の行の位置が同じ行へ寄る。編集の後も残るのは次の行のほうなので、下の行にあった位置を残す（PR #274 の再レビュー）。
 //
 // req: FR-141
 func (s *State) shiftSites(shift func(buffer.Position) (buffer.Position, bool)) {
@@ -384,7 +388,7 @@ func (s *State) shiftSites(shift func(buffer.Position) (buffer.Position, bool)) 
 	}
 	used := map[int]bool{s.cursor.Line: true}
 	kept := make([]buffer.Position, 0, len(s.insert.others))
-	for _, p := range s.insert.others {
+	for _, p := range slices.Backward(s.insert.others) {
 		q, inside := shift(p)
 		if inside || q != s.clampPos(q) || used[q.Line] {
 			continue
@@ -392,6 +396,7 @@ func (s *State) shiftSites(shift func(buffer.Position) (buffer.Position, bool)) 
 		used[q.Line] = true
 		kept = append(kept, q)
 	}
+	slices.Reverse(kept)
 	s.insert.others = kept
 }
 

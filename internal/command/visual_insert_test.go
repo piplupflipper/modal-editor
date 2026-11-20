@@ -215,6 +215,9 @@ func TestVisualInsertShift(t *testing.T) {
 		// 2 行目を消す。消した行の位置は範囲の内側なので落とし、3 行目の位置を残す。
 		{"途中の行を消す", "|abc\ndef\nghi", "VjjAX", buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(2, 0)}}, "abcXY\nghiXY"},
 		{"I で途中の行を消す", "|  a\n  b\n  c", "VjjIX", buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(2, 0)}}, "  XYa\n  XYc"},
+		// 列 0 の位置（字下げの無い行の I）の行を消す。消した行の位置は範囲の始まりにあって内側に数えないが、
+		// 次の行の位置と同じ行へ寄るので、下の行にあった位置を残す（PR #274 の再レビューの必須）。
+		{"I で列 0 の位置の行を消す", "|  alpha\nbeta\n  gamma", "VjjI", buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(2, 0)}}, "  Yalpha\n  Ygamma"},
 		// 2 行目と 3 行目を消す。消した行の位置はカーソルの行の行末へ寄るので落とす。
 		{"末尾の行を消す", "|abc\ndef\nghi", "VjjAX", buffer.Edit{Range: buffer.Range{Start: pos(0, 4), End: pos(2, 4)}}, "abcXY"},
 		// 最後の行を、前の行の行末から消す（最後の行には後ろに改行が無いので、外からはこの形でしか消せない）。

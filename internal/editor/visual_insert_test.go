@@ -27,6 +27,8 @@ func TestVisualInsertExternalEdit(t *testing.T) {
 		// I の位置（字下げの後）で、最後の行を前の行の行末から消す（MCP の edit_buffer で最後の行を消す形。PR #274 のレビューの必須 1）。
 		// 消した行の位置は前の行の行末へ寄るが、範囲の内側にあったので落とし、前の行の字下げの後の位置を残す。
 		{"I で最後の行を消す", indented, "VjjIX", buffer.Edit{Range: buffer.Range{Start: at(1, 4), End: at(2, 4)}}, "  XYa\n  XYb"},
+		// 列 0 の位置の行（beta）を消す。消した行の位置ではなく、下の行（gamma の字下げの後）の位置を残す（PR #274 の再レビューの必須）。
+		{"I で列 0 の位置の行を消す", "  alpha\nbeta\n  gamma\n", "VjjI", buffer.Edit{Range: buffer.Range{Start: at(1, 0), End: at(2, 0)}}, "  Yalpha\n  Ygamma"},
 		// 行を丸ごと書き換えると、その行の位置は範囲の内側なので落とす（行の先頭には入れない。レビューの推奨 3）。
 		{"I で行を書き換える", indented, "VjjIX", buffer.Edit{Range: buffer.Range{Start: at(1, 0), End: at(1, 4)}, Text: "  Xbb"}, "  XYa\n  Xbb\n  XYc"},
 	}
