@@ -99,6 +99,9 @@ type Message struct {
 	// 広げるのは画面の半分まで（Frame.HitEnter の問いの行を除く）で、収まらない行は省いたことを最後の行に書く。
 	Text  string
 	Level MessageLevel
+	// Right は、Text が 1 行のときに、同じ行の右に寄せて出す文字列（検索の一致の件数 "[2/5]"。FR-167）である。空なら出さない。
+	// 色は Text と同じである。Text が改行を含むときは出さない。
+	Right string
 }
 
 // Choice は、選択肢の問い（choice/ask）の表示である（Frame.Choice）。

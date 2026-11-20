@@ -202,10 +202,12 @@ type State struct {
 	searchSteps int
 	// searchBackward は、直前の検索（/、?、*、#）が後ろ向きだったかである。n と N の向きを決める。
 	searchBackward bool
-	recording      rune // マクロの記録先。0 なら記録していない
-	recorded       []editcmd.Key
-	lastPlayed     rune // @@ が再生するレジスター
-	playDepth      int
+	// matchCache は、検索の一致の件数（FR-167）のために最後に集めた一致の一覧である（searchCount）。無ければ nil。
+	matchCache *matchCache
+	recording  rune // マクロの記録先。0 なら記録していない
+	recorded   []editcmd.Key
+	lastPlayed rune // @@ が再生するレジスター
+	playDepth  int
 	// playUndoStart は、いちばん外側の再生（play、ContinueReplay、ResumeReplay）を始めたときのアンドゥの履歴の末尾の識別子である
 	// （buffer.Buffer.UndoTip）。止めたときの末尾と違えば、止める前の再生が単位を作っている（suspendQuery、ResumeReplay）。
 	playUndoStart uint64

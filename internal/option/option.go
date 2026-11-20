@@ -144,6 +144,10 @@ const (
 	// 既定の 500 は、Vim 9.1 の 'incsearch' が検索を約 0.5 秒で打ち切るのと同じである（:help 'incsearch'。'redrawtime' の既定の 2000 は
 	// 'hlsearch' の色付けの上限で、打つたびの検索には使わない）。打つたびの検索をしない設定は持たない（#296 のオーナーの決め）。
 	SearchIncrementalTimeoutMs = "search.incrementalTimeoutMs"
+	// SearchShowCount は、検索で動いたときに、メッセージの行の右に一致の件数（[2/5] の形）を出すかである（FR-167。
+	// Vim の 'shortmess' に S が無いとき）。本体の既定は Vim 9.1 の既定（'shortmess' に S があり、出さない）に合わせて出さない。
+	// 検索するたびにこの値を読む。'shortmess' は多くのフラグをまとめた設定なので、:set の別名は作らない（#320 のオーナーの決め）。
+	SearchShowCount = "search.showCount"
 	// YankHighlightMs は、本体の y でヤンクした範囲に色を付けておくミリ秒である（FR-140。nvim の vim.hl.on_yank の timeout）。
 	// 0 なら付けない。範囲は 0 から 10000 である。Vim にこの設定は無い。
 	YankHighlightMs = "yank.highlightMs"
@@ -173,6 +177,7 @@ var defs = []Def{
 	{Name: SearchHighlight, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	// 下限は、打つたびの検索をしない値（0）を作らないため 1 にした。上限は yank.highlightMs と同じ 10 秒にした。
 	{Name: SearchIncrementalTimeoutMs, Type: Int, Scope: ScopeEditor, Default: IntValue(500), Range: &IntRange{Min: 1, Max: 10000}},
+	{Name: SearchShowCount, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	// 上限は、色を一瞬だけ付ける設定なので 10 秒にした（ミリ秒を時間の長さにしたときに溢れないためでもある）。
 	{Name: YankHighlightMs, Type: Int, Scope: ScopeEditor, Default: IntValue(0), Range: &IntRange{Min: 0, Max: 10000}},
 	// 境目の上限は、端末の列数として現実に無い大きさにした。0 にすると、プレビューの欄を持つ窓では常に出す。

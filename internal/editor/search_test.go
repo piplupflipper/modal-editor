@@ -110,6 +110,33 @@ func TestSearchHighlightAcrossClients(t *testing.T) {
 	})
 }
 
+// 設定ファイルの search.showCount（Config.Options）が真なら、検索で動いたときに、メッセージの行の右の端の 2 列を空けた位置に、
+// 一致が何件目かと件数を出す。折り返したら、警告の文の代わりに件数の前に W を付ける。
+// 値は検索するたびに読むので、:option.set と :option.toggle で変えた値は次の検索から効き、偽なら今までどおりに出す。
+//
+// req: FR-167
+func TestSearchCountMessage(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "foo bar\nbaz foo\nqux\nfoo foo\nend\n"})
+	h := start(t, Config{WorkDir: dir, Options: map[string]option.Value{option.SearchShowCount: option.BoolValue(true)}}, "a.txt")
+	// 偽の端末は 120 列 6 行で、最後の行がメッセージの行である。件数は右の端の 2 列を空けた 118 列目で終わる。
+	line := func(left, right string) string { return left + strings.Repeat(" ", 118-len(left)-len(right)) + right }
+	h.settle()
+	for _, s := range []struct{ keys, want string }{
+		{"/foo<CR>", line("/foo", "[2/4]")},
+		{"n", line("/foo", "[3/4]")},
+		{"nn", line("/foo", "W [1/4]")},
+		{"*", line(`/\bfoo\b`, "[1/4]")},
+		{":option.toggle search.showCount<CR>n", `/\bfoo\b`},
+		{"G?foo<CR>", "?foo"},
+		{"gg?foo<CR>", "先頭まで検索したので末尾から続けました"},
+		{":option.set search.showCount true<CR>gg?foo<CR>", line("?foo", "W [4/4]")},
+	} {
+		h.keys(s.keys)
+		h.settle()
+		h.eventually(s.keys, func() bool { return h.screenRow(5) == s.want })
+	}
+}
+
 // / と ? のパターンの入力は、コマンドラインの行に "/" か "?" を付けて出し、Ex コマンドの入力と同じ行の編集を使う。
 // 検索の後は、検索したパターンをメッセージの行に出し、バッファの端で折り返したら警告を出す。
 //

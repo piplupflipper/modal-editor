@@ -1,0 +1,50 @@
+## 件数
+size 24x4 cursor 0,0 block
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | NORMAL  <me]  1,1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |/foo             [2/4]  |
+
+## 折り返しの W
+size 24x4 cursor 0,0 block
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | NORMAL  <me]  1,1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |/foo        W [1/>999]  |
+
+## 長いパターンは後ろを描かない
+size 24x4 cursor 0,0 block
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | NORMAL  <me]  1,1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |/abcdefghijklmno [2/4]  |
+
+## 全角の文字のパターン
+size 24x4 cursor 0,0 block
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   | NORMAL  <me]  1,1  All |
+fx |SSSSSSSSSSSSSSSSSSSSSSSS|
+   |/あいうえおかき  [2/4]  |
+
+## 改行を含むメッセージには出さない
+size 24x4 cursor 0,0 block
+   |hello                   |
+   |~                       |
+fg |n.......................|
+   |a                       |
+   |b                       |
+
+## 右の文字列も収まらない幅
+size 6x3 cursor 0,0 block
+   |hello |
+   |1,1  A|
+fx |SSSSSS|
+   |[2/4] |
