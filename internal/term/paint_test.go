@@ -99,36 +99,43 @@ func randomFrame(rnd *rand.Rand) *ui.Frame {
 
 // TestPaintMatchesGrid は、続けて描いた画面の差分を端末の模型へ流し、模型の画面が毎回の格子と一致することを確かめる。
 // 全角文字の片側だけを上書きしたときの崩れ、属性の切り替えの漏れ、大きさの変化による全体の書き直しを、乱数の画面で揺さぶる。
+// 模型は、端末を直接使うときと、tmux の中で動かすとき（全角文字の右の半分を残す組。#297）の 2 つで確かめる。
 func TestPaintMatchesGrid(t *testing.T) {
-	for seed := range uint64(40) {
-		rnd := rand.New(rand.NewPCG(seed, 104)) //nolint:gosec // 再現できる無作為な画面の列を作るためで、暗号の用途ではない
-		w, h := 20, 8
-		r := &ui.Renderer{Width: w, Height: h, Theme: paintTheme()}
-		v := newVT(w, h)
-		var p Painter
-		var buf bytes.Buffer
-		for step := range 60 {
-			if rnd.IntN(15) == 0 {
-				w, h = 5+rnd.IntN(30), 3+rnd.IntN(10)
-				r.Width, r.Height = w, h
-				v = newVT(w, h)
-			}
-			s := r.Render(randomFrame(rnd))
-			buf.Reset()
-			p.Paint(&buf, s)
-			v.write(t, buf.String())
-			if t.Failed() {
-				return
-			}
-			func() {
-				defer func() {
-					if t.Failed() {
-						t.Logf("seed %d, step %d", seed, step)
+	for _, tmux := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "tmux"}[tmux], func(t *testing.T) {
+			for seed := range uint64(40) {
+				rnd := rand.New(rand.NewPCG(seed, 104)) //nolint:gosec // 再現できる無作為な画面の列を作るためで、暗号の用途ではない
+				w, h := 20, 8
+				r := &ui.Renderer{Width: w, Height: h, Theme: paintTheme()}
+				v := newVT(w, h)
+				v.tmux = tmux
+				var p Painter
+				var buf bytes.Buffer
+				for step := range 60 {
+					if rnd.IntN(15) == 0 {
+						w, h = 5+rnd.IntN(30), 3+rnd.IntN(10)
+						r.Width, r.Height = w, h
+						v = newVT(w, h)
+						v.tmux = tmux
 					}
-				}()
-				v.check(t, s)
-			}()
-		}
+					s := r.Render(randomFrame(rnd))
+					buf.Reset()
+					p.Paint(&buf, s)
+					v.write(t, buf.String())
+					if t.Failed() {
+						return
+					}
+					func() {
+						defer func() {
+							if t.Failed() {
+								t.Logf("seed %d, step %d", seed, step)
+							}
+						}()
+						v.check(t, s)
+					}()
+				}
+			}
+		})
 	}
 }
 
@@ -185,17 +192,98 @@ func TestPaintAttrSwitches(t *testing.T) {
 }
 
 // TestPaintWideOverwrite は、全角文字の片側だけが変わったときに、端末に残りの半分が崩れて残らないことを確かめる。
+// 端末を直接使うときと、tmux の中で動かすとき（#297）の両方の模型で確かめる。
 func TestPaintWideOverwrite(t *testing.T) {
-	r := &ui.Renderer{Width: 10, Height: 3}
-	v := newVT(10, 3)
+	for _, tmux := range []bool{false, true} {
+		r := &ui.Renderer{Width: 10, Height: 3}
+		v := newVT(10, 3)
+		v.tmux = tmux
+		var p Painter
+		var buf bytes.Buffer
+		for _, text := range []string{"あいう", "aいう", "あいう", "xあいう", "あいう", "a\tb", "あいう", "", "あいう", "a い", "あいう", "いう"} {
+			s := r.Render(&ui.Frame{Text: lines{text}})
+			buf.Reset()
+			p.Paint(&buf, s)
+			v.write(t, buf.String())
+			v.check(t, s)
+		}
+	}
+}
+
+// TestPaintWideClear は、全角文字のあった列を既定の空白にするときの書き方を確かめる（#297）。
+// 行末までが既定の空白なら EL で消し、行の途中で前回の全角文字の右の半分の列を含むなら ECH で消す。
+// どちらも空白の文字を並べない（tmux が右の半分の列の空白を外側へ送らず、カーソルを進めるだけにするため）。
+func TestPaintWideClear(t *testing.T) {
+	cases := []struct {
+		name     string
+		from, to string
+		want     string // 1 行目を書く制御シーケンス（前の画面のステータス行の属性を戻す SGR を含む）
+	}{
+		// select-all の後の D（issue の再現の手順）。
+		{"行の全体を消す", "あいうえお", "", "\x1b[1;1H\x1b[0m\x1b[K"},
+		{"行の途中から行末まで消す", "abあいう", "ab", "\x1b[1;3H\x1b[0m\x1b[K"},
+		// r で全角文字を半角文字に置き換えると、後ろの文字が 1 列ずつ左へ寄り、行末に既定の空白が 1 列残る。
+		{"全角文字を半角文字に置き換える", "あいう", "xいう", "\x1b[1;1H\x1b[0mxいう\x1b[K"},
+		{"行の途中の全角文字を消す", "あいxyz", "    xyz", "\x1b[1;1H\x1b[0m\x1b[4X"},
+		{"全角文字の右の半分だけが空白になる", "あいxyz", "a   xyz", "\x1b[1;1H\x1b[0ma\x1b[3X"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &ui.Renderer{Width: 12, Height: 3}
+			v := newVT(12, 3)
+			v.tmux = true
+			var p Painter
+			var buf bytes.Buffer
+			p.Paint(&buf, r.Render(&ui.Frame{Text: lines{tc.from}}))
+			v.write(t, buf.String())
+			buf.Reset()
+			s := r.Render(&ui.Frame{Text: lines{tc.to}})
+			p.Paint(&buf, s)
+			v.write(t, buf.String())
+			v.check(t, s)
+			// 1 行目の分の後は、次の行へ移る CUP か、カーソルを置く CUP である。
+			if out := buf.String(); !strings.Contains(out, tc.want+"\x1b[") {
+				t.Errorf("Paint = %q, want 1 行目が %q", out, tc.want)
+			}
+		})
+	}
+}
+
+// TestPaintEraseAttr は、既定でない属性の空白を EL と ECH で消さず、消す前に属性を既定に戻すことを確かめる。
+// EL と ECH は今の属性の背景の色で消すので、属性が残っていると、消したセルに背景の色が付く。
+func TestPaintEraseAttr(t *testing.T) {
+	r := &ui.Renderer{Width: 12, Height: 3, Theme: paintTheme()}
+	v := newVT(12, 3)
+	v.tmux = true
 	var p Painter
 	var buf bytes.Buffer
-	for _, text := range []string{"あいう", "aいう", "あいう", "xあいう", "あいう", "a\tb", "あいう"} {
-		s := r.Render(&ui.Frame{Text: lines{text}})
+	// colored は、1 行目の n バイトに背景の色を付けた画面の入力である。
+	colored := func(text string, n int) *ui.Frame {
+		hs := []ui.Highlight{{Range: buffer.Range{End: buffer.Position{Byte: n}}, Style: ui.StyleType}}
+		return &ui.Frame{Text: lines{text}, Decorations: ui.NewDecorations(hs, 1)}
+	}
+	for i, tc := range []struct {
+		f    *ui.Frame
+		want string // 1 行目を書く制御シーケンスに含まれるもの
+	}{
+		{colored("あいう", 9), ""},
+		// 背景の色の付いた x の後の行末を、属性を戻してから EL で消す。
+		{colored("x", 1), "x\x1b[0m\x1b[K"},
+		{colored("あいう", 9), ""},
+		// 背景の色の付いた a の後の、前回の全角文字の列を、属性を戻してから ECH で消す。
+		{colored("a   z", 1), "a\x1b[0m\x1b[3X"},
+		// 背景の色の付いた空白は、EL でも ECH でも消さず、空白の文字で書く。
+		{colored("あいう", 9), ""},
+		{colored("         ", 9), "\x1b[1;1H         "},
+	} {
+		s := r.Render(tc.f)
 		buf.Reset()
 		p.Paint(&buf, s)
 		v.write(t, buf.String())
 		v.check(t, s)
+		if !strings.Contains(buf.String(), tc.want) {
+			t.Errorf("%d 回目: %q に %q が無い", i, buf.String(), tc.want)
+		}
 	}
 }
 
