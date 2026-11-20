@@ -3847,7 +3847,7 @@ CI は `make build-check` の後に `make footprint-check` を実行する。
 
 | ターゲット | 検証すること | 要件 |
 |---|---|---|
-| `make build-check` | 本体の実行ファイルが 10 MiB 以下（`internal/distcheck`） | NFR-05 |
+| `make build-check` | 本体の実行ファイルが 12 MiB 以下（`internal/distcheck`。2026-11-21 に 10 MiB から上げた。要件定義の NFR-05 の注） | NFR-05 |
 | `make footprint-check` | 拡張機能なしで 10,000 行のファイルを偽の端末で開き、起動から文字を含む最初の画面までと、その後の本体の `VmRSS` を 20 回測った中央値が、20 ms 以下と 16 MiB 以下（`cmd/vi-imitation`） | NFR-05 |
 
 測り方と、目標値を決めた根拠の実測は [measurements/nfr05-footprint.md](measurements/nfr05-footprint.md) に書く。

@@ -261,7 +261,7 @@ tree-sitter の拡張機能は、#66 の時点で glibc を静的にリンクし
 
 | 項目 | 検査 | 判定 |
 |---|---|---|
-| 実行ファイルのサイズ | `make build-check` が実行する `internal/distcheck` の `TestBuildMainSize` | `bin/vi-imitation` の大きさが 10 MiB（10,485,760 バイト）以下。サイズはビルドの環境が同じなら揺れないので、1 回の値で判定する |
+| 実行ファイルのサイズ | `make build-check` が実行する `internal/distcheck` の `TestBuildMainSize` | `bin/vi-imitation` の大きさが 12 MiB（12,582,912 バイト）以下（2026-11-21 のオーナーの決めで 10 MiB から上げた。要件定義の NFR-05 の注）。サイズはビルドの環境が同じなら揺れないので、1 回の値で判定する |
 | 起動から最初の画面までの時間と本体の RSS | `make footprint-check` が単独で実行する `cmd/vi-imitation` の `TestFootprintInPTY` | 最初の 3 回を捨て、続く 20 回の中央値が 20 ms 以下、16 MiB（16,384 KiB）以下 |
 
 `TestFootprintInPTY` は、この文書の道具と同じ手順で 1 回を測る。
