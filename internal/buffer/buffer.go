@@ -493,6 +493,18 @@ func (b *Buffer) MarkSaved() {
 	b.savedID = b.stateID()
 }
 
+// unsavedID は、MarkUnsaved が savedID に入れる値である。アンドゥの単位の識別子は 1 から数えるので、どの stateID とも等しくならない。
+const unsavedID = ^uint64(0)
+
+// MarkUnsaved は、現在の内容を、保存していない変更がある内容として記録する。
+// 以後、次に MarkSaved を呼ぶまで、編集、アンドゥ、リドゥでどの内容になっても Modified は true を返す。
+// アンドゥの履歴には何も足さないので、作った直後に呼べば、アンドゥで取り消せる変更は無いまま Modified が true になる。
+// 標準入力から読んだバッファ（FR-158）のように、ファイルに保存していない中身で作ったバッファに使う
+// （Vim が - で読んだバッファに changed() を呼ぶのと同じ）。
+func (b *Buffer) MarkUnsaved() {
+	b.savedID = unsavedID
+}
+
 // Modified は、現在の内容が、最後に MarkSaved した時点（呼んでいなければ作った時点）の内容から変わっているかどうかを返す。
 //
 // 判定はアンドゥの履歴の位置で行う。

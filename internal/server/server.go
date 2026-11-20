@@ -131,7 +131,13 @@ func (s *Server) newTerm() *clientTerm {
 
 // clientInfo は、Hello から、イベントループへ渡す client ごとの情報を作る。
 func clientInfo(id editor.ClientID, h protocol.Hello) editor.ClientInfo {
-	return editor.ClientInfo{ID: id, Pane: h.Pane, WorkDir: h.WorkDir, Env: h.Env, Files: h.Files, ReadOnly: h.ReadOnly}
+	return editor.ClientInfo{ID: id, Pane: h.Pane, WorkDir: h.WorkDir, Env: h.Env, Files: h.Files, ReadOnly: h.ReadOnly, Stdin: h.Stdin}
+}
+
+// OpenStdin は、起動の引数の - で標準入力から読んだ text を、名前の無いバッファとして開き、カーソルのあるバッファにする
+// （editor.Editor.OpenStdin。FR-158）。readOnly なら編集を禁止した状態で開く（FR-119）。Run の前に呼ぶ。
+func (s *Server) OpenStdin(text string, readOnly bool) {
+	s.ed.OpenStdin(text, readOnly)
 }
 
 // Open は、path のファイルを開き、カーソルのあるバッファにする（editor.Editor.Open）。Run の前に呼ぶ。
@@ -169,7 +175,7 @@ func (s *Server) Run(ctx context.Context, conn protocol.ServerConn) error {
 // first が nil でなければ、それを最初の編集の client にする（1 つのプロセスの構成）。
 // first が nil なら、ln で受け付けた接続のうち、最初に編集の client の Hello を送ったものを最初の編集の client にする（server だけのプロセス）。
 // FirstClientTimeout の間に来なければ ErrNoClient で戻る。
-// 最初の編集の client を繋いだら、その Hello の Files を Hello.ReadOnly に従って開いてから（OpenArgs と同じ順）、イベントループを動かす。
+// 最初の編集の client を繋いだら、その Hello の Stdin（FR-158）と Files を Hello.ReadOnly に従って開いてから（OpenStdin、OpenArgs と同じ順）、イベントループを動かす。
 // 開けなければ、その理由の終わりの知らせを送り、誤りで戻る。
 // ln が nil でなければ、Serve の間 ln で待ち受け、後から編集の client の Hello を送った接続を、イベントループへ足す（editor.Editor.Attach。FR-62）。
 // その client の Files を開けなければ、その理由の終わりの知らせを送って閉じる。編集の client でない接続は、理由付きの終わりの知らせを送って閉じる。
@@ -197,6 +203,11 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, first protocol.Serv
 	s.client.attach(id, conn, hello)
 	s.track(s.client)
 	s.ed.SetClientInfo(clientInfo(id, hello))
+	if hello.Stdin != nil {
+		// req: FR-158
+		s.ed.OpenStdin(*hello.Stdin, hello.ReadOnly)
+		hello.Stdin = nil // 中身はバッファが持つ。イベントループを動かす間は覚えておかない
+	}
 	if err = s.openArgs(hello.Files, hello.ReadOnly); err != nil {
 		s.client.end(err.Error())
 		return err
@@ -434,9 +445,10 @@ func (s *Server) serveWait(a *acceptor, conn protocol.ServerConn, h protocol.Hel
 	}()
 	ended := make(chan string, 1)
 	stopWait, err := s.ed.Wait(ctx, editor.WaitInfo{
-		Files: h.Files, ReadOnly: h.ReadOnly, Parent: editor.ClientID(h.Parent),
+		Files: h.Files, ReadOnly: h.ReadOnly, Stdin: h.Stdin, Parent: editor.ClientID(h.Parent),
 		Done: func(reason string) { ended <- reason },
 	})
+	h.Stdin = nil // 中身はバッファが持つ。待つ間は覚えておかない
 	if err != nil {
 		reason := err.Error()
 		if errors.Is(err, editor.ErrStopped) || errors.Is(err, context.Canceled) {

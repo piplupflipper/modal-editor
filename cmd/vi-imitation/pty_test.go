@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -109,14 +110,25 @@ func startEditorIn(t *testing.T, xdg string, env []string, args ...string) *edit
 // startEditorSized は、startEditorIn と同じく、ただし偽の端末を cols 列 rows 行にしてエディタを起動する。
 func startEditorSized(t *testing.T, cols, rows uint16, xdg string, env []string, args ...string) *editorProc {
 	t.Helper()
+	return startEditorStdin(t, cols, rows, xdg, env, nil, args...)
+}
+
+// startEditorStdin は、startEditorSized と同じく、ただし標準入力を stdin にしてエディタを起動する。nil なら偽の端末にする。
+// 偽の端末は制御端末なので、エディタは /dev/tty でそれを開ける（起動の引数の - の後にキーを読む端末。FR-158）。
+func startEditorStdin(t *testing.T, cols, rows uint16, xdg string, env []string, stdin io.Reader, args ...string) *editorProc {
+	t.Helper()
 	master, tty := ptytest.Open(t, cols, rows)
 	cmd := exec.Command(os.Args[0], args...) //nolint:gosec // テストの実行ファイル自身をエディタとして起動する
 	cmd.Env = append(muxFreeEnv(), envRunMain+"=1",
 		"XDG_CONFIG_HOME="+filepath.Join(xdg, "config"), "XDG_DATA_HOME="+filepath.Join(xdg, "data"))
 	cmd.Env = append(cmd.Env, env...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
 	// 新しいセッションを作り、tty を制御端末にする。端末の大きさを変えると、カーネルがエディタへ SIGWINCH を送る。
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	// Ctty は子の fd の番号で、標準出力（1）はいつも tty である。
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 1}
 	p := &editorProc{cmd: cmd, master: master, tty: tty, out: ptytest.StartCapture(master), done: make(chan error, 1)}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

@@ -740,6 +740,25 @@ func start(t *testing.T, cfg Config, files ...string) *harness {
 // startTerm は、start の、偽の端末 term（大きさを変えたもの）を使う形である。
 func startTerm(t *testing.T, term *fakeTerm, cfg Config, files ...string) *harness {
 	t.Helper()
+	return startTermWith(t, term, cfg, func(e *Editor) error {
+		for _, f := range files {
+			if err := e.Open(f); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// startWith は、start と同じく cfg でエディタを作り、Run の前に open を呼んでから、別の goroutine で Run する。
+func startWith(t *testing.T, cfg Config, open func(e *Editor) error) *harness {
+	t.Helper()
+	return startTermWith(t, newFakeTerm(), cfg, open)
+}
+
+// startTermWith は、startWith の、偽の端末 term を使う形である。
+func startTermWith(t *testing.T, term *fakeTerm, cfg Config, open func(e *Editor) error) *harness {
+	t.Helper()
 	if cfg.WorkDir == "" {
 		cfg.WorkDir = t.TempDir()
 	}
@@ -750,10 +769,8 @@ func startTerm(t *testing.T, term *fakeTerm, cfg Config, files ...string) *harne
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range files {
-		if err := e.Open(f); err != nil {
-			t.Fatal(err)
-		}
+	if err := open(e); err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &harness{t: t, e: e, term: term, done: make(chan error, 1), cancel: cancel}

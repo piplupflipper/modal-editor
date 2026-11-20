@@ -75,8 +75,13 @@ type Hello struct {
 	// server は、この client を繋いだ後、イベントループを動かす前に、引数の順に開く（server を起動した client の引数ではなく、
 	// 繋いだ client の引数を開くため。同じ window でほぼ同時に起動した 2 つの client のファイルを取り違えない）。
 	Files []string
-	// ReadOnly は、Files を編集を禁止した状態で開くことを表す（起動のオプション -R。FR-119）。
+	// ReadOnly は、Files と Stdin を編集を禁止した状態で開くことを表す（起動のオプション -R。FR-119）。
 	ReadOnly bool
+	// Stdin は、client が起動の引数の - で標準入力から終わりまで読んだ中身である（FR-158）。nil なら - を書いていない。
+	// server は、Files と同じく、この client を繋いだ後に、名前の無いバッファのタブとして開く。
+	// 1 つのプロセスの中の接続（Pipe）では写さずにそのまま渡す。ソケットの上では、Hello の通知の後に、
+	// 1 件の通知の上限より十分小さい塊に分けた通知で送る（socket.go の methodStdin）。Recv は、塊をすべて受けてから Hello を返す。
+	Stdin *string
 	// Pane は、client のペインの識別子（tmux の TMUX_PANE、herdr の HERDR_PANE_ID）である。
 	// server は、別の client のタブのファイルを開こうとした client から、そのタブの client のペインへフォーカスを移すのに使う（FR-63）。
 	// 端末多重化ソフトの外では空である。
