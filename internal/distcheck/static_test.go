@@ -5,6 +5,8 @@ import (
 	"debug/elf"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -96,37 +98,72 @@ func TestBuildMainSize(t *testing.T) {
 	}
 }
 
-// TestBuildAllStatic は、`make build` の全ての実行ファイルが静的にリンクされていることを確かめる。
+// TestBuildAllStatic は、`make build` の、cgo の拡張機能を除く全ての実行ファイルが静的にリンクされていることを確かめる。
 // 動的リンカーと共有ライブラリを要求しないので、glibc の版や musl かどうかによらず、ファイルを置くだけで起動する。
-// cgo の拡張機能も、C の標準ライブラリごと静的にリンクする。
+// cgo の拡張機能（tree-sitter）は glibc に動的にリンクする（TestBuildCgoGlibcDynamic）。
 //
 // req: NFR-01
 func TestBuildAllStatic(t *testing.T) {
 	dir := buildDir(t)
-	for _, name := range append(pureGoBinaries(t), cgoBinaries(t)...) {
+	for _, name := range pureGoBinaries(t) {
 		t.Run(name, func(t *testing.T) {
 			assertStaticELF(t, filepath.Join(dir, name))
 		})
 	}
 }
 
-// TestBuildCgoNotGlibc は、cgo の拡張機能が glibc ではなく musl を静的にリンクしていることを確かめる。
-// glibc を静的にリンクすると LGPL の再リンクの義務を伴うので、Makefile は musl-gcc でリンクする。
-// glibc の crt1.o は ELF に .note.ABI-tag（file コマンドの "for GNU/Linux 3.2.0"）を入れ、musl の crt1.o は入れない。
-// これを手がかりに、CC の指定が外れて glibc に戻ったことを見つける。
-func TestBuildCgoNotGlibc(t *testing.T) {
+// glibcLibraries は、cgo の拡張機能が要求してよい共有ライブラリ（glibc のもの）である。
+// glibc 2.34 より前では libdl と libpthread が libc と別のファイルなので、それらも含める。
+var glibcLibraries = map[string]bool{
+	"libc.so.6": true, "libdl.so.2": true, "libpthread.so.0": true, "libm.so.6": true,
+}
+
+// assertGlibcDynamicELF は、path の ELF が glibc の動的リンカーを要求し、glibc の共有ライブラリだけを要求することを確かめる。
+func assertGlibcDynamicELF(t *testing.T, path string) {
+	t.Helper()
+	f, err := elf.Open(path)
+	if err != nil {
+		t.Fatalf("%s を ELF として開けない: %v", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	interp := ""
+	for _, p := range f.Progs {
+		if p.Type != elf.PT_INTERP {
+			continue
+		}
+		b := make([]byte, p.Filesz)
+		if _, err = p.ReadAt(b, 0); err != nil {
+			t.Fatalf("%s の PT_INTERP を読めない: %v", path, err)
+		}
+		interp = strings.TrimRight(string(b), "\x00")
+	}
+	if !strings.Contains(filepath.Base(interp), "ld-linux") {
+		t.Errorf("%s の動的リンカー = %q, want glibc の ld-linux", path, interp)
+	}
+	libs, err := f.ImportedLibraries()
+	if err != nil {
+		t.Fatalf("%s の共有ライブラリの一覧を読めない: %v", path, err)
+	}
+	if !slices.Contains(libs, "libc.so.6") {
+		t.Errorf("%s は libc.so.6 を要求しない: %v", path, libs)
+	}
+	for _, l := range libs {
+		if !glibcLibraries[l] {
+			t.Errorf("%s は glibc でない共有ライブラリ %s を要求する", path, l)
+		}
+	}
+}
+
+// TestBuildCgoGlibcDynamic は、cgo の拡張機能が glibc に動的にリンクされていることを確かめる（NFR-01、2026-11-20 のオーナーの裁定、#277）。
+// 利用者の手元でビルドしたパーサを dlopen で読む（FR-142）には、動的にリンクする必要がある。
+// glibc の共有ライブラリだけを要求するので、最近の glibc の Linux ではファイルを置くだけで起動する。
+//
+// req: NFR-01
+func TestBuildCgoGlibcDynamic(t *testing.T) {
 	dir := buildDir(t)
 	for _, name := range cgoBinaries(t) {
 		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(dir, name)
-			f, err := elf.Open(path)
-			if err != nil {
-				t.Fatalf("%s を ELF として開けない: %v", path, err)
-			}
-			defer func() { _ = f.Close() }()
-			if f.Section(".note.ABI-tag") != nil {
-				t.Errorf("%s に .note.ABI-tag がある（glibc をリンクしている）", path)
-			}
+			assertGlibcDynamicELF(t, filepath.Join(dir, name))
 		})
 	}
 }

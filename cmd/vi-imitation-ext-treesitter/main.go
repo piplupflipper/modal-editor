@@ -18,9 +18,16 @@
 // 解析の goroutine が最後に解析した構文木の複製を使い、問い合わせのバージョンの構文木が無ければ、
 // 問い合わせの goroutine で全文から解析する。どちらもメッセージを処理する goroutine の上では行わない。
 //
-// 対応する言語は Go（ファイルの種類 "go"）と JSON（"json" と "jsonc"）で、表は languages にある。
-// 文法は公式の Go のモジュール（github.com/tree-sitter/tree-sitter-go など）を cgo で一緒にコンパイルする。
+// 同梱する言語は Go（ファイルの種類 "go"）と JSON（"json" と "jsonc"）で、表は languages にある。
+// 同梱する文法は公式の Go のモジュール（github.com/tree-sitter/tree-sitter-go など）を cgo で一緒にコンパイルする。
 // cgo を使うのはこの実行ファイルだけで、本体は cgo を使わない（NFR-02）。
+//
+// ほかの言語は、利用者の設定（extensions.settings.treesitter.parsers。settings.go の parserSpec）に並べたパーサを、
+// そのファイルの種類のバッファを初めて開いたときに git で取得し、C コンパイラで共有ライブラリにビルドし、dlopen で読み込む（FR-142。parsers.go）。
+// 取得したコミットはロックファイルに記録し、次からは同じコミットとビルドしたものを使う。
+// 同じファイルの種類を同梱の言語と利用者の設定の両方が持てば、利用者の設定のパーサを使う。
+// dlopen を使うので、この実行ファイルは glibc に動的にリンクする（NFR-01。Makefile）。
+// 取得とビルドは、メッセージを処理する goroutine とも解析の goroutine とも別の、用意の goroutine で行う（userparser.go）。
 //
 // ハイライトのクエリは、各文法の公式の queries/highlights.scm を queries/ の下に写して埋め込む。
 // キャプチャ名から decoration/set の色の種類の名前への対応は styleFor にある。

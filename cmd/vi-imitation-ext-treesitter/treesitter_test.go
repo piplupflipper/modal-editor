@@ -443,11 +443,17 @@ func connectWithMessages(t *testing.T) (*rpc.Conn, <-chan ext.DecorationSetParam
 // connectLimited は、decoration/set の大きさの上限を maxBytes にして connectWithMessages と同じものを返す。
 func connectLimited(t *testing.T, maxBytes int) (*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams) {
 	t.Helper()
+	return connectWith(t, func(h *highlighter) { h.maxBytes = maxBytes }, nil)
+}
+
+// connectWith は、setup で変えた highlighter の Server を動かし、settings を initialize の設定として渡して、connectWithMessages と同じものを返す。
+func connectWith(t *testing.T, setup func(*highlighter), settings json.RawMessage) (*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams) {
+	t.Helper()
 	h, err := newHighlighter()
 	if err != nil {
 		t.Fatalf("newHighlighter: %v", err)
 	}
-	h.maxBytes = maxBytes
+	setup(h)
 	hostR, extW := io.Pipe()
 	extR, hostW := io.Pipe()
 	served := make(chan error, 1)
@@ -491,7 +497,7 @@ func connectLimited(t *testing.T, maxBytes int) (*rpc.Conn, <-chan ext.Decoratio
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 	var init ext.InitializeResult
-	if err := conn.Call(ctx, ext.MethodInitialize, ext.InitializeParams{APIVersion: ext.APIVersion}, &init); err != nil {
+	if err := conn.Call(ctx, ext.MethodInitialize, ext.InitializeParams{APIVersion: ext.APIVersion, Settings: settings}, &init); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
 	return conn, got, msgs

@@ -15,25 +15,21 @@ MCP_BRIDGE := $(BIN_DIR)/vi-imitation-mcp-bridge
 # 標準の拡張機能。本体とは別の実行ファイルとして作る（NFR-01）。
 EXTENSIONS := vi-imitation-ext-line vi-imitation-ext-script vi-imitation-ext-dap vi-imitation-ext-lsp vi-imitation-ext-acp vi-imitation-ext-mcp vi-imitation-ext-git vi-imitation-ext-finder
 # cgo を使う標準の拡張機能。C コンパイラが要る。cgo を使うのはこれだけで、本体は CGO_ENABLED=0 で作る（NFR-02）。
-CGO_EXTENSIONS := vi-imitation-ext-treesitter
-# cgo の拡張機能は、musl を C の標準ライブラリとして静的にリンクする（NFR-01）。
-# 動的にリンクすると、ビルドしたマシンより古い glibc の環境（AlmaLinux 8 の glibc 2.28 など）や、
-# musl の環境（Alpine）で起動できない。
-# glibc を静的にリンクすると LGPL の再リンクの義務を伴うので、MIT の musl を使う（docs/measurements/nfr-dist.md）。
-# musl-gcc は Debian と Ubuntu の musl-tools にある。
+# cgo の拡張機能（tree-sitter）は、glibc に動的にリンクする（NFR-01。2026-11-20 のオーナーの裁定、#277）。
+# 利用者の手元でビルドしたパーサの共有ライブラリを dlopen で読む（FR-142）ためで、musl を静的にリンクした実行ファイルは dlopen を使えない。
+# このため、ビルドしたマシンより古い glibc の環境（AlmaLinux 8 の glibc 2.28 など）と musl の環境（Alpine）では起動せず、
+# そこでは構文の色付けを使えない。本体と、ほかの拡張機能は静的なままである（docs/measurements/nfr-dist.md）。
 #
 # req: NFR-01
-MUSL_CC            ?= musl-gcc
-CGO_STATIC_LDFLAGS := -linkmode external -extldflags "-static"
-# 配布物に同梱する musl の著作権とライセンスの文面。musl-tools が依存する musl のパッケージが置く。
-MUSL_COPYRIGHT     ?= /usr/share/doc/musl/copyright
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+CGO_EXTENSIONS := vi-imitation-ext-treesitter
+VERSION :=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/piplupflipper/vi-imitation/internal/version.version=$(VERSION)
 
 # 配布物（NFR-01、NFR-06）。ビルド済みの実行ファイルと宣言ファイルを 1 つのディレクトリと tar.gz にまとめる。
 # 宣言ファイルのある拡張機能は extensions/<名前>/ に実行ファイルと並べ（FR-13）、
 # 宣言ファイルの無い実行ファイル（スクリプトの実行環境）は本体と同じ階層に置く。
 # 配布するのはビルド済みの実行ファイルだけなので、利用者は C コンパイラも Go も要しない。
+# 設定に並べた tree-sitter のパーサを手元でビルドする機能（FR-142）を使うときだけ、git と C コンパイラが要る（NFR-06 の注）。
 # 実行ファイルに静的にリンクするサードパーティのライセンスの文面は licenses/ に置く。
 # herdr の中でポップアップとペインを開くための同梱のプラグインの宣言ファイルは herdr-plugin/ に置く。
 # 利用者は herdr plugin link <配布物>/herdr-plugin で 1 回登録する（基本設計 1.3）。
@@ -51,6 +47,9 @@ DIST_LICENSE_PACKAGES := $(DIST_PACKAGES) ./internal/diff
 # 配布物を起動して確かめるコンテナのイメージ。ビルド用の道具が無く、C の標準ライブラリが異なるものを選ぶ。
 # 結果が docs/measurements/nfr-dist.md の記録と同じものを指すように、版のタグで固定する。
 DIST_SMOKE_IMAGES := debian:13.7-slim almalinux:8.10-minimal alpine:3.24.1 busybox:1.36.1
+# DIST_SMOKE_IMAGES のうち、glibc に動的にリンクした tree-sitter の拡張機能が起動して解析することまで確かめるイメージ。
+# 残りのイメージ（古い glibc と musl）では、tree-sitter の拡張機能が起動しなくても失敗にしない（NFR-01）。
+DIST_SMOKE_TREESITTER_IMAGES := debian:13.7-slim busybox:1.36.1
 
 .DEFAULT_GOAL := help
 
@@ -108,7 +107,7 @@ build: ## 本体、MCP の中継コマンド、標準の拡張機能の実行フ
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/vi-imitation
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(MCP_BRIDGE) ./cmd/vi-imitation-mcp-bridge
 	for e in $(EXTENSIONS); do CGO_ENABLED=0 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
-	for e in $(CGO_EXTENSIONS); do CGO_ENABLED=1 CC=$(MUSL_CC) go build -trimpath -ldflags '$(CGO_STATIC_LDFLAGS)' -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
+	for e in $(CGO_EXTENSIONS); do CGO_ENABLED=1 go build -trimpath -o $(BIN_DIR)/$$e ./cmd/$$e || exit 1; done
 
 .PHONY: build-check
 build-check: build ## make build の生成物を検査する（本体の静的リンクと CGO_ENABLED=0、本体の大きさなど。NFR-02、NFR-05）
@@ -124,7 +123,7 @@ footprint-check: build ## make build の本体の起動時間と RSS を検査�
 .PHONY: dist
 dist: build ## 配布物を dist/ に作る（実行ファイルと宣言ファイルのディレクトリと tar.gz。NFR-01）
 	rm -rf $(DIST_ROOT)
-	mkdir -p $(DIST_DIR)/extensions $(DIST_DIR)/licenses/go $(DIST_DIR)/licenses/musl $(DIST_DIR)/herdr-plugin
+	mkdir -p $(DIST_DIR)/extensions $(DIST_DIR)/licenses/go $(DIST_DIR)/herdr-plugin
 	cp $(BINARY) $(MCP_BRIDGE) config.example.jsonc $(DIST_DIR)/
 	cp internal/mux/herdr-plugin/herdr-plugin.toml $(DIST_DIR)/herdr-plugin/
 	for e in $(EXTENSIONS) $(CGO_EXTENSIONS); do \
@@ -136,7 +135,6 @@ dist: build ## 配布物を dist/ に作る（実行ファイルと宣言ファ�
 		fi; \
 	done
 	cp $$(go env GOROOT)/LICENSE $$(go env GOROOT)/PATENTS $(DIST_DIR)/licenses/go/
-	cp $(MUSL_COPYRIGHT) $(DIST_DIR)/licenses/musl/copyright
 	go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Dir}}{{end}}{{end}}' $(DIST_LICENSE_PACKAGES) | sort -u | \
 		while read -r p d; do \
 			mkdir -p $(DIST_DIR)/licenses/$$p && cp $$d/LICENSE* $(DIST_DIR)/licenses/$$p/ || exit 1; \
@@ -155,7 +153,8 @@ dist-smoke-images: ## make dist-smoke のイメージを取得する（取得の
 dist-smoke: dist ## ビルド用の道具の無いコンテナで配布物を起動する（Docker が要る。NFR-01、NFR-06）
 	for img in $(DIST_SMOKE_IMAGES); do \
 		echo "== $$img"; \
-		docker run --rm --network none \
+		ts=0; case " $(DIST_SMOKE_TREESITTER_IMAGES) " in *" $$img "*) ts=1 ;; esac; \
+		docker run --rm --network none -e SMOKE_TREESITTER=$$ts \
 			-v $(abspath $(DIST_DIR)):/opt/vi-imitation:ro \
 			-v $(abspath internal/distcheck/testdata/smoke.sh):/smoke.sh:ro \
 			$$img /bin/sh /smoke.sh /opt/vi-imitation || exit 1; \

@@ -9,3 +9,8 @@ import "os/exec"
 func start(cmd *exec.Cmd) error {
 	return cmd.Start()
 }
+
+// startTerm は、start と同じく起動する。
+func startTerm(cmd *exec.Cmd) error {
+	return cmd.Start()
+}

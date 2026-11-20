@@ -655,10 +655,7 @@ func (s *syncer) install(ctx context.Context, t *target) Outcome {
 	if t.installed != nil && t.installed.Commit == commit && t.installed.Repo == t.spec.Repo {
 		return Outcome{Name: name, Action: ActionUnchanged, Commit: commit}
 	}
-	if _, err = s.git(ctx, src, "-c", "advice.detachedHead=false", "checkout", "--quiet", "--force", "--detach", commit); err != nil {
-		return fail(err)
-	}
-	if _, err = s.git(ctx, src, "clean", "-ffdxq"); err != nil {
+	if err = s.checkout(ctx, src, commit); err != nil {
 		return fail(err)
 	}
 
@@ -681,6 +678,15 @@ func (s *syncer) install(ctx context.Context, t *target) Outcome {
 	return Outcome{Name: name, ID: id, Action: ActionInstalled, Commit: commit}
 }
 
+// checkout は、src の作業ツリーをコミット commit にし、追跡していないファイルを消す。
+func (s *syncer) checkout(ctx context.Context, src, commit string) error {
+	if _, err := s.git(ctx, src, "-c", "advice.detachedHead=false", "checkout", "--quiet", "--force", "--detach", commit); err != nil {
+		return err
+	}
+	_, err := s.git(ctx, src, "clean", "-ffdxq")
+	return err
+}
+
 // srcDir は、name のソースを取得するディレクトリである。
 func (s *syncer) srcDir(name string) string {
 	return filepath.Join(s.opts.WorkDir, "src", name)
@@ -693,7 +699,11 @@ func (s *syncer) srcDir(name string) string {
 // 取得元に届かない（ネットワークに出られない）だけで git fetch が失敗したときは、ソースを消さずに誤りを返す（#213）。
 // 取得したディレクトリを返す。
 func (s *syncer) fetch(ctx context.Context, t *target) (string, error) {
-	src := s.srcDir(t.spec.Name)
+	return s.fetchTo(ctx, s.srcDir(t.spec.Name), t)
+}
+
+// fetchTo は、fetch の取得先のディレクトリを src にしたものである。
+func (s *syncer) fetchTo(ctx context.Context, src string, t *target) (string, error) {
 	if _, err := os.Stat(filepath.Join(src, ".git")); err == nil {
 		broken, err := s.update(ctx, src, t)
 		if !broken || ctx.Err() != nil {

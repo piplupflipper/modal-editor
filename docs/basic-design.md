@@ -39,7 +39,7 @@
 | `vi-imitation-ext-mcp` | MCP のサーバー | 不使用 | FR-32 |
 | `vi-imitation-mcp-bridge` | MCP の中継コマンド | 不使用 | FR-33 |
 | `vi-imitation-ext-acp` | ACP のクライアント | 不使用 | FR-34 |
-| `vi-imitation-ext-treesitter` | tree-sitter による構文解析 | 使用 | FR-35 |
+| `vi-imitation-ext-treesitter` | tree-sitter による構文解析 | 使用（glibc に動的にリンクする。9.1） | FR-35、FR-142 |
 | `vi-imitation-ext-script` | yaegi によるスクリプトの拡張機能の実行 | 不使用 | FR-36 |
 
 利用者が足す拡張機能も、標準の拡張機能と同じ仕組みで起動する。
@@ -1690,7 +1690,7 @@ tree-sitter-json（v0.24.8）の文法はコメントを含み、公式のクエ
 
 問い合わせは、メッセージを処理する goroutine では解析しない（2.1、`cmd/vi-imitation-ext-treesitter` の `textObjects`）。
 構文ハイライトのために最後に解析した構文木の複製が問い合わせのバージョンのものならそれを使い、そうでなければ問い合わせの goroutine で全文から解析する。
-起動の契機は、文法を持つファイルの種類ごとの `filetype` の契機である。
+起動の契機は、同梱の文法を持つファイルの種類ごとの `filetype` の契機と、利用者の設定に並べたパーサのファイルの種類から本体が作る `filetype` の契機（`settingsFileType`。この節の「利用者の設定に並べたパーサ」と 6.7）である。
 ファイルの種類は本体が判定して `buffer/open` の `fileType` で渡し、拡張機能には判定を問い合わせない（6.7）。
 
 `decoration/set` の `style`（色の種類の名前）は、次の名前（仮）から選ぶ。
@@ -1787,6 +1787,71 @@ goroutine は、受け取った後に変えない一覧のスライスとバッ�
 上限の値は、PR #73 で本体のイベントループの停止（当時 10 万行で約 0.1 秒）から決めたもので、仮のまま使う。
 停止が無くなったので、値を見直すときは、上の 3 つの時間と割り当てで決める。
 大きさは、送る前に `ext.DecorationSetParams` の `JSONSize` で符号化せずに数える。
+
+#### 利用者の設定に並べたパーサ（FR-142）
+
+同梱する言語は Go と JSON だけで、文法を cgo で一緒にコンパイルし、版は `go.mod` で固定する。
+ほかの言語は、利用者が設定に並べたパーサ（文法）を、そのファイルの種類のバッファを初めて開いたときに git で取得し、利用者の手元の C コンパイラで共有ライブラリ（`.so`）にビルドし、`dlopen` で読み込む（2026-11-20 のオーナーの裁定、#277）。
+どの言語のパーサを、どの版で取得するかは、利用者の設定とロックファイルが持ち、このリポジトリは持たない。
+拡張機能は言語の名前で処理を分けない。
+
+設定は、tree-sitter の拡張機能に向けた設定（`extensions.settings.treesitter`）に書く。
+項目の名前は仮で、書き方の例は [使い方](usage.md) の「パーサを足す」にある。
+`cmd/vi-imitation-ext-treesitter` の `parseSettings` が読む。
+
+| 項目（仮） | 内容 |
+|---|---|
+| `parsers.<名前>.repo` | 取得元の git のリポジトリ。URL か絶対パス |
+| `parsers.<名前>.version` | 版。タグ、ブランチ、コミットのハッシュの順に探す（5.6 の `:ext sync` と同じ） |
+| `parsers.<名前>.fileTypes` | このパーサを使うファイルの種類の列 |
+| `parsers.<名前>.path` | `src/parser.c` のある `src/` の親のディレクトリ（リポジトリの中の相対パス）。既定は最上位 |
+| `parsers.<名前>.queries` | ハイライトのクエリのファイルの列（リポジトリの中の相対パス）。既定は `path` の下の `queries/highlights.scm`、無ければ最上位の `queries/highlights.scm` |
+| `compiler` | C コンパイラ。既定は PATH の `cc` |
+
+置き場所は次のとおりである（仮）。
+
+| 置き場所 | 中身 |
+|---|---|
+| `$XDG_DATA_HOME/vi-imitation/treesitter/src/<名前>/` | 取得したソース（git のリポジトリ） |
+| `$XDG_DATA_HOME/vi-imitation/treesitter/parsers/<名前>/<鍵>/` | ビルドしたもの。`parser.so`、`highlights.scm`（クエリをつないだもの）、`build.json`（取得元、コミット、文法の関数の名前）。鍵はコミットと `path` と `queries` から作り、同じパスの `.so` を中身を変えて読み直すことはしない |
+| `$XDG_DATA_HOME/vi-imitation/treesitter/lock` | 取得とビルドを、別の server（FR-59）の拡張機能と 1 つずつにする `flock` のファイル |
+| 設定ファイルと同じディレクトリの `treesitter.lock.json` | 取得したコミットのロックファイル。形は `{"version": 1, "parsers": {"<名前>": {"repo", "version", "commit"}}}` で、5.6 の `extensions.lock.json` と同じ考え方で書く（symlink ならリンク先を書き換える） |
+
+ロックファイルを拡張機能の管理（5.6）の `extensions.lock.json` と分けたのは、書く者が違う（本体の `:ext sync` と、tree-sitter の拡張機能）からで、同じファイルを 2 つのプロセスが書き換えるのを避けるためである。
+
+用意の流れは次のとおりである。
+
+1. `buffer/open` のファイルの種類を利用者の設定のパーサが持ち、まだ用意していなければ、用意の goroutine に頼み、バッファの複製を待ちの表に置いて戻る。待つ間の `buffer/change` は複製を最新のものに替える
+2. 用意の goroutine は、置き場所の `flock` を取り、ロックファイルを読む。記録が設定の `repo` と `version` に合い、そのコミットの鍵のディレクトリがあれば、git も C コンパイラも起動せずに 5 へ進む
+3. `internal/extmgr` の `Checkout`（`:ext sync` と同じ取得と版の解決）で取得してコミットを取り出す。記録が合えばそのコミットを、合わなければ `version` を解決したコミットを使う
+4. 鍵のディレクトリが無ければ、`<C コンパイラ> -shared -fPIC -O2 -I src -o parser.so src/parser.c [src/scanner.c]` でビルドし、クエリと一緒に置く。tree-sitter の CLI は要らない。前のビルド（別の鍵）は消す。ロックファイルに取り出したコミットを記録し、設定に並べなくなったパーサの記録を消す
+5. `parser.so` を `dlopen` し、`tree_sitter_<文法の名前>`（`src/grammar.json` の `name`）を呼んで得た言語でパーサとクエリを作る。待ちの表のバッファを、その言語で全文から解析させる
+
+取得とビルドは、メッセージを処理する goroutine とも解析の goroutine とも別の、1 つの用意の goroutine で行う。メッセージを処理する goroutine で待つと、ping の応答が遅れ、本体の生存確認の期限切れで強制終了されるためである（5.2）。
+用意の間も編集を続けられ、ほかの言語の解析も続く。
+進み具合（取得している、ビルドしている、用意した）と失敗の理由は `message/show` でメッセージの行に出す。
+git の子プロセスは、`internal/extmgr` の `Checkout` が `:ext sync` と同じく、別のプロセスグループにし、拡張機能が終わったら SIGKILL を受け取る形（`Setpgid` と `Pdeathsig`）で起動する。
+C コンパイラは `internal/extmgr` の `StartTerm` で、同じ形のまま、シグナルを SIGTERM にして起動する。
+拡張機能が終わったら（SIGKILL で終わったときも）C コンパイラは SIGTERM を受け取り、取り消し（`:qa` での拡張機能の正常な終了など）ではプロセスグループ全体へ SIGTERM を送り、5 秒を過ぎたら SIGKILL で止める。
+gcc の driver は SIGKILL では一時ファイル（`/tmp` の `cc*.s`）を消せないが、SIGTERM では消すためである（PR #282 のレビューで確かめた）。
+拡張機能が SIGKILL で終わったときは、シグナルが届くのは直接の子（driver）だけで、孫（`cc1` など）はそのコンパイルを終えるまで動く。
+拡張機能が途中で終わって置き場所に残ったビルドの一時ディレクトリ（`parsers/<名前>/.build-*`）は、次の用意で置き場所の `flock` を取った後に消す。
+取得とビルドの待ちには、それぞれ上限（仮に 10 分）を付ける。
+
+ファイルの種類からパーサへの対応は次のとおりにする。
+
+- 同梱の言語の表（`languages`）と利用者の設定のパーサが同じファイルの種類を持つときは、利用者の設定のパーサを使う
+- 利用者の設定の中で同じファイルの種類を複数のパーサが持つときは、誤りとして知らせ、その種類にはどのパーサも使わない
+- 用意に失敗したパーサ（設定の誤り、取得できない、ビルドできない、ABI の版が合わない、`.so` を読めない）は、拡張機能が終わるまで使わない（取得の失敗も、server を起動し直すまで試し直さない）。そのファイルの種類を同梱の言語が持てば、それを使う。拡張機能の全体は止めない
+- 設定の誤りは、`initialize` の応答の前に知らせを送らないように、最初の `buffer/open` で知らせる
+- 利用者の設定のパーサは、テキストオブジェクトのクエリを持たない
+
+`dlopen` を使うので、tree-sitter の拡張機能は glibc に動的にリンクする（9.1。要件定義の NFR-01）。
+読み込んだパーサの C のコードは拡張機能のプロセスの中で動くので、パーサの不具合で拡張機能が異常終了しても、本体は拡張機能の異常終了として扱う（5.2。NFR-03）。
+
+利用者がパーサを足したファイルの種類で拡張機能を起動するために、宣言ファイルに `{"on": "settingsFileType", "pattern": "/parsers/*/fileTypes"}` の契機を書く（6.7）。
+本体は設定を読んだときに、この契機から `filetype` の契機を作るので、利用者は `extensions.activation` に同じファイルの種類をもう一度書かなくてよい。
+設定は拡張機能の起動のときに渡す（`initialize` の `settings`）ので、設定を変えたら server を起動し直す。
 
 ### 6.2 MCP
 
@@ -2147,8 +2212,18 @@ ACP の `fs/*` と MCP のツールが受け取るパスも絶対パスなので
 | `activation` の `socket` の契機 | 宣言ファイル | MCP のソケットへの最初の接続で起動する。本体は待ち受けているソケットと受け付けた接続を子プロセスへ引き継ぐ（6.2） | MCP |
 | `saveHook` | 宣言ファイル | true なら、稼働中のときに `buffer/willSave` を受け取る | LSP |
 | `args` | 宣言ファイル | `command` に渡す引数の列。本体は解決せずにそのまま渡す。相対パスの引数は、拡張機能が環境変数 `VI_IMITATION_EXTENSION_DIR` の宣言ファイルのディレクトリから解決する（5.1） | スクリプト |
-| 拡張機能ごとの `activation` の追加 | 利用者の設定 | 宣言ファイルの `activation` に `filetype` の契機を足す | LSP、tree-sitter |
+| 拡張機能ごとの `activation` の追加 | 利用者の設定 | 宣言ファイルの `activation` に `filetype` の契機を足す | LSP |
+| `activation` の `settingsFileType` の契機 | 宣言ファイル | `pattern` は、拡張機能に向けた設定（`extensions.settings.<ID>`）の中を指す JSON Pointer で、参照トークン `*` はオブジェクトのすべての項目か配列のすべての要素に当たる。指した値が文字列ならその 1 つを、配列ならその中の文字列のすべてを、ファイルの種類の名前とする。本体（`internal/config` の `LoadExtensions`）は、宣言ファイルと設定を読んだときに、この契機の直後にそれらの `filetype` の契機を足す。この契機そのものでは起動しない。`*` が当たった項目の下にその先の値が無いか、文字列か文字列を含む配列でないときは（`fileTypes` を `filetypes` と綴った、`[]` や `[3]` を書いたなど）、契機を作らず、設定の誤りとして知らせる（拡張機能が起動しないので、拡張機能からは知らせられない）（#277） | tree-sitter（`/parsers/*/fileTypes`。6.1） |
 | ファイルの種類の対応表 | 利用者の設定 | 拡張子とファイル名から、ファイルの種類の名前への対応を足す | すべて |
+
+`settingsFileType` の契機は、利用者が拡張機能の設定に書いたファイルの種類を、`extensions.activation` にもう一度書かずに済ませるために足した（#277）。
+宣言ファイルは実行せずに読む固定のファイルなので、利用者が設定で足した言語の契機を宣言ファイルの側に前もって書けない。
+次の 2 つの案は採らなかった。
+
+- 本体が `extensions.settings.treesitter.parsers` を読んで契機を足す案。本体が特定の拡張機能の設定の形を知ることになる。`settingsFileType` なら、本体は JSON Pointer で値を拾うだけで、設定の形は宣言ファイルの側が決める
+- すべてのファイルの種類で起動する契機を足す案。構文の色を付けないファイル（テキストなど）でも拡張機能を起動し、FR-14 の「使うときに初めて起動する」に反する
+
+古い本体は、知らない契機の種類を警告にして無視する（`ext.Manifest.Validate`）ので、この契機を書いた宣言ファイルを丸ごと拒まない。
 
 #### 保存の流れ
 
@@ -2623,7 +2698,7 @@ go-udiff を選んだ理由と候補は、2026-11-18 の調べ（#177 の「参�
 | `github.com/sergi/go-diff` | MIT | v1.4.5（2026-11-17） | 採らない。diff-match-patch の移植 |
 | `github.com/pmezard/go-difflib` | GitHub では判定不能（NOASSERTION） | 最後の push は 2023-05-30 | 対象外 |
 
-go-udiff は本体に静的にリンクするので、配布物の `licenses/` にライセンスの文面を足す（9.1 の musl と同じ扱い）。
+go-udiff は本体に静的にリンクするので、配布物の `licenses/` にライセンスの文面を足す（9.1。ほかの Go のモジュールと同じく、`make dist` が `go list` で集める）。
 cgo は使わないので、NFR-02 は変わらない。
 
 ### 6.9 段階 3 の標準の拡張機能
@@ -3203,15 +3278,17 @@ CI は `make check` の後に、次のターゲットを実行する。
 
 | ターゲット | 検証すること | 要件 |
 |---|---|---|
-| `make build-check` | 本体が `CGO_ENABLED=0` でビルドされ（`debug/buildinfo`）、全ての実行ファイルの ELF に動的リンカーと共有ライブラリの指定が無い（`debug/elf`） | NFR-01、NFR-02 |
-| `make dist-check` | `make dist` の配布物で、宣言ファイルの `command` が同じディレクトリの静的な実行ファイルを指す | NFR-01、NFR-06 |
-| `make dist-smoke` | C コンパイラと Go の無いコンテナ（glibc の版の違うもの、musl、busybox）に配布物を置き、全ての実行ファイルが起動する | NFR-01、NFR-06 |
+| `make build-check` | 本体が `CGO_ENABLED=0` でビルドされ（`debug/buildinfo`）、tree-sitter の拡張機能を除く全ての実行ファイルの ELF に動的リンカーと共有ライブラリの指定が無い（`debug/elf`）。tree-sitter の拡張機能は glibc の動的リンカーと、glibc の共有ライブラリだけを要求する | NFR-01、NFR-02 |
+| `make dist-check` | `make dist` の配布物で、宣言ファイルの `command` が同じディレクトリの実行ファイルを指し、その実行ファイルが静的（tree-sitter の拡張機能は glibc の共有ライブラリだけを要求する） | NFR-01、NFR-06 |
+| `make dist-smoke` | C コンパイラと Go の無いコンテナ（glibc の版の違うもの、musl、busybox）に配布物を置き、本体と tree-sitter 以外の実行ファイルが起動する。tree-sitter の拡張機能は、新しい glibc のイメージ（Makefile の `DIST_SMOKE_TREESITTER_IMAGES`）で起動して Go のソースを解析し、古い glibc と musl のイメージでは起動しなくても失敗にしない | NFR-01、NFR-06 |
 
-cgo を使う tree-sitter の拡張機能も、musl を C の標準ライブラリとして静的にリンクする。
-動的にリンクすると、ビルドしたマシンより古い glibc や musl の環境で起動しない。
-glibc を静的にリンクすると LGPL の再リンクの義務を伴うので、MIT の musl を使う。
+cgo を使う tree-sitter の拡張機能は、glibc に動的にリンクする（2026-11-20 のオーナーの裁定、#277）。
+利用者の手元でビルドしたパーサの `.so` を `dlopen` で読む（6.1 の「利用者の設定に並べたパーサ」。FR-142）ためで、musl を静的にリンクした実行ファイルは `dlopen` を使えない。
+このため、ビルドしたマシンの glibc が持つシンボルの版より古い glibc（AlmaLinux 8 の 2.28 など）と、musl の環境（Alpine）では、tree-sitter の拡張機能が起動せず、構文の色付けを使えない（要件定義の NFR-01）。
+本体と、ほかの拡張機能は、引き続き静的にリンクする。
 配布物には、静的にリンクするサードパーティのライセンスの文面を `licenses/` に同梱する。
-理由と、2026-11-16 の結果は [measurements/nfr-dist.md](measurements/nfr-dist.md) に書く。
+配布物は glibc を含まないので、glibc の文面は同梱しない。
+理由と結果は [measurements/nfr-dist.md](measurements/nfr-dist.md) に書く。
 
 NFR-05 の上限は、`make build` の生成物を測る検査で確かめる。
 CI は `make build-check` の後に `make footprint-check` を実行する。

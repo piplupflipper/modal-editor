@@ -55,13 +55,34 @@ type highlighter struct {
 	maxBytes int
 
 	// active は、ループが、解析の対象にしているバッファとその言語を覚える表である。ループだけが触る。
+	// 利用者の設定のパーサの用意を待っているバッファ（waiting にあるもの）の言語は nil である。
 	active map[ext.BufferID]*language
+
+	// env は、利用者の設定に並べたパーサ（FR-142）の置き場所と子プロセスの設定である。newHighlighter が既定の値を入れ、テストは server の前に変える。
+	env parserEnv
+	// user は、ファイルの種類から、利用者の設定に並べたパーサへの対応である。
+	// initialize の設定から作り（configure）、その後は変えない。ループだけが読む。
+	user map[string]*userParser
+	// problems は、設定の誤りである。最初の buffer/open で知らせる。ループだけが触る。
+	problems []string
+	// prep は、パーサを用意する道具である。configure が作り、用意の goroutine（prepareLoop）が使う。
+	prep *preparer
 
 	mu      sync.Mutex
 	pending map[ext.BufferID]*job // mu で守る
 	wake    chan struct{}         // job を積んだことを解析の goroutine に知らせる。容量 1
 	stop    chan struct{}
 	done    chan struct{} // 解析の goroutine が終わったら閉じる。start の前は nil
+	// waiting は、利用者の設定のパーサの用意を待っているバッファと、その最新の複製である。mu で守る。
+	waiting map[ext.BufferID]*waitingBuffer
+	// prepQueue は、用意を待つパーサの列である。mu で守る。prepWake は、積んだことを用意の goroutine に知らせる。容量 1
+	prepQueue []*userParser
+	prepWake  chan struct{}
+	// userLangs は、読み込んだ利用者の設定のパーサの言語である。close で解放する。mu で守る。
+	userLangs []*language
+	// prepCancel は、用意の goroutine の取得とビルドを取り消す。prepDone は、その goroutine が終わったら閉じる。start の前は nil
+	prepCancel context.CancelFunc
+	prepDone   chan struct{}
 
 	// trees は、解析の goroutine が解析した構文木の複製を、テキストオブジェクトの問い合わせ（objects）へ渡す。
 	trees   *treeStore
@@ -89,6 +110,10 @@ func newHighlighter() (*highlighter, error) {
 		stop:     make(chan struct{}),
 		docs:     map[ext.BufferID]*document{},
 		warned:   map[ext.BufferID]bool{},
+		env:      defaultParserEnv(),
+		user:     map[string]*userParser{},
+		waiting:  map[ext.BufferID]*waitingBuffer{},
+		prepWake: make(chan struct{}, 1),
 	}
 	for _, spec := range languages {
 		l, err := newLanguage(spec)
@@ -118,6 +143,11 @@ func (h *highlighter) close() {
 		<-h.done
 		h.done = nil
 	}
+	if h.prepDone != nil {
+		h.prepCancel()
+		<-h.prepDone
+		h.prepDone = nil
+	}
 	if h.objects != nil {
 		h.objects.close()
 	}
@@ -134,12 +164,22 @@ func (h *highlighter) close() {
 	}
 	h.all = nil
 	clear(h.langs)
+	h.mu.Lock()
+	for _, l := range h.userLangs {
+		l.close()
+	}
+	h.userLangs = nil
+	h.mu.Unlock()
 }
 
 // server は、フックを登録した Server を返し、解析の goroutine を動かし始める。
 func (h *highlighter) server() *server.Server {
 	s := server.New()
 	s.ErrorLog = h.log
+	s.OnInitialize(func(_ context.Context, e *server.InitializeEvent) error {
+		h.configure(e.Settings)
+		return nil
+	})
 	s.OnBufferOpen(func(_ context.Context, e *server.BufferOpenEvent) { h.open(e.Buffer) })
 	s.OnBufferChange(func(_ context.Context, e *server.BufferChangeEvent) { h.change(e) })
 	s.OnBufferClose(func(_ context.Context, e *server.BufferCloseEvent) { h.closeBuffer(e.Buffer) })
@@ -148,6 +188,10 @@ func (h *highlighter) server() *server.Server {
 	h.notify = s.ShowMessage
 	h.done = make(chan struct{})
 	go h.work()
+	ctx, cancel := context.WithCancel(context.Background())
+	h.prepCancel = cancel
+	h.prepDone = make(chan struct{})
+	go h.prepareLoop(ctx)
 	return s
 }
 
@@ -155,21 +199,91 @@ func (h *highlighter) server() *server.Server {
 // 文法を持たない種類のファイルは解析しない。
 // 送り直された全文（buffer/resync の応答）でファイルの種類が文法を持たないものに変わっていたら、構文木を捨て、空の一覧を送って色を消させる。
 //
-// req: FR-35
+// 利用者の設定のパーサ（FR-142）がそのファイルの種類を持てば、同梱の言語より先にそれを使う（languageFor）。
+// パーサがまだ用意できていなければ、用意の goroutine に用意を頼み、バッファの複製を waiting に置いて戻る。
+// 用意ができたら、用意の goroutine がその複製から解析させる（parserDone）。用意の間も編集は続けられる。
+//
+// req: FR-35, FR-142
 func (h *highlighter) open(b *server.Buffer) {
-	lang, ok := h.langs[b.FileType()]
-	if !ok {
-		if _, was := h.active[b.ID()]; was {
-			delete(h.active, b.ID())
-			h.put(b.ID(), &job{drop: true, clear: true, version: b.Version()})
+	h.reportProblems()
+	id := b.ID()
+	_, was := h.active[id]
+	h.mu.Lock()
+	delete(h.waiting, id)
+	lang, p := h.languageForLocked(b.FileType())
+	if p != nil {
+		// 前の種類の言語で色を付けていたら、用意ができるまでの間は色を消す。
+		// 用意の goroutine が waiting から積む job に上書きされないように、waiting に置くのと同じ mu の中で積む。
+		if was {
+			h.pending[id] = &job{drop: true, clear: true, version: b.Version()}
 		}
+		h.waiting[id] = &waitingBuffer{parser: p, buf: b.Clone()}
+		if p.state == parserIdle {
+			p.state = parserPreparing
+			h.prepQueue = append(h.prepQueue, p)
+		}
+	}
+	h.mu.Unlock()
+	switch {
+	case p != nil:
+		h.active[id] = nil
+		h.signal()
+		h.signalPrepare()
+	case lang == nil:
+		if was {
+			delete(h.active, id)
+			h.put(id, &job{drop: true, clear: true, version: b.Version()})
+		}
+	default:
+		h.active[id] = lang
+		h.put(id, &job{reset: b.Clone(), lang: lang, version: b.Version()})
+	}
+}
+
+// languageForLocked は、ファイルの種類 ft に使う言語を返す。mu を取って呼ぶ。
+//
+// 利用者の設定のパーサが ft を持てば、用意できていればその言語を、用意を待つなら nil とそのパーサを返す。
+// 用意に失敗していれば、同梱の言語にその種類があればそれを使う。どちらも無ければ nil, nil を返す。
+//
+// req: FR-142
+func (h *highlighter) languageForLocked(ft string) (*language, *userParser) {
+	if p, ok := h.user[ft]; ok {
+		switch p.state {
+		case parserReady:
+			return p.lang, nil
+		case parserIdle, parserPreparing:
+			return nil, p
+		case parserFailed:
+		}
+	}
+	return h.langs[ft], nil
+}
+
+// reportProblems は、設定の誤りを、最初の 1 回だけメッセージの行に出す。ループの上で呼ぶ。
+func (h *highlighter) reportProblems() {
+	if len(h.problems) == 0 {
 		return
 	}
-	h.active[b.ID()] = lang
-	h.put(b.ID(), &job{reset: b.Clone(), lang: lang, version: b.Version()})
+	for _, p := range h.problems {
+		h.log.Printf("settings: %s", p)
+	}
+	text := "tree-sitter: " + h.problems[0]
+	if n := len(h.problems) - 1; n > 0 {
+		text += fmt.Sprintf("（ほか %d 件）", n)
+	}
+	h.problems = nil
+	h.message(ext.MessageWarning, text)
+}
+
+// message は、message/show を送る。送れなければログに書く。
+func (h *highlighter) message(level ext.MessageLevel, text string) {
+	if err := h.notify(level, text); err != nil {
+		h.log.Printf("message/show: %v", err)
+	}
 }
 
 // change は、buffer/change の編集を、まだ取り出されていない同じバッファの job に足す。ループの上で呼ぶ。
+// パーサの用意を待っているバッファなら、待っている複製を最新のものに替える。
 //
 // req: FR-35
 func (h *highlighter) change(e *server.BufferChangeEvent) {
@@ -178,6 +292,11 @@ func (h *highlighter) change(e *server.BufferChangeEvent) {
 	}
 	latest := e.Buffer.Clone()
 	h.mu.Lock()
+	if w, ok := h.waiting[e.Buffer.ID()]; ok {
+		w.buf = latest
+		h.mu.Unlock()
+		return
+	}
 	j, ok := h.pending[e.Buffer.ID()]
 	if !ok {
 		j = &job{}
@@ -196,6 +315,9 @@ func (h *highlighter) closeBuffer(id ext.BufferID) {
 		return
 	}
 	delete(h.active, id)
+	h.mu.Lock()
+	delete(h.waiting, id)
+	h.mu.Unlock()
 	h.put(id, &job{drop: true})
 }
 

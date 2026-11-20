@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,7 +28,8 @@ func distDir(t *testing.T) string {
 
 // TestDistLayout は、配布物が本体と拡張機能を別のファイルとして含み、
 // 拡張機能ごとに宣言ファイルと、その command が指す実行ファイルを同じディレクトリに置いていることを確かめる。
-// 実行ファイルは全て静的にリンクされていて、ファイルを置くだけで起動する。
+// tree-sitter の拡張機能を除く実行ファイルは静的にリンクされていて、ファイルを置くだけで起動する。
+// tree-sitter の拡張機能は glibc の共有ライブラリだけを要求する（NFR-01）。
 //
 // req: NFR-01, NFR-06
 func TestDistLayout(t *testing.T) {
@@ -71,18 +73,23 @@ func TestDistLayout(t *testing.T) {
 			// command の相対パスは、宣言ファイルのあるディレクトリから解決する（基本設計 5.1）。
 			path := filepath.Join(filepath.Dir(m), manifest.Command)
 			assertExecutable(t, path)
-			assertStaticELF(t, path)
+			// cgo の拡張機能（tree-sitter）は glibc に動的にリンクし、ほかは静的にリンクする（NFR-01）。
+			if slices.Contains(cgoBinaries(t), filepath.Base(path)) {
+				assertGlibcDynamicELF(t, path)
+			} else {
+				assertStaticELF(t, path)
+			}
 		})
 	}
 }
 
 // TestDistLicenses は、配布物が、実行ファイルに静的にリンクするサードパーティのライセンスの文面を含むことを確かめる。
-// Go の標準ライブラリとランタイム、musl、tree-sitter とその文法は、配布するときに著作権の表示とライセンスの文面を添える必要がある。
+// Go の標準ライブラリとランタイム、tree-sitter とその文法は、配布するときに著作権の表示とライセンスの文面を添える必要がある。
+// tree-sitter の拡張機能は glibc に動的にリンクし、配布物は C の標準ライブラリを含まないので、その文面は無い。
 func TestDistLicenses(t *testing.T) {
 	dir := distDir(t)
 	for _, rel := range []string{
 		"licenses/go/LICENSE",
-		"licenses/musl/copyright",
 		"licenses/github.com/tree-sitter/go-tree-sitter/LICENSE",
 		"licenses/github.com/tree-sitter/tree-sitter-go/LICENSE",
 		"licenses/github.com/tree-sitter/tree-sitter-json/LICENSE",

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/tailscale/hujson"
@@ -144,6 +145,9 @@ func typeErrorOffset(root *hujson.Value, te *json.UnmarshalTypeError) int {
 // 設定 cfg の extensions.settings と extensions.activation を合わせた拡張機能の一覧を返す（基本設計 5.1、6.7）。
 // 拡張機能のプロセスは起動しない（FR-14）。
 //
+// 宣言ファイルの ext.ActivationSettingsFileType の契機の直後に、その拡張機能に向けた extensions.settings から作った
+// ファイルの種類の契機（ext.ActivationFileType）を足す（expandSettingsActivation）。extensions.activation の契機はその後ろに並ぶ。
+//
 // 一覧の順は、dirs の順、ディレクトリの中では名前の順である。
 // 存在しないディレクトリと、manifest.json の無いディレクトリは飛ばす。
 // 読めない宣言ファイルと、先に読んだものと ID が重なる宣言ファイルは使わず、problems に返す。
@@ -186,8 +190,20 @@ func LoadExtensions(dirs []string, cfg Config) (exts []Extension, problems []err
 			problems = append(problems, &Error{Path: p, Msg: "宣言ファイルのディレクトリを絶対パスにできない: " + err.Error()})
 			continue
 		}
-		m.Activation = append(m.Activation, cfg.ExtensionActivation[m.ID]...)
-		exts = append(exts, Extension{Manifest: m, Dir: dir, Settings: cfg.ExtensionSettings[m.ID]})
+		settings := cfg.ExtensionSettings[m.ID]
+		acts, missing := expandSettingsActivation(m.Activation, settings)
+		for _, name := range missing {
+			// 位置は、extensions.settings に書いた拡張機能の ID の位置を使う（値の中の位置は、RawMessage にした後は分からない）。
+			e := &Error{Path: p}
+			if pos, ok := cfg.extPos[m.ID]; ok {
+				e = &Error{Path: pos.Path, Line: pos.Line, Column: pos.Column}
+			}
+			e.Msg = fmt.Sprintf("extensions.settings.%s.%s が無いか、文字列か文字列を含む配列でないので、拡張機能 %s の起動の契機を作らない", m.ID, name, m.ID)
+			problems = append(problems, e)
+		}
+		acts = append(acts, cfg.ExtensionActivation[m.ID]...)
+		m.Activation = acts
+		exts = append(exts, Extension{Manifest: m, Dir: dir, Settings: settings})
 	}
 
 	ids := make([]string, 0, len(cfg.extPos))
@@ -211,4 +227,143 @@ func LoadExtensions(dirs []string, cfg Config) (exts []Extension, problems []err
 		return nil, append(problems, err)
 	}
 	return exts, problems
+}
+
+// expandSettingsActivation は、acts の ext.ActivationSettingsFileType の契機のそれぞれの直後に、
+// settings の中の Pattern（JSON Pointer）が指すファイルの種類の名前から作った ext.ActivationFileType の契機を足した列を返す。
+//
+// 元の契機は残す。本体（internal/exthost）は ext.ActivationSettingsFileType の契機で起動しないので、残しても働きは変わらず、
+// 足す契機が 1 つも無いときに activation が空になって宣言ファイルの検査に落ちることを避けられる。
+// 同じ名前は 1 回だけ足し、空の名前は足さない。
+// settings が無いか JSON として読めないとき、Pattern の指す値が無いか文字列とその配列でないときは、何も足さない。
+// 設定の中身の誤りを知らせるのは、設定を解釈する拡張機能である。
+// ただし、Pattern の "*" が当たった項目の下に、その先の値が無いか、文字列か文字列を含む配列でないとき（[] や [3] を含む）は、
+// その場所の名前（点で区切ったもの）を missing に返す。項目の名前を誤ると（fileTypes を filetypes と書くなど）、
+// 契機が作られず拡張機能が起動しないので、拡張機能からは知らせられないためである（PR #282 のレビュー）。
+func expandSettingsActivation(acts []ext.Activation, settings json.RawMessage) (out []ext.Activation, missing []string) {
+	if !slices.ContainsFunc(acts, func(a ext.Activation) bool { return a.On == ext.ActivationSettingsFileType }) {
+		return acts, nil
+	}
+	var root any
+	if len(settings) > 0 {
+		if err := json.Unmarshal(settings, &root); err != nil {
+			root = nil
+		}
+	}
+	out = make([]ext.Activation, 0, len(acts))
+	seen := map[string]bool{}
+	for _, a := range acts {
+		out = append(out, a)
+		if a.On != ext.ActivationSettingsFileType || root == nil {
+			continue
+		}
+		var w pointerWalk
+		w.walk(root, a.Pattern, "", false)
+		missing = append(missing, w.missing...)
+		for _, ft := range w.found {
+			if ft == "" || seen[ft] {
+				continue
+			}
+			seen[ft] = true
+			out = append(out, ext.Activation{On: ext.ActivationFileType, Pattern: ft})
+		}
+	}
+	return out, missing
+}
+
+// pointerStrings は、v の中で JSON Pointer ptr が指す値の文字列を返す（ext.ActivationSettingsFileType の doc）。
+// 参照トークン "*" は、オブジェクトのすべての項目（名前の順）か配列のすべての要素に当たる。
+// 指した値が文字列ならその 1 つ、配列ならその中の文字列のすべてを返し、それ以外の値は除く。
+func pointerStrings(v any, ptr string) []string {
+	var w pointerWalk
+	w.walk(v, ptr, "", false)
+	return w.found
+}
+
+// pointerWalk は、JSON Pointer で値を辿った結果である。
+type pointerWalk struct {
+	// found は、指した値の文字列である。
+	found []string
+	// missing は、"*" が当たった項目の下で、その先の値が無いか、文字列か文字列を含む配列でない場所の、点で区切った名前である。
+	// 利用者が設定の項目の名前を誤ったとき（fileTypes を filetypes と書いたなど）に知らせるのに使う。
+	missing []string
+}
+
+// walk は、v（at の位置の値）から ptr を辿る。wild は、ここまでに "*" が当たったかどうかである。
+func (w *pointerWalk) walk(v any, ptr, at string, wild bool) {
+	rest, ok := strings.CutPrefix(ptr, "/")
+	if !ok {
+		if ptr != "" {
+			return
+		}
+		switch x := v.(type) {
+		case string:
+			w.found = append(w.found, x)
+			return
+		case []any:
+			n := 0
+			for _, e := range x {
+				if s, ok := e.(string); ok {
+					w.found = append(w.found, s)
+					n++
+				}
+			}
+			// 文字列を 1 つも含まない配列（[] や [3]）も、契機を 1 つも作らないので知らせる。
+			if n == 0 && wild {
+				w.missing = append(w.missing, at)
+			}
+			return
+		}
+		if wild {
+			w.missing = append(w.missing, at)
+		}
+		return
+	}
+	tok, next, found := strings.Cut(rest, "/")
+	if found {
+		next = "/" + next
+	}
+	tok = strings.NewReplacer("~1", "/", "~0", "~").Replace(tok)
+	type child struct {
+		name string
+		v    any
+	}
+	var children []child
+	switch x := v.(type) {
+	case map[string]any:
+		if tok == "*" {
+			keys := make([]string, 0, len(x))
+			for k := range x {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				children = append(children, child{k, x[k]})
+			}
+		} else if c, ok := x[tok]; ok {
+			children = append(children, child{tok, c})
+		}
+	case []any:
+		if tok == "*" {
+			for i, c := range x {
+				children = append(children, child{strconv.Itoa(i), c})
+			}
+		} else if i, err := strconv.Atoi(tok); err == nil && i >= 0 && i < len(x) && tok == strconv.Itoa(i) {
+			children = append(children, child{tok, x[i]})
+		}
+	}
+	if len(children) == 0 && tok != "*" && wild {
+		w.missing = append(w.missing, joinName(at, tok))
+	}
+	for _, c := range children {
+		w.walk(c.v, next, joinName(at, c.name), wild || tok == "*")
+	}
+}
+
+// joinName は、点で区切った名前 at の後ろに name を足す。
+func joinName(at, name string) string {
+	if at == "" {
+		return name
+	}
+	return at + "." + name
 }

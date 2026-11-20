@@ -15,10 +15,11 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 
 - Go（バージョンは [go.mod](go.mod) を参照）
 - make
-- C コンパイラ（gcc など）。tree-sitter の拡張機能（`cmd/vi-imitation-ext-treesitter/`）が cgo で文法をコンパイルするので、`make check`、`make test`、`make build` に要る。本体は cgo を使わない
-- musl-gcc（Debian と Ubuntu では `musl-tools`）。`make build` が tree-sitter の拡張機能を musl で静的にリンクするので要る。別の場所にあるなら `make build MUSL_CC=<パス>` で指定する
+- C コンパイラ（gcc など）。tree-sitter の拡張機能（`cmd/vi-imitation-ext-treesitter/`）が cgo で文法をコンパイルするので、`make check`、`make test`、`make build` に要る。本体は cgo を使わない。`make build` は tree-sitter の拡張機能をビルドしたマシンの glibc に動的にリンクする（NFR-01）
+- git。tree-sitter の拡張機能のテストが、手元に作った git のリポジトリからパーサを取得してビルドする（FR-142）
 
 配布物の利用者には、C コンパイラも Go も要らない。
+設定に並べた tree-sitter のパーサを使うときだけ、git と C コンパイラが要る（[使い方](docs/usage.md)）。
 
 リンターなどの開発ツールは、`make` が `go run` でバージョンを固定して実行するので、インストールは不要である。
 初回の実行時だけ、ツールのビルドに数分かかる。

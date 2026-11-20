@@ -218,6 +218,100 @@ func TestLoadExtensions(t *testing.T) {
 	}
 }
 
+// 宣言ファイルの settingsFileType の契機は、その拡張機能に向けた extensions.settings の中のファイルの種類から filetype の契機を作る。
+// 利用者は、設定に書いたファイルの種類を extensions.activation にもう一度書かずに済む（#277）。
+func TestLoadExtensionsSettingsFileType(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, "treesitter", `{"id": "treesitter", "command": "./ts", "activation": [
+  {"on": "filetype", "pattern": "go"},
+  {"on": "settingsFileType", "pattern": "/parsers/*/fileTypes"},
+]}`)
+	writeManifest(t, dir, "plain", `{"id": "plain", "command": "./plain", "activation": [{"on": "settingsFileType", "pattern": "/fileType"}]}`)
+	writeManifest(t, dir, "nosettings", `{"id": "nosettings", "command": "./n", "activation": [{"on": "settingsFileType", "pattern": "/a"}]}`)
+
+	cfg, errs := Parse("config.jsonc", []byte(`{
+  "extensions": {
+    "settings": {
+      "treesitter": { "parsers": {
+        "rust": { "fileTypes": ["rust"] },
+        "python": { "fileTypes": ["python", "", 3, "python"] },
+        "broken": { "fileTypes": "notalist" },
+        "nofield": {},
+        "empty": { "fileTypes": [] },
+        "numbers": { "fileTypes": [3] },
+      } },
+      "plain": { "fileType": "toml" },
+    },
+    "activation": { "treesitter": [{ "on": "filetype", "pattern": "lua" }] },
+  },
+}`))
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	exts, problems := LoadExtensions([]string{dir}, cfg)
+	// "*" が当たった nofield に fileTypes が無いこと、empty と numbers の fileTypes が文字列を 1 つも含まないことを、
+	// 設定の treesitter の位置で、項目の名前の順に知らせる（綴りや値の誤りで起動しないことに気づけるように）。
+	ps := problemsOf(t, problems)
+	if len(ps) != 3 {
+		t.Fatalf("problems = %v", problems)
+	}
+	for i, name := range []string{"empty", "nofield", "numbers"} {
+		if ps[i].Path != "config.jsonc" || ps[i].Line != 4 ||
+			!strings.Contains(ps[i].Msg, "extensions.settings.treesitter.parsers."+name+".fileTypes が無いか、文字列か文字列を含む配列でない") {
+			t.Errorf("problems[%d] = %v", i, ps[i])
+		}
+	}
+	got := map[string][]ext.Activation{}
+	for _, e := range exts {
+		got[e.Manifest.ID] = e.Manifest.Activation
+	}
+	settings := ext.Activation{On: ext.ActivationSettingsFileType, Pattern: "/parsers/*/fileTypes"}
+	want := map[string][]ext.Activation{
+		// 項目の名前の順（broken、empty、nofield、numbers、python、rust）に、文字列だけを 1 回ずつ足す。指した値が文字列（broken）なら、その 1 つを足す。
+		"treesitter": {
+			{On: ext.ActivationFileType, Pattern: "go"},
+			settings,
+			{On: ext.ActivationFileType, Pattern: "notalist"},
+			{On: ext.ActivationFileType, Pattern: "python"},
+			{On: ext.ActivationFileType, Pattern: "rust"},
+			{On: ext.ActivationFileType, Pattern: "lua"},
+		},
+		"plain": {
+			{On: ext.ActivationSettingsFileType, Pattern: "/fileType"},
+			{On: ext.ActivationFileType, Pattern: "toml"},
+		},
+		// 設定が無ければ足さず、元の契機だけが残る（activation が空にならない）。
+		"nosettings": {{On: ext.ActivationSettingsFileType, Pattern: "/a"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("契機 = %+v, want %+v", got, want)
+	}
+}
+
+// pointerStrings は、JSON Pointer の参照トークンの ~0 と ~1 を戻し、配列の添字と "*" を辿る。
+func TestPointerStrings(t *testing.T) {
+	var v any
+	if err := json.Unmarshal([]byte(`{"a/b": {"m~n": ["x"]}, "list": [{"t": "p"}, {"t": "q"}], "n": 1}`), &v); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		ptr  string
+		want []string
+	}{
+		{"/a~1b/m~0n", []string{"x"}},
+		{"/list/*/t", []string{"p", "q"}},
+		{"/list/1/t", []string{"q"}},
+		{"/list/01/t", nil},
+		{"/list/9/t", nil},
+		{"/n", nil},
+		{"/missing", nil},
+	} {
+		if got := pointerStrings(v, tt.ptr); !slices.Equal(got, tt.want) {
+			t.Errorf("pointerStrings(%q) = %q, want %q", tt.ptr, got, tt.want)
+		}
+	}
+}
+
 // Extension の項目は exthost.Spec と同じ並びと型にする（呼び出し側が型の変換で写せるように）。
 // exthost は同じ層なので import できず、ここでは項目の名前と型を固定して確かめる。
 func TestExtensionFields(t *testing.T) {
