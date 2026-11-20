@@ -107,7 +107,7 @@ func TestParseKeymapCommand(t *testing.T) {
 	}
 
 	// 名前とモードは CheckKeymapCommands で確かめ、使えない項目を位置付きの誤りにして除く。
-	errs = cfg.CheckKeymapCommands(func(mode, lhs string, c KeymapCommand) error {
+	errs = cfg.CheckKeymapCommands(func(mode, _ string, _ KeymapCommand) error {
 		if mode == "normal" {
 			return nil
 		}
