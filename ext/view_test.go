@@ -153,3 +153,43 @@ func TestPaneOpenPlacement(t *testing.T) {
 		`{"component":{"kind":"tree","items":[{"id":"a","label":"A"}],"cursor":"a"},"placement":"center","closeOnSelect":true}`)
 	roundTrip(t, ViewTabChangeParams{View: 3, Buffer: 2, Path: "/a"}, `{"view":3,"buffer":2,"path":"/a"}`)
 }
+
+// 項目のプレビューに出すもの（FR-149）の JSON の形と検査と、部品がプレビューの欄を持つかの判定。
+func TestViewItemPreview(t *testing.T) {
+	line, neg, buf := 4, -1, BufferID(2)
+	for _, tt := range []struct {
+		pv   *ViewPreview
+		want string // 誤りの文の一部。空なら誤りにしない
+	}{
+		{&ViewPreview{Path: "/a"}, ""},
+		{&ViewPreview{Path: "a.go", Line: &line}, ""},
+		{&ViewPreview{Buffer: &buf}, ""},
+		{&ViewPreview{}, "path も buffer も無い"},
+		{&ViewPreview{Path: "/a", Line: &neg}, "負"},
+	} {
+		c := ViewComponent{Kind: ViewTree, Items: []ViewItem{{ID: "d", Label: "D", Children: []ViewItem{{ID: "a", Label: "A", Preview: tt.pv}}}}}
+		err := c.Validate()
+		switch {
+		case tt.want == "" && err != nil:
+			t.Errorf("%+v: %v", tt.pv, err)
+		case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
+			t.Errorf("%+v: err = %v, want %q", tt.pv, err, tt.want)
+		}
+	}
+	roundTrip(t, ViewComponent{Kind: ViewFinder, Preview: true, Items: []ViewItem{{ID: "a", Label: "A", Preview: &ViewPreview{Path: "/a", Line: &line}}}},
+		`{"kind":"finder","items":[{"id":"a","label":"A","preview":{"path":"/a","line":4}}],"preview":true}`)
+	roundTrip(t, ViewPreview{Buffer: &buf}, `{"buffer":2}`)
+
+	for _, tt := range []struct {
+		c    ViewComponent
+		want bool
+	}{
+		{ViewComponent{Kind: ViewList, Items: []ViewItem{{ID: "a", Label: "A"}}}, false},
+		{ViewComponent{Kind: ViewFinder, Preview: true}, true},
+		{ViewComponent{Kind: ViewTree, Items: []ViewItem{{ID: "d", Label: "D", Children: []ViewItem{{ID: "a", Label: "A", Preview: &ViewPreview{Path: "/a"}}}}}}, true},
+	} {
+		if got := tt.c.HasPreview(); got != tt.want {
+			t.Errorf("HasPreview(%+v) = %v, want %v", tt.c, got, tt.want)
+		}
+	}
+}

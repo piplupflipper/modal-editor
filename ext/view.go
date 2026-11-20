@@ -107,6 +107,31 @@ type ViewComponent struct {
 	// （view/update では、前にカーソルのあった項目を追う）。
 	// ファイラの「今のファイルの場所まで開いてカーソルを置く」と、h で親の項目へ移るのに使う（FR-105）。他の種類では読まない。
 	Cursor string `json:"cursor,omitempty"`
+	// Preview は、ViewList、ViewTree、ViewFinder で、項目のプレビュー（ViewItem.Preview）を出す欄を持つことを表す
+	// （FR-149。API 0.11.0 で足した）。省いても、項目のどれかが Preview を持てば欄を持つ。
+	// 項目が後から届く部品（ファインダー）は、開いたときから true にしておくと、最初の項目が届いたときに窓の幅が変わらない。
+	// 欄を持つ部品の窓は、幅が設定の境目を超えるときだけ広げて右にプレビューを出す（基本設計 1.4 の「#288 のプレビュー」）。
+	Preview bool `json:"preview,omitempty"`
+}
+
+// ViewPreview は、一覧、木、ファインダーの項目 1 つの、プレビューに出すものである（FR-149。API 0.11.0 で足した）。
+// 拡張機能は出すものの場所だけを渡し、中身は本体が読む。拡張機能が、一覧の全部の項目の中身を先に読まなくてよいためである
+// （ファイラの 4 万個の項目のディレクトリ。PR #290 のレビューの推奨 5）。
+//
+//   - Buffer があれば、その開いているバッファ（ファイルでないバッファを含む）の今の中身を出す。Path は読まない
+//   - Path がファイルなら、その中身を出す。開いているバッファのファイルなら、ファイルでなくバッファの今の中身を出す
+//   - Path がディレクトリなら、その中身の一覧を出す
+//
+// Line は、出す行（0 から数える）である。あればその行を窓の真ん中に置いて色を付け、無ければ先頭から出す。
+// 本体は、中身を編集を禁止したバッファとして開き、ファイルの種類で構文の色を付ける。大きなファイル、読めないファイル、
+// バイナリのファイルは、中身を出さずに理由を出す。
+type ViewPreview struct {
+	// Path は、ファイルかディレクトリのパスである。相対パスは、操作中の client の作業ディレクトリから数える。
+	Path string `json:"path,omitempty"`
+	// Buffer は、開いているバッファの番号である。
+	Buffer *BufferID `json:"buffer,omitempty"`
+	// Line は、出す行の番号（0 から数える）である。
+	Line *int `json:"line,omitempty"`
 }
 
 // ViewItem は、一覧か木の項目 1 つである。
@@ -127,6 +152,26 @@ type ViewItem struct {
 	// 省くと、前の木にあった ID の項目は利用者が開閉した状態を保ち、新しく現れた ID の項目は閉じて出す。
 	// 書くと、前の木にあった項目もその状態にする（ファイラの「今のファイルの場所まで開く」、DAP の止まった位置のスコープを開く）。
 	Expanded *bool `json:"expanded,omitempty"`
+	// Preview は、この項目にカーソルがあるときにプレビューに出すものである（FR-149。API 0.11.0 で足した）。
+	// 無ければ、プレビューの欄を空にする。古い本体は読まずに捨てる。
+	Preview *ViewPreview `json:"preview,omitempty"`
+}
+
+// HasPreview は、c がプレビューの欄を持つか（Preview が true か、項目のどれかが Preview を持つか）を返す。
+func (c *ViewComponent) HasPreview() bool {
+	if c.Preview {
+		return true
+	}
+	var has func(items []ViewItem) bool
+	has = func(items []ViewItem) bool {
+		for _, it := range items {
+			if it.Preview != nil || has(it.Children) {
+				return true
+			}
+		}
+		return false
+	}
+	return has(c.Items)
 }
 
 // ViewExpandParams は、view/expand の params である。
@@ -187,6 +232,14 @@ func (c *ViewComponent) Validate() error {
 				return fmt.Errorf("%s.children と hasChildren は tree でだけ使える", p)
 			}
 			seen[it.ID] = true
+			if pv := it.Preview; pv != nil {
+				switch {
+				case pv.Path == "" && pv.Buffer == nil:
+					return fmt.Errorf("%s.preview に path も buffer も無い", p)
+				case pv.Line != nil && *pv.Line < 0:
+					return fmt.Errorf("%s.preview.line %d が負である", p, *pv.Line)
+				}
+			}
 			for j, s := range it.Highlights {
 				if s.Start < 0 || s.End < s.Start || s.End > len(it.Label) {
 					return fmt.Errorf("%s.highlights[%d] が label の外を指す", p, j)

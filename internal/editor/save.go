@@ -129,7 +129,7 @@ func displayName(bs *bufferState) string {
 
 // doAction は、Ex コマンドが求めるエディタの動作を 1 つ行う（:w、:q、:e）。
 func (e *Editor) doAction(bs *bufferState, a ex.Action) error {
-	if f := e.float; f != nil && f.focused && bs == f.bs {
+	if f := e.float; f != nil && f.focused && (bs == f.bs || (bs == f.preview.bs && f.preview.focus)) {
 		// フォーカスのあるポップアップの中で打った、タブに関わるコマンド（popup.go）。
 		switch a.Kind {
 		case ex.ActionQuit:

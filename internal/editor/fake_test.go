@@ -671,6 +671,8 @@ type fakeTerm struct {
 	last ui.Screen
 	// clips は、SetClipboard で送られたテキストを、送られた順に並べたものである。
 	clips []string
+	// w と h は、Size が返す大きさである。w が 0 なら 120 列と 6 行である。
+	w, h int
 }
 
 // closeInput は、端末の入力を閉じる（端末が失われた）。何度呼んでもよい。
@@ -694,7 +696,12 @@ func newFakeTerm() *fakeTerm { return &fakeTerm{in: make(chan TermEvent, 1024)} 
 
 func (f *fakeTerm) Input() <-chan TermEvent { return f.in }
 
-func (f *fakeTerm) Size() (int, int) { return 120, 6 }
+func (f *fakeTerm) Size() (int, int) {
+	if f.w > 0 {
+		return f.w, f.h
+	}
+	return 120, 6
+}
 
 func (f *fakeTerm) Draw(s ui.Screen) error {
 	f.mu.Lock()
@@ -727,13 +734,18 @@ type harness struct {
 // start は、cfg でエディタを作り、files を開いて、別の goroutine で Run する。テストの終わりに止めて Close する。
 func start(t *testing.T, cfg Config, files ...string) *harness {
 	t.Helper()
+	return startTerm(t, newFakeTerm(), cfg, files...)
+}
+
+// startTerm は、start の、偽の端末 term（大きさを変えたもの）を使う形である。
+func startTerm(t *testing.T, term *fakeTerm, cfg Config, files ...string) *harness {
+	t.Helper()
 	if cfg.WorkDir == "" {
 		cfg.WorkDir = t.TempDir()
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	term := newFakeTerm()
 	e, err := New(term, cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -253,6 +253,8 @@ type Editor struct {
 	popupKeys map[string][]popupKeyBinding
 	// floatSeq は、最後に開いたポップアップの番号である（floatState.id）。
 	floatSeq uint64
+	// previewSeq は、最後に付けたプレビューの中身の番号である（previewState.id。preview.go）。
+	previewSeq uint64
 	// paneActive と paneSaved は、ペインの部品の client のキーを処理している間（paneInput）の、そのペインの部品と、
 	// 退避した元の client のポップアップである（component.go）。処理していなければ nil である。
 	paneActive, paneSaved *floatState

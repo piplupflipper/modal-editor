@@ -67,6 +67,9 @@ const (
 	// StyleFinderMatch は、ファインダー（FR-106）の一覧の、入力に一致した文字である（fzf の hl に当たる）。
 	// 拡張機能が一覧の項目の highlights でこの名前を指す。
 	StyleFinderMatch = "finder.match"
+	// StylePreviewLine は、項目のプレビュー（Float.Preview。FR-149）の、項目の指す行（grep の一致した行など）である。
+	// 行の全体に付け、構文の色はその上に重ねる（fzf-lua のプレビューの FzfLuaCursorLine に当たる）。
+	StylePreviewLine = "preview.line"
 	// StyleStatusLineMode などは、ステータス行の部品ごとの色である。名前は "statusline." と部品の ID（StatusPart...）をつないだもの。
 	// 部品は StyleStatusLine の上に重ねて描く（Attr.Over）ので、文字の色だけを変えることもできる。既定の対応には無い。
 	StyleStatusLineMode      = "statusline.mode"
@@ -100,7 +103,7 @@ var styleNames = []string{
 	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleLineNr, StyleSearch, StyleYank,
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
-	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch,
+	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch, StylePreviewLine,
 	StyleSignBreakpoint, StyleSignBreakpointUnverified, StyleSignExecutionPoint,
 	StyleSignDiagnosticError, StyleSignDiagnosticWarning, StyleSignDiagnosticInfo, StyleSignDiagnosticHint,
 	StyleStatusLineMode, StyleStatusLineName, StyleStatusLineModified, StyleStatusLineReadOnly, StyleStatusLineFileType,
@@ -171,10 +174,13 @@ func DefaultTheme() Theme {
 		StyleDiagnosticInfo:    {Underline: true, Sp: Indexed(12)},
 		StyleDiagnosticHint:    {Underline: true, Sp: Indexed(8)},
 
-		StyleStatusLineNC:             {Reverse: true},
-		StylePopup:                    {Fg: Indexed(15), Bg: Indexed(8)},
-		StylePopupSelected:            {Fg: Indexed(0), Bg: Indexed(14)},
-		StyleFinderMatch:              {Bold: true, Underline: true},
+		StyleStatusLineNC:  {Reverse: true},
+		StylePopup:         {Fg: Indexed(15), Bg: Indexed(8)},
+		StylePopupSelected: {Fg: Indexed(0), Bg: Indexed(14)},
+		StyleFinderMatch:   {Bold: true, Underline: true},
+		// プレビューの項目の指す行は、窓の色（StylePopup の背景の 8 番）の上で見分けられ、構文の色（文字の色）を消さないよう、
+		// 背景の色だけを持つ。
+		StylePreviewLine:              {Bg: Indexed(0)},
 		StyleSignBreakpoint:           {Fg: Indexed(9), Bold: true},
 		StyleSignBreakpointUnverified: {Fg: Indexed(8)},
 		StyleSignExecutionPoint:       {Fg: Indexed(11), Bold: true},

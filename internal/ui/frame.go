@@ -158,6 +158,11 @@ type Float struct {
 	List *Frame
 	// ListCount は、List の項目の数である。0 なら一覧の場所に空であることを書く。
 	ListCount int
+	// Preview は、一覧、木、ファインダーのカーソルの項目のプレビュー（FR-149）である。nil なら、窓はプレビューの欄を持たない。
+	// 中央の窓（Center）か画面の全体の窓（Fill）で、PreviewRule.Layout が出すと決めたときだけ、窓を広げて右に描く（preview.go）。
+	Preview *Preview
+	// PreviewRule は、プレビューを出すかと、窓とプレビューの幅を決める設定の値である。
+	PreviewRule PreviewRule
 }
 
 // SignKind は、行の印の種類である。値は sign/set の kind と同じ文字列である（基本設計 6.7）。

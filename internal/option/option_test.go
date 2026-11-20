@@ -92,6 +92,31 @@ func TestYankHighlightMsDef(t *testing.T) {
 	}
 }
 
+// プレビューの幅の項目は、範囲がエディタ全体の整数で、既定は fzf-lua の既定とオーナーの nvim の窓の幅（100、60、90）である。
+func TestPreviewDefs(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		def      int
+		min, max int
+	}{
+		{PreviewMinWindowWidth, 100, 0, 10000},
+		{PreviewWidthPercent, 60, 1, 99},
+		{PreviewWindowWidthPercent, 90, 10, 100},
+	} {
+		d, ok := Lookup(tt.name)
+		if !ok || d.Type != Int || d.Scope != ScopeEditor || d.Default != IntValue(tt.def) || d.Range == nil || *d.Range != (IntRange{Min: tt.min, Max: tt.max}) {
+			t.Errorf("Lookup(%s) = %+v, %v", tt.name, d, ok)
+			continue
+		}
+		if _, err := d.Parse(strconv.Itoa(tt.min - 1)); !errors.Is(err, ErrBelowMin) {
+			t.Errorf("%s: Parse(%d) = %v", tt.name, tt.min-1, err)
+		}
+		if _, err := d.Parse(strconv.Itoa(tt.max + 1)); !errors.Is(err, ErrAboveMax) {
+			t.Errorf("%s: Parse(%d) = %v", tt.name, tt.max+1, err)
+		}
+	}
+}
+
 // Revision は、項目ごとに Set で値を入れた回数で、同じ値を入れ直しても増え、誤りで入れなかった Set と他の項目の Set では増えない。
 //
 // req: FR-138
