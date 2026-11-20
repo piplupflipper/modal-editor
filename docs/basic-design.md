@@ -3358,7 +3358,7 @@ Vim の名前の `:tabe`（`:tabedit`）と `:tabnew` は本体に書かず、�
 
 ```jsonc
 "commandAliases": {
-  "tabedit": { "command": "edit", "min": 4 },
+  "tabedit": { "command": "tab.new", "min": 4 },
   "tabnew": { "command": "tab.new" }
 }
 ```
@@ -3395,12 +3395,13 @@ Vim の名前の別名の省略の長さは、手元の Vim 9.1（`vim -Nu NONE 
 
 | 別名 | 付け替える先 | 省略の長さ | Vim 9.1 |
 |---|---|---|---|
-| `tabedit` | `edit` | 4（`:tabe`） | `:tab` は修飾子の `:tab`、`:tabe` から `:tabedit`（`fullcommand('tabe')` は `tabedit`） |
+| `tabedit` | `tab.new` | 4（`:tabe`） | `:tab` は修飾子の `:tab`、`:tabe` から `:tabedit`（`fullcommand('tabe')` は `tabedit`） |
 | `tabnew` | `tab.new` | 6（省略できない） | `:tabn` と `:tabne` は `:tabnext` で、`:tabnew` は省略できない |
 
 Vim 9.1 の `:tabe` を引数なしで打つと、`:tabnew` と同じく空のタブを開く（2026-11-20 に確かめた）。
-同梱の設定の例の `:tabe` は、オーナーの決め（#291）のとおり `:edit` の別名なので、引数なしでは今のファイルの読み直しになり、Vim と違う。
-Vim と同じにするには、`tabedit` の `command` を `tab.new` にする（`:tab.new {ファイル}` は `:e {ファイル}` と同じなので、ファイルを書いたときの動作は変わらない）。
+#291 の本文は `:tabe` を `:edit` の別名としたが、それでは引数なしの `:tabe` が今のファイルの読み直しになり、Vim と違う。
+`:tab.new {ファイル}` は `:e {ファイル}` と同じなので、`tabedit` の付け替える先を `tab.new` にすれば、ファイルを書いたときの動作は変えずに、引数なしでも Vim と同じになる。
+オーナーの決め（Vim の `:tabe` を使えるようにする）の意図に合うので、PR #293 でオーケストレータがこの形に決めた。
 
 #### この上に載るもの
 

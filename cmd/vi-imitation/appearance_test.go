@@ -33,7 +33,7 @@ func TestConfigExample(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("設定の例の誤り: %v", errs)
 	}
-	if got, want := aliases.Added(), []ex.RenameAlias{{Name: "tabedit", Min: 4, Target: "edit"}, {Name: "tabnew", Min: 6, Target: "tab.new"}}; !reflect.DeepEqual(got, want) {
+	if got, want := aliases.Added(), []ex.RenameAlias{{Name: "tabedit", Min: 4, Target: "tab.new"}, {Name: "tabnew", Min: 6, Target: "tab.new"}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("commandAliases = %+v, want %+v", got, want)
 	}
 	// インサートモードの Emacs 風のキー（#257）。Ctrl-H は <BS> として届くので、<C-h> は書かない（PR #258 のレビューの推奨 4）。

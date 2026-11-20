@@ -67,7 +67,7 @@ import (
 //	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] },
 //	  "tabline": { "show": "always", "left": ["tabs"], "right": ["mrreview.status"] },
 //	  "elevateCommand": ["sudo"],
-//	  "commandAliases": { "tabedit": { "command": "edit", "min": 4 }, "tabnew": { "command": "tab.new" } }
+//	  "commandAliases": { "tabedit": { "command": "tab.new", "min": 4 }, "tabnew": { "command": "tab.new" } }
 //	}
 //
 // 設定の表（internal/option）の、範囲がエディタ全体の項目は、点で区切った名前を入れ子のキーにして書き、Options に入る
