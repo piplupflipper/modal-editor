@@ -297,7 +297,11 @@ func TestMiseMissing(t *testing.T) {
 // req: FR-143
 func TestMiseInstallFails(t *testing.T) {
 	m := newFakeMise(t)
-	untrusted := "mise ERROR Config files in ~/p/mise.toml are not trusted.\nTrust them with `mise trust`.\n"
+	// mise 2026.5.2 が、信頼していない mise.toml のあるディレクトリで出す行（パスは短くした）。
+	untrusted := "mise ERROR error parsing config file: ~/p/mise.toml\n" +
+		"mise ERROR Config files in ~/p/mise.toml are not trusted.\n" +
+		"Trust them with `mise trust`.\n" +
+		"mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information\n"
 	m.touch("fail", untrusted)
 	h := startHost(t, hostOptions{maxRestarts: -1, mise: m.path, extra: map[string]any{"command": missingCommand, "mise": testTool, "autoInstall": true}})
 	h.open(1, "a.go", "a")

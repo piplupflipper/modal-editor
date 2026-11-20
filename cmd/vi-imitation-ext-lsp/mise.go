@@ -149,7 +149,7 @@ func (c *client) miseInstall(ctx context.Context, mise, root string) error {
 		return fmt.Errorf("mise install %s: %w", c.cfg.Mise, ctx.Err())
 	}
 	c.x.logf("%s: mise install %s: %v", c.name(), c.cfg.Mise, err)
-	detail := strings.Join(w.tail(), " ")
+	detail := strings.Join(miseDetail(w.tail()), " ")
 	if ctx.Err() != nil {
 		detail = fmt.Sprintf("%s 以内に終わらなかった", c.installTimeout)
 	} else if detail == "" {
@@ -157,6 +157,27 @@ func (c *client) miseInstall(ctx context.Context, mise, root string) error {
 	}
 	c.x.showMessage(ext.MessageError, fmt.Sprintf("mise で %s を入れられない: %s", c.cfg.Mise, detail))
 	return errReported
+}
+
+// miseVerboseHint は、mise が誤りの最後に付ける、どの誤りでも同じ行に含まれる文字列である（mise 2026.5.2）。
+const miseVerboseHint = "Run with --verbose or MISE_VERBOSE=1"
+
+// miseDetailLines は、mise install が失敗したときに、メッセージの行に含める mise の出力の行の数（末尾から）である。
+// メッセージの行は 1 行で、画面の幅で切れるので、誤りの中身を含む末尾の行を残す。値は仮。
+const miseDetailLines = 2
+
+// miseDetail は、mise install の出力の末尾の行から、どの誤りでも同じ案内の行（miseVerboseHint）を除き、
+// 末尾の miseDetailLines 行を返す。
+// 信頼していない mise.toml のときは、"Config files in … are not trusted." と "Trust them with `mise trust`. …" の 2 行が残る
+// （その前の "error parsing config file: …" の行は、ログにだけ残る）。
+func miseDetail(lines []string) []string {
+	var out []string
+	for _, l := range lines {
+		if !strings.Contains(l, miseVerboseHint) {
+			out = append(out, l)
+		}
+	}
+	return out[max(len(out)-miseDetailLines, 0):]
 }
 
 // miseLine は、mise install の出力の 1 行をログに書き、前に出してから miseLineInterval が過ぎていれば message/show で出す。
