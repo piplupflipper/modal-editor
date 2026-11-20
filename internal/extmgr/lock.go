@@ -101,22 +101,30 @@ func (l *Lock) encode() ([]byte, error) {
 // リンク先が無い（切れた symlink。dotfiles のリポジトリでまだ作っていないか、消したとき）ときも、リンクの指す先に作る。
 // ReadLock は切れた symlink を「ファイルが無い」として読むので、それと揃える（#213）。
 func writeLock(path string, l *Lock) error {
-	path, err := lockTarget(path)
-	if err != nil {
-		return fmt.Errorf("ロックファイルの symlink の先を求められない: %w", err)
-	}
 	data, err := l.encode()
 	if err != nil {
 		return err
+	}
+	return WriteLockFile(path, data, len(l.Extensions) > 0)
+}
+
+// WriteLockFile は、ロックファイルの中身 data を path に、writeLock と同じ書き方で書く。
+// 中身が今のファイルと同じなら書かない。path が無く、create が false なら作らない（記録が 1 つも無いときに作らないため）。
+// 一時ファイルを同じディレクトリに書いてから名前を変え、path が symlink ならリンク先を書き換える（writeLock の doc）。
+// tree-sitter の拡張機能が、パーサのロックファイル（FR-142）を同じ扱いで書くのに使う。
+func WriteLockFile(path string, data []byte, create bool) error {
+	path, err := lockTarget(path)
+	if err != nil {
+		return fmt.Errorf("ロックファイルの symlink の先を求められない: %w", err)
 	}
 	old, err := os.ReadFile(path)
 	switch {
 	case err == nil && bytes.Equal(old, data):
 		return nil
-	case errors.Is(err, fs.ErrNotExist) && len(l.Extensions) == 0:
+	case errors.Is(err, fs.ErrNotExist) && !create:
 		return nil
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), "."+LockFileName+".*")
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
 		return fmt.Errorf("ロックファイルを書けない: %w", err)
 	}

@@ -82,19 +82,29 @@ type ActivationKind string
 // ActivationSocket は、本体が EnvMCPSocket のパスで待ち受けるソケットへ、最初の接続が来たときに成り立つ（基本設計 6.2）。
 // ID と Pattern は使わない。本体は、待ち受けているソケットと受け付けた接続を、子プロセスへ引き継ぐ（EnvSocketFDs）。
 // 1 つの本体で待ち受けるソケットは 1 つなので、この契機を宣言した拡張機能が複数あれば、本体は最初の 1 つだけに使う。
+//
+// ActivationSettingsFileType は、利用者の設定のうちこの拡張機能に向けた部分（extensions.settings.<ID>）から、
+// ファイルの種類の契機（ActivationFileType）を作ることを表す（基本設計 6.7。#277）。
+// Pattern は、設定の中の値を指す JSON Pointer（RFC 6901）で、参照トークン "*" はオブジェクトのすべての項目か配列のすべての要素に当たる。
+// 指した値が文字列ならその 1 つを、配列ならその中の文字列のすべてを、ファイルの種類の名前とする。それ以外の値は無視する。
+// 本体（internal/config の LoadExtensions）は、宣言ファイルと設定を読んだときに、この契機を ActivationFileType の契機に置き換える。
+// 利用者が設定に書いたファイルの種類を、設定の extensions.activation にもう一度書かずに済ませるためのものである。
+// 例: tree-sitter の拡張機能の {"on": "settingsFileType", "pattern": "/parsers/*/fileTypes"}。
 const (
-	ActivationOperator   ActivationKind = "operator"
-	ActivationMotion     ActivationKind = "motion"
-	ActivationTextObject ActivationKind = "textObject"
-	ActivationCommand    ActivationKind = "command"
-	ActivationFileType   ActivationKind = "filetype"
-	ActivationSocket     ActivationKind = "socket"
+	ActivationOperator         ActivationKind = "operator"
+	ActivationMotion           ActivationKind = "motion"
+	ActivationTextObject       ActivationKind = "textObject"
+	ActivationCommand          ActivationKind = "command"
+	ActivationFileType         ActivationKind = "filetype"
+	ActivationSocket           ActivationKind = "socket"
+	ActivationSettingsFileType ActivationKind = "settingsFileType"
 )
 
 // Known は、k がこの版の API の知っている契機の種類かどうかを返す。
 func (k ActivationKind) Known() bool {
 	switch k {
-	case ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType, ActivationSocket:
+	case ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType, ActivationSocket,
+		ActivationSettingsFileType:
 		return true
 	}
 	return false
@@ -106,7 +116,8 @@ type Activation struct {
 	On ActivationKind `json:"on"`
 	// ID は、操作が呼ばれたときの契機で、その操作の ID である。それ以外の契機では空。
 	ID string `json:"id,omitempty"`
-	// Pattern は、ActivationFileType の契機で、ファイルの種類の名前である。それ以外の契機では空。
+	// Pattern は、ActivationFileType の契機で、ファイルの種類の名前である。
+	// ActivationSettingsFileType の契機では、設定の中の値を指す JSON Pointer である。それ以外の契機では空。
 	Pattern string `json:"pattern,omitempty"`
 }
 
@@ -192,6 +203,7 @@ func (m *Manifest) HandlesFileType(ft string) bool {
 //   - Provides に同じ操作が 2 回現れないこと
 //   - 操作の契機は、同じ種類の操作として Contributes にある ID を指すこと
 //   - ファイルの種類の契機は、Pattern が空でないこと
+//   - 設定からファイルの種類を作る契機（ActivationSettingsFileType）は、Pattern が "/" で始まること
 //   - Contributes の各操作の ID が空でなく、種類をまたいで重複しないこと
 //   - Contributes.StatusLine の各部品の ID が、拡張機能の ID と "." で始まり、その後が空でなく "." を含まず、空白を含まず、重複しないこと
 //   - Contributes.PopupKeys の各項目の ID とキーが空でなく、ID が PopupKeys の中で重複しないこと
@@ -286,6 +298,10 @@ func (m *Manifest) Validate() (warnings []error, err error) {
 		case ActivationFileType:
 			if a.Pattern == "" {
 				errs = append(errs, fmt.Errorf("%s.pattern が空である", path))
+			}
+		case ActivationSettingsFileType:
+			if !strings.HasPrefix(a.Pattern, "/") {
+				errs = append(errs, fmt.Errorf("%s.pattern %q が / で始まる JSON Pointer でない", path, a.Pattern))
 			}
 		case ActivationSocket:
 		default:

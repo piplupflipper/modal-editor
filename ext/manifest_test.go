@@ -168,6 +168,13 @@ func TestManifestValidate(t *testing.T) {
 			want:   []string{"activation[1].pattern が空"},
 		},
 		{
+			name: "settingsFileType の pattern が / で始まらない",
+			modify: func(m *Manifest) {
+				m.Activation = append(m.Activation, Activation{On: ActivationSettingsFileType, Pattern: "parsers/*/fileTypes"})
+			},
+			want: []string{`activation[2].pattern "parsers/*/fileTypes" が / で始まる JSON Pointer でない`},
+		},
+		{
 			name:   "操作の id が空",
 			modify: func(m *Manifest) { m.Contributes.Motions = []Contribution{{Keys: "x"}} },
 			want:   []string{"contributes.motions[0].id が空"},
@@ -240,11 +247,13 @@ func TestKnownActivation(t *testing.T) {
 		{On: "lsp"},
 		{On: ActivationFileType, Pattern: "markdown"},
 		{On: ActivationSocket},
+		{On: ActivationSettingsFileType, Pattern: "/parsers/*/fileTypes"},
 	}
 	want := []Activation{
 		{On: ActivationOperator, ID: "surround.add"},
 		{On: ActivationFileType, Pattern: "markdown"},
 		{On: ActivationSocket},
+		{On: ActivationSettingsFileType, Pattern: "/parsers/*/fileTypes"},
 	}
 	if _, err := m.Validate(); err != nil {
 		t.Errorf("Validate = %v", err)
@@ -253,7 +262,7 @@ func TestKnownActivation(t *testing.T) {
 		t.Errorf("KnownActivation = %#v, want %#v", got, want)
 	}
 
-	for _, k := range []ActivationKind{ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType, ActivationSocket} {
+	for _, k := range []ActivationKind{ActivationOperator, ActivationMotion, ActivationTextObject, ActivationCommand, ActivationFileType, ActivationSocket, ActivationSettingsFileType} {
 		if !k.Known() {
 			t.Errorf("%q.Known() = false, want true", k)
 		}

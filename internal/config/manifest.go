@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/tailscale/hujson"
@@ -144,6 +145,9 @@ func typeErrorOffset(root *hujson.Value, te *json.UnmarshalTypeError) int {
 // 設定 cfg の extensions.settings と extensions.activation を合わせた拡張機能の一覧を返す（基本設計 5.1、6.7）。
 // 拡張機能のプロセスは起動しない（FR-14）。
 //
+// 宣言ファイルの ext.ActivationSettingsFileType の契機の直後に、その拡張機能に向けた extensions.settings から作った
+// ファイルの種類の契機（ext.ActivationFileType）を足す（expandSettingsActivation）。extensions.activation の契機はその後ろに並ぶ。
+//
 // 一覧の順は、dirs の順、ディレクトリの中では名前の順である。
 // 存在しないディレクトリと、manifest.json の無いディレクトリは飛ばす。
 // 読めない宣言ファイルと、先に読んだものと ID が重なる宣言ファイルは使わず、problems に返す。
@@ -186,8 +190,9 @@ func LoadExtensions(dirs []string, cfg Config) (exts []Extension, problems []err
 			problems = append(problems, &Error{Path: p, Msg: "宣言ファイルのディレクトリを絶対パスにできない: " + err.Error()})
 			continue
 		}
-		m.Activation = append(m.Activation, cfg.ExtensionActivation[m.ID]...)
-		exts = append(exts, Extension{Manifest: m, Dir: dir, Settings: cfg.ExtensionSettings[m.ID]})
+		settings := cfg.ExtensionSettings[m.ID]
+		m.Activation = append(expandSettingsActivation(m.Activation, settings), cfg.ExtensionActivation[m.ID]...)
+		exts = append(exts, Extension{Manifest: m, Dir: dir, Settings: settings})
 	}
 
 	ids := make([]string, 0, len(cfg.extPos))
@@ -211,4 +216,97 @@ func LoadExtensions(dirs []string, cfg Config) (exts []Extension, problems []err
 		return nil, append(problems, err)
 	}
 	return exts, problems
+}
+
+// expandSettingsActivation は、acts の ext.ActivationSettingsFileType の契機のそれぞれの直後に、
+// settings の中の Pattern（JSON Pointer）が指すファイルの種類の名前から作った ext.ActivationFileType の契機を足した列を返す。
+//
+// 元の契機は残す。本体（internal/exthost）は ext.ActivationSettingsFileType の契機で起動しないので、残しても働きは変わらず、
+// 足す契機が 1 つも無いときに activation が空になって宣言ファイルの検査に落ちることを避けられる。
+// 同じ名前は 1 回だけ足し、空の名前は足さない。
+// settings が無いか JSON として読めないとき、Pattern の指す値が無いか文字列とその配列でないときは、何も足さない。
+// 設定の中身の誤りを知らせるのは、設定を解釈する拡張機能である。
+func expandSettingsActivation(acts []ext.Activation, settings json.RawMessage) []ext.Activation {
+	if !slices.ContainsFunc(acts, func(a ext.Activation) bool { return a.On == ext.ActivationSettingsFileType }) {
+		return acts
+	}
+	var root any
+	if len(settings) > 0 {
+		if err := json.Unmarshal(settings, &root); err != nil {
+			root = nil
+		}
+	}
+	out := make([]ext.Activation, 0, len(acts))
+	seen := map[string]bool{}
+	for _, a := range acts {
+		out = append(out, a)
+		if a.On != ext.ActivationSettingsFileType || root == nil {
+			continue
+		}
+		for _, ft := range pointerStrings(root, a.Pattern) {
+			if ft == "" || seen[ft] {
+				continue
+			}
+			seen[ft] = true
+			out = append(out, ext.Activation{On: ext.ActivationFileType, Pattern: ft})
+		}
+	}
+	return out
+}
+
+// pointerStrings は、v の中で JSON Pointer ptr が指す値の文字列を返す（ext.ActivationSettingsFileType の doc）。
+// 参照トークン "*" は、オブジェクトのすべての項目（名前の順）か配列のすべての要素に当たる。
+// 指した値が文字列ならその 1 つ、配列ならその中の文字列のすべてを返し、それ以外の値は除く。
+func pointerStrings(v any, ptr string) []string {
+	rest, ok := strings.CutPrefix(ptr, "/")
+	if !ok {
+		if ptr != "" {
+			return nil
+		}
+		switch x := v.(type) {
+		case string:
+			return []string{x}
+		case []any:
+			var out []string
+			for _, e := range x {
+				if s, ok := e.(string); ok {
+					out = append(out, s)
+				}
+			}
+			return out
+		}
+		return nil
+	}
+	tok, next, found := strings.Cut(rest, "/")
+	if found {
+		next = "/" + next
+	}
+	tok = strings.NewReplacer("~1", "/", "~0", "~").Replace(tok)
+	var children []any
+	switch x := v.(type) {
+	case map[string]any:
+		if tok == "*" {
+			keys := make([]string, 0, len(x))
+			for k := range x {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				children = append(children, x[k])
+			}
+		} else if c, ok := x[tok]; ok {
+			children = append(children, c)
+		}
+	case []any:
+		if tok == "*" {
+			children = x
+		} else if i, err := strconv.Atoi(tok); err == nil && i >= 0 && i < len(x) && tok == strconv.Itoa(i) {
+			children = append(children, x[i])
+		}
+	}
+	var out []string
+	for _, c := range children {
+		out = append(out, pointerStrings(c, next)...)
+	}
+	return out
 }
