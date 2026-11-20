@@ -4,7 +4,8 @@
   "activation": [
     { "on": "filetype", "pattern": "go" },
     { "on": "filetype", "pattern": "json" },
-    { "on": "filetype", "pattern": "jsonc" }
+    { "on": "filetype", "pattern": "jsonc" },
+    { "on": "settingsFileType", "pattern": "/parsers/*/fileTypes" }
   ],
   "contributes": {
     "textObjects": [

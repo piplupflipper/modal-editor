@@ -31,8 +31,9 @@ type languageSpec struct {
 	objects string
 }
 
-// languages は、対応する言語の一覧である。
-// 言語を足すときは、ここと宣言ファイル（manifest.json）の activation と queries/ の下のクエリを足す。
+// languages は、同梱する言語の一覧である。
+// 同梱する言語を足すときは、ここと宣言ファイル（manifest.json）の activation と queries/ の下のクエリを足す。
+// 同梱しない言語は、利用者の設定に並べたパーサ（FR-142。settings.go）で足す。
 // JSON は、関数、型、引数に当たる構文を持たないので、テキストオブジェクトを持たない。
 // JSON の文法（tree-sitter-json）は、コメントを文法に含み（extras）、ハイライトのクエリはコメントにも色を付けるので、"jsonc" にも使う。
 // 末尾のカンマは文法に無く、構文木に誤りのノードができるが、パーサーが立ち直るので、後ろの要素にも色が付く（TestDecorationsJSONC）。
@@ -65,32 +66,16 @@ func newLanguage(spec languageSpec) (*language, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", spec.name, err)
 	}
-	lang := sitter.NewLanguage(spec.language())
-	parser := sitter.NewParser()
-	if err = parser.SetLanguage(lang); err != nil {
-		parser.Close()
-		return nil, fmt.Errorf("%s: %w", spec.name, err)
-	}
-	query, qerr := sitter.NewQuery(lang, string(src))
-	if qerr != nil {
-		parser.Close()
-		return nil, fmt.Errorf("%s: %s: %s", spec.name, spec.query, qerr.Error())
-	}
-	names := query.CaptureNames()
-	styles := make([]styleID, len(names))
-	for i, n := range names {
-		styles[i] = styleFor(n)
-	}
-	l := &language{name: spec.name, grammar: lang, parser: parser, query: query, styles: styles}
-	if spec.objects == "" {
-		return l, nil
+	l, err := newGrammarLanguage(spec.name, spec.language(), spec.query, src)
+	if err != nil || spec.objects == "" {
+		return l, err
 	}
 	src, err = queryFS.ReadFile(spec.objects)
 	if err != nil {
 		l.close()
 		return nil, fmt.Errorf("%s: %w", spec.name, err)
 	}
-	objects, qerr := sitter.NewQuery(lang, string(src))
+	objects, qerr := sitter.NewQuery(l.grammar, string(src))
 	if qerr != nil {
 		l.close()
 		return nil, fmt.Errorf("%s: %s: %s", spec.name, spec.objects, qerr.Error())
@@ -100,6 +85,30 @@ func newLanguage(spec languageSpec) (*language, error) {
 		l.objectCaptures = append(l.objectCaptures, parseObjectCapture(n))
 	}
 	return l, nil
+}
+
+// newGrammarLanguage は、TSLanguage へのポインター grammar でパーサーを作り、ハイライトのクエリ highlights を解釈した言語を返す。
+// テキストオブジェクトのクエリは持たない。queryName は誤りの文言に使うクエリの名前である。
+// 文法の ABI の版がこの tree-sitter の受け付ける範囲（13 から 15）に無ければ、パーサーに文法を設定できずに誤りを返す。
+// 同梱の言語（newLanguage）と、利用者の手元でビルドしたパーサ（FR-142）の両方が使う。
+func newGrammarLanguage(name string, grammar unsafe.Pointer, queryName string, highlights []byte) (*language, error) {
+	lang := sitter.NewLanguage(grammar)
+	parser := sitter.NewParser()
+	if err := parser.SetLanguage(lang); err != nil {
+		parser.Close()
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	query, qerr := sitter.NewQuery(lang, string(highlights))
+	if qerr != nil {
+		parser.Close()
+		return nil, fmt.Errorf("%s: %s: %s", name, queryName, qerr.Error())
+	}
+	names := query.CaptureNames()
+	styles := make([]styleID, len(names))
+	for i, n := range names {
+		styles[i] = styleFor(n)
+	}
+	return &language{name: name, grammar: lang, parser: parser, query: query, styles: styles}, nil
 }
 
 // close は、パーサーとクエリの C のメモリを解放する。
