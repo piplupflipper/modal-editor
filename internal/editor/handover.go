@@ -310,9 +310,7 @@ func (e *Editor) openWaiterFiles(w *waiter, info WaitInfo) error {
 		w.bufs = append(w.bufs, bs)
 		first = bs
 	case len(info.Files) == 0:
-		b := buffer.New("")
-		b.SetFixEndOfLine(e.fixEOL)
-		bs := e.newBuffer(b, "", "")
+		bs := e.newUnnamedBuffer("")
 		w.bufs = append(w.bufs, bs)
 		first = bs
 	}

@@ -6,9 +6,12 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"syscall"
+
+	"github.com/piplupflipper/vi-imitation/internal/protocol"
 )
 
 // stdinArg は、起動の引数で、標準入力から読んだ中身を開くことを表す名前である（FR-158。Vim の -）。
@@ -70,6 +73,25 @@ func readStdinUntil(r io.Reader, msg io.Writer, intr <-chan os.Signal) (string, 
 	// （2026-11-20 に 900 MB の入力を別のプロセスの server へ送ったとき、client の最大の RSS が入力の約 4.1 倍になった）。
 	runtime.GC()
 	return text, nil
+}
+
+// releaseMemory は、server へ送り終えた標準入力の中身の領域を、すぐに OS へ返す（FR-158）。
+// 送り終えた client は画面を中継するだけで、中身はもう要らない。返さないと、Go のランタイムが領域を返すまで（PR #304 のレビューで、
+// 100 MiB の入力で約 4 分）入力の約 2 倍の RSS を持ち続ける。中身への参照を切ってから呼ぶ。
+func releaseMemory() {
+	debug.FreeOSMemory()
+}
+
+// serverAlive は、path の server のソケットに繋げるかを返す。繋げたら、何も送らずに閉じる。
+// 起動の引数の - で標準入力を読む前に、VI_IMITATION_SOCKET の server がまだいるか（待つだけの client として動けるか）を確かめるのに使う。
+// server の側は、Hello を送らずに閉じた接続として断る（記録に 1 行残る）。
+func serverAlive(path string) bool {
+	conn, err := protocol.Dial(path)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close() // 確かめるためだけの接続。閉じる誤りは扱えない
+	return true
 }
 
 // stdinBlockSize は、readStdin が読んだものを溜める塊 1 つの大きさである（仮）。

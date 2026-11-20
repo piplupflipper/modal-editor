@@ -75,6 +75,7 @@ var ErrNoClient = errors.New("server: no edit client connected in time")
 type Server struct {
 	// FirstClientTimeout は、ソケットだけで待つ Serve（first が nil）が、最初の編集の client の Hello を待つ上限である。
 	// 超えたら ErrNoClient で戻る。0 なら待ち続ける。
+	// 時間は、受け付けた接続のどれからも何も読めない時間で数える（Hello に続く標準入力の中身を受けている間は延ばす。FR-158）。
 	// client が自動で起動した server（-server）が、起動の途中で client が終わったとき（kill -9、ペインを閉じた）に、
 	// 誰も繋がないまま残らないようにする（FR-61。PR #207 のレビューの必須 2）。Serve の前に設定する。
 	FirstClientTimeout time.Duration
@@ -301,11 +302,14 @@ func (s *Server) firstClient(ctx context.Context, a *acceptor, first protocol.Se
 	if a == nil {
 		return nil, protocol.Hello{}, errors.New("server: no client and no listener")
 	}
-	var expired <-chan time.Time
+	var expired <-chan struct{}
 	if s.FirstClientTimeout > 0 {
-		timer := time.NewTimer(s.FirstClientTimeout)
-		defer timer.Stop()
-		expired = timer.C
+		// 何も読めない時間で数える。最初の client が Hello に続けて標準入力の中身（FR-158）を送っている間は延ばす
+		// （中身を受け終えるまで a.joined に来ないので、Serve の始めからの時間で数えると、大きな中身の間に終わってしまう）。
+		stop := make(chan struct{})
+		defer close(stop)
+		start := time.Now()
+		expired = idleExpired(s.FirstClientTimeout, func() time.Duration { return a.read.idleSince(start) }, stop)
 	}
 	select {
 	case <-ctx.Done():
@@ -365,6 +369,8 @@ type acceptor struct {
 	// joined は、編集の client の Hello を送った接続を、届いた順に渡す。最初のものは firstClient が、後のものは attachLoop が受け取る。
 	joined chan joined
 	done   chan struct{}
+	// read は、受け付けたどれかの接続で最後に読めた時刻である（firstClient の期限）。
+	read progress
 }
 
 // joined は、編集の client の Hello を送った接続である。
@@ -382,7 +388,7 @@ func (s *Server) startAccept(ln net.Listener) *acceptor {
 			if err != nil {
 				return // ln を閉じた
 			}
-			pc := newProgressConn(c)
+			pc := newProgressConn(c, &a.read)
 			go s.admit(a, protocol.NewServerSocket(pc), pc)
 		}
 	}()

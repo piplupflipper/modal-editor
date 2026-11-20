@@ -73,6 +73,10 @@ func waitClient(conn protocol.ClientConn, getenv func(string) string, files []st
 	if err := conn.Send(hello); err != nil {
 		return fmt.Errorf("server に繋げない: %w", err)
 	}
+	if stdin != nil {
+		// 送り終えた標準入力の中身は、タブが閉じられるまで待つ間に要らない（FR-158）。hello と stdin は、この後は使わない。
+		releaseMemory()
+	}
 	for {
 		m, err := conn.Recv()
 		switch {

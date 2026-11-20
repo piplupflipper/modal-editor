@@ -89,17 +89,21 @@ func TestReadStdin(t *testing.T) {
 //
 // req: FR-158
 func TestRunStdinErrors(t *testing.T) {
-	t.Setenv(envSocket, "")
+	stale := filepath.Join(t.TempDir(), "gone.sock")
 	for _, tt := range []struct {
-		name string
-		args []string
-		want error
+		name   string
+		socket string
+		args   []string
+		want   error
 	}{
-		{"標準出力が端末でない", []string{"-"}, errNotTerminal},
-		{"ほかのファイルと一緒", []string{"-", "a.txt"}, nil},
-		{"-listen と一緒", []string{"-listen", "x.sock", "-"}, nil},
+		{"標準出力が端末でない", "", []string{"-"}, errNotTerminal},
+		// :! の中で起動したシェルが server より長く残り、VI_IMITATION_SOCKET の server がもういない（PR #304 のレビューの推奨 4）。
+		{"古い VI_IMITATION_SOCKET が残り、標準出力が端末でない", stale, []string{"-"}, errNotTerminal},
+		{"ほかのファイルと一緒", "", []string{"-", "a.txt"}, nil},
+		{"-listen と一緒", "", []string{"-listen", "x.sock", "-"}, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(envSocket, tt.socket)
 			in := &countReader{r: strings.NewReader("x\n")}
 			var stdout, stderr bytes.Buffer
 			err := run(tt.args, in, &stdout, &stderr)

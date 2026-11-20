@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/piplupflipper/vi-imitation/ext"
-	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
@@ -260,9 +259,7 @@ func (e *Editor) startClient(c *clientView) {
 	prev := e.view
 	e.switchView(c)
 	if e.cur == nil {
-		b := buffer.New("")
-		b.SetFixEndOfLine(e.fixEOL)
-		e.enter(e.newBuffer(b, "", ""))
+		e.enter(e.newUnnamedBuffer(""))
 	}
 	w, h := e.term.Size()
 	e.setSize(w, h)

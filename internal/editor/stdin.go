@@ -1,9 +1,7 @@
 package editor
 
-import "github.com/piplupflipper/vi-imitation/internal/buffer"
-
 // newStdinBuffer は、client が起動の引数の - で標準入力から読んだ text を中身にする、名前の無いバッファを作る（FR-158）。
-// 標準入力のためだけのバッファの種類は作らず、:tab.new などと同じ名前の無いバッファにする。
+// 標準入力のためだけのバッファの種類も作り方も持たず、:tab.new などと同じ newUnnamedBuffer で作り、未保存の変更の扱いと -R だけを足す。
 // :w ファイル で名前を付けて保存でき、:set filetype= で種類を決められる。
 //
 // 中身は、ファイルを読むときと同じく buffer.New で行に分ける。末尾の改行の有り無しを記録し、正しくない UTF-8 のバイトはそのまま持つ（基本設計 4.1）。
@@ -15,15 +13,14 @@ import "github.com/piplupflipper/vi-imitation/internal/buffer"
 //
 // req: FR-158
 func (e *Editor) newStdinBuffer(text string, readOnly bool) *bufferState {
-	b := buffer.New(text)
-	b.SetFixEndOfLine(e.fixEOL)
-	switch {
+	bs := e.newUnnamedBuffer(text)
+	switch b := bs.buf; {
 	case readOnly:
 		b.SetReadOnly(true)
 	case b.LineCount() > 1 || b.Line(0) != "":
 		b.MarkUnsaved()
 	}
-	return e.newBuffer(b, "", "")
+	return bs
 }
 
 // OpenStdin は、起動の引数の - で標準入力から読んだ text を、名前の無いバッファとして開き、カーソルのあるバッファにする（FR-158。newStdinBuffer）。

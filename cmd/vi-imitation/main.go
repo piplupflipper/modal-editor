@@ -111,26 +111,37 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sock := os.Getenv(envSocket)
 	waiting := sock != "" && !*newServer && countSet(*listen, *connect, *serverPath) == 0
 	var stdinText *string
+	var tty *os.File
 	if fromStdin {
 		// req: FR-158
 		if *listen != "" || *serverPath != "" {
 			return errors.New("-listen と -server では - を指定できない")
 		}
-		// 標準出力が端末でなければ、標準入力を読む前に誤りにする（読んでから断ると、読んだ中身を失う）。
-		// 待つだけの client は端末を使わないので確かめない。
-		if out, ok := stdout.(*os.File); !waiting && (!ok || !term.IsTerminal(out)) {
-			return errNotTerminal
+		// 読んでから断ると読んだ中身を失うので、読む前に、待つだけの client かエディタとして動けるかを確かめる。
+		// VI_IMITATION_SOCKET の server がもういなければ（古い環境変数が残っている）、エディタとして動く（下の waiting の Dial と同じ）。
+		if waiting && !serverAlive(sock) {
+			waiting = false
 		}
-		text, err := readStdin(stdin, stderr)
-		if err != nil {
-			return err
+		if !waiting {
+			// エディタとして動くには、標準出力が端末で、キーを読む端末を開ける必要がある。
+			if out, ok := stdout.(*os.File); !ok || !term.IsTerminal(out) {
+				return errNotTerminal
+			}
+			if tty, err = os.OpenFile(ttyPath, os.O_RDWR, 0); err != nil {
+				return fmt.Errorf("キーを読む端末を開けない: %w", err)
+			}
+			defer func() { _ = tty.Close() }() // 閉じる誤りは扱えない
+		}
+		text, rerr := readStdin(stdin, stderr)
+		if rerr != nil {
+			return rerr
 		}
 		stdinText, files = &text, nil
 	}
 	if waiting {
 		// :! などの子孫として起動した vi-imitation は、待つだけの client になる（FR-83）。
 		// VI_IMITATION_SOCKET の server がもう無ければ、規則 2 以降でソケットを決める編集の client として動く（基本設計 1.2）。
-		if conn, err := protocol.Dial(sock); err == nil {
+		if conn, derr := protocol.Dial(sock); derr == nil {
 			return waitClient(conn, os.Getenv, files, stdinText, *readOnly)
 		}
 	}
@@ -150,11 +161,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	out, outOK := stdout.(*os.File)
 	if stdinText != nil {
 		// 標準入力は読み終えたので、キーは端末から読む（FR-158。Vim 9.1 も読み終えた後は端末から読む）。
-		tty, err := os.OpenFile(ttyPath, os.O_RDWR, 0)
-		if err != nil {
-			return fmt.Errorf("キーを読む端末を開けない: %w", err)
+		if tty == nil {
+			// 読む前には VI_IMITATION_SOCKET の server がいたが、読む間に終わった。端末は読む前に確かめていない
+			if tty, err = os.OpenFile(ttyPath, os.O_RDWR, 0); err != nil {
+				return fmt.Errorf("キーを読む端末を開けない: %w", err)
+			}
+			defer func() { _ = tty.Close() }() // 閉じる誤りは扱えない
 		}
-		defer func() { _ = tty.Close() }() // 閉じる誤りは扱えない
 		in, inOK = tty, true
 	}
 	if !inOK || !outOK {
@@ -171,6 +184,14 @@ type launch struct {
 	stdin *string
 	// readOnly は、起動のオプション -R で、files と stdin を編集を禁止した状態で開く（FR-119）。
 	readOnly bool
+}
+
+// releaseStdin は、server へ送り終えた標準入力の中身を、この client で手放す（FR-158。releaseMemory）。
+func (a *launch) releaseStdin() {
+	if a.stdin != nil {
+		a.stdin = nil
+		releaseMemory()
+	}
 }
 
 var errNotTerminal = errors.New("標準入力と標準出力が端末のときだけ起動できる")
@@ -245,7 +266,7 @@ func edit(args launch, in, out *os.File, logPath, connect string, newServer bool
 				_ = conn.Close() // 使わない接続。閉じる誤りは扱えない
 				return problem
 			}
-			args.stdin = nil // server へ送り終えた標準入力の中身は、この client では手放す（FR-158）
+			args.releaseStdin()
 			return continueClient(ctx, conn, first, tm, logger)
 		}
 		if newServer {
@@ -260,7 +281,7 @@ func edit(args launch, in, out *os.File, logPath, connect string, newServer bool
 			var first protocol.ServerMessage
 			first, problem = startClient(conn, tm, args)
 			if problem == nil {
-				args.stdin = nil // server へ送り終えた標準入力の中身は、この client では手放す（FR-158）
+				args.releaseStdin()
 				return continueClient(ctx, conn, first, tm, logger)
 			}
 			_ = conn.Close() // 使わない接続。閉じる誤りは扱えない
