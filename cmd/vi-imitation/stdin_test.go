@@ -53,7 +53,7 @@ func TestReadStdin(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "in.txt")
-	if err := os.WriteFile(path, []byte("from file\n"), 0o600); err != nil {
+	if err = os.WriteFile(path, []byte("from file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f, err := os.Open(path)
@@ -61,7 +61,7 @@ func TestReadStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	if got, err := readStdinUntil(f, io.Discard, nil); err != nil || got != "from file\n" {
+	if got, err = readStdinUntil(f, io.Discard, nil); err != nil || got != "from file\n" {
 		t.Errorf("ファイルをつないだ readStdinUntil = %q, %v", got, err)
 	}
 
@@ -69,9 +69,9 @@ func TestReadStdin(t *testing.T) {
 	intr := make(chan os.Signal, 1)
 	done := make(chan string, 1)
 	go func() {
-		s, err := readStdinUntil(pr, io.Discard, intr)
-		if err != nil {
-			t.Error(err)
+		s, rerr := readStdinUntil(pr, io.Discard, intr)
+		if rerr != nil {
+			t.Error(rerr)
 		}
 		done <- s
 	}()

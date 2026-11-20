@@ -36,7 +36,7 @@ func (c *progressConn) idle() time.Duration {
 // helloContext は、接続 pc の Hello を待つ間の ctx を返す。何も読めないまま limit が経つか、done が閉じたら取り消される。
 //
 // Hello の後に標準入力の中身（protocol.Hello.Stdin。FR-158）が続くと、数百 MB の中身を受け終えるまでに limit を超えることがある
-// （2026-11-20 に、300 MB で約 1.6 秒かかった）。読めている間は期限を延ばし、Hello を送らない接続だけを limit で断る。
+// （2026-11-20 の手元の計測で、300 MiB を送るのに約 1.6 秒かかった）。読めている間は期限を延ばし、Hello を送らない接続だけを limit で断る。
 // cancel は、待ち終えたら呼ぶ。
 func helloContext(pc *progressConn, limit time.Duration, done <-chan struct{}) (ctx context.Context, cancel func()) {
 	ctx, cancel = context.WithCancel(context.Background())
