@@ -25,7 +25,17 @@ const testTimeout = 10 * time.Second
 // fakeLS は、テストの前に testdata/fakels をビルドした実行ファイルのパスである。
 var fakeLS string
 
+// envRunExtension は、テストの実行ファイルを拡張機能そのものとして動かす環境変数である（TestKillLeavesNoServer）。
+const envRunExtension = "VI_IMITATION_LSP_TEST_RUN_EXTENSION"
+
 func TestMain(m *testing.M) {
+	if os.Getenv(envRunExtension) == "1" {
+		if err := run(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	dir, err := os.MkdirTemp("", "fakels")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -100,6 +110,12 @@ type hostOptions struct {
 	// secondFileType は、空でなければ、go とは別の client で fakels を言語サーバーにするファイルの種類である。
 	// その fakels は args を受け取り、ログを secondLogPath に書く。
 	secondFileType string
+	// secondExtra は、secondFileType の言語サーバーの設定に足す項目である。
+	secondExtra map[string]any
+	// settings は、settings の最上位に足す項目である。
+	settings map[string]any
+	// mise は、空でなければ client の mise（mise の実行ファイル）を置き換える。
+	mise string
 }
 
 // simBuffer は、本体の役が持つバッファの状態である（editor/state、sim の buffer/edit）。
@@ -142,13 +158,16 @@ func startHost(t *testing.T, o hostOptions) *host {
 	}
 	servers := map[string]any{"go": gocfg}
 	if o.secondFileType != "" {
-		servers[o.secondFileType] = map[string]any{
+		second := map[string]any{
 			"command":    fakeLS,
 			"args":       append([]string{"-log", h.secondLogPath()}, o.args...),
 			"languageId": o.secondFileType,
 		}
+		maps.Copy(second, o.secondExtra)
+		servers[o.secondFileType] = second
 	}
 	settings := map[string]any{"servers": servers}
+	maps.Copy(settings, o.settings)
 	if o.maxRestarts >= 0 {
 		settings["maxRestarts"] = o.maxRestarts
 	}
@@ -168,6 +187,9 @@ func startHost(t *testing.T, o hostOptions) *host {
 		c.restartDelay = 10 * time.Millisecond
 		if o.resetAfter > 0 {
 			c.resetAfter = o.resetAfter
+		}
+		if o.mise != "" {
+			c.mise = o.mise
 		}
 	}
 	served := make(chan error, 1)

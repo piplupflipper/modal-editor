@@ -65,6 +65,13 @@ type client struct {
 	initTimeout time.Duration
 	// resetAfter は、稼働中になってからこの時間より長く動いた後の異常終了では、再起動の回数を数え直すという時間である。
 	resetAfter time.Duration
+	// mise は、mise の実行ファイルである。"/" を含まなければ PATH から探す（FR-143）。
+	mise string
+	// installTimeout は、mise に言語サーバーを入れさせるときに待つ時間の上限である（FR-143）。
+	installTimeout time.Duration
+	// ctx は、client の寿命の ctx で、stop で取り消す。mise に入れさせている途中で拡張機能が終わるときに、mise を終わらせる。
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mu   sync.Mutex
 	docs map[ext.BufferID]*document
@@ -79,18 +86,25 @@ type client struct {
 	failed bool
 	// stopped は、拡張機能が終わるので、もう起動しないことを表す。
 	stopped bool
+	// miseDone は、動いている mise where か mise install（runMise）が終わったときに閉じる。動いていなければ nil か閉じている。
+	miseDone chan struct{}
 }
 
 func newClient(x *extension, fileType string, cfg *serverConfig, maxRestarts int) *client {
+	ctx, cancel := context.WithCancel(x.ctx)
 	return &client{
-		x:            x,
-		fileType:     fileType,
-		cfg:          cfg,
-		maxRestarts:  maxRestarts,
-		restartDelay: defaultRestartDelay,
-		initTimeout:  defaultInitTimeout,
-		resetAfter:   defaultResetAfter,
-		docs:         make(map[ext.BufferID]*document),
+		x:              x,
+		fileType:       fileType,
+		cfg:            cfg,
+		maxRestarts:    maxRestarts,
+		restartDelay:   defaultRestartDelay,
+		initTimeout:    defaultInitTimeout,
+		resetAfter:     defaultResetAfter,
+		mise:           "mise",
+		installTimeout: defaultInstallTimeout,
+		ctx:            ctx,
+		cancel:         cancel,
+		docs:           make(map[ext.BufferID]*document),
 	}
 }
 
@@ -268,7 +282,10 @@ func (c *client) notify(p *proc, method string, params any) {
 // start は、言語サーバーを起動し、initialize を送り、応答が届いたら開いている文書を送る。
 // 起動の goroutine で動く。
 //
+// 起動するコマンドは prepare で決める。実行ファイルが見つからず、mise の道具の ID があれば、
+// 入れ方を案内するか、mise に入れさせてから mise exec で起動する（FR-143）。入れている間は initialize の期限を数えない。
 // 実行ファイルを起動できなければ、再起動しても同じなので、もう起動しない。
+// ただし、入れ方を案内しただけのときは、次にファイルを開いたときに探し直す（利用者が案内に従って入れた後に起動できるように）。
 // initialize が失敗するか期限を超えたら、プロセスを止める。その後は異常終了と同じく、監視の goroutine が再起動を決める。
 //
 // req: FR-30
@@ -282,15 +299,24 @@ func (c *client) start() {
 		c.mu.Unlock()
 		return
 	}
-	p, err := c.spawn(root)
+	cmd, retry, err := c.prepare(c.ctx, root)
+	var p *proc
+	if err == nil {
+		p, err = c.spawn(root, cmd)
+	}
 	c.mu.Lock()
 	c.starting = false
 	switch {
+	case err != nil && (c.stopped || retry):
+		c.mu.Unlock()
+		return
 	case err != nil:
 		c.failed = true
 		c.mu.Unlock()
 		c.x.logf("%s: %v", c.name(), err)
-		c.x.showMessage(ext.MessageError, fmt.Sprintf("言語サーバー %s を起動できない: %v", c.name(), err))
+		if !errors.Is(err, errReported) {
+			c.x.showMessage(ext.MessageError, fmt.Sprintf("言語サーバー %s を起動できない: %v", c.name(), err))
+		}
 		return
 	case c.stopped:
 		p.stopping = true
@@ -341,11 +367,8 @@ func (c *client) start() {
 // 標準入出力のパイプは os.Pipe で自分で作る。exec.Cmd の StdoutPipe は Wait が閉じるので、
 // 監視の goroutine の Wait と、接続の読み取りが競合するからである。
 // 言語サーバーの標準エラー出力は、拡張機能の標準エラー出力へそのまま流す。本体はそれをログとして記録する（基本設計 5.3）。
-func (c *client) spawn(root string) (*proc, error) {
-	path, err := exec.LookPath(c.cfg.Command)
-	if err != nil {
-		return nil, err
-	}
+// 起動は startProcess で行い、拡張機能が強制終了されても言語サーバーが残らないようにする。
+func (c *client) spawn(root string, l command) (*proc, error) {
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -356,12 +379,12 @@ func (c *client) spawn(root string) (*proc, error) {
 		_ = inW.Close()
 		return nil, err
 	}
-	cmd := exec.Command(path, c.cfg.Args...) //nolint:gosec // 起動するのは利用者が設定した言語サーバーである
+	cmd := exec.Command(l.path, l.args...) //nolint:gosec // 起動するのは利用者が設定した言語サーバーである
 	cmd.Dir = root
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = os.Stderr
-	err = cmd.Start()
+	err = startProcess(cmd)
 	_ = inR.Close()
 	_ = outW.Close()
 	if err != nil {
@@ -426,8 +449,10 @@ func (c *client) watch(p *proc) {
 
 // stop は、稼働中の言語サーバーへ shutdown と exit を送って止める。ctx の期限までに終わらなければ強制終了する。
 // 起動中（initialize の応答の前）の言語サーバーは、すぐに強制終了する。
+// mise に入れさせている途中なら、mise を終わらせ（c.ctx の取り消し）、mise が終わるのを ctx の期限まで待つ。
 // これより後は起動しない。拡張機能が終わるときに呼ぶ。
 func (c *client) stop(ctx context.Context) {
+	c.cancel()
 	c.mu.Lock()
 	c.stopped = true
 	p := c.proc
@@ -435,7 +460,16 @@ func (c *client) stop(ctx context.Context) {
 	if p != nil {
 		p.stopping = true
 	}
+	miseDone := c.miseDone
 	c.mu.Unlock()
+	if miseDone != nil {
+		// 入れている途中の mise は、c.ctx の取り消しで SIGINT を受け取り、npm などを終わらせてから終わる（runMise）。
+		// それを ctx の期限まで待つ。待たずに戻ると、拡張機能が先に終わり、mise の後始末の途中で本体に強制終了されうる。
+		select {
+		case <-miseDone:
+		case <-ctx.Done():
+		}
+	}
 	if p == nil {
 		return
 	}

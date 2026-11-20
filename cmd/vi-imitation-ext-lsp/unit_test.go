@@ -3,15 +3,18 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/piplupflipper/vi-imitation/ext"
+	userconfig "github.com/piplupflipper/vi-imitation/internal/config"
 )
 
 // refChar は、行 line の先頭からのバイト数 b を、unicode/utf16 で数えた UTF-16 の位置にする（検証用の参照実装）。
@@ -221,6 +224,130 @@ func TestParseSettings(t *testing.T) {
 	}
 	if _, err := parseSettings(json.RawMessage(`[]`)); err == nil {
 		t.Error("invalid settings: err = nil")
+	}
+}
+
+// TestParseSettingsMise は、mise の道具の ID と自動で入れる設定の読み方を確かめる。
+// servers の autoInstall を省くと settings の autoInstall に従い、道具の ID が無ければ自動で入れない。
+//
+// req: FR-143
+func TestParseSettingsMise(t *testing.T) {
+	c, err := parseSettings(nil)
+	if err != nil || c.servers["go"].Mise != "" || c.servers["go"].autoInstall() {
+		t.Fatalf("default go = %+v, %v; want no mise tool", c.servers["go"], err)
+	}
+	c, err = parseSettings(json.RawMessage(`{"autoInstall": true, "servers": {
+		"python": {"command": "pyright-langserver", "mise": "npm:pyright@1.1.410"},
+		"sh": {"command": "bash-language-server", "mise": "npm:bash-language-server@5.6.0", "autoInstall": false},
+		"lua": {"command": "lua-language-server", "autoInstall": true}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ft, want := range map[string]bool{"python": true, "sh": false, "lua": false, "go": false} {
+		if got := c.servers[ft].autoInstall(); got != want {
+			t.Errorf("%s autoInstall = %v, want %v", ft, got, want)
+		}
+	}
+	// 版の無い ID は誤りにする（npm の scope の "@" は版の区切りでない）。
+	for _, bad := range []string{"-g", "npm:pyright @1", "npm:pyright", "npm:pyright@", "npm:@vtsls/language-server", "@scope/pkg", "npm:pyright@latest", "npm:@vtsls/language-server@latest"} {
+		raw := fmt.Sprintf(`{"servers": {"python": {"command": "pyright-langserver", "mise": %q}}}`, bad)
+		if _, err := parseSettings(json.RawMessage(raw)); err == nil {
+			t.Errorf("mise %q: err = nil", bad)
+		}
+	}
+	for _, good := range []string{"npm:@vtsls/language-server@0.2.9", "aqua:tamasfe/taplo@0.10.0", "rust-analyzer@2025-11-17"} {
+		raw := fmt.Sprintf(`{"servers": {"x": {"command": "x", "mise": %q}}}`, good)
+		if _, err := parseSettings(json.RawMessage(raw)); err != nil {
+			t.Errorf("mise %q: %v", good, err)
+		}
+	}
+}
+
+// TestMiseDetail は、mise install が失敗したときにメッセージの行に含める行を確かめる。
+// npm が registry に接続できないときの行は、2026-11-20 に mise 2026.5.2 と node 26.1.0 で、
+// registry を接続できないアドレス（npm_config_registry）にして mise install npm:bash-language-server@5.6.0 を打った出力から写した（パスは省いた）。
+//
+// req: FR-143
+func TestMiseDetail(t *testing.T) {
+	npmOffline := []string{
+		"npm error code ECONNREFUSED",
+		"npm error syscall connect",
+		"npm error errno ECONNREFUSED",
+		"npm error FetchError: request to http://127.0.0.1:9/bash-language-server failed, reason: connect ECONNREFUSED 127.0.0.1:9",
+		"npm error A complete log of this run can be found in: ~/npm-cache/_logs/2026-11-20T06_38_48_666Z-debug-0.log",
+		"mise WARN  Failed to resolve tool version list for npm:bash-language-server: [--runtime] npm:bash-language-server@5.6.0: command [\"npm\", \"view\", \"bash-language-server\", \"versions\", \"time\", \"--json\"] exited with code 1",
+		"mise ERROR Failed to install npm:bash-language-server@5.6.0: command [\"npm\", \"view\", \"bash-language-server\", \"versions\", \"time\", \"--json\"] exited with code 1",
+		"mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information",
+	}
+	untrusted := []string{
+		"mise ERROR error parsing config file: ~/p/mise.toml",
+		"mise ERROR Config files in ~/p/mise.toml are not trusted.",
+		"Trust them with `mise trust`. See https://mise.en.dev/cli/trust.html for more information.",
+		"mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information",
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  []string
+	}{
+		{"npm offline", npmOffline, []string{npmOffline[0], npmOffline[6]}},
+		{"untrusted", untrusted, untrusted[1:3]},
+	} {
+		w := &lineWriter{line: func(string, time.Time) bool { return false }}
+		for _, l := range tc.lines {
+			if _, err := w.Write([]byte(l + "\n")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := miseDetail(w.cause(), w.tail()); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: detail = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestConfigExample は、同梱する設定の例（config.example.jsonc）の LSP の部分が、この拡張機能の設定として誤り無く読め、
+// pyright の言語サーバーを mise の道具の ID と一緒に足し、python のファイルで起動する契機を足していることを確かめる。
+func TestConfigExample(t *testing.T) {
+	data, err := os.ReadFile("../../config.example.jsonc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, errs := userconfig.Parse("config.example.jsonc", data)
+	if len(errs) != 0 {
+		t.Fatalf("設定の例の誤り: %v", errs)
+	}
+	c, err := parseSettings(cfg.ExtensionSettings["lsp"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	py := c.servers["python"]
+	if py == nil || py.Command != "pyright-langserver" || !strings.HasPrefix(py.Mise, "npm:pyright@") || py.autoInstall() {
+		t.Errorf("python = %+v, want pyright with a mise tool and no autoInstall", py)
+	}
+	if c.servers["go"] == nil {
+		t.Error("the default go server is dropped")
+	}
+	if !slices.Contains(cfg.ExtensionActivation["lsp"], ext.Activation{On: ext.ActivationFileType, Pattern: "python"}) {
+		t.Errorf("activation.lsp = %+v, want filetype python", cfg.ExtensionActivation["lsp"])
+	}
+}
+
+// TestLineWriter は、mise の出力を行に分け、"\r" で上書きする行は最後の部分を使い、末尾の行を覚えることを確かめる。
+func TestLineWriter(t *testing.T) {
+	var got []string
+	w := &lineWriter{line: func(s string, _ time.Time) bool { got = append(got, s); return true }}
+	for _, p := range []string{"a\nb", "c\n\n", "10%\r50%\r100%\n", "1\n2\n3\n4\n", "tail"} {
+		if _, err := w.Write([]byte(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.flush()
+	want := []string{"a", "bc", "100%", "1", "2", "3", "4", "tail"}
+	if !slices.Equal(got, want) {
+		t.Errorf("lines = %q, want %q", got, want)
+	}
+	if tail := w.tail(); !slices.Equal(tail, want[len(want)-miseTailLines:]) {
+		t.Errorf("tail = %q", tail)
 	}
 }
 

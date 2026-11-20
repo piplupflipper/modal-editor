@@ -15,6 +15,7 @@
 //
 // 受け取ったメッセージと、各時点の文書の全文は、-log のファイルへ JSON の行で書き足す。
 // 起動したときに、自分と親（拡張機能）のプロセス ID を "start" の行で書く。
+// -linger なら、接続が閉じても終わらない（拡張機能が強制終了されたときに残らないことを確かめるのに使う）。
 package main
 
 import (
@@ -45,6 +46,7 @@ var (
 	initDelay    = flag.Duration("init-delay", 0, "initialize の応答を遅らせる時間")
 	hangShutdown = flag.Bool("hang-on-shutdown", false, "shutdown に応答せず、exit でも終わらない（止まった言語サーバーの代役）")
 	publishClose = flag.Bool("publish-on-close", false, "didClose を受け取ったときに、閉じる前の文書の診断を送る")
+	linger       = flag.Bool("linger", false, "接続が閉じても終わらない（標準入力の終わりで終わらない言語サーバーの代役）")
 )
 
 type pos struct {
@@ -165,6 +167,12 @@ func main() {
 	}, rpc.WithCancelMethod("$/cancelRequest"))
 	<-conn.Done()
 	logEntry("closed", conn.Err().Error())
+	if *linger {
+		// select {} では、ほかの goroutine が無いと runtime が deadlock として終わらせるので、眠り続ける。
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	os.Exit(4)
 }
 

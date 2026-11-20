@@ -41,9 +41,11 @@ type extension struct {
 	// requestTimeout は、sync が false のコマンドが言語サーバーの応答を待つ時間の上限である。
 	requestTimeout time.Duration
 
-	// mu は clients を守る。clients は initialize で作り、その後は変えない。
+	// mu は clients と guided を守る。clients は initialize で作り、その後は変えない。
 	mu      sync.Mutex
 	clients map[string]*client
+	// guided は、言語サーバーの入れ方を案内した実行ファイルと道具の ID の組である（client.guide。FR-143）。
+	guided map[string]bool
 	// tune は、テストが client の待ち時間などを変えるための関数である。nil なら何もしない。
 	tune func(*client)
 
@@ -119,6 +121,20 @@ func (x *extension) stop() {
 }
 
 func (x *extension) logf(format string, args ...any) { x.log.Printf(format, args...) }
+
+// firstGuide は、key の案内をまだ出していなければ、出したことにして true を返す。
+func (x *extension) firstGuide(key string) bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if x.guided[key] {
+		return false
+	}
+	if x.guided == nil {
+		x.guided = make(map[string]bool)
+	}
+	x.guided[key] = true
+	return true
+}
 
 // showMessage は、本体へ message/show を送る。送れなければログに書く。
 func (x *extension) showMessage(level ext.MessageLevel, text string) {
