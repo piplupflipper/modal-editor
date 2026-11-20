@@ -2738,6 +2738,7 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 描画は、描くたびに設定の今の値と直前の検索のパターンを読む。
 `internal/editor` が client の画面の描画の入力を作るたびに、`search.highlight` が真なら直前の検索のパターンをコンパイルして `ui.Frame.Search` に詰める（`Editor.uiSearch`）。
 `:set hlsearch`、`/`、`*`、`:nohlsearch` の後に呼ぶ処理は無い。
+その client で `/` か `?` を打っている間は、直前の検索のパターンの代わりに、打つたびの検索のパターンを詰める（次の節。#296）。
 コンパイルは、直前と同じパターンなら覚えておいた結果を使い、描くたびには行わない。
 直前の検索は client の間で共有する（FR-58）ので、最後にそれを持った State（`Editor.shared`）から読む。
 ある client で検索すると、別の client の画面にも同じパターンの色が付き、`:nohlsearch` も全ての client に効く（Vim で窓をまたいで同じ色が付くのと同じ）。
