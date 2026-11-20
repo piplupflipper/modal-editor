@@ -7,9 +7,18 @@ import (
 )
 
 // visualState は、ビジュアルモードの状態である。
+//
+// 選択は anchor と head の 2 つの端で表し、カーソルとは別に持つ（#263）。
+// 普段は head をカーソルと同じに保つ。カーソルを動かす操作（モーション、テキストオブジェクト、ページ単位のスクロール、
+// 拡張機能の操作と呼び出し側の SetCursor がカーソルを動かしたとき）は、動かした後に head をカーソルに合わせる（followCursor）。
+// head をカーソルから離すのは、カーソルを動かさずに選択を作る操作（select-all）だけである。
+// 選択の範囲（Selection）とオペレーターの範囲はカーソルではなく head から作るので、それらの操作の後の各キーは、
+// ビジュアルモードの汎用の規則のとおりに働く（y は全体をヤンクし、j はカーソルから動いて head をカーソルに合わせる）。
 type visualState struct {
-	// anchor は、選択の動かない側の端である。もう一方の端はカーソルである。
+	// anchor は、選択の動かない側の端である。
 	anchor buffer.Position
+	// head は、選択の動く側の端である（Vim の VIsual の反対の端で、Vim ではカーソルと同じ）。
+	head buffer.Position
 	// start と end は、最後に抜けたビジュアルモードの選択の始まりと終わりの位置（マーク '< と '>）である。
 	start, end buffer.Position
 	marked     bool
@@ -28,15 +37,26 @@ type visualExtent struct {
 // Selection は、ビジュアルモードの選択の始まりと終わり（どちらも含む）と、行単位かどうかを返す。
 // ビジュアルモードでなければ ok が false である。
 // 端は行末の後（Byte が行の長さ）にあることがあり、そのときはその行の改行を選んでいることを表す（visualCursor）。
+// 選択は anchor と head から作り、カーソルの位置には依らない（visualState の doc）。カーソルは選択の端に無いことがある（select-all の後）。
+// 両端はバッファの中に丸めて返す。外からの編集の後に ShiftPositions を通らずにバッファが縮んでも（読み直しなど）、
+// 呼び出し側（描画、editor/state、オペレーターの範囲）がバッファの外の行を読まない。
 func (s *State) Selection() (start, end buffer.Position, linewise, ok bool) {
 	if !s.mode.visual() {
 		return buffer.Position{}, buffer.Position{}, false, false
 	}
-	start, end = s.visual.anchor, s.cursor
+	start, end = s.clampPos(s.visual.anchor), s.clampPos(s.visual.head)
 	if end.Less(start) {
 		start, end = end, start
 	}
 	return start, end, s.mode == ModeVisualLine, true
+}
+
+// followCursor は、ビジュアルモードなら、選択の動く側の端（head）をカーソルに合わせる。
+// カーソルを動かす操作の後に呼ぶ（visualState の doc）。
+func (s *State) followCursor() {
+	if s.mode.visual() {
+		s.visual.head = s.cursor
+	}
 }
 
 // actVisual は、v と V である。ノーマルモードではビジュアルモードへ入り、
@@ -50,19 +70,45 @@ func actVisual(m Mode) actionFunc {
 			s.mode = m
 		default:
 			s.mode = m
-			s.visual.anchor = s.cursor
+			s.visual.anchor, s.visual.head = s.cursor, s.cursor
 			s.parser.SetVisual(true)
 		}
 		return nil
 	}
 }
 
-// actVisualSwap は、ビジュアルモードの o である。カーソルを選択の反対の端へ移す。
+// actSelectAll は、select-all である。文字単位のビジュアルモードに入り（行単位のビジュアルモードの中なら文字単位に切り替え）、
+// バッファの全体を選ぶ。選択は、最初の行の最初の文字から、最後の行の最後の文字までで、最後の行の改行は含めない
+// （Vim 9.1 で ggvG$y がレジスターに最後の改行を入れないことを確かめた）。
+//
+// カーソルと望みの列は動かさない。画面もスクロールせず、ジャンプリストにも記録しない。
+// anchor をバッファの先頭に、head を最後の行の行末の後（ggvG$ の後のカーソルと同じ位置。visualCursor）に置くだけで、
+// その後の各キーの振る舞いはビジュアルモードの汎用の規則から決まる（visualState の doc。#263）。
+// 最後の行には改行が無いので、行末の後の端は改行を選ばない（charRegion）。
+// head を最後の文字でなく行末の後に置くので、1 回目の > で行が伸びても、ggvG$> と同じく最後の文字が選択に残る（FR-77）。
+// > を重ねると、FR-77 が両端をずらす前のバイトの位置へ戻すので、2 回目から字下げ 1 段ごとに最後の文字が 1 文字ずつ選択から外れる
+// （Vim 9.1 の ggvG$>gv>gvy と同じ結果。PR #265 のレビュー）。
+//
+// req: FR-130
+func actSelectAll(s *State, _ editcmd.Command) error {
+	if !s.mode.visual() {
+		s.parser.SetVisual(true)
+	}
+	s.mode = ModeVisual
+	s.visual.anchor = pos(0, 0)
+	s.visual.head = s.lineEnd(s.lastLine())
+	return nil
+}
+
+// actVisualSwap は、ビジュアルモードの o である。選択の両端（anchor と head）を入れ替え、カーソルを新しい head へ移す。
+// カーソルが head にあれば（普段の状態）、カーソルを選択の反対の端へ移すことになる（Vim の v_o）。
 func actVisualSwap(s *State, _ editcmd.Command) error {
 	if !s.mode.visual() {
 		return failf("not in visual mode")
 	}
-	s.visual.anchor, s.cursor = s.cursor, s.visual.anchor
+	// 端がバッファの外を指していても、カーソルはバッファの中に置く（Selection の doc）。
+	s.visual.anchor, s.visual.head = s.clampPos(s.visual.head), s.clampPos(s.visual.anchor)
+	s.cursor = s.visual.head
 	s.updateWant()
 	return nil
 }
@@ -92,14 +138,22 @@ func (s *State) mark(name rune) (int, bool) {
 }
 
 // visualMotion は、ビジュアルモードのモーションとテキストオブジェクトで、選択を動かす。
+// モーションはカーソルから動き、動いた後に head をカーソルに合わせる（visualState の doc）。
+// 失敗したモーションはカーソルを動かさないので、head も動かさない。
 func (s *State) visualMotion(cmd editcmd.Command) error {
-	if cmd.Target.Kind == editcmd.TargetTextObject {
-		return s.visualTextObject(cmd)
+	var err error
+	switch {
+	case cmd.Target.Kind == editcmd.TargetTextObject:
+		err = s.visualTextObject(cmd)
+	case cmd.Target.Kind == editcmd.TargetMotion && cmd.Target.Ref.Builtin() && cmd.Target.Ref.ID == "right":
+		err = s.visualRight(cmd)
+	default:
+		err = s.moveMotion(cmd)
 	}
-	if cmd.Target.Kind == editcmd.TargetMotion && cmd.Target.Ref.Builtin() && cmd.Target.Ref.ID == "right" {
-		return s.visualRight(cmd)
+	if err == nil {
+		s.followCursor()
 	}
-	return s.moveMotion(cmd)
+	return err
 }
 
 // visualRight は、ビジュアルモードの l である。Vim と同じく、最後の文字から行末の後（NUL の位置）まで進める
@@ -120,15 +174,16 @@ func (s *State) visualRight(cmd editcmd.Command) error {
 }
 
 // visualTextObject は、ビジュアルモードのテキストオブジェクトである。
-// 選択が 1 文字（端とカーソルが同じ）なら、選択をテキストオブジェクトの範囲にする。
-// そうでなければ、カーソルの次の文字から始まるテキストオブジェクトの終わりまで選択を広げる。
+// 選択が 1 文字（anchor と head が同じ）なら、選択をテキストオブジェクトの範囲にする。
+// そうでなければ、head の次の文字から始まるテキストオブジェクトの終わりまで選択を広げる。
+// どちらでも、カーソルは選択の終わりへ移る（head は visualMotion がカーソルに合わせる）。
 // 行単位のテキストオブジェクト（ip）は、文字単位のビジュアルモードを行単位に切り替える。
 //
 // Vim は、選択を広げる方向（カーソルが端より前か）や、i( を重ねたときの外側の括弧への広げ方を細かく扱うが、
 // ここでは前へ広げることだけを扱う。
 func (s *State) visualTextObject(cmd editcmd.Command) error {
-	from := s.cursor
-	extend := s.cursor != s.visual.anchor
+	from := s.clampPos(s.visual.head) // バッファの外を指していても読まない（Selection の doc）
+	extend := s.visual.head != s.visual.anchor
 	if extend {
 		line := s.line(from.Line)
 		switch {
@@ -168,11 +223,12 @@ func (s *State) visualRegion() region {
 	start, end, linewise, _ := s.Selection()
 	if linewise {
 		// Vim は、行単位の選択の端（VIsual）が始まりなら列を 0 にし、カーソルが始まりならカーソルの列を残す（do_pending_operator）。
-		// y の後のカーソルと、アンドゥの後のカーソルがこの位置になる。
-		// カーソルが行末の後（NUL の位置）にあれば、その列を残す（vkC のアンドゥの後のカーソル。#86）。
+		// Vim のカーソルは選択の動く側の端なので、ここでは head で判定する。
+		// アンドゥの後のカーソルがこの位置になる（y の後のカーソルは FR-129 で動かさない。visualOperator）。
+		// head が行末の後（NUL の位置）にあれば、その列を残す（vkC のアンドゥの後のカーソル。#86）。
 		at := pos(start.Line, 0)
-		if s.cursor.Less(s.visual.anchor) {
-			at = s.cursor
+		if s.visual.head.Less(s.visual.anchor) {
+			at = s.clampPos(s.visual.head)
 		}
 		return region{
 			start:    at,
@@ -223,7 +279,9 @@ func (s *State) extentOf(rg region) visualExtent {
 	} else {
 		// 複数の行では、Vim と同じく終わりの列だけを記録し、$ の後だけ行末とする（resel_VIsual_vcol が MAXCOL）。
 		// 終わりの列が繰り返す先の行の長さ以上なら、regionFromExtent がその行の改行まで選ぶ（#89）。
-		ex.eol = s.want == target.WantEOL
+		// 望みの列はカーソルのものなので、head がカーソルにあるとき（普段の状態）だけ head の $ の印として読む。
+		// select-all の後のように head がカーソルに無ければ、終わりの位置のバイト数だけを記録する。
+		ex.eol = s.want == target.WantEOL && s.visual.head == s.cursor
 		ex.endByte = end.Byte
 	}
 	return ex
@@ -263,7 +321,11 @@ var linewiseVisualOperators = map[string]string{
 // 回数は、> と < では字下げを繰り返す回数で、それ以外のオペレーターでは使わない。
 // D、C、S、Y（linewiseVisualOperators）は、選択を行単位に切り替えてから働く。
 //
-// req: FR-01, FR-02, FR-77
+// y と Y は、ヤンクの後もカーソルを y を押したときの位置に残す（FR-129）。カーソルが行末の後にあれば、
+// <Esc> でノーマルモードへ戻るときと同じく最後の文字へ寄せる。Vim は範囲の始まりへ移す（docs/vim-differences.md）。
+// d、c などは、Vim と同じく範囲の始まりへ移す。
+//
+// req: FR-01, FR-02, FR-77, FR-129
 func (s *State) visualOperator(cmd editcmd.Command) error {
 	if base, ok := linewiseVisualOperators[cmd.Operator.ID]; ok && cmd.Operator.Builtin() {
 		// D、C、S、Y は、選択を行単位に切り替えてから、もとのオペレーターとして働く（Vim の nv_visop は
@@ -272,16 +334,21 @@ func (s *State) visualOperator(cmd editcmd.Command) error {
 		cmd.Operator.ID = base
 	}
 	keep := cmd.Operator.Builtin() && (cmd.Operator.ID == "indent" || cmd.Operator.ID == "dedent")
-	mode, anchor, cursor, want := s.mode, s.visual.anchor, s.cursor, s.want
+	mode, anchor, head, cursor, want := s.mode, s.visual.anchor, s.visual.head, s.cursor, s.want
 	rg := s.visualRegion()
 	ext := s.extentOf(rg)
 	s.exitVisual()
 	err := s.change(cmd, func() error { return s.regionOperator(cmd, rg) })
+	if isYank(cmd.Operator) && err == nil {
+		// FR-129: ヤンクはテキストを変えないので、y を押したときの位置はそのまま残っている。
+		s.setCursorNormal(cursor)
+	}
 	if keep && err == nil {
-		// > と < は、ずらした後もビジュアルモードと選択を保つ（FR-77）。Vim の >gv と同じく、選択の両端は
+		// > と < は、ずらした後もビジュアルモードと選択を保つ（FR-77）。Vim の >gv と同じく、選択の両端とカーソルは
 		// ずらす前の行とバイトの位置に戻し、行が短くなっていれば行末の後へ寄せる。
 		s.mode = mode
 		s.visual.anchor = s.clampPos(anchor)
+		s.visual.head = s.clampPos(head)
 		s.cursor = s.clampPos(cursor)
 		// 望みの列は、Vim の >gv と同じく、ビジュアルモードの中ではずらす前の値を保つ（v>j は前の列へ移る）。
 		// ビジュアルモードを抜けると、exitVisual が戻したカーソルの表示の列から計算し直す（v><Esc>j は字下げの後の列へ移る）。

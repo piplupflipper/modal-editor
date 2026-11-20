@@ -327,9 +327,13 @@ func TestVim(t *testing.T) {
 }
 
 // runVimCases は、vimCase の表を順に実行し、Vim 9.1 の結果と比べる。
+// Vim と意図して違うケース（visualYankDiffs）は、バッファとカーソルをその表の値と比べる。
 func runVimCases(t *testing.T, cases []vimCase) {
 	t.Helper()
 	for _, tc := range cases {
+		if d, ok := visualYankDiffs[[2]string{tc.text, tc.keys}]; ok {
+			tc.want, tc.cursor = d.want, d.cursor
+		}
 		t.Run(fmt.Sprintf("%q/%s", tc.text, tc.keys), func(t *testing.T) {
 			s := setup(t, tc.text)
 			s.registers.history = []Register{{Text: "U", filled: true}}

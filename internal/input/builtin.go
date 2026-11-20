@@ -178,6 +178,9 @@ var (
 		{keys: "V", id: "visual-line", modes: MapNormal | MapVisual, desc: "行単位のビジュアルモード"},
 		// ビジュアルモードの o は、カーソルを選択の反対の端へ移す。
 		{keys: "o", id: "visual-swap", modes: MapVisual, desc: "選択の反対の端へ移る"},
+		// バッファの全体を文字単位のビジュアルモードで選ぶ。カーソルも画面も動かさない（FR-130。#263）。
+		// 既定のキーは無く、設定の keymap で割り当てたときだけ使える。
+		{keys: "", id: "select-all", modes: MapNormal | MapVisual, desc: "カーソルを動かさずにバッファの全体を選ぶ"},
 		// ページ単位のスクロール（Vim の <C-f> と <C-b>）。画面の表示領域を動かすので、モーションではなく操作にする。
 		// Vim と同じく、オペレーターの後では使えない（d<PageDown> は誤りになる）。
 		{keys: "<PageDown>", id: "page-down", modes: MapNormal | MapVisual, desc: "1 画面下へスクロールする"},

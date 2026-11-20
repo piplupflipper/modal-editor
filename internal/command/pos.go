@@ -92,8 +92,13 @@ func (s *State) updateWant() {
 }
 
 // setCursorNormal は、カーソルをノーマルモードの位置に丸めて置き、望みの列を更新する。
+// ビジュアルモードの中（拡張機能の操作の後など）でカーソルが動いたなら、head をカーソルに合わせる（SetCursor と同じ）。
 func (s *State) setCursorNormal(p buffer.Position) {
+	old := s.cursor
 	s.cursor = s.clampNormal(s.clampPos(p))
+	if s.cursor != old {
+		s.followCursor()
+	}
 	s.updateWant()
 }
 

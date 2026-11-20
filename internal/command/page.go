@@ -90,9 +90,11 @@ func (s *State) scrollPage(forward bool, count int) error {
 			p = s.clampNormal(p)
 		}
 		s.cursor = p
+		s.followCursor()
 		return failf("cannot scroll further")
 	}
 	s.cursor = s.firstNonBlankPos(cur)
+	s.followCursor()
 	s.updateWant()
 	return nil
 }

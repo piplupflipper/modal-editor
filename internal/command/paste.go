@@ -150,7 +150,8 @@ func (s *State) pasteVisual(text string) {
 	s.record(editcmd.Rune('"'), editcmd.Rune('_'), editcmd.Rune('c'))
 	s.record(pasteKeys(text, false)...)
 	s.record(editcmd.Esc)
-	oldCursor, oldAnchor := s.cursor, s.visual.anchor
+	// 消した後のカーソルが選択より上か左かを、選択の両端（anchor と head）と比べて判定する。
+	oldHead, oldAnchor := s.visual.head, s.visual.anchor
 	linewise := s.mode == ModeVisualLine
 	rg := s.visualRegion()
 	s.exitVisual()
@@ -166,7 +167,7 @@ func (s *State) pasteVisual(text string) {
 	case c.Byte >= len(line):
 		// カーソルの位置に文字が無い（空の行）なら、そのまま入れる。
 	case linewise:
-		if c.Line < oldCursor.Line && c.Line < oldAnchor.Line {
+		if c.Line < oldHead.Line && c.Line < oldAnchor.Line {
 			// バッファの最後の行まで消して、カーソルが上の行へ移った。消した行の位置に空の行を開いて入れる。
 			if err := s.apply(buffer.Edit{Range: emptyRange(s.lineEnd(c.Line)), Text: "\n"}); err != nil {
 				s.buf.EndUndoGroup()
@@ -175,7 +176,7 @@ func (s *State) pasteVisual(text string) {
 			}
 			s.cursor = pos(c.Line+1, 0)
 		}
-	case c.Byte < oldCursor.Byte && c.Byte < oldAnchor.Byte:
+	case c.Byte < oldHead.Byte && c.Byte < oldAnchor.Byte:
 		// 行末まで消して、カーソルが選択より左の文字へ戻った。その文字の後ろへ入れる。
 		s.cursor.Byte = nextChar(line, c.Byte)
 	}

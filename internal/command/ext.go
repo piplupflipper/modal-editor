@@ -124,7 +124,7 @@ func (s *State) extCommand(a ex.Action) error {
 // runExtCommand は、extCommand を実行し、失敗を結果に記録する。
 // 拡張機能が結果を保留した（ErrDeferred）場合は、run と同じく、再生中でなければ Result.Deferred に記録する。
 func (s *State) runExtCommand(a ex.Action) {
-	d := Deferred{Version: s.buf.Version(), Cursor: s.cursor, mode: s.mode, anchor: s.visual.anchor, want: s.want, exCommand: &a}
+	d := Deferred{Version: s.buf.Version(), Cursor: s.cursor, mode: s.mode, anchor: s.visual.anchor, head: s.visual.head, want: s.want, exCommand: &a}
 	err := s.extCommand(a)
 	switch {
 	case err == nil:
