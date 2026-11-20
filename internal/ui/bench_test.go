@@ -54,6 +54,24 @@ func BenchmarkRenderLongLines(b *testing.B) {
 	benchRender(b, Frame{Text: sameLines{line, 10000}, Cursor: pos(0, 20000)})
 }
 
+// 行を折り返すとき（FR-156）の描画である。どの行も画面の幅より長いので、カーソルを 1 行下げるたびに、行の単位でスクロールする。
+func BenchmarkRenderWrapLongLines(b *testing.B) {
+	line := strings.Repeat("abcdefghij", 2200)
+	benchRender(b, Frame{Text: sameLines{line, 10000}, Cursor: pos(0, 20000), Wrap: true})
+}
+
+// 行を折り返すとき、全角文字とタブを含む 20 万文字の 1 行の中で、カーソルを見た目の行で動かしながら描く（行の途中から描く）。
+func BenchmarkRenderWrapHugeLine(b *testing.B) {
+	line := strings.Repeat("abc\tあいうえお日本語 ", 20000)
+	text := sameLines{line, 1}
+	r := &Renderer{Width: 200, Height: 60}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		r.Render(&Frame{Text: text, Cursor: pos(0, (i*997)%len(line)/4*4), Wrap: true})
+	}
+}
+
 func BenchmarkRenderManyDecorations(b *testing.B) {
 	line := strings.Repeat("abcd ", 40)
 	benchRender(b, Frame{Text: sameLines{line, 10000}, Decorations: perLine(10000, 60, 3)})

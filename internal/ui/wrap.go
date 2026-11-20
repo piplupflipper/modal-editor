@@ -43,11 +43,6 @@ type wrapper struct {
 // x はその見た目の行の左の端（本文の左の端）からの列である。続きの見た目の行は、記号の列（sbw）から文字を置く。
 type wrapPos struct{ row, x int }
 
-// less は、p が q より前（上の行か、同じ行の左）にあるかを返す。
-func (p wrapPos) less(q wrapPos) bool {
-	return p.row < q.row || p.row == q.row && p.x < q.x
-}
-
 // wrapper は、直前の layout の本文の幅と、記号の設定で、行の分け方を返す。
 func (r *Renderer) wrapper() wrapper {
 	w := max(r.textWidth(), 1)
@@ -370,6 +365,8 @@ func (r *Renderer) cursorScreen(text Text, f *Frame, cur cursorPlace) (row, col 
 //     カーソルの見た目の行が隠れたら、隠れなくなる最小の分だけ skip を動かす（nvim 0.12.5 で gj、gk、$ を打って確かめた）
 //
 // 折り返さないときの scrollRows と違い、表示領域の中ほどの位置は Vim の scroll_cursor_halfway と同じく、上と下の見た目の行の数をそろえて決める。
+//
+// req: FR-156
 func (r *Renderer) scrollWrapped(text Text, cur cursorPlace, h int) {
 	r.left = 0
 	if h <= 0 {

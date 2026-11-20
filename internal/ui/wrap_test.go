@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,16 +29,9 @@ func wrapText() *buffer.Buffer {
 		strings.Repeat("0123456789", 40),
 	}
 	for i := 8; i <= 20; i++ {
-		lines = append(lines, "line"+itoa(i))
+		lines = append(lines, "line"+strconv.Itoa(i))
 	}
 	return buffer.New(strings.Join(lines, "\n") + "\n")
-}
-
-func itoa(n int) string {
-	if n < 10 {
-		return string(rune('0' + n))
-	}
-	return itoa(n/10) + string(rune('0'+n%10))
 }
 
 // 行番号の列を出して（本文は 37 列）、カーソルを下へ動かしたときの画面である。期待値は nvim 0.12.5 の :set number の画面と同じにした。
@@ -97,11 +92,14 @@ func TestGoldenWrapSkip(t *testing.T) {
 func TestGoldenWrapLayers(t *testing.T) {
 	b := wrapText()
 	r := newRenderer(41, 12)
+	r.Theme[StyleSearch] = Attr{Underline: true} // ゴールデンの飾りの '_'
 	sel := Selection{Active: true, Start: pos(1, 35), End: pos(1, 45)}
 	diag := []Diagnostic{{Range: buffer.Range{Start: pos(3, 36), End: pos(3, 41)}, Severity: SeverityError}}
 	hl := []Highlight{{Range: buffer.Range{Start: pos(2, 54), End: pos(2, 66)}, Style: StyleDiagnosticWarning}}
 	golden(t, "wrap_layers", renderSteps(r, []step{
 		{"選択と診断と範囲の色", Frame{Text: b, Mode: ModeVisual, Cursor: pos(1, 45), Selection: sel, Diagnostics: diag, Highlights: hl, Wrap: true}},
+		// 2 行目の IJ0123 の 1 つ目（38 バイト目から）は、1 つ目と 2 つ目の見た目の行にまたがる。
+		{"検索の一致の色", Frame{Text: b, Cursor: pos(0, 0), Search: regexp.MustCompile("IJ0123"), Wrap: true}},
 	}))
 
 	r = newRenderer(41, 12)
@@ -215,5 +213,43 @@ func TestWrapCursorAtEOL(t *testing.T) {
 	}
 	if got := rowTexts(s, 2); got[1] != "next" {
 		t.Errorf("行 = %q（行の見た目の行の数は増やさない）", got)
+	}
+}
+
+// プレビュー（FR-149）の中身も、View.Wrap なら本文と同じく折り返して描き、色を付ける行（Line）の見た目の行のすべてに色を付ける。
+//
+// req: FR-156
+func TestDrawPreviewWrap(t *testing.T) {
+	theme := testTheme()
+	lineAttr := Attr{Bg: RGB(1, 2, 3)}
+	theme[StylePreviewLine] = lineAttr
+	rule := PreviewRule{MinWindowWidth: 40, WidthPercent: 50, WindowWidthPercent: 100}
+	text := buffer.New("short\n" + strings.Repeat("x", 60) + "\nend")
+	r := &Renderer{Width: 60, Height: 14, Theme: theme}
+	s := r.Render(&Frame{Text: buffer.New("x"), Float: &Float{
+		ID: 1, View: &Frame{Text: buffer.New("one")}, Center: true, CursorLine: true, PreviewRule: rule,
+		Preview: &Preview{ID: 1, Title: "t", View: &Frame{Text: text, Cursor: pos(1, 0), Wrap: true}, Line: 1},
+	}})
+	rows := strings.Split(s.Grid.String(), "\n")
+	// プレビューは 30 列目から 30 列で、中身は 28 列。60 文字の行は 28、28、4 文字の 3 行になる。
+	start := -1
+	for i, row := range rows {
+		if strings.Contains(row, "short") {
+			start = i
+		}
+	}
+	if start < 0 || !strings.Contains(rows[start+1], strings.Repeat("x", 28)) || !strings.Contains(rows[start+3], "xxxx ") ||
+		!strings.Contains(rows[start+4], "end") {
+		t.Fatalf("折り返したプレビュー:\n%s", s.Grid.String())
+	}
+	for i := start + 1; i <= start+3; i++ {
+		if a := s.Grid.At(i, 58).Attr; a.Bg != lineAttr.Bg {
+			t.Errorf("%d 行目（色を付ける行の見た目の行）の色 = %+v", i, a)
+		}
+	}
+	for _, i := range []int{start, start + 4} {
+		if a := s.Grid.At(i, 58).Attr; a.Bg == lineAttr.Bg {
+			t.Errorf("%d 行目に色が付いた", i)
+		}
 	}
 }

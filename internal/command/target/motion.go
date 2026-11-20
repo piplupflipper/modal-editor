@@ -121,20 +121,26 @@ func displayVertical(forward bool) MotionFunc {
 		} else {
 			row, x = sl.Locate(s, req.Want)
 		}
+		// 行の見た目の行の数は、行を移ったときだけ数え直す（数えるのは行の長さに比例する）。
+		rows := -1
 		moved := 0
 		for range req.count1() {
+			if forward && rows < 0 {
+				rows = sl.Rows(s)
+			}
 			switch {
-			case forward && row+1 < sl.Rows(s):
+			case forward && row+1 < rows:
 				row++
 			case forward && line+1 < b.LineCount():
 				line++
-				s, row = b.Line(line), 0
+				s, row, rows = b.Line(line), 0, -1
 			case !forward && row > 0:
 				row--
 			case !forward && line > 0:
 				line--
 				s = b.Line(line)
-				row = sl.Rows(s) - 1
+				rows = sl.Rows(s)
+				row = rows - 1
 			default:
 				continue
 			}
