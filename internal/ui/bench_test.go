@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -101,6 +102,37 @@ func BenchmarkNewDecorationsMultiline100k(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		NewDecorations(hs, 100_000)
+	}
+}
+
+// 一致の多い長い行（PR #276 のレビューの推奨 1 の、約 917 KB の行を 8 行と同じ形）を、80 × 16 の画面に描く時間を測る。
+// 一致を探すのは表示の右の端までなので、一致の数（1 行に約 13 万）でなく、見えている列の範囲に比例する。
+func BenchmarkRenderSearchLongLines(b *testing.B) {
+	line := strings.Repeat("foo xy ", 131072)
+	for _, tt := range []struct {
+		name    string
+		pattern string
+		left    int
+	}{
+		{"o", "o", 0},
+		{"y_foo", "y foo", 0},
+		{"zzq", "zzq", 0},
+		{"none", "", 0},
+		{"o_scrolled", "o", 450000},
+	} {
+		b.Run(tt.name, func(b *testing.B) {
+			f := Frame{Text: sameLines{line, 8}, Cursor: pos(0, tt.left)}
+			if tt.pattern != "" {
+				f.Search = regexp.MustCompile(tt.pattern)
+			}
+			r := &Renderer{Width: 80, Height: 16}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := range b.N {
+				f.Cursor.Line = i % 8
+				r.Render(&f)
+			}
+		})
 	}
 }
 

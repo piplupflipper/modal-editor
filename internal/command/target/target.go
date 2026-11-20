@@ -213,36 +213,34 @@ var ErrInvalidRequest = errors.New("target: invalid request")
 //
 // req: FR-03
 var motions = map[string]MotionFunc{
-	"left":                 left,                   // h
-	"right":                right,                  // l
-	"down":                 down,                   // j
-	"up":                   up,                     // k
-	"word-next":            wordForward(false),     // w
-	"bigword-next":         wordForward(true),      // W
-	"word-prev":            wordBackward(false),    // b
-	"bigword-prev":         wordBackward(true),     // B
-	"word-end":             wordEnd(false),         // e
-	"bigword-end":          wordEnd(true),          // E
-	"line-start":           lineStart,              // 0
-	"line-first-nonblank":  firstNonBlank,          // ^
-	"line-end":             lineEnd,                // $
-	"file-start":           gotoLine(false),        // gg
-	"file-end":             gotoLine(true),         // G
-	"find-forward":         findChar(false, false), // f
-	"find-backward":        findChar(true, false),  // F
-	"till-forward":         findChar(false, true),  // t
-	"till-backward":        findChar(true, true),   // T
-	"find-repeat":          repeatFind(false),      // ;
-	"find-repeat-reverse":  repeatFind(true),       // ,
-	"match-pair":           percent,                // %
-	"paragraph-prev":       paragraph(false),       // {
-	"paragraph-next":       paragraph(true),        // }
-	"search-forward":       searchMotion(false),    // /
-	"search-backward":      searchMotion(true),     // ?
-	"search-next":          searchRepeat(false),    // n
-	"search-prev":          searchRepeat(true),     // N
-	"search-word-forward":  searchWord(false),      // *
-	"search-word-backward": searchWord(true),       // #
+	"left":                left,                   // h
+	"right":               right,                  // l
+	"down":                down,                   // j
+	"up":                  up,                     // k
+	"word-next":           wordForward(false),     // w
+	"bigword-next":        wordForward(true),      // W
+	"word-prev":           wordBackward(false),    // b
+	"bigword-prev":        wordBackward(true),     // B
+	"word-end":            wordEnd(false),         // e
+	"bigword-end":         wordEnd(true),          // E
+	"line-start":          lineStart,              // 0
+	"line-first-nonblank": firstNonBlank,          // ^
+	"line-end":            lineEnd,                // $
+	"file-start":          gotoLine(false),        // gg
+	"file-end":            gotoLine(true),         // G
+	"find-forward":        findChar(false, false), // f
+	"find-backward":       findChar(true, false),  // F
+	"till-forward":        findChar(false, true),  // t
+	"till-backward":       findChar(true, true),   // T
+	"find-repeat":         repeatFind(false),      // ;
+	"find-repeat-reverse": repeatFind(true),       // ,
+	"match-pair":          percent,                // %
+	"paragraph-prev":      paragraph(false),       // {
+	"paragraph-next":      paragraph(true),        // }
+	"search-forward":      searchMotion(false),    // /
+	"search-backward":     searchMotion(true),     // ?
+	"search-next":         searchRepeat(false),    // n
+	"search-prev":         searchRepeat(true),     // N
 }
 
 // textObjects は、テキストオブジェクトの ID と、それを解決する関数の表である。

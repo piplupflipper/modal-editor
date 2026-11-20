@@ -63,8 +63,8 @@ func searchRepeat(reverse bool) MotionFunc {
 	}
 }
 
-// searchWord は、*（backward が true なら #）を返す。
-// カーソルの位置の単語を、単語の全体に一致するパターンにして検索する（Vim の nv_ident() と find_ident_at_pos()）。
+// WordPattern は、* と # が検索のパターンにする、カーソルの位置 at の単語に全体で一致するパターンを返す
+// （Vim の nv_ident() と find_ident_at_pos()）。カーソルは動かさない（FR-139）。
 //
 //   - カーソルの位置から行末へ向かって、最初の単語の文字（分類が classWord 以上の文字）を探し、その文字を含む同じ分類の並びを単語にする
 //   - 行末までに単語の文字が無ければ、最初の空白でない文字を探し、その文字から前の同じ分類の並びの先頭から、空白の手前までを文字列にする
@@ -74,29 +74,24 @@ func searchRepeat(reverse bool) MotionFunc {
 // （Vim の \< と \>）。Go の \b は ASCII の文字だけで境界を決めるので、両端が日本語などの文字なら境界を付けない。
 // このため、「日本語」の * は「日本語化」の中の「日本語」にも一致する（Vim は一致しない）。
 //
-// 検索は、Vim と同じく、カーソルを単語の先頭へ移してから始める。カーソルのある単語そのものには、バッファを一周してから一致する。
-//
-// req: FR-03
-func searchWord(backward bool) MotionFunc {
-	return func(b *buffer.Buffer, req Request) (Result, error) {
-		line := b.Line(req.Cursor.Line)
-		start, end, keyword, ok := identAt(line, req.Cursor.Byte)
-		if !ok {
-			return Result{}, ErrNoString
-		}
-		word := line[start:end]
-		pat := regexp.QuoteMeta(word)
-		if keyword {
-			if r, _ := utf8.DecodeRuneInString(word); isASCIIWord(r) {
-				pat = `\b` + pat
-			}
-			if r, _ := utf8.DecodeLastRuneInString(word); isASCIIWord(r) {
-				pat += `\b`
-			}
-		}
-		from := buffer.Position{Line: req.Cursor.Line, Byte: start}
-		return search(b, req, from, Search{Pattern: pat, Backward: backward})
+// req: FR-139
+func WordPattern(b *buffer.Buffer, at buffer.Position) (string, error) {
+	line := b.Line(at.Line)
+	start, end, keyword, ok := identAt(line, at.Byte)
+	if !ok {
+		return "", ErrNoString
 	}
+	word := line[start:end]
+	pat := regexp.QuoteMeta(word)
+	if keyword {
+		if r, _ := utf8.DecodeRuneInString(word); isASCIIWord(r) {
+			pat = `\b` + pat
+		}
+		if r, _ := utf8.DecodeLastRuneInString(word); isASCIIWord(r) {
+			pat += `\b`
+		}
+	}
+	return pat, nil
 }
 
 // identAt は、line の at から、* と # が検索する単語か文字列の範囲 [start, end) を返す。keyword は単語であるかを表す。

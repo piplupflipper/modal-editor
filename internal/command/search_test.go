@@ -16,7 +16,11 @@ import (
 // バッファの内容、カーソル（行:バイト）、@/、v:searchforward、無名のレジスター、エラーの番号である。
 //
 // pattern は、この実装の直前のパターン（State.Ex.LastPattern）である。* と # は、Vim の \<foo\> の代わりに \bfoo\b になる
-// （target.searchWord の doc コメント）。それ以外は Vim の @/ と同じ文字列である。
+// （target.WordPattern の doc コメント）。それ以外は Vim の @/ と同じ文字列である。
+//
+// * と # はカーソルを動かさない（FR-139。Vim と違う）。* と # の行の期待値は、カーソルが元の位置のままであることと、
+// 続く n と N の移動先である。n と N の移動先は、2026-11-20 に同じ起動の Vim 9.1 で、同じ位置にカーソルを置き、
+// @/ に \<foo\> の形のパターンを、v:searchforward に向きを入れてから n と N を打って得た。
 type searchCase struct {
 	text, keys       string
 	want, cursor     string
@@ -41,12 +45,16 @@ var searchCases = []searchCase{
 	{"|abc\nfoo", "d/foo<CR>", "foo", "0:0", "foo", false, "abc", ""},
 	{"|abc foo bar", "v/foo<CR>d", "oo bar", "0:0", "foo", false, "abc f", ""},
 	{"|abc foo bar", "vl/fo<Esc>d", "c foo bar", "0:0", "", false, "ab", ""},
-	{"foo |+ bar\nbar foo", "*", "foo + bar\nbar foo", "1:0", `\bbar\b`, false, "U", ""},
-	{"foo x foo\nf|oo", "#", "foo x foo\nfoo", "0:6", `\bfoo\b`, true, "U", ""},
-	{"a| b", "*", "a b", "0:2", `\bb\b`, false, "U", ""},
-	{"foo|.bar foo.bar", "*", "foo.bar foo.bar", "0:12", `\bbar\b`, false, "U", ""},
-	{"a|日本語b 日本語", "*", "a日本語b 日本語", "0:12", "日本語", false, "U", ""},
+	{"foo |+ bar\nbar foo", "*", "foo + bar\nbar foo", "0:4", `\bbar\b`, false, "U", ""},
+	{"foo |+ bar\nbar foo", "*n", "foo + bar\nbar foo", "0:6", `\bbar\b`, false, "U", ""},
+	{"foo x foo\nf|oo", "#", "foo x foo\nfoo", "1:1", `\bfoo\b`, true, "U", ""},
+	{"foo x foo\nf|oo", "#n", "foo x foo\nfoo", "1:0", `\bfoo\b`, true, "U", ""},
+	{"a| b", "*", "a b", "0:1", `\bb\b`, false, "U", ""},
+	{"foo|.bar foo.bar", "*", "foo.bar foo.bar", "0:3", `\bbar\b`, false, "U", ""},
+	{"a|日本語b 日本語", "*", "a日本語b 日本語", "0:1", "日本語", false, "U", ""},
+	{"a|日本語b 日本語", "*n", "a日本語b 日本語", "0:12", "日本語", false, "U", ""},
 	{"|foo bar\nfoo", "2*", "foo bar\nfoo", "0:0", `\bfoo\b`, false, "U", ""},
+	{"|foo bar\nfoo", "*2n", "foo bar\nfoo", "0:0", `\bfoo\b`, false, "U", ""},
 	{"abc\nab|c", "?$<CR>", "abc\nabc", "0:2", "$", true, "U", ""},
 	{"|a foo b foo c foo", "d/foo<CR>.", "foo c foo", "0:0", "foo", false, "foo b ", ""},
 	{"|abc\nxbx", ":s/b/B/<CR>n", "aBc\nxbx", "1:1", "b", false, "U", ""},
@@ -55,16 +63,22 @@ var searchCases = []searchCase{
 	{"|abc foo", "c/foo<CR>X<Esc>", "Xfoo", "0:0", "foo", false, "abc ", ""},
 	{"|a1\na2\na3", "qa/a<CR>xq@a", "a1\n2\n3", "2:0", "a", false, "a", ""},
 	{"abc foo b|ar", "v?foo<CR>d", "abc r", "0:4", "foo", true, "foo ba", ""},
-	{"foo |foo foo", "*N", "foo foo foo", "0:4", `\bfoo\b`, false, "U", ""},
+	{"foo |foo foo", "*N", "foo foo foo", "0:0", `\bfoo\b`, false, "U", ""},
+	{"foo |foo foo", "*n", "foo foo foo", "0:8", `\bfoo\b`, false, "U", ""},
+	// 単語の途中の # の後の n と、* の後の N は、カーソルのある単語の先頭へ移る（Vim 9.1 の同じ位置からの n と N、*N と同じ）。
+	{"fo|o bar foo baz", "#n", "foo bar foo baz", "0:0", `\bfoo\b`, true, "U", ""},
+	{"fo|o bar foo baz", "*N", "foo bar foo baz", "0:0", `\bfoo\b`, false, "U", ""},
+	{"fo|o bar foo baz", "*n", "foo bar foo baz", "0:8", `\bfoo\b`, false, "U", ""},
 	{"|abc", "/zzz<CR>", "abc", "0:0", "zzz", false, "U", "E486"},
 	{"|f f f f", "/f<CR>2n", "f f f f", "0:6", "f", false, "U", ""},
 	{"|abc", "/<BS>x", "bc", "0:0", "", false, "a", ""},
 	{"|ab ab ab", "/b<CR>0dn", "b ab ab", "0:0", "b", false, "a", ""},
-	{"|foo\nbar\nfoo", "#", "foo\nbar\nfoo", "2:0", `\bfoo\b`, true, "U", ""},
-	{"|foo\nbar\nfoo", "#n", "foo\nbar\nfoo", "0:0", `\bfoo\b`, true, "U", ""},
+	{"|foo\nbar\nfoo", "#", "foo\nbar\nfoo", "0:0", `\bfoo\b`, true, "U", ""},
+	{"|foo\nbar\nfoo", "#n", "foo\nbar\nfoo", "2:0", `\bfoo\b`, true, "U", ""},
 	{"|  \nfoo", "*", "  \nfoo", "0:0", "", false, "U", "E348"},
-	{"x |+++ y +++", "*", "x +++ y +++", "0:6", `\by\b`, false, "U", ""},
-	{"x ++|+ y +++", "#", "x +++ y +++", "0:6", `\by\b`, true, "U", ""},
+	{"x |+++ y +++", "*", "x +++ y +++", "0:2", `\by\b`, false, "U", ""},
+	{"x |+++ y +++", "*n", "x +++ y +++", "0:6", `\by\b`, false, "U", ""},
+	{"x ++|+ y +++", "#", "x +++ y +++", "0:4", `\by\b`, true, "U", ""},
 	{"|abc\ndef", "y/e<CR>", "abc\ndef", "0:0", "e", false, "abc\nd", ""},
 	{"|abc/def/x", `/\/d<CR>`, "abc/def/x", "0:3", `\/d`, false, "U", ""},
 	{"|a?b?c", `?\?<CR>`, "a?b?c", "0:3", `\?`, true, "U", ""},
@@ -72,7 +86,7 @@ var searchCases = []searchCase{
 	{"a|b\ncd\nef", "2d/f<CR>", "af", "0:1", "f", false, "b\ncd\ne", ""},
 	{"|aXbXcXd", "/X<CR>3n", "aXbXcXd", "0:1", "X", false, "U", ""},
 	{"|foo_bar foo", "*", "foo_bar foo", "0:0", `\bfoo_bar\b`, false, "U", ""},
-	{"|é foo é", "*", "é foo é", "0:7", "é", false, "U", ""},
+	{"|é foo é", "*", "é foo é", "0:0", "é", false, "U", ""},
 }
 
 // 検索のモーションの移動、オペレーターとの組み合わせ、ビジュアルモード、回数、ドットリピート、マクロ、Ex との直前のパターンの共有が、

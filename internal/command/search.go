@@ -30,14 +30,14 @@ type pendingSearch struct {
 var searchInputMotions = map[string]rune{"search-forward": '/', "search-backward": '?'}
 
 // searchRecordMotions は、実行すると直前の検索のパターンと向きを記録するモーションである。n と N は記録しない（向きを変えない）。
+// パターンと向きを決める操作の * と #（actSearchWord）も、同じ記録の経路（SetLastSearch）を通る。
 var searchRecordMotions = map[string]bool{
-	"search-forward": true, "search-backward": true, "search-word-forward": true, "search-word-backward": true,
+	"search-forward": true, "search-backward": true,
 }
 
 // searchMotionIDs は、検索のモーションの ID である。
 var searchMotionIDs = map[string]bool{
 	"search-forward": true, "search-backward": true, "search-next": true, "search-prev": true,
-	"search-word-forward": true, "search-word-backward": true,
 }
 
 // LastSearch は、n と N が繰り返す直前の検索のパターンと向きを返す。
@@ -46,11 +46,46 @@ func (s *State) LastSearch() target.Search {
 	return target.Search{Pattern: s.Ex.LastPattern, Backward: s.searchBackward}
 }
 
-// SetLastSearch は、n と N が繰り返す直前の検索を sr にする。
-// Vim と同じく直前の検索をバッファをまたいで 1 つにするために、呼び出し側がバッファを切り替えるときに前のバッファの LastSearch を渡す。
+// SetLastSearch は、n と N が繰り返す直前の検索を sr にする。検索のパターンと向きを決める操作（/、?、*、#）は、どれもこれで記録する。
+// 記録すると、:search.clearHighlight で消した一致の色を戻す（ex.State.UsePattern。FR-138）。
+// n と N は、直前の検索をそのまま記録し直す（パターンと向きは変わらず、色だけが戻る）。
+//
+// req: FR-138, FR-139
 func (s *State) SetLastSearch(sr target.Search) {
-	s.Ex.LastPattern = sr.Pattern
+	s.Ex.UsePattern(sr.Pattern)
 	s.searchBackward = sr.Backward
+}
+
+// HighlightPattern は、一致の色を付けるパターンを返す。色を消している（:search.clearHighlight）か、パターンが無ければ空を返す。
+// rev は、設定の search.highlight を設定した回数（option.Values.Revision）である（ex.State.HighlightPattern）。
+// 設定の search.highlight の値は見ない。描画（internal/editor）が、描くたびに設定の値と合わせて読む（FR-137）。
+//
+// req: FR-137
+func (s *State) HighlightPattern(rev uint64) string {
+	return s.Ex.HighlightPattern(rev)
+}
+
+// actSearchWord は、*（backward が true なら #）である（FR-139）。
+// カーソルの単語に全体で一致するパターン（target.WordPattern）と向きを、/ と同じ経路（SetLastSearch）で直前の検索として記録する。
+// カーソルは動かさず、ジャンプリストにも記録しない。次の一致へは n で移る。回数は使わない。
+// 移らないので、モーションでなく対象を取らない操作にした（オペレーターの後には使えない）。ビジュアルモードでは、選択を変えない。
+// 記録したパターンは、/ で見つけたときと同じく通知に出す（* は "/"、# は "?" を前に付ける）。
+//
+// req: FR-139
+func actSearchWord(backward bool) actionFunc {
+	return func(s *State, _ editcmd.Command) error {
+		pat, err := target.WordPattern(s.buf, s.cursor)
+		if err != nil {
+			return &ex.Error{Code: "E348", Msg: "カーソルの位置に文字列がありません"}
+		}
+		s.SetLastSearch(target.Search{Pattern: pat, Backward: backward})
+		delim := "/"
+		if backward {
+			delim = "?"
+		}
+		s.res.Message = Message{Text: delim + pat}
+		return nil
+	}
 }
 
 // CommandLineType は、コマンドラインモードの種類を、行の先頭に出す文字で返す。
@@ -129,14 +164,22 @@ func vimStyle(pat string) bool {
 }
 
 // searchResult は、検索のモーション t の結果 res と誤り err を、State に反映する。
-//   - / ? * # は、見つからなかった場合も含めて、検索したパターンと向きを直前の検索として記録する（Vim と同じ）。
+//   - / と ? は、見つからなかった場合も含めて、検索したパターンと向きを直前の検索として記録する（Vim と同じ）。
 //     パターンは Ex と共有するので、/foo の後の :s//x/ は foo を置き換える
+//   - n と N は、パターンを検索したら（見つからなかった場合も含めて）直前の検索をそのまま記録し直し、消した一致の色を戻す（FR-138）
 //   - 見つけたら、Vim と同じく検索したパターンを通知に出す（/foo、n の後も /foo）。バッファの端で折り返したら、代わりに警告を出す
 //   - 誤りは、利用者に出す Vim のエラー番号の付いた誤り（*ex.Error）にする
+//
+// パターンが正しくない（E383）か無い（E35）ときは、記録せず、消した一致の色も戻さない。
+//
+// req: FR-03, FR-138
 func (s *State) searchResult(t editcmd.Target, res target.Result, err error) error {
-	if res.Search.Pattern != "" && searchRecordMotions[t.Ref.ID] {
-		s.Ex.LastPattern = res.Search.Pattern
-		s.searchBackward = res.Search.Backward
+	switch {
+	case res.Search.Pattern == "":
+	case searchRecordMotions[t.Ref.ID]:
+		s.SetLastSearch(res.Search)
+	default:
+		s.SetLastSearch(s.LastSearch())
 	}
 	var pe *target.PatternError
 	switch {
@@ -149,8 +192,6 @@ func (s *State) searchResult(t editcmd.Target, res target.Result, err error) err
 		return &ex.Error{Code: "E486", Msg: msg}
 	case errors.Is(err, target.ErrNoPattern):
 		return &ex.Error{Code: "E35", Msg: "直前の正規表現がありません"}
-	case errors.Is(err, target.ErrNoString):
-		return &ex.Error{Code: "E348", Msg: "カーソルの位置に文字列がありません"}
 	case errors.As(err, &pe):
 		return &ex.Error{Code: "E383", Msg: "正規表現が正しくありません（Go の regexp の文法で書きます）: " + pe.Pattern + ": " + pe.Err.Error()}
 	default:

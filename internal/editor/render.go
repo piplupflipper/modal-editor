@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/piplupflipper/vi-imitation/internal/command"
@@ -105,7 +106,49 @@ func (e *Editor) frame() *ui.Frame {
 func (e *Editor) bufferFrame() *ui.Frame {
 	f := e.frame()
 	f.LineNumbers = e.uiLineNumbers()
+	f.Search = e.uiSearch()
 	return f
+}
+
+// uiSearch は、検索の一致に色を付けるパターンを、エディタ全体の設定の今の値（search.highlight）と直前の検索のパターンから作る（FR-137）。
+// 色を付けないとき（設定が false、:search.clearHighlight で消した、パターンが無い、パターンが正しくない）は nil を返す。
+// 描くたびに読むので、:set hlsearch、/、*、:nohlsearch の後に呼ぶ処理は無い（基本設計 7.3）。
+// 色を付けるのは、行番号の列と同じく client の画面のバッファの表示領域だけである（bufferFrame）。
+//
+// 直前の検索は client の間で共有する状態なので、最後にそれを持った State（e.shared）から読む。
+// 別の client で検索した直後でも、この client の画面に同じパターンの色が付く（Vim で窓をまたいで同じ色が付くのと同じ）。
+//
+// req: FR-137, FR-138
+func (e *Editor) uiSearch() *regexp.Regexp {
+	if !e.options.Get(option.SearchHighlight).Bool() {
+		return nil
+	}
+	st := e.shared
+	if st == nil && e.cur != nil {
+		st = e.cur.state
+	}
+	if st == nil {
+		return nil
+	}
+	pat := st.HighlightPattern(e.options.Revision(option.SearchHighlight))
+	if pat == "" {
+		return nil
+	}
+	if c := &e.searchRegexp; c.pattern != pat {
+		// 描くたびにコンパイルしないよう、直前のパターンの結果を覚えておく。正しくないパターンは nil を覚える。
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			re = nil
+		}
+		c.pattern, c.re = pat, re
+	}
+	return e.searchRegexp.re
+}
+
+// searchRegexp は、uiSearch がコンパイルした直前のパターンと、その結果である。
+type searchRegexp struct {
+	pattern string
+	re      *regexp.Regexp
 }
 
 // uiLineNumbers は、行番号の列の出し方を、エディタ全体の設定の今の値（lineNumber.show と lineNumber.minWidth）から作る（FR-135、FR-136）。

@@ -27,9 +27,9 @@ func TestSearchInPTY(t *testing.T) {
 	// <CR> で 2 行目の foo へ移り、n で 4 行目の foo へ移る。もう一度の n は先頭へ折り返して 2 行目へ戻り、警告を出す。
 	p.write(t, "o\rnn")
 	p.out.WaitForString(t, "末尾まで検索したので先頭から続けました")
-	// * で 2 行目の foo から 4 行目の foo へ移って Y を入れる。
+	// 2 行目の foo の上の * はカーソルを動かさずにパターンを決め（FR-139）、n で 4 行目の foo へ移って Y を入れる。
 	// 最後に 1 行目へ戻り、d/thr<CR> で 1 行目と 2 行目を消す（行の先頭から行の先頭までの d は行単位になる）。
-	p.write(t, "*iY")
+	p.write(t, "*niY")
 	p.out.WaitForString(t, "INSERT")
 	p.write(t, "\x1bggd/thr\r:wq\r")
 	if err := p.wait(t); err != nil {

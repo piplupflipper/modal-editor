@@ -62,6 +62,47 @@ func TestLineNumberDefs(t *testing.T) {
 	}
 }
 
+// 検索の一致の色付けの項目は、範囲がエディタ全体の真偽で、既定は付けない（Vim の 'hlsearch' と同じ）。
+//
+// req: FR-137
+func TestSearchHighlightDef(t *testing.T) {
+	if d, ok := Lookup(SearchHighlight); !ok || d.Type != Bool || d.Scope != ScopeEditor || d.Default != BoolValue(false) || d.Range != nil {
+		t.Errorf("Lookup(SearchHighlight) = %+v, %v", d, ok)
+	}
+}
+
+// Revision は、項目ごとに Set で値を入れた回数で、同じ値を入れ直しても増え、誤りで入れなかった Set と他の項目の Set では増えない。
+//
+// req: FR-138
+func TestValuesRevision(t *testing.T) {
+	b := Def{Name: "b", Type: Bool, Default: BoolValue(false)}
+	n := Def{Name: "n", Type: Int, Default: IntValue(0)}
+	var vs Values
+	if got := vs.Revision("b"); got != 0 {
+		t.Errorf("ゼロ値の Revision = %d", got)
+	}
+	steps := []struct {
+		d    Def
+		v    Value
+		want uint64 // b の回数
+	}{
+		{b, BoolValue(true), 1},
+		{b, BoolValue(true), 2},
+		{n, IntValue(3), 2},
+		{b, IntValue(1), 2}, // 型の違う値は入れない
+		{b, BoolValue(false), 3},
+	}
+	for i, s := range steps {
+		_ = vs.Set(s.d, s.v)
+		if got := vs.Revision("b"); got != s.want {
+			t.Errorf("%d: Revision(b) = %d, want %d", i, got, s.want)
+		}
+	}
+	if got := vs.Revision("n"); got != 1 {
+		t.Errorf("Revision(n) = %d, want 1", got)
+	}
+}
+
 // Check は、整数の項目の範囲（Range）の外の値を、下限の側と上限の側で分けて断る。範囲の両端は通す。
 // Parse と Values.Set も同じ検査を通る。
 //

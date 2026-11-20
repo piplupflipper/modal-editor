@@ -28,17 +28,15 @@ type Navigator interface {
 // 移動が成り立てば、移る前のカーソルの位置をジャンプリストに記録する。オペレーターの対象とビジュアルモードの移動でも記録する。
 // 移る先が同じ位置（1 行目での gg）でも記録する。Vim 9.1 で確かめた。
 var jumpMotions = map[string]bool{
-	"file-start":           true,
-	"file-end":             true,
-	"search-forward":       true,
-	"search-backward":      true,
-	"search-next":          true,
-	"search-prev":          true,
-	"search-word-forward":  true,
-	"search-word-backward": true,
-	"match-pair":           true,
-	"paragraph-prev":       true,
-	"paragraph-next":       true,
+	"file-start":      true,
+	"file-end":        true,
+	"search-forward":  true,
+	"search-backward": true,
+	"search-next":     true,
+	"search-prev":     true,
+	"match-pair":      true,
+	"paragraph-prev":  true,
+	"paragraph-next":  true,
 }
 
 // markJump は、現在のカーソルの位置をジャンプリストに記録する。
