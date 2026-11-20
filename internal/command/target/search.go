@@ -201,7 +201,8 @@ func Snapshot(b *buffer.Buffer) LineSnapshot {
 type Match struct {
 	// Range は、一致の範囲（半開区間）である。空の一致（^、$、x* など）は、Start と End が同じである。
 	Range buffer.Range
-	// Wrapped は、バッファの端で折り返して見つけたかである。
+	// Wrapped は、バッファの端で折り返して見つけたかである。FindMatch の steps が 0 でないときは、検索を始めた位置から検索の向きに見て、
+	// 一致がバッファの端の向こう（前向きなら始めた位置かその前）にあるかである。
 	Wrapped bool
 }
 
@@ -257,6 +258,13 @@ func FindMatch(ctx context.Context, src Lines, from buffer.Position, s Search, c
 	if steps != 0 {
 		if err := walk(steps < 0, count*abs(steps)); err != nil {
 			return Match{}, err
+		}
+		// <C-g> と <C-t> で動かしたときの折り返しは、途中の移動でなく、from から s の向きに見て、最後の一致がバッファの端の向こうにあるかで決める
+		// （nvim 0.12.5 の 1 行目の先頭からの /foo<C-t><CR> は、最後の一致へ移って折り返しの W を出さない。PR #306 のレビューの推奨 2）。
+		if s.Backward {
+			m.Wrapped = !m.Range.Start.Less(from)
+		} else {
+			m.Wrapped = !from.Less(m.Range.Start)
 		}
 	}
 	return m, nil

@@ -110,12 +110,19 @@ func TestIncSearchSteps(t *testing.T) {
 		{"|" + text, "/foo<C-t><CR>", "45:8"},
 		{strings.TrimSuffix(text, "x") + "|x", "?foo<C-g><CR>", "1:12"},
 		{"|" + text, "3/foo<C-t><CR>", "45:8"},
+		// 空のパターンの <C-g> と <C-t> は数えない（nvim 0.12.5 の /<C-g>foo<CR> は最初の一致へ移る）。
+		{"|" + text, "/<C-g><C-g><C-t>foo<CR>", "1:12"},
 	} {
 		t.Run(tc.keys, func(t *testing.T) {
 			s := setup(t, tc.start)
 			rs := feedKeys(s, tc.keys)
 			if err := rs[len(rs)-1].Err; err != nil {
 				t.Fatal(err)
+			}
+			// どれも、打ち始めた位置から検索の向きに見て端を越えない一致なので、折り返しの警告を出さない
+			// （nvim 0.12.5 の /foo<C-t><CR> は最後の一致へ移って W を出さない。PR #306 のレビューの推奨 2）。
+			if m := rs[len(rs)-1].Message; m.Warning {
+				t.Errorf("message = %+v（折り返していない）", m)
 			}
 			if got := s.Cursor().String(); got != tc.want {
 				t.Errorf("cursor = %s, want %s", got, tc.want)

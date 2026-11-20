@@ -95,9 +95,15 @@ func (s *State) IncSearchMatch() (pattern string, m target.Match, ok bool) {
 // 動かした数は、<CR> で決めたときの移り先にも使う（finishSearch）。ジャンプリストは変えない。
 // nvim 0.12.5 と同じく、/ と ? のどちらでも <C-g> がバッファの末尾の方へ動かす（target.FindMatch）。
 // パターンを打ち足しても、動かした数は残る（打ち始めた位置から数え直す）。
+// 打ったパターンが空のときは数えない（nvim 0.12.5 の /<C-g>foo<CR> は最初の一致へ移る。PR #306 のレビューの推奨 3）。
+// 一致が無いときと、パターンが正しくないときは数える。一致があるかは後から届く検索の結果で決まり、再生の中では検索しないので、
+// 数えるかをそれで分けると、打ったときと再生したときで移り先が変わるためである。
 //
 // req: FR-153
 func (s *State) stepSearch(next bool) {
+	if pat, _, _ := target.SplitSearch(string(s.cmdline), s.search.delim); pat == "" {
+		return
+	}
 	if next {
 		s.search.steps++
 	} else {

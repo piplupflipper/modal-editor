@@ -117,6 +117,24 @@ func (r *Renderer) SetScroll(top, left int) {
 	r.topFill = 0
 }
 
+// ScrollPos は、Renderer の表示の位置である。縦と横のスクロールの位置に加えて、見比べている間の最初の行の上の詰め物の行の数
+// （Vim の w_topfill）を含む。中身は描画の内部の値で、呼び出し側は ScrollPos で読んだ値を SetScrollPos で戻すだけに使う。
+// 表示の位置を決める値を足すとき（行を折り返したときの 1 行の途中から見せる位置など）は、ここに足す。
+type ScrollPos struct {
+	top, left, topFill int
+}
+
+// ScrollPos は、今の表示の位置を返す。
+func (r *Renderer) ScrollPos() ScrollPos {
+	return ScrollPos{top: r.top, left: r.left, topFill: r.topFill}
+}
+
+// SetScrollPos は、表示の位置を、前に ScrollPos で読んだ p に戻す。SetScroll と違い、詰め物の行の数も戻す。
+// 次の Render は、この位置からカーソルが画面に収まるようにスクロールする。
+func (r *Renderer) SetScrollPos(p ScrollPos) {
+	r.top, r.left, r.topFill = max(p.top, 0), max(p.left, 0), max(p.topFill, 0)
+}
+
 // EnterBuffer は、表示するバッファを替えたときに、スクロールの位置を、替えた先のバッファ（行数 lineCount）のカーソルの行 line に合わせて決め直す。
 // 縦は、line を表示領域の中ほど（上から (h-1)/2 行目。h は直前の Render の表示領域の行数）に置き、
 // 最初の行が先頭より前にも、バッファの最終行の後ろに "~" の行が出る位置にもならないように詰める。横は左の端に戻す。
@@ -561,7 +579,9 @@ func (d *drawer) attrAt(row, line, off, size int, base Attr) Attr {
 	sp := d.sel[row]
 	covers := sp.start < off+max(size, 1) && sp.end > off
 	// カーソルの文字は反転しない。端末のカーソルが反転で描かれても文字が読めるようにするためで、Vim と同じ。
-	if sp.end > 0 && covers && (line != d.cur.line || off != d.cur.byte) {
+	// コマンドラインモード（ビジュアルモードから / を打っている間）は、端末のカーソルがコマンドラインの行にあるので、カーソルの文字にも重ねる
+	// （nvim 0.12.5 の v/foo も、打っている間は一致の先頭の文字まで選択の色で出す）。
+	if sp.end > 0 && covers && (d.f.Mode == ModeCommandLine || line != d.cur.line || off != d.cur.byte) {
 		a = a.Over(sp.attr)
 	}
 	return a

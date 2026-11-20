@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -150,9 +151,10 @@ func TestIncSearchModes(t *testing.T) {
 	h.settle()
 	h.eventually("d/foo<CR>", func() bool { return h.screenRow(1) == "foo bar" })
 	h.keys("v/x")
-	// 1 行目は、行末のセル（改行）まで選択の色が付く。
+	// 1 行目は、行末のセル（改行）まで選択の色が付く。選択は一致の先頭の文字（2 行目の x）まで選択の色で出し、
+	// 一致には incsearch の色を付けない（nvim 0.12.5 と同じ。PR #306 のレビューの推奨 1）。
 	h.eventually("v/x の選択", func() bool {
-		return h.marks(incAttr) == "|    ^|||" && h.marks(visAttr) == "^^^^^^^^|^^^^|||"
+		return h.marks(incAttr) == "||||" && h.marks(visAttr) == "^^^^^^^^|^^^^^|||"
 	})
 	h.keys("<Esc><Esc>G$?foo")
 	h.eventually("?foo", func() bool { return h.marks(incAttr) == "|      ^^^|||" })
@@ -168,18 +170,58 @@ func TestIncSearchModes(t *testing.T) {
 	h.eventually("2/foo<C-t><C-t><CR>", func() bool { return h.e.cur.state.Cursor().String() == "1:0" })
 }
 
+// 見比べている間に / で打っても、最初の行の上の詰め物の行は残り、<Esc> で取り消した後も打つ前と同じ画面の位置に戻る
+// （nvim 0.12.5 の nvim -d でも、打っている間と <Esc> の後に詰め物の行が残る。PR #306 のレビューの必須 1）。
+//
+// req: FR-153
+func TestIncSearchDiffFill(t *testing.T) {
+	term := newFakeTerm()
+	term.w, term.h = 40, 12
+	h, _, _, _ := startDiffPairTerm(t, term, map[string]string{
+		"a.txt": "alpha\nbeta foo\ngamma\ndelta\n",
+		"b.txt": "new1\nnew2\nnew3\nalpha\nbeta foo\ngamma\ndelta\n",
+	})
+	diffTop := func() string {
+		top, fill := h.e.viewOf(h.e.clients[0]).renderer.DiffTop()
+		return fmt.Sprintf("%d+%d", top, fill)
+	}
+	h.eventually("打つ前の詰め物", func() bool { return diffTop() == "0+3" })
+	h.keys("/fo")
+	h.eventually("打っている間の詰め物", func() bool {
+		_, _, found := h.e.cur.state.IncSearchMatch()
+		return found && diffTop() == "0+3"
+	})
+	h.keys("<Esc>")
+	h.settle()
+	h.eventually("<Esc> の後の詰め物", func() bool { return h.e.inc == nil && diffTop() == "0+3" })
+	h.keys("/delta<CR>")
+	h.settle()
+	h.eventually("<CR> で移った後", func() bool { return h.e.cur.state.Cursor().String() == "3:0" && diffTop() == "0+3" })
+}
+
 // findCall は、偽の findMatch の 1 回の呼び出しである。
 type findCall struct {
 	pattern  string
 	deadline time.Duration
 	release  chan error
+	released bool // fakeFind.mu で守る
 }
 
-// fakeFind は、Editor.findMatch に差し替える偽物である。呼ばれたら calls に積み、release に値が届くまで返さない。
-// 届いた値が nil なら本物の target.FindMatch の結果を（取り消しを無視して）返し、nil でなければその誤りを返す。
+// fakeFind は、Editor.findMatch に差し替える偽物である。呼ばれたら calls に積み、release で返させるまで返さない。
+// 返させた値が nil なら本物の target.FindMatch の結果を（取り消しを無視して）返し、nil でなければその誤りを返す。
+// イベントループがキーの間で描くと、打ったキーの数より検索の回数が増えることがあるので、試験は回数を数えずに、
+// 最後の呼び出しのパターンで待つ（waitLast。PR #306 のレビューの必須 2）。
 type fakeFind struct {
 	mu    sync.Mutex
 	calls []*findCall
+}
+
+// newFakeFind は、h のエディタの findMatch を偽物に替える。試験の終わりに、返していない呼び出しを返させる。
+func newFakeFind(h *harness) *fakeFind {
+	ff := &fakeFind{}
+	h.e.do(func() { h.e.findMatch = ff.find })
+	h.t.Cleanup(func() { ff.releaseAll(context.Canceled) })
+	return ff
 }
 
 func (f *fakeFind) find(ctx context.Context, src target.Lines, from buffer.Position, s target.Search, count, steps int) (target.Match, error) {
@@ -196,19 +238,47 @@ func (f *fakeFind) find(ctx context.Context, src target.Lines, from buffer.Posit
 	return target.FindMatch(context.Background(), src, from, s, count, steps)
 }
 
-func (f *fakeFind) call(i int) *findCall {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if i >= len(f.calls) {
-		return nil
-	}
-	return f.calls[i]
-}
-
+// count は、呼ばれた回数を返す。
 func (f *fakeFind) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.calls)
+}
+
+// waitLast は、from 番目より後の呼び出しがあり、最後の呼び出しのパターンが pattern になるまで待ち、その呼び出しを返す。
+func (f *fakeFind) waitLast(h *harness, from int, pattern string) *findCall {
+	h.t.Helper()
+	var c *findCall
+	h.eventually(pattern+" の検索", func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if n := len(f.calls); n > from && f.calls[n-1].pattern == pattern {
+			c = f.calls[n-1]
+			return true
+		}
+		return false
+	})
+	return c
+}
+
+// release は、呼び出し c を err で返させる。返させた後なら何もしない。
+func (f *fakeFind) release(c *findCall, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !c.released {
+		c.released = true
+		c.release <- err
+	}
+}
+
+// releaseAll は、返していない呼び出しをすべて err で返させる。
+func (f *fakeFind) releaseAll(err error) {
+	f.mu.Lock()
+	calls := slices.Clone(f.calls)
+	f.mu.Unlock()
+	for _, c := range calls {
+		f.release(c, err)
+	}
 }
 
 // 打つたびの検索はイベントループを止めない。検索が終わらない間も、打ったキーはすぐコマンドラインの行に出る。
@@ -217,33 +287,35 @@ func (f *fakeFind) count() int {
 // req: FR-153
 func TestIncSearchAsync(t *testing.T) {
 	h := startInc(t, incText, map[string]option.Value{option.SearchIncrementalTimeoutMs: option.IntValue(50)})
-	ff := &fakeFind{}
-	h.e.do(func() { h.e.findMatch = ff.find })
+	ff := newFakeFind(h)
 	h.keys("/f")
-	h.eventually("1 回目の検索", func() bool { return ff.count() == 1 })
+	ff.waitLast(h, 0, "f")
 	h.keys("ox")
 	h.settle()
-	h.eventually("検索の終わりを待たずに打ったキーを出す", func() bool { return h.screenRow(7) == "/fox" && ff.count() == 2 })
-	if c := ff.call(1); c.pattern != "fox" || c.deadline <= 0 || c.deadline > 50*time.Millisecond {
-		t.Errorf("2 回目の検索 = %q、上限まで %v", c.pattern, c.deadline)
+	h.eventually("検索の終わりを待たずに打ったキーを出す", func() bool { return h.screenRow(7) == "/fox" })
+	c := ff.waitLast(h, 0, "fox")
+	if c.deadline <= 0 || c.deadline > 50*time.Millisecond {
+		t.Errorf("検索の上限まで %v", c.deadline)
 	}
-	ff.call(1).release <- nil
+	ff.release(c, nil)
 	h.eventually("今の問いの結果", func() bool { return h.marks(incAttr) == "||   ^^^||" })
-	ff.call(0).release <- nil
+	// 前の問い（f と、キーの間に描いたなら fo）の結果を後から届ける。
+	ff.releaseAll(nil)
 	time.Sleep(20 * time.Millisecond)
 	h.settle()
 	h.eventually("前の問いの結果は捨てる", func() bool { return h.marks(incAttr) == "||   ^^^||" })
+	n := ff.count()
 	h.keys("<BS>")
-	h.eventually("3 回目の検索", func() bool { return ff.count() == 3 })
-	ff.call(2).release <- context.DeadlineExceeded
+	ff.release(ff.waitLast(h, n, "fo"), context.DeadlineExceeded)
 	h.eventually("時間の上限を超えた回は一致を出さない", func() bool {
 		return h.marks(incAttr) == "||||" && h.screenRow(7) == "/fo" && h.e.cur.state.Cursor().String() == "0:0"
 	})
+	n = ff.count()
 	h.keys("<CR>")
 	h.settle()
 	h.eventually("<CR> は上限を付けずに検索する", func() bool { return h.e.cur.state.Cursor().String() == "2:3" })
-	if n := ff.count(); n != 3 {
-		t.Errorf("<CR> で打つたびの検索をした: %d 回", n)
+	if got := ff.count(); got != n {
+		t.Errorf("<CR> で打つたびの検索をした: %d 回から %d 回", n, got)
 	}
 	h.e.do(func() {
 		if h.e.inc != nil {
@@ -257,17 +329,18 @@ func TestIncSearchAsync(t *testing.T) {
 // req: FR-153
 func TestIncSearchReplay(t *testing.T) {
 	h := startInc(t, "a foo b foo c foo d foo e foo\n", nil)
-	ff := &fakeFind{}
-	h.e.do(func() { h.e.findMatch = ff.find })
+	ff := newFakeFind(h)
 	h.keys("qa/foo")
-	h.eventually("記録の間の検索", func() bool { return ff.count() == 1 })
-	ff.call(0).release <- nil
+	ff.waitLast(h, 0, "foo")
+	ff.releaseAll(nil)
+	n := ff.count()
 	h.keys("<CR>qd/foo")
-	h.eventually("d/foo の検索", func() bool { return ff.count() == 2 })
-	ff.call(1).release <- errors.New("unused")
+	ff.waitLast(h, n, "foo")
+	ff.releaseAll(errors.New("unused"))
 	h.keys("<CR>")
 	h.settle()
 	h.eventually("d/foo<CR>", func() bool { return h.e.cur.buf.Text() == "a foo c foo d foo e foo" })
+	n = ff.count()
 	h.keys(".")
 	h.settle()
 	h.eventually(".", func() bool {
@@ -276,7 +349,7 @@ func TestIncSearchReplay(t *testing.T) {
 	h.keys("@a")
 	h.settle()
 	h.eventually("@a", func() bool { return h.e.cur.state.Cursor().String() == "0:8" })
-	if n := ff.count(); n != 2 {
-		t.Errorf("再生の中で打つたびの検索をした: %d 回", n)
+	if got := ff.count(); got != n {
+		t.Errorf("再生の中で打つたびの検索をした: %d 回から %d 回", n, got)
 	}
 }

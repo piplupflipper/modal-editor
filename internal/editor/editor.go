@@ -451,6 +451,8 @@ type bufferState struct {
 	creator string
 	// sent は、exthost へ知らせたバージョン番号である（FR-16）。
 	sent uint64
+	// incLines は、打つたびの検索（incsearch.go。FR-153）のために最後に写した、このバッファの行である。
+	incLines lineSnapshot
 	// replacedInReplay は、マクロの再生の途中の :e で、この bufferState の buf と state を作り直した（replaceBuffer）ことを表す。
 	// 作り直す前の State が返す結果は捨てたバッファのものなので、handleResult はその変更を exthost へ送らず、
 	// 再生の残りを作り直した State で続ける（PR #173 のレビュー）。handleResult が読んで下ろす。
