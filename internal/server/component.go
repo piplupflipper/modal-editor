@@ -95,6 +95,7 @@ func openPopupRetry(m mux.Mux, po mux.PopupOptions) error {
 // runPopup は、editor.Config.RunPopup である（FR-168。:terminal.popup）。from のペインの上に、端末多重化ソフトの中央のポップアップを開き、
 // その中で argv を作業ディレクトリ dir で起動する。大きさは部品のポップアップと同じ規則（popupOptions）で、opts.Width が幅である。
 // コマンドが 0 でない終了コードで終わったら、ポップアップを閉じずに残す（mux.PopupOptions.KeepOnFailure）。
+// コマンドには from のペインを知らせる環境変数を足し（mux.InPane）、中で起動した vi-imitation が同じ window の server に繋ぐようにする。
 // ポップアップが既に開いていれば（mux.ErrPopupBusy）、部品の client と同じく popupBusyTimeout まで開き直す。
 // 端末多重化ソフトの外なら mux.ErrUnsupported を返す（editor は、client のペインを知らないときは呼ばない）。
 //
@@ -105,7 +106,9 @@ func (s *Server) runPopup(from string, argv []string, dir string, opts editor.Po
 		return mux.ErrUnsupported
 	}
 	po := popupOptions(from, opts)
-	po.Command = mux.Command{Args: argv, Dir: dir}
+	// ポップアップの中で起動した vi-imitation（EDITOR から呼ばれたものを含む）が、from のペインで起動したときと同じく、
+	// 同じ window（タブ）の server に繋ぐように、from のペインを知らせる（mux.InPane。FR-59）。
+	po.Command = mux.InPane(m, from, mux.Command{Args: argv, Dir: dir})
 	po.KeepOnFailure = true
 	return openPopupRetry(m, po)
 }

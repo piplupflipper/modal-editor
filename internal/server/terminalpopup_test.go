@@ -105,7 +105,8 @@ func TestRunPopupTmux(t *testing.T) {
 	if len(popups) != 3 {
 		t.Fatalf("display-popup の回数 = %d, want 3（開けない 2 回と開いた 1 回）", len(popups))
 	}
-	want := []string{"display-popup", "-E", "-c", "/dev/pts/9", "-t", "%5", "-w", "90%", "-h", "80%", "-d", dir, "--"}
+	// TMUX_PANE は、ポップアップの中で起動した vi-imitation が下のペインの window の server に繋ぐためのもの（mux.InPane）。
+	want := []string{"display-popup", "-E", "-c", "/dev/pts/9", "-t", "%5", "-w", "90%", "-h", "80%", "-d", dir, "-e", "TMUX_PANE=%5", "--"}
 	if got := popups[2]; !slices.Equal(got[:len(want)], want) || !strings.HasSuffix(got[len(got)-1], " "+out+` 'git log | cat'`) ||
 		!strings.Contains(got[len(got)-1], "dd bs=1 count=1") {
 		t.Errorf("display-popup の引数 = %q\nwant %q と、コマンドの文字列", got, want)
@@ -172,6 +173,10 @@ func TestRunPopupHerdr(t *testing.T) {
 	params, _ := got[2]["params"].(map[string]any)
 	env, _ := params["env"].(map[string]any)
 	cmd, _ := env[mux.HerdrCommandEnv].(string)
+	// 中で起動した vi-imitation が下のペインのタブの server に繋ぐように、下のペインを別の名前で渡し、中で HERDR_PANE_ID に入れ直す（mux.InPane）。
+	if env["VI_IMITATION_MUX_PANE"] != "wW:p7" || !strings.Contains(cmd, "export HERDR_PANE_ID") {
+		t.Errorf("env = %v, コマンド = %q", env, cmd)
+	}
 	if params["placement"] != "popup" || params["width"] != "90%" || params["height"] != "80%" || params["cwd"] != dir {
 		t.Errorf("params = %v", params)
 	}

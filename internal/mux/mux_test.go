@@ -65,6 +65,60 @@ func TestDetect(t *testing.T) {
 	}
 }
 
+// TestInPane は、InPane が返すコマンドを、ポップアップの中の環境（tmux は TMUX はあるが TMUX_PANE が無い。
+// herdr は HERDR_ENV と HERDR_SOCKET_PATH はあるが HERDR_PANE_ID が無い）で動かすと、中のコマンドから見た環境で、
+// Detect が同じ端末多重化ソフトの実装を、下のペインを自分のペインとして選ぶことを確かめる（FR-168）。
+//
+// req: FR-168
+func TestInPane(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh が無い")
+	}
+	names := []string{"TMUX", "TMUX_PANE", "HERDR_ENV", "HERDR_PANE_ID", "HERDR_SOCKET_PATH", herdrPaneEnv}
+	// show は、中のコマンドとして、names の環境変数を 1 行に 1 つずつ出す。
+	show := []string{"sh", "-c", `for n; do eval "printf '%s\n' \"\${$n}\""; done`, "sh"}
+	show = append(show, names...)
+	for _, tc := range []struct {
+		name  string
+		m     Mux
+		popup []string
+		want  Mux
+	}{
+		{"tmux", &Tmux{Bin: "tmux", Socket: "/tmp/t/default", Pane: "%1"}, []string{"TMUX=/tmp/t/default,10,0"}, &Tmux{Bin: "tmux", Socket: "/tmp/t/default", Pane: "%5"}},
+		{"herdr", &Herdr{Socket: "/run/h.sock", Pane: "wW:p1"}, []string{"HERDR_ENV=1", "HERDR_SOCKET_PATH=/run/h.sock"}, &Herdr{Socket: "/run/h.sock", Pane: "%5"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := InPane(tc.m, "%5", Command{Args: show, Env: map[string]string{"A": "1"}})
+			if c.Env["A"] != "1" {
+				t.Errorf("元の環境変数を落とした: %v", c.Env)
+			}
+			cmd := exec.CommandContext(testCtx(t), c.Args[0], c.Args[1:]...) //nolint:gosec // InPane が包んだコマンドを試す
+			cmd.Env = append([]string{"PATH=/usr/bin:/bin"}, tc.popup...)
+			for k, v := range c.Env {
+				cmd.Env = append(cmd.Env, k+"="+v)
+			}
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen := map[string]string{}
+			for i, v := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
+				seen[names[i]] = v
+			}
+			if seen[herdrPaneEnv] != "" {
+				t.Errorf("%s が中のコマンドに残った", herdrPaneEnv)
+			}
+			if got := Detect(envOf(seen)); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Detect = %#v, want %#v（中の環境 %v）", got, tc.want, seen)
+			}
+		})
+	}
+	c := Command{Args: []string{"true"}}
+	if got := InPane(None{}, "%5", c); !reflect.DeepEqual(got, c) {
+		t.Errorf("InPane(None) = %+v, want そのまま", got)
+	}
+}
+
 func TestNoneIsUnsupported(t *testing.T) {
 	ctx := context.Background()
 	n := Detect(envOf(nil))
