@@ -10,6 +10,8 @@
 //   - textDocument/formatting: "fmtme" の出現ごとに、同じ開始の位置の 2 つの編集（"<" の挿入と "FMTME" への置き換え）を、後ろの出現から順に返す。
 //     -fmt-whole なら、同じ結果の全文で、文書の全体（文書の末尾まで。末尾が改行なら、その後ろの空の行の先頭）を置き換える 1 つの編集を返す
 //   - didChange の後の文書が "CRASH" を含めば、終了コード 3 で終わる
+//   - -publish-on-close なら、didClose を受け取ったときに、閉じる前の文書の診断を送ってから文書を捨て、"published on close" の行を書く
+//     （閉じた文書の診断を後から送る言語サーバーの代役）
 //
 // 受け取ったメッセージと、各時点の文書の全文は、-log のファイルへ JSON の行で書き足す。
 // 起動したときに、自分と親（拡張機能）のプロセス ID を "start" の行で書く。
@@ -42,6 +44,7 @@ var (
 	fmtDelay     = flag.Duration("fmt-delay", 0, "整形の応答を遅らせる時間")
 	initDelay    = flag.Duration("init-delay", 0, "initialize の応答を遅らせる時間")
 	hangShutdown = flag.Bool("hang-on-shutdown", false, "shutdown に応答せず、exit でも終わらない（止まった言語サーバーの代役）")
+	publishClose = flag.Bool("publish-on-close", false, "didClose を受け取ったときに、閉じる前の文書の診断を送る")
 )
 
 type pos struct {
@@ -386,6 +389,10 @@ func notification(_ context.Context, n *rpc.Notification) {
 			TextDocument struct{ URI string } `json:"textDocument"`
 		}
 		_ = json.Unmarshal(n.Params, &p)
+		if *publishClose {
+			publish(p.TextDocument.URI)
+			logEntry("published on close", p.TextDocument.URI)
+		}
 		mu.Lock()
 		delete(docs, p.TextDocument.URI)
 		mu.Unlock()
