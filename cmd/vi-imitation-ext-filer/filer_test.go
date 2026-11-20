@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -401,5 +402,91 @@ func TestOpenAndLargeDirectory(t *testing.T) {
 	h.command("filer.popup")
 	if p := h.pane(); p.Placement != ext.PaneCenter || !p.CloseOnSelect {
 		t.Errorf("filer.popup pane/open = %+v", p)
+	}
+}
+
+// 選んだファイルの editor/open は、その前に開いたディレクトリの読み込み（遅い git の待ち）の後ろで待たない。
+// 本体は、ペインで選んでから 1 秒（internal/editor の paneFocusWindow）を過ぎて届いた editor/open では、端末多重化ソフトの
+// フォーカスを元の client へ戻さない（#292。PR #290 のレビューの推奨 2 の手順を写した）。
+// ディレクトリ（ディレクトリを指すシンボリックリンクを含む）を選んでも editor/open は送らず、続けて選んだファイルは選んだ順に開く。
+//
+// req: FR-105
+func TestChooseDoesNotWaitForLoading(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"tracked.log": "", "z.txt": "", "src/m.go": ""})
+	if err := os.Symlink(filepath.Join(dir, "src"), filepath.Join(dir, "lnk")); err != nil {
+		t.Fatal(err)
+	}
+	// git は、slow のファイルがあれば 3 秒待ってから「どれも無視されていない」で終わる
+	// （大きなリポジトリやネットワークのファイルシステムの git を真似る）。木を開くまでは待たない。
+	slow := filepath.Join(t.TempDir(), "slow")
+	fakeGit(t, fmt.Sprintf("if [ -e '%s' ]; then sleep 3; fi\nexit 1", slow))
+	h := newHost(t, dir, "")
+	h.command("filer.pane")
+	h.pane()
+	if err := os.WriteFile(slow, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	src := filepath.Join(dir, "src")
+	h.notify(ext.MethodViewExpand, ext.ViewExpandParams{View: testView, Item: src, Expanded: true})
+	start := time.Now()
+	for _, item := range []string{src, filepath.Join(dir, "lnk"), filepath.Join(dir, "tracked.log"), filepath.Join(dir, "z.txt")} {
+		h.notify(ext.MethodViewSelect, ext.ViewSelectParams{View: testView, Item: item, Selection: 1})
+	}
+	for i, want := range []string{"tracked.log", "z.txt"} {
+		select {
+		case o := <-h.opens:
+			if o.Path != filepath.Join(dir, want) || !o.Focus {
+				t.Errorf("editor/open %d = %+v, want %s", i, o, want)
+			}
+		case <-time.After(testTimeout):
+			t.Fatalf("no editor/open of %s", want)
+		}
+		if d := time.Since(start); d >= time.Second {
+			t.Errorf("editor/open of %s took %v while git was slow", want, d)
+		}
+	}
+	// 読み込みは、選んだ後も続いて子を送る。
+	h.update("src の子", func(c ext.ViewComponent) bool {
+		s := find(c.Items, src)
+		return s != nil && len(s.Children) == 1
+	})
+	select {
+	case o := <-h.opens:
+		t.Errorf("unexpected editor/open %+v", o)
+	default:
+	}
+}
+
+// H で gitignore されたものも見せている間は、見出しの先頭にその旨を置く。本体は見出しを窓の幅で末尾から切るので、
+// 根のパスが窓の幅より長くても印が見える（#292。PR #290 のレビューの推奨 4）。
+//
+// req: FR-105
+func TestIgnoredMarkInTitle(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "a-rather-long-directory-name-for-the-filer-title-0123456789",
+		"another-rather-long-directory-name-to-exceed-the-pane-width-0123456789")
+	writeTree(t, root, map[string]string{"a.txt": ""})
+	fakeGit(t, "exit 1")
+	h := newHost(t, root, "")
+	h.command("filer.pane")
+	title := h.pane().Component.Title
+	if title == "" || strings.Contains(title, ignoredMark) || !strings.HasSuffix(title, filepath.Base(root)) {
+		t.Fatalf("title = %q", title)
+	}
+
+	h.notify(ext.MethodViewKey, ext.ViewKeyParams{View: testView, ID: keyToggleIgnored, Item: filepath.Join(root, "a.txt")})
+	c := h.update("印のある見出し", func(c ext.ViewComponent) bool { return c.Title != title })
+	// 分割したペイン（150 列の端末の 30% で 45 列）の幅で切っても、印は残る。印は短く、根との間に空白を置く。
+	if c.Title != ignoredMark+" "+title {
+		t.Errorf("title with H = %q, want the mark and a space followed by %q", c.Title, title)
+	}
+	if n := len(ignoredMark); n > 4 {
+		t.Errorf("the mark takes %d columns", n)
+	}
+	h.notify(ext.MethodViewKey, ext.ViewKeyParams{View: testView, ID: keyToggleIgnored, Item: filepath.Join(root, "a.txt")})
+	if c = h.update("印を外した見出し", func(c ext.ViewComponent) bool { return !strings.Contains(c.Title, ignoredMark) }); c.Title != title {
+		t.Errorf("title after the second H = %q, want %q", c.Title, title)
 	}
 }

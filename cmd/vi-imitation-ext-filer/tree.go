@@ -24,9 +24,17 @@ import (
 //
 // # goroutine
 //
-// 開いた後の操作（本体からの知らせ）は、post で列に積み、木ごとの goroutine（run）が 1 つずつ行う。
+// 開いた後の操作（本体からの知らせ）は、post で列（ops）に積み、木ごとの goroutine が 1 つずつ行う。
 // ディレクトリの読み込みと git の待ちを ext/server のループの上で行わないためと、操作の順を保つためである。
-// run が始まる前（開く前）は、コマンドの goroutine だけが触る。
+// 列が始まる前（開く前）は、コマンドの goroutine だけが触る。
+//
+// 選んだファイルを開く操作（choose）だけは、別の列（opens）に積む。ディレクトリの読み込みの後ろで待たせないためである。
+// 本体は、ペインで選んでから paneFocusWindow（internal/editor/component.go。1 秒）を過ぎて届いた editor/open では、
+// 端末多重化ソフトのフォーカスを元の client へ戻さない。前に開いたディレクトリの読み込みや git が遅いと、その後ろで待った choose が
+// この期限を過ぎていた（#292。PR #290 のレビューの推奨 2）。choose は木の状態（dirs など）を読まずに os.Stat で判定するので、
+// ops の操作と並んで動いてよい。opens も列にするのは、続けて選んだファイルを選んだ順に開くためである。
+// opens に積んでよいのは、木の状態を読まず、ops の操作との順を問わないものだけである。作ったファイルを開くなど、ops の操作の
+// 結果を前提にする editor/open は ops に積む（docs/basic-design.md のファイラの goroutine の行）。
 type tree struct {
 	f    *filer
 	root string
@@ -38,18 +46,15 @@ type tree struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	qmu   sync.Mutex
-	queue []func()
-	wake  chan struct{}
+	// ops は、choose を除く操作の列である。opens は、choose の列である。
+	ops, opens *serial
 
-	// 以下は run の goroutine（開く前はコマンドの goroutine）だけが触る。
+	// 以下は ops の goroutine（開く前はコマンドの goroutine）だけが触る。
 	// dirs は、読んだディレクトリの子である（絶対パスから）。読んでいないディレクトリは無い。
 	dirs     map[string][]entry
 	expanded map[string]bool
 	// showIgnored は、gitignore されたものも見せることを表す（H で切り替える）。
 	showIgnored bool
-	// ended は、end の終わりの印を読んだことを表す。run が終わる。
-	ended bool
 }
 
 // newTree は、root を根にした木を作る。根の子はまだ読まない。
@@ -57,49 +62,79 @@ func newTree(f *filer, root string, split bool) *tree {
 	ctx, cancel := context.WithCancel(f.ctx)
 	return &tree{
 		f: f, root: filepath.Clean(root), split: split, ctx: ctx, cancel: cancel,
-		wake: make(chan struct{}, 1), dirs: map[string][]entry{}, expanded: map[string]bool{},
+		ops: newSerial(), opens: newSerial(), dirs: map[string][]entry{}, expanded: map[string]bool{},
 	}
 }
 
-// post は、op を木の goroutine の列に積む。待たない。どこから呼んでもよい。
+// start は、木の列の goroutine を始める。register で 1 度だけ呼ぶ。
+func (t *tree) start() {
+	go t.ops.run()
+	go t.opens.run()
+}
+
+// post は、op を木の操作の列（ops）に積む。待たない。どこから呼んでもよい。
 func (t *tree) post(op func()) {
-	t.qmu.Lock()
-	t.queue = append(t.queue, op)
-	t.qmu.Unlock()
+	t.ops.post(op)
+}
+
+// end は、木を閉じた（view/closed を受けたか、view/close を送った）ときに呼ぶ。ディレクトリの読み込みと git をすぐに止め（ctx）、
+// 列に積んである操作を行ってから列の goroutine を終わらせる。
+// 選んだ（view/select）直後に本体が閉じる（closeOnSelect）と、view/closed が view/select のすぐ後に届くので、
+// 積んである choose を捨てずに行うためである。閉じた後の操作は、木を送り直さない（send）。列を始める前（register の前）は呼ばない。
+func (t *tree) end() {
+	t.cancel()
+	t.ops.stop()
+	t.opens.stop()
+}
+
+// serial は、積んだ操作を 1 つの goroutine（run）で積んだ順に行う列である。
+type serial struct {
+	mu    sync.Mutex
+	queue []func()
+	wake  chan struct{}
+	// done は、stop の終わりの印を読んだことを表す。run の goroutine だけが触る。
+	done bool
+}
+
+func newSerial() *serial {
+	return &serial{wake: make(chan struct{}, 1)}
+}
+
+// post は、op を列に積む。待たない。どこから呼んでもよい。
+func (s *serial) post(op func()) {
+	s.mu.Lock()
+	s.queue = append(s.queue, op)
+	s.mu.Unlock()
 	select {
-	case t.wake <- struct{}{}:
+	case s.wake <- struct{}{}:
 	default:
 	}
 }
 
-// run は、end の後に積んだ終わりの印を読むまで、列に積んだ操作を順に行う。
-func (t *tree) run() {
+// stop は、終わりの印を列に積む。run は、それより前に積んだ操作を行ってから終わる。
+func (s *serial) stop() {
+	s.post(func() { s.done = true })
+}
+
+// run は、stop の終わりの印を読むまで、列に積んだ操作を順に行う。
+func (s *serial) run() {
 	for {
-		<-t.wake
+		<-s.wake
 		for {
-			t.qmu.Lock()
-			if len(t.queue) == 0 {
-				t.qmu.Unlock()
+			s.mu.Lock()
+			if len(s.queue) == 0 {
+				s.mu.Unlock()
 				break
 			}
-			op := t.queue[0]
-			t.queue = t.queue[1:]
-			t.qmu.Unlock()
+			op := s.queue[0]
+			s.queue = s.queue[1:]
+			s.mu.Unlock()
 			op()
-			if t.ended {
+			if s.done {
 				return
 			}
 		}
 	}
-}
-
-// end は、木を閉じた（view/closed を受けたか、view/close を送った）ときに呼ぶ。ディレクトリの読み込みと git をすぐに止め（ctx）、
-// 列に積んである操作を行ってから run を終わらせる。
-// 選んだ（view/select）直後に本体が閉じる（closeOnSelect）と、view/closed が view/select のすぐ後に届くので、
-// 積んである choose を捨てずに行うためである。閉じた後の操作は、木を送り直さない（send）。run を始める前（register の前）は呼ばない。
-func (t *tree) end() {
-	t.cancel()
-	t.post(func() { t.ended = true })
 }
 
 // load は、ディレクトリ dir の子を読み直す。読めなければ、子を空にして理由を知らせる。木を閉じた後は何もしない。
@@ -228,7 +263,15 @@ func cleanLabel(s string) string {
 	}, s)
 }
 
-// title は、木の見出しである。根を、ホームディレクトリの下なら ~/ から書く。gitignore されたものも見せているときはその旨を足す。
+// ignoredMark は、gitignore されたものも見せている間に見出しの先頭に置く印である（切り替えるキーの H。意味は docs/usage.md に書く）。
+// <Space>E のペイン（150 列の端末で 45 列）でも根が見えるよう、3 列にとどめる（PR #311 のレビューの推奨 2）。
+const ignoredMark = "[H]"
+
+// title は、木の見出しである。根を、ホームディレクトリの下なら ~/ から書く。gitignore されたものも見せているときは、
+// その旨の印（ignoredMark）を、空白 1 つで区切って根の前に置く。本体は見出しを窓の幅で末尾から切る（internal/ui の drawText）ので、
+// 根が長くても印が切れないようにするためである（#292。PR #290 のレビューの推奨 4）。
+//
+// req: FR-105
 func (t *tree) title() string {
 	s := t.root
 	if home, err := os.UserHomeDir(); err == nil {
@@ -237,7 +280,7 @@ func (t *tree) title() string {
 		}
 	}
 	if t.showIgnored {
-		s += "（gitignore されたものも表示）"
+		s = ignoredMark + " " + s
 	}
 	return s
 }
@@ -312,10 +355,14 @@ func (t *tree) follow(path string) {
 
 // choose は、利用者が項目 item を選んだ（view/select）ときに、そのファイルを、ファイラを開いた元の client のタブで開く
 // （editor/open の focus。基本設計 1.2）。中央のポップアップを閉じるのと、分割したペインからフォーカスを戻すのは本体が行う。
+// opens の列で呼ぶ（tree の doc の goroutine）。木の状態は読まず、ディレクトリかどうかは os.Stat で見る
+// （readDir と同じく、ディレクトリを指すシンボリックリンクはディレクトリとして扱う）。
+// ディレクトリなら何もしない（開閉は本体が view/expand で知らせる）。os.Stat が失敗したもの（行き先の無いリンク、自分を指すリンク）は
+// ファイルとして editor/open に渡し、開けない理由を本体に出させる（readDir もこれらをファイルとして木に出す）。
 //
 // req: FR-105
 func (t *tree) choose(item string) {
-	if e, ok := t.entryOf(item); !ok || e.dir {
+	if fi, err := os.Stat(item); err == nil && fi.IsDir() {
 		return
 	}
 	if _, err := t.f.srv.OpenEditor(t.f.ctx, ext.EditorOpenParams{Path: item, Focus: true}); err != nil {

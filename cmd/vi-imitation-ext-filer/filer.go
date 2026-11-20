@@ -162,7 +162,7 @@ func (f *filer) register(t *tree, id ext.ViewID) {
 	evs := f.early[id]
 	delete(f.early, id)
 	f.trees[id] = t
-	go t.run()
+	t.start()
 	for _, e := range evs {
 		f.dispatch(t, e)
 	}
@@ -202,7 +202,8 @@ func (f *filer) dispatch(t *tree, e server.ViewEvent) {
 	case server.ViewExpanded:
 		t.post(func() { t.expand(e.Item, e.Expanded) })
 	case server.ViewSelected:
-		t.post(func() { t.choose(e.Item) })
+		// 読み込みの列（post）に積まない（tree の doc の goroutine）。
+		t.opens.post(func() { t.choose(e.Item) })
 	case server.ViewKey:
 		switch e.Key {
 		case keyClose:

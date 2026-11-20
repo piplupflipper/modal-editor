@@ -33,7 +33,9 @@
 // 隠すものは無い。並びはディレクトリが先で、その中はバイトの順である（neo-tree の既定の sort_items と同じ）。
 //
 // ディレクトリの子は、開いたときに読む（ext.ViewItem.HasChildren と view/expand）。ディレクトリの読み込みと git の待ちは、
-// ext/server のメッセージを処理する goroutine の上では行わず、開いた木ごとの goroutine（tree.run）で行う。
+// ext/server のメッセージを処理する goroutine の上では行わず、開いた木ごとの操作の列の goroutine（tree.ops）で行う。
+// 選んだファイルの editor/open は、読み込みの後ろで待たせず、別の列（tree.opens）から送る。本体が端末多重化ソフトのフォーカスを
+// 元の client へ戻す期限（1 秒）を、遅い読み込みや git の待ちで過ぎないためである（#292）。
 // 大きなディレクトリ（node_modules など）を開いても、ping の応答を遅らせないためである（dev-cycle 2.2）。
 // git の子プロセスは、拡張機能が SIGKILL で終わっても残らないように起動する（procattr_linux.go）。
 package main
