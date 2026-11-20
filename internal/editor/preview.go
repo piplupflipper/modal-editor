@@ -109,23 +109,29 @@ func (e *Editor) previewCapable(f *floatState) bool {
 }
 
 // previewShown は、部品 f の窓にプレビューを出すかを返す。ui の描き方と同じ規則（ui.PreviewRule.Layout）で決める。
-// 部品の client が描く部品（端末多重化ソフトのポップアップとペイン）は、その画面の全体が窓である。
-// 編集の client の画面に描く部品は、中央のポップアップだけに出す（カーソルの近くの窓には出さない）。
+//
+//   - 中央のポップアップ: 編集の client の画面の中央に描くときも、端末多重化ソフトのポップアップに出すときも、開いた client の画面の幅の
+//     preview.windowWidthPercent % を窓の幅として決める。端末多重化ソフトのポップアップは、出すときにその百分率の幅で開く（requestPopup）。
+//     出す場所で分けず、同じ設定の項目と同じ規則で決めるためである
+//   - 分割したペイン: そのペインの部品の client の画面の全体が窓である
+//   - カーソルの近くの窓: 出さない
+//
+// 読み込んでいる client が f を開いた client であるときに呼ぶ（e.renderer がその画面の描画の部品である）。
 //
 // req: FR-149
 func (e *Editor) previewShown(f *floatState) bool {
 	if !e.previewCapable(f) {
 		return false
 	}
-	if c := f.remote; c != nil {
-		_, _, ok := e.previewRule().Layout(c.r.Width, true)
+	switch {
+	case f.pane && f.remote != nil:
+		_, _, ok := e.previewRule().Layout(f.remote.r.Width, true)
+		return ok
+	case f.center:
+		_, _, ok := e.previewRule().Layout(e.renderer.Width, false)
 		return ok
 	}
-	if !f.center {
-		return false
-	}
-	_, _, ok := e.previewRule().Layout(e.renderer.Width, false)
-	return ok
+	return false
 }
 
 // cursorPreview は、部品 f のカーソルの項目のプレビューに出すものを返す。無ければ nil である。

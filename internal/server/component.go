@@ -26,7 +26,8 @@ const (
 	ComponentFlagPane  = "-pane"
 )
 
-// popupWidth と popupHeight は、中央のポップアップの大きさ（端末全体に対する百分率）である（仮。herdr の同梱のプラグインの既定と同じ）。
+// popupWidth と popupHeight は、中央のポップアップの大きさ（端末全体に対する百分率）の既定である（仮。herdr の同梱のプラグインの既定と同じ）。
+// プレビュー（FR-149）を出す部品では、本体が幅を editor.PopupOptions.Width で渡す（設定 preview.windowWidthPercent）。
 const popupWidth, popupHeight = 80, 80
 
 // popupBusyTimeout と popupBusyRetry は、ポップアップが既に開いていて開けない（mux.ErrPopupBusy）ときに、開き直すのを待つ上限と間隔である（仮）。
@@ -63,23 +64,38 @@ func (s *Server) componentCommand(flag string, view uint64, dir string) (mux.Mux
 // openPopup は、editor.Config.OpenPopup である（FR-67）。from のペインの上に、端末多重化ソフトの中央のポップアップを開き、
 // その中で部品 view を描くポップアップの部品の client を起動する。
 // ポップアップが既に開いていれば（mux.ErrPopupBusy）、popupBusyTimeout まで開き直す。
+// 幅は opts.Width（プレビューを出す部品。FR-149）で、0 なら popupWidth である（popupOptions）。
 //
-// req: FR-66, FR-67
-func (s *Server) openPopup(from string, view uint64, dir string) error {
+// req: FR-66, FR-67, FR-149
+func (s *Server) openPopup(from string, view uint64, dir string, opts editor.PopupOptions) error {
 	m, cmd, err := s.componentCommand(ComponentFlagPopup, view, dir)
 	if err != nil {
 		return err
 	}
+	po := popupOptions(from, opts)
+	po.Command = cmd
 	deadline := time.Now().Add(popupBusyTimeout)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), splitTimeout)
-		err = m.OpenPopup(ctx, mux.PopupOptions{Target: from, Width: popupWidth, Height: popupHeight, Command: cmd})
+		err = m.OpenPopup(ctx, po)
 		cancel()
 		if !errors.Is(err, mux.ErrPopupBusy) || time.Now().After(deadline) {
 			return herdrHint(err)
 		}
 		time.Sleep(popupBusyRetry)
 	}
+}
+
+// popupOptions は、元のペイン from に開く中央のポップアップの大きさを返す。幅は opts.Width で、0 なら既定の popupWidth である。
+// 高さは popupHeight のままにする（#288 のオーナーの決めは幅だけ）。
+//
+// req: FR-149
+func popupOptions(from string, opts editor.PopupOptions) mux.PopupOptions {
+	w := popupWidth
+	if opts.Width > 0 {
+		w = min(opts.Width, 100)
+	}
+	return mux.PopupOptions{Target: from, Width: w, Height: popupHeight}
 }
 
 // openPane は、editor.Config.OpenPane である（FR-115）。from のペインを分割し、新しいペインで部品 view を描くペインの部品の client を起動する。

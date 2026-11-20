@@ -412,6 +412,84 @@ func TestPreviewFocus(t *testing.T) {
 	})
 }
 
+// 端末多重化ソフトのポップアップに出す中央のポップアップも、編集の client の画面に描く窓と同じ規則と同じ設定の項目で決める。
+// プレビューを出すなら、ポップアップを preview.windowWidthPercent（90）% の幅で開かせ、ポップアップの部品の client の画面（その幅）で
+// 一覧の右にプレビューを描く。出さない（開いた client の画面の 90% が境目を超えない、プレビューの欄が無い）なら、既定の大きさで開かせ、
+// ポップアップの画面が広くてもプレビューを描かない。
+//
+// req: FR-149, FR-67
+func TestPreviewMuxPopupWidth(t *testing.T) {
+	dir := previewDir(t)
+	var calls muxCalls
+	cfg := Config{WorkDir: dir}
+	calls.config(&cfg)
+	h := start(t, cfg)
+	items := []ext.ViewItem{{ID: "a", Label: "a.go", Preview: pvOf(filepath.Join(dir, "a.go"))}}
+	n := ClientID(1)
+	open := func(width int, items []ext.ViewItem) (*floatState, muxCall) {
+		t.Helper()
+		n++
+		term := &exitTerm{fakeTerm: newFakeTerm()}
+		term.w, term.h = width, 24
+		h.peers = append(h.peers, term.fakeTerm)
+		if err := h.e.Attach(term, ClientInfo{ID: n, Pane: fmt.Sprintf("%%%d", n)}); err != nil {
+			t.Fatal(err)
+		}
+		var f *floatState
+		h.e.do(func() {
+			h.e.withView(h.clientOf(term), func() {
+				f = h.e.newComponentFloat(ext.ViewComponent{Kind: ext.ViewList, Items: items}, "")
+				f.center, f.focused = true, true
+				h.e.openFloat(f)
+			})
+		})
+		h.eventually("OpenPopup", func() bool { c, ok := calls.last(false); return ok && c.view == f.id })
+		c, _ := calls.last(false)
+		return f, c
+	}
+	component := func(view uint64, width int) *exitTerm {
+		t.Helper()
+		term := &exitTerm{fakeTerm: newFakeTerm()}
+		term.w, term.h = width, 20
+		h.peers = append(h.peers, term.fakeTerm)
+		if err := h.e.AttachComponent(term, ComponentInfo{View: view}); err != nil {
+			t.Fatal(err)
+		}
+		return term
+	}
+
+	// 200 列の client: 90% の幅で開かせ、180 列のポップアップの画面にプレビューを描く。
+	f, call := open(200, items)
+	if call.popup.Width != 90 {
+		t.Errorf("OpenPopup width = %d, want 90", call.popup.Width)
+	}
+	comp := component(call.view, 180)
+	h.eventually("ポップアップの画面のプレビュー", func() bool {
+		s := comp.screen()
+		return f.preview.bs != nil && strings.Contains(s, "│") && strings.Contains(s, "package main")
+	})
+
+	// プレビューの欄の無い一覧は、既定の大きさで開かせる。
+	_, call = open(200, []ext.ViewItem{{ID: "k", Label: "key"}})
+	if call.popup.Width != 0 {
+		t.Errorf("OpenPopup width without previews = %d, want 0 (the default)", call.popup.Width)
+	}
+
+	// 90 列の client: 90% の 81 列は境目を超えないので、既定の大きさで開かせ、広いポップアップの画面でもプレビューを描かない。
+	g, call := open(90, items)
+	if call.popup.Width != 0 {
+		t.Errorf("OpenPopup width on a 90-column client = %d, want 0", call.popup.Width)
+	}
+	comp = component(call.view, 160)
+	h.eventually("ポップアップの画面の一覧", func() bool { return strings.Contains(comp.screen(), "a.go") })
+	h.settle()
+	h.e.do(func() {
+		if g.preview.loading || g.preview.key != "" || strings.Contains(comp.screen(), "│") {
+			t.Errorf("a preview in the popup of a 90-column client: %+v\n%s", g.preview, comp.screen())
+		}
+	})
+}
+
 // 標準のファインダーとファイラの拡張機能の項目にプレビューが出る。200 列の画面では <Space>ff のファイルの先頭、<Space>fg の一致した行、
 // <Space>e のファイラのファイルとディレクトリを出し、90 列の画面では出さない。分割したペイン（ペインの部品の client の画面が 36 列）の
 // ファイラにも出さない。どれも同じ幅の規則による。

@@ -71,6 +71,13 @@ type PaneOptions struct {
 	Focus bool
 }
 
+// PopupOptions は、Config.OpenPopup に渡す、端末多重化ソフトのポップアップの開き方である。
+type PopupOptions struct {
+	// Width は、ポップアップの幅の、端末の幅に対する百分率である。0 なら server の既定（80%）である。
+	// プレビュー（FR-149）を出す部品では、設定 preview.windowWidthPercent の値にする（requestPopup）。
+	Width int
+}
+
 // component は、部品を描く部品の client の端末と、その画面を描く描画の部品である。
 type component struct {
 	// f は、この client が描く部品である。イベントループだけが読む。
@@ -346,17 +353,23 @@ func (e *Editor) focusAfterPane(extID string, move bool) {
 
 // requestPopup は、読み込んでいる client に開いた中央のポップアップ f を、端末多重化ソフトのポップアップに出すよう頼む（FR-67）。
 // 別の goroutine で Config.OpenPopup を呼ぶ。開けなければ、誤りをその client のメッセージの行に出す（ポップアップは画面の中央に描いたまま）。
+// プレビューを出す部品（previewShown）なら、ポップアップの幅を設定 preview.windowWidthPercent の百分率にする。
+// 編集の client の画面の中央に描く窓と同じ規則と同じ設定の項目で、窓の幅が決まる（FR-149）。
 //
-// req: FR-67
+// req: FR-67, FR-149
 func (e *Editor) requestPopup(f *floatState) {
 	pane := e.view.info.Pane
 	if e.cfg.OpenPopup == nil || pane == "" {
 		return
 	}
+	var opts PopupOptions
+	if e.previewShown(f) {
+		opts.Width = e.previewRule().WindowWidthPercent
+	}
 	open, id, dir, c := e.cfg.OpenPopup, f.id, e.workDir(), e.view
 	go func() {
 		defer e.recoverPanic()
-		err := open(pane, id, dir)
+		err := open(pane, id, dir, opts)
 		if err == nil {
 			return
 		}

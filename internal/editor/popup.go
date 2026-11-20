@@ -1357,7 +1357,9 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 		fl.List = &ui.Frame{Text: f.list.buf, Cursor: f.list.state.Cursor(), Decorations: f.list.decoView}
 		fl.ListCount = len(f.rows)
 	}
-	if e.previewCapable(f) {
+	if e.previewShown(f) {
+		// 出すかは previewShown で決め、ui は決めた窓の中を幅の規則で分ける。端末多重化ソフトのポップアップ（Fill）は、
+		// 出すときに preview.windowWidthPercent % の幅で開いたので、その全体の幅も境目を超える。
 		fl.Preview, fl.PreviewRule = e.uiPreview(f), e.previewRule()
 	}
 	return fl
