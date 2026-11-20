@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"unicode/utf8"
 
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
@@ -265,6 +266,64 @@ func FindMatch(ctx context.Context, src Lines, from buffer.Position, s Search, c
 		m.Wrapped = false
 	}
 	return m, nil
+}
+
+// Matches は、バッファの先頭から並べた一致の先頭の位置の一覧である（FindMatches。検索の一致の件数。FR-167）。
+type Matches struct {
+	// starts は、一致の先頭を、カーソルと比べる位置（行末の位置での一致は 1 つ前。matchCol）にしたものを、
+	// バッファの先頭から limit+1 件まで並べたものである。limit+1 件目があれば、件数は limit を超える。
+	starts []buffer.Position
+	limit  int
+}
+
+// FindMatches は、src の全体から pattern の一致を、バッファの先頭から limit+1 件まで集める。limit が 1 未満なら 1 にする。
+//
+// 一致の並べ方は、n と N の検索（search の doc）と検索の一致の色付け（FR-137。internal/ui の drawer.searchSpans）と同じく、
+// 行ごとに、行の先頭から重ならないように並べた一致（regexp の FindAllStringIndex）である。行をまたぐ一致は無い。
+// このため、件数は n で順に移れる一致の数と同じになる。
+// limit+1 件を集めたら、残りの行は読まない（Vim の searchcount() の maxcount と同じ）。
+//
+// ctx が終わったら、集めるのをやめて ctx.Err() を返す。ctx は FindMatch と同じく、読んだ量が checkBytes に達するたびに調べる。
+// パターンが空なら ErrNoPattern、正しくなければ *PatternError を返す。一致が無いときは、誤りでなく空の一覧を返す。
+// src を読むだけで変えないので、src が LineSnapshot ならイベントループの外の goroutine で呼んでよい。
+//
+// req: FR-167
+func FindMatches(ctx context.Context, src Lines, pattern string, limit int) (Matches, error) {
+	if pattern == "" {
+		return Matches{}, ErrNoPattern
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return Matches{}, &PatternError{Pattern: pattern, Err: err}
+	}
+	limit = max(limit, 1)
+	sc := scanner{ctx: ctx, src: src, re: re}
+	out := Matches{limit: limit}
+	for l := range src.LineCount() {
+		line := src.Line(l)
+		for _, m := range re.FindAllStringIndex(line, limit+1-len(out.starts)) {
+			out.starts = append(out.starts, buffer.Position{Line: l, Byte: matchCol(line, m[0])})
+		}
+		if len(out.starts) > limit {
+			break
+		}
+		if err := sc.advance(len(line)); err != nil {
+			return Matches{}, err
+		}
+	}
+	return out, nil
+}
+
+// Count は、at の位置が何件目の一致かを cur に、一致の件数を total に返す。
+// cur は、先頭が at と同じかそれより前にある一致の数である（Vim の searchcount() の current と同じ。一致の途中にいれば、その一致の番号）。
+// at より前に一致が無ければ 0 である。
+// 件数が上限（FindMatches の limit）を超えたら over を true にし、total は上限に 1 を足した数にする。
+// cur も同じく、上限を超えた先にいれば上限に 1 を足した数になる。
+//
+// req: FR-167
+func (m Matches) Count(at buffer.Position) (cur, total int, over bool) {
+	cur = sort.Search(len(m.starts), func(i int) bool { return at.Less(m.starts[i]) })
+	return cur, len(m.starts), len(m.starts) > m.limit
 }
 
 // abs は、n の絶対値を返す。

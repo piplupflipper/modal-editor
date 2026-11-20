@@ -998,6 +998,31 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool
 		end := r.drawMessageLines(g, lines, theme.attr(style), HitEnterPrompt, theme.attr(StyleMessageInfo))
 		return Cursor{Row: row, Col: min(end, max(r.Width-1, 0)), Shape: CursorBlock, Visible: r.Width > 0}, true
 	}
-	r.drawText(g, row, 0, r.Width, lines[0], theme.attr(style))
+	if f.Message.Right == "" {
+		r.drawText(g, row, 0, r.Width, lines[0], theme.attr(style))
+		return Cursor{}, false
+	}
+	r.drawMessageRight(g, row, lines[0], f.Message.Right, theme.attr(style))
 	return Cursor{}, false
+}
+
+// messageRightMargin は、メッセージの行の右に寄せる文字列（Message.Right）の右に空ける列の数である。
+// Neovim 0.12.5 の 'showcmd' がオフのとき（本体には showcmd の欄が無い）の検索の件数と同じく、右の端の 2 列を空ける
+// （2026-11-21 に nvim --clean -c 'set noshowcmd' を 50 列の tmux で動かし、"[2/4]" が 44 列目から 48 列目に出ることを確かめた）。
+const messageRightMargin = 2
+
+// drawMessageRight は、メッセージの行に、左の text と、右に寄せた right を描く（検索のパターンと一致の件数。FR-167）。
+// right は、右の端の messageRightMargin 列を空けた位置で終わるように置く。text は right の手前の 1 列を空けて収まるところまで描き、
+// 収まらない後ろの側は描かない（right を隠さない）。right も収まらないほど狭ければ、right を行の先頭から描ける分だけ描く。
+//
+// req: FR-167
+func (r *Renderer) drawMessageRight(g *Grid, row int, text, right string, a Attr) {
+	tabStop := tabStopOr(r.TabStop)
+	start := r.Width - messageRightMargin - StringWidth(right, tabStop)
+	if start < 0 {
+		r.drawText(g, row, 0, r.Width, right, a)
+		return
+	}
+	r.drawText(g, row, 0, max(start-1, 0), text, a)
+	r.drawText(g, row, start, r.Width, right, a)
 }

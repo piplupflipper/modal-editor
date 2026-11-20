@@ -1,12 +1,17 @@
 package command
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"time"
 
+	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command/ex"
 	"github.com/piplupflipper/vi-imitation/internal/command/target"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/option"
 )
 
 // Message は、操作が利用者に知らせる 1 行の通知である。
@@ -15,6 +20,87 @@ type Message struct {
 	Text string
 	// Warning は、警告として出すことを表す（検索がバッファの端で折り返したとき）。
 	Warning bool
+	// Count は、Text と同じ行の右に寄せて出す、検索の一致の件数（"[2/5]"、折り返したら "W [1/5]"）である（FR-167）。
+	// 空なら出さない。設定の search.showCount が偽なら、常に空である。
+	Count string
+}
+
+// 検索の一致の件数（FR-167）の上限。Neovim 0.12.5 の既定に合わせた。
+const (
+	// searchCountLimit は、数える一致の件数の上限である。超えたら ">999" と出す（Neovim 0.12.5 の 'maxsearchcount' の既定。
+	// Vim 9.1 の既定は 99。2026-11-21 に :set maxsearchcount? で確かめた）。
+	searchCountLimit = 999
+)
+
+// searchCountTimeout は、一致を数える時間の上限である。超えたら件数の代わりに "[?/??]" と出す。
+// Neovim 0.12.5 も時間の上限を超えると "[?/??]" と出す。上限の値は文書に無いので、2026-11-21 に nvim --clean で、
+// 一致の少ない行を増やしたファイルで /foo を打ち、searchcount({'timeout': 0}) で測った数える時間が 36 ms のファイルでは件数が出て、
+// 45 ms のファイルでは "[?/??]" になったことから、40 ms とした。テストが差し替える。
+var searchCountTimeout = 40 * time.Millisecond
+
+// matchCache は、検索の一致の件数のために集めた一致の一覧（target.Matches）と、集めたときのバッファ、バージョン番号、パターンである。
+// バッファが変わらず、同じパターンで n を続けて押したときに、集め直さずに件数を出すために持つ。
+type matchCache struct {
+	buf     *buffer.Buffer
+	version uint64
+	pattern string
+	matches target.Matches
+}
+
+// searchCount は、設定の search.showCount が真なら、パターン pat の一致のうち at が何件目かと件数を、メッセージの行の右に出す形
+// （"[2/5]"。wrapped なら "W [1/5]"）で返す（FR-167）。偽か、設定を読めないなら空を返す。
+//
+// 形は Neovim 0.12.5 の既定（'shortmess' に S が無い）の検索の件数に合わせる（2026-11-21 に nvim --clean を tmux で動かして確かめた）。
+//
+//   - 件数が上限（searchCountLimit）を超えたら "[2/>999]"、at も上限を超えた先なら "[>999/>999]"
+//   - 数える時間の上限（searchCountTimeout）を超えたら "[?/??]"
+//   - バッファの端で折り返したら、前に "W " を付ける（Neovim は件数を出すとき、折り返しの警告の文の代わりに W を付ける）
+//
+// 一致は target.FindMatches で集め、バッファとバージョン番号とパターンが同じ間は集め直さない（matchCache）。
+// 時間の上限を超えたときは覚えないので、次の検索で数え直す。
+//
+// req: FR-167
+func (s *State) searchCount(pat string, at buffer.Position, wrapped bool) string {
+	if s.Ex.Options == nil {
+		return ""
+	}
+	d, ok := option.Lookup(option.SearchShowCount)
+	if !ok || !s.Ex.Options.Get(d).Bool() {
+		return ""
+	}
+	c := s.matchCache
+	if c == nil || c.buf != s.buf || c.version != s.buf.Version() || c.pattern != pat {
+		ctx, cancel := context.WithTimeout(context.Background(), searchCountTimeout)
+		ms, err := target.FindMatches(ctx, s.buf, pat, searchCountLimit)
+		cancel()
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return wrapMark(wrapped) + "[?/??]"
+		case err != nil:
+			return ""
+		}
+		c = &matchCache{buf: s.buf, version: s.buf.Version(), pattern: pat, matches: ms}
+		s.matchCache = c
+	}
+	cur, total, over := c.matches.Count(at)
+	var count string
+	switch {
+	case over && cur > searchCountLimit:
+		count = fmt.Sprintf("[>%d/>%d]", searchCountLimit, searchCountLimit)
+	case over:
+		count = fmt.Sprintf("[%d/>%d]", cur, searchCountLimit)
+	default:
+		count = fmt.Sprintf("[%d/%d]", cur, total)
+	}
+	return wrapMark(wrapped) + count
+}
+
+// wrapMark は、検索がバッファの端で折り返したなら、件数の前に付ける "W " を返す（Vim の shm-s の説明の W）。
+func wrapMark(wrapped bool) string {
+	if wrapped {
+		return "W "
+	}
+	return ""
 }
 
 // pendingSearch は、/ か ? でパターンを入力している間の、パターンを待っている編集コマンドの値である。
@@ -76,8 +162,11 @@ func (s *State) HighlightPattern(rev uint64) string {
 // カーソルは動かさず、ジャンプリストにも記録しない。次の一致へは n で移る。回数は使わない。
 // 移らないので、モーションでなく対象を取らない操作にした（オペレーターの後には使えない）。ビジュアルモードでは、選択を変えない。
 // 記録したパターンは、/ で見つけたときと同じく通知に出す（* は "/"、# は "?" を前に付ける）。
+// 設定の search.showCount が真なら、カーソルが何件目の一致にいるかと件数も出す（FR-167）。カーソルは単語の上にあるので、
+// オーナーの nvim の * の割り当て（*N。FR-139）で単語の先頭へ戻ったときと同じ番号になる。カーソルが単語の手前の空白にいれば、
+// その単語の一致はまだ数えないので、Vim の searchcount() と同じく、前の一致の番号（前に無ければ 0）になる。
 //
-// req: FR-139
+// req: FR-139, FR-167
 func actSearchWord(backward bool) actionFunc {
 	return func(s *State, _ editcmd.Command) error {
 		pat, err := target.WordPattern(s.buf, s.cursor)
@@ -89,7 +178,7 @@ func actSearchWord(backward bool) actionFunc {
 		if backward {
 			delim = "?"
 		}
-		s.res.Message = Message{Text: delim + pat}
+		s.res.Message = Message{Text: delim + pat, Count: s.searchCount(pat, s.cursor, false)}
 		return nil
 	}
 }
@@ -182,11 +271,14 @@ func vimStyle(pat string) bool {
 //     パターンは Ex と共有するので、/foo の後の :s//x/ は foo を置き換える
 //   - n と N は、パターンを検索したら（見つからなかった場合も含めて）直前の検索をそのまま記録し直し、消した一致の色を戻す（FR-138）
 //   - 見つけたら、Vim と同じく検索したパターンを通知に出す（/foo、n の後も /foo）。バッファの端で折り返したら、代わりに警告を出す
-//   - 誤りは、利用者に出す Vim のエラー番号の付いた誤り（*ex.Error）にする
+//   - 設定の search.showCount が真なら、見つけた一致が何件目かと件数を、パターンと同じ行の右に出す（FR-167）。
+//     このときは、折り返しの警告の文を出さず、件数の前に W を付けて、パターンを出す（Neovim 0.12.5 と同じ）。
+//     件数は、オペレーターがバッファを変える前に、移り先の一致の位置で数える（d/foo でも、移り先の一致の番号を出す）
+//   - 誤りは、利用者に出す Vim のエラー番号の付いた誤り（*ex.Error）にする。見つからなかったとき（E486）は件数を出さない
 //
 // パターンが正しくない（E383）か無い（E35）ときは、記録せず、消した一致の色も戻さない。
 //
-// req: FR-03, FR-138
+// req: FR-03, FR-138, FR-167
 func (s *State) searchResult(t editcmd.Target, res target.Result, err error) error {
 	switch {
 	case res.Search.Pattern == "":
@@ -211,15 +303,21 @@ func (s *State) searchResult(t editcmd.Target, res target.Result, err error) err
 	default:
 		return err
 	}
+	delim := "/"
+	if res.Search.Backward {
+		delim = "?"
+	}
+	if count := s.searchCount(res.Search.Pattern, res.Pos, res.Wrapped); count != "" {
+		s.res.Message = Message{Text: delim + res.Search.Pattern, Count: count}
+		return nil
+	}
 	switch {
 	case res.Wrapped && res.Search.Backward:
 		s.res.Message = Message{Text: "先頭まで検索したので末尾から続けました", Warning: true}
 	case res.Wrapped:
 		s.res.Message = Message{Text: "末尾まで検索したので先頭から続けました", Warning: true}
-	case res.Search.Backward:
-		s.res.Message = Message{Text: "?" + res.Search.Pattern}
 	default:
-		s.res.Message = Message{Text: "/" + res.Search.Pattern}
+		s.res.Message = Message{Text: delim + res.Search.Pattern}
 	}
 	return nil
 }

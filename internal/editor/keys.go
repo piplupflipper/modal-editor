@@ -388,11 +388,12 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 	}
 	if res.Message.Text != "" {
 		// 検索したパターンと、検索の折り返しの警告。後に続く動作と失敗の知らせで上書きされる。
+		// 検索の一致の件数（FR-167）は、パターンと同じ行の右に寄せて出す。
 		level := ui.MessageInfo
 		if res.Message.Warning {
 			level = ui.MessageWarning
 		}
-		e.message = ui.Message{Text: res.Message.Text, Level: level}
+		e.message = ui.Message{Text: res.Message.Text, Level: level, Right: res.Message.Count}
 	}
 	switched := errors.Is(res.Err, command.ErrBufferSwitched)
 	// 再生の途中の外部のコマンドで再生を止めた。誤りではないので知らせない（残りは shellFinished が続ける）。

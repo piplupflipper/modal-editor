@@ -326,6 +326,26 @@ func TestGoldenStatusAndCommandLine(t *testing.T) {
 	}))
 }
 
+// メッセージの行の右に寄せる文字列（Message.Right。検索の一致の件数）は、右の端の 2 列を空けた位置で終わるように置く
+// （Neovim 0.12.5 の 'showcmd' がオフのときの検索の件数と同じ位置）。左の文字列は、右の文字列の手前の 1 列を空けて収まるところまで描く。
+// 右の文字列も収まらないほど狭ければ、右の文字列を行の先頭から描く。左の文字列が改行を含むときは、右の文字列を出さない。
+//
+// req: FR-167
+func TestGoldenMessageRight(t *testing.T) {
+	b := buffer.New("hello\n")
+	wide := renderSteps(newRenderer(24, 4), []step{
+		{"件数", Frame{Text: b, Cursor: pos(0, 0), Message: Message{Text: "/foo", Right: "[2/4]"}}},
+		{"折り返しの W", Frame{Text: b, Cursor: pos(0, 0), Message: Message{Text: "/foo", Right: "W [1/>999]"}}},
+		{"長いパターンは後ろを描かない", Frame{Text: b, Cursor: pos(0, 0), Message: Message{Text: "/abcdefghijklmnopqrstuvwxyz", Right: "[2/4]"}}},
+		{"全角の文字のパターン", Frame{Text: b, Cursor: pos(0, 0), Message: Message{Text: "/あいうえおかきく", Right: "[2/4]"}}},
+		{"改行を含むメッセージには出さない", Frame{Text: b, Cursor: pos(0, 0), Message: Message{Text: "a\nb", Right: "[2/4]"}}},
+	})
+	narrow := renderSteps(newRenderer(6, 3), []step{
+		{"右の文字列も収まらない幅", Frame{Text: b, Cursor: pos(0, 0), Message: Message{Text: "/foo", Right: "[2/4]"}}},
+	})
+	golden(t, "message-right", wide+"\n"+narrow)
+}
+
 // TestScrollVertical は、縦のスクロールの位置を、端末の Vim 9.1 で測った値と比べる。
 // 測り方: 100 行のファイルを `vim -Nu NONE` で開き、表示領域の高さ h の端末で、gg の後に nG（または G の後に nG）を打ち、line('w0') を読んだ。
 func TestScrollVertical(t *testing.T) {
