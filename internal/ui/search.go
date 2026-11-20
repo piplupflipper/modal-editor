@@ -15,9 +15,10 @@ const searchBatch = 64
 // 呼ぶのは表示領域に描く行（drawLine）だけで、バッファの全体は走査しない。
 // 行の中でも、一致を集めるのは表示の範囲の右の端（to）までにする。パターンは行の全体（s）に当てるので、
 // ^、$、\b のような前後の文字に依る書き方の一致は、右の端で行を切ったときと違って変わらない。
-// FindAllStringIndex は件数の上限を渡すと上限で探すのをやめるので、上限を倍にしながら、最後の一致の先頭が to に届くまで探し直す。
-// 探し直しを含めて、走査するのは右の端の後の一致を 1 回分探すまでで、時間は行の先頭から右の端までの長さと、そこまでの一致の数に比例する
-// （drawLine が行の先頭から文字を数え直すのと同じ量。PR #276 のレビューの推奨 1）。
+// FindAllStringIndex は件数の上限を渡すと上限で探すのをやめるので、最後の一致の先頭が to に届くまで、上限を広げて探し直す
+// （広げ方は、見つけた一致の密度から右の端までの件数を見積もり、少なくとも倍にする）。
+// 時間は、行の先頭から右の端までの長さと、そこまでの一致の数に比例する（drawLine が行の先頭から文字を数え直すのと同じく、
+// 右へ横にスクロールした行では左の端より左の一致も数える。PR #276 のレビューの推奨 1）。
 // 一致の無い長い行は、一致を探して行末まで走査する。左の端（from）より左で終わる一致は、範囲にしない。
 //
 // req: FR-137
@@ -31,11 +32,17 @@ func (d *drawer) searchSpans(dst []span, s string, from, to int) []span {
 		return dst
 	}
 	var ms [][]int
-	for n := searchBatch; ; n *= 2 {
+	for n := searchBatch; ; {
 		ms = re.FindAllStringIndex(s, n)
-		if len(ms) < n || ms[len(ms)-1][0] >= to {
+		last := 0
+		if len(ms) > 0 {
+			last = ms[len(ms)-1][0]
+		}
+		if len(ms) < n || last >= to {
 			break
 		}
+		// 見つけた一致の密度から右の端までの件数を見積もり、少し多めに探し直す（少なくとも倍にする）。
+		n = max(2*n, int(float64(n)*float64(to)/float64(last+1)*1.1)+searchBatch)
 	}
 	for _, m := range ms {
 		start, end := m[0], m[1]
