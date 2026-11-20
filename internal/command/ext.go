@@ -117,7 +117,7 @@ func (s *State) extCommand(a ex.Action) error {
 			return err
 		}
 	}
-	s.setCursorNormal(s.cursor)
+	s.setCursorAfterEx(s.cursor)
 	return nil
 }
 

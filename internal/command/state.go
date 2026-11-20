@@ -490,6 +490,12 @@ func (s *State) execute(cmd editcmd.Command) error {
 	if err := s.checkNames(cmd); err != nil {
 		return err
 	}
+	if cmd.Kind == editcmd.KindAction && isKeymapCommand(cmd.Action) {
+		// 設定の keymap に書いた Ex コマンド（FR-154）。編集を禁止したバッファの検査とドットリピートの記録は、
+		// コマンドラインで打ったときと同じく Ex コマンドの側に任せる。誤りは keymapCommand が Result.Err に入れる。
+		s.keymapCommand(cmd.Action.ID)
+		return nil
+	}
 	if err := s.checkReadOnly(cmd); err != nil {
 		return err
 	}

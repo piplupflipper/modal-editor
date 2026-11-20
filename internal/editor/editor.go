@@ -106,6 +106,12 @@ type Config struct {
 	// Keymap と違ってキーの列に展開せず、操作の表（input.Keymap）へ登録し、同じモードの同じキーの列の本体の既定の登録に勝つ
 	// （applyKeymapActions）。使えない項目は捨て、起動後に設定の誤りとして知らせる。
 	KeymapActions map[string]map[string]string
+	// KeymapCommands は、利用者のキーマップのうち、右辺に Ex コマンドを書いた割り当て（{ "command": "<正規の名前>", "args": "<引数>" }。FR-154）である。
+	// モードの名前（"normal"、"visual"、"insert"）から、キーの列の表記から Ex コマンドへの対応である。
+	// KeymapActions と同じく操作の表へ登録し、キーで呼ばれると、コマンドラインを出さずに、コマンドラインで打ったときと同じ口で実行する。
+	// 書ける名前は、本体の Ex コマンドの正規の名前と、Extensions が宣言した拡張機能のコマンドの ID である（別名は CommandAliases で引く）。
+	// 使えない項目は捨て、起動後に設定の誤りとして知らせる（applyKeymapActions）。
+	KeymapCommands map[string]map[string]config.KeymapCommand
 	// Leader は、キーの表記の <Leader> に当たるキーの列の表記である（基本設計 7.2 の leader。FR-97）。
 	// 空なら editcmd.DefaultLeader（<Space>）を使う。Keymap と、拡張機能の宣言の keys の <Leader> をこの値に置き換える。
 	Leader string
@@ -561,7 +567,11 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	var remap *remapper
 	remap, w2 = newRemapper(cfg.Keymap, leader)
 	warnings = append(warnings, w2...)
-	warnings = append(warnings, applyKeymapActions(e.keymap, cfg.KeymapActions, leader, remap)...)
+	user := userKeymap{
+		actions: cfg.KeymapActions, commands: cfg.KeymapCommands,
+		aliases: cfg.CommandAliases, extCommands: keymapExtCommands(cfg.Extensions),
+	}
+	warnings = append(warnings, applyKeymapActions(e.keymap, user, leader, remap)...)
 	addKeyListBindings(e.keymap, remap)
 	// 最初の編集の client は term である（server では、最初に繋いだ client。後の client は Attach で足す）。
 	first := e.newClientView(term, remap)

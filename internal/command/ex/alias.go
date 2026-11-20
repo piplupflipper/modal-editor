@@ -205,12 +205,6 @@ func (x *aliasCtx) call(line string, pos int) error {
 	return err
 }
 
-// get は、:option.get に当たる読み出しで、正規の名前 name の項目の今の値を返す（反転の変換に使う）。
-func (x *aliasCtx) get(name string, pos int) (option.Value, error) {
-	v, _, err := x.c.getOption(name, pos, pos)
-	return v, err
-}
-
 // vimOptionNames は、:set で受け付ける Vim の名前から、設定の正規の名前への対応である（FR-133）。
 // 短い名前（Vim の ft など）は受け付けない。
 var vimOptionNames = map[string]string{
@@ -233,14 +227,14 @@ func vimOption(name string) (option.Def, bool) {
 //
 //	name        真偽の項目なら option.set <正規の名前> true。それ以外の項目なら option.get <正規の名前>（Vim と同じく値を出す）
 //	noname      真偽の項目なら option.set <正規の名前> false。それ以外の項目なら E474
-//	name!       真偽の項目なら、今の値を読み、反対の値で option.set。それ以外の項目なら E488
+//	name!       option.toggle <正規の名前>。真偽でない項目は、option.toggle が E488 にする
 //	name=value  option.set <正規の名前> value
 //	name?       option.get <正規の名前>
 //
 // 知らない名前（inv の接頭辞、+=、-=、^=、&、短い名前を含む）は E518 にし、引数が無ければ E471 にする。
 // 途中の引数が誤りなら、そこで止め、前の引数の設定は残す（Vim 9.1 の :set ts=4 foo ts=8 と同じ）。
 //
-// req: FR-133
+// req: FR-133, FR-155
 func expandSet(x *aliasCtx, inv *invocation) error {
 	s := &scanner{src: inv.arg, base: inv.argPos}
 	s.skipBlanks()
@@ -252,7 +246,7 @@ func expandSet(x *aliasCtx, inv *invocation) error {
 		for !s.eof() && s.peek() != ' ' && s.peek() != '\t' {
 			s.next()
 		}
-		line, err := setCall(x, inv.arg[start:s.i], pos)
+		line, err := setCall(inv.arg[start:s.i], pos)
 		if err != nil {
 			return err
 		}
@@ -265,7 +259,7 @@ func expandSet(x *aliasCtx, inv *invocation) error {
 }
 
 // setCall は、:set の引数 1 つ arg を、正規のコマンドの呼び出しの文字列に変換する。pos は arg の位置である。
-func setCall(x *aliasCtx, arg string, pos int) (string, error) {
+func setCall(arg string, pos int) (string, error) {
 	unknown := func() (string, error) {
 		return "", errAt(pos, codeUnknownOption, "知らない設定です: %s", arg)
 	}
@@ -278,18 +272,12 @@ func setCall(x *aliasCtx, arg string, pos int) (string, error) {
 		}
 		return optionGetName + " " + d.Name, nil
 	case strings.HasSuffix(arg, "!"):
+		// 反転は正規のコマンド :option.toggle に任せる（FR-155）。真偽でない項目の E488 も :option.toggle が出す。
 		d, ok := vimOption(strings.TrimSuffix(arg, "!"))
 		if !ok {
 			return unknown()
 		}
-		if d.Type != option.Bool {
-			return "", errAt(pos, codeTrailing, "真偽の設定ではないので反転できません: %s", arg)
-		}
-		v, err := x.get(d.Name, pos)
-		if err != nil {
-			return "", err
-		}
-		return set(d, option.BoolValue(!v.Bool()).String()), nil
+		return optionToggleName + " " + d.Name, nil
 	case strings.Contains(arg, "="):
 		name, value, _ := strings.Cut(arg, "=")
 		d, ok := vimOption(name)

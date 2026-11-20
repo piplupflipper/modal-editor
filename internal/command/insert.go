@@ -101,6 +101,11 @@ func (s *State) insertKey(k editcmd.Key) {
 		}
 	}
 	ref, ok := s.parser.InsertAction(k)
+	if ok && isKeymapCommand(ref) {
+		// 設定の keymap に書いた Ex コマンド（FR-154）。インサートモードのまま、入力を区切らずに実行する。
+		s.keymapCommand(ref.ID)
+		return
+	}
 	if !ok || !ref.Builtin() {
 		// 拡張機能の操作は、インサートモードには登録されない（internal/editor の buildKeymap は既定のモードで登録する）。
 		return

@@ -22,8 +22,9 @@ type Options interface {
 
 // 設定の Ex コマンドの名前。点を含む正規の名前で、省略できない（拡張機能のコマンドの ID と同じ）。
 const (
-	optionSetName = "option.set"
-	optionGetName = "option.get"
+	optionSetName    = "option.set"
+	optionGetName    = "option.get"
+	optionToggleName = "option.toggle"
 )
 
 // optionLookup は、設定の表を引く関数である。テストが、表に無い型の項目を足すために差し替える。
@@ -123,6 +124,30 @@ func runOptionGet(c *execCtx, inv *invocation) error {
 	c.notice = Notice{Text: text}
 	c.optionText = text
 	return nil
+}
+
+// runOptionToggle は :option.toggle <名前> を実行する（FR-155）。真偽の項目の今の値を読み、反対の値を設定する。
+// 読み書きは :option.get と :option.set と同じ口（State.Options）を通し、項目の名前では分けない。
+// 知らない名前は E518、真偽でない項目と、名前の後に文字が続いたときは E488、名前が無ければ E471 にする
+// （真偽でない項目の E488 は、Vim 9.1 の :set filetype! と同じ番号）。
+//
+// req: FR-155
+func runOptionToggle(c *execCtx, inv *invocation) error {
+	name, rest, restPos := splitName(inv.arg, inv.argPos)
+	if name == "" {
+		return errAt(inv.argPos, codeArgRequired, "引数が必要です")
+	}
+	if rest != "" {
+		return errAt(restPos, codeTrailing, "余分な文字があります: %s", rest)
+	}
+	v, d, err := c.getOption(name, inv.argPos, inv.namePos)
+	if err != nil {
+		return err
+	}
+	if d.Type != option.Bool {
+		return errAt(inv.argPos, codeTrailing, "真偽の設定ではないので反転できません: %s", name)
+	}
+	return c.st.Options.Set(d, option.BoolValue(!v.Bool()))
 }
 
 // getOption は、正規の名前 name の項目の今の値を読む（:option.get と、別名の中の読み出し）。
