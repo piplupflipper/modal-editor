@@ -190,10 +190,13 @@ func (e *Editor) dropTerminalJob() {
 
 // WaitInfo は、待つだけの client（FR-83）が server に知らせる情報である。
 type WaitInfo struct {
-	// Files は、開かせるファイルの絶対パスである。空なら、名前の無い空のタブを 1 つ開く。
+	// Files は、開かせるファイルの絶対パスである。Files と Stdin がどちらも空なら、名前の無い空のタブを 1 つ開く。
 	Files []string
-	// ReadOnly は、Files を編集を禁止した状態で開くことを表す（-R）。
+	// ReadOnly は、Files と Stdin を編集を禁止した状態で開くことを表す（-R）。
 	ReadOnly bool
+	// Stdin は、待つだけの client が起動の引数の - で標準入力から読んだ中身である（FR-158）。nil なら - を書いていない。
+	// Files より前に、名前の無いバッファのタブとして開く（ClientInfo.Stdin と同じ）。
+	Stdin *string
 	// Parent は、タブを開く先の client の識別子（環境変数 EnvClient の値）である。0 か、その client がいなければ、操作中の client に開く。
 	Parent ClientID
 	// Done は、Files のタブがすべて閉じられたときに、イベントループから 1 回だけ呼ぶ。待つのをやめる理由（タブを開いた client が終わった）が
@@ -300,10 +303,14 @@ func (e *Editor) addWaiter(req waitRequest) {
 // 他の client のタブになっているファイルは、そのタブのまま待つ（タブとバッファの 1 対 1 を保つ。FR-62）。
 func (e *Editor) openWaiterFiles(w *waiter, info WaitInfo) error {
 	var first *bufferState
-	if len(info.Files) == 0 {
-		b := buffer.New("")
-		b.SetFixEndOfLine(e.fixEOL)
-		bs := e.newBuffer(b, "", "")
+	switch {
+	case info.Stdin != nil:
+		// req: FR-158
+		bs := e.newStdinBuffer(*info.Stdin, info.ReadOnly)
+		w.bufs = append(w.bufs, bs)
+		first = bs
+	case len(info.Files) == 0:
+		bs := e.newUnnamedBuffer("")
 		w.bufs = append(w.bufs, bs)
 		first = bs
 	}

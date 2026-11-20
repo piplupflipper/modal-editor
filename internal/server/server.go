@@ -61,6 +61,7 @@ import (
 const flushTimeout = time.Second
 
 // helloTimeout は、server のソケットで受け付けた接続が Hello を送るのを待つ上限である（仮）。
+// Hello に続く標準入力の中身（FR-158）を受けている間は、何も読めない時間がこれを超えるまで待つ（helloContext）。
 // 超えたら接続を閉じ、次の接続を待つ（Hello を送らない接続で、編集の client を受け付けられなくならないため）。
 const helloTimeout = 5 * time.Second
 
@@ -74,6 +75,7 @@ var ErrNoClient = errors.New("server: no edit client connected in time")
 type Server struct {
 	// FirstClientTimeout は、ソケットだけで待つ Serve（first が nil）が、最初の編集の client の Hello を待つ上限である。
 	// 超えたら ErrNoClient で戻る。0 なら待ち続ける。
+	// 時間は、受け付けた接続のどれからも何も読めない時間で数える（Hello に続く標準入力の中身を受けている間は延ばす。FR-158）。
 	// client が自動で起動した server（-server）が、起動の途中で client が終わったとき（kill -9、ペインを閉じた）に、
 	// 誰も繋がないまま残らないようにする（FR-61。PR #207 のレビューの必須 2）。Serve の前に設定する。
 	FirstClientTimeout time.Duration
@@ -131,7 +133,13 @@ func (s *Server) newTerm() *clientTerm {
 
 // clientInfo は、Hello から、イベントループへ渡す client ごとの情報を作る。
 func clientInfo(id editor.ClientID, h protocol.Hello) editor.ClientInfo {
-	return editor.ClientInfo{ID: id, Pane: h.Pane, WorkDir: h.WorkDir, Env: h.Env, Files: h.Files, ReadOnly: h.ReadOnly}
+	return editor.ClientInfo{ID: id, Pane: h.Pane, WorkDir: h.WorkDir, Env: h.Env, Files: h.Files, ReadOnly: h.ReadOnly, Stdin: h.Stdin}
+}
+
+// OpenStdin は、起動の引数の - で標準入力から読んだ text を、名前の無いバッファとして開き、カーソルのあるバッファにする
+// （editor.Editor.OpenStdin。FR-158）。readOnly なら編集を禁止した状態で開く（FR-119）。Run の前に呼ぶ。
+func (s *Server) OpenStdin(text string, readOnly bool) {
+	s.ed.OpenStdin(text, readOnly)
 }
 
 // Open は、path のファイルを開き、カーソルのあるバッファにする（editor.Editor.Open）。Run の前に呼ぶ。
@@ -169,7 +177,7 @@ func (s *Server) Run(ctx context.Context, conn protocol.ServerConn) error {
 // first が nil でなければ、それを最初の編集の client にする（1 つのプロセスの構成）。
 // first が nil なら、ln で受け付けた接続のうち、最初に編集の client の Hello を送ったものを最初の編集の client にする（server だけのプロセス）。
 // FirstClientTimeout の間に来なければ ErrNoClient で戻る。
-// 最初の編集の client を繋いだら、その Hello の Files を Hello.ReadOnly に従って開いてから（OpenArgs と同じ順）、イベントループを動かす。
+// 最初の編集の client を繋いだら、その Hello の Stdin（FR-158）と Files を Hello.ReadOnly に従って開いてから（OpenStdin、OpenArgs と同じ順）、イベントループを動かす。
 // 開けなければ、その理由の終わりの知らせを送り、誤りで戻る。
 // ln が nil でなければ、Serve の間 ln で待ち受け、後から編集の client の Hello を送った接続を、イベントループへ足す（editor.Editor.Attach。FR-62）。
 // その client の Files を開けなければ、その理由の終わりの知らせを送って閉じる。編集の client でない接続は、理由付きの終わりの知らせを送って閉じる。
@@ -197,6 +205,11 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, first protocol.Serv
 	s.client.attach(id, conn, hello)
 	s.track(s.client)
 	s.ed.SetClientInfo(clientInfo(id, hello))
+	if hello.Stdin != nil {
+		// req: FR-158
+		s.ed.OpenStdin(*hello.Stdin, hello.ReadOnly)
+		hello.Stdin = nil // 中身はバッファが持つ。イベントループを動かす間は覚えておかない
+	}
 	if err = s.openArgs(hello.Files, hello.ReadOnly); err != nil {
 		s.client.end(err.Error())
 		return err
@@ -289,11 +302,14 @@ func (s *Server) firstClient(ctx context.Context, a *acceptor, first protocol.Se
 	if a == nil {
 		return nil, protocol.Hello{}, errors.New("server: no client and no listener")
 	}
-	var expired <-chan time.Time
+	var expired <-chan struct{}
 	if s.FirstClientTimeout > 0 {
-		timer := time.NewTimer(s.FirstClientTimeout)
-		defer timer.Stop()
-		expired = timer.C
+		// 何も読めない時間で数える。最初の client が Hello に続けて標準入力の中身（FR-158）を送っている間は延ばす
+		// （中身を受け終えるまで a.joined に来ないので、Serve の始めからの時間で数えると、大きな中身の間に終わってしまう）。
+		stop := make(chan struct{})
+		defer close(stop)
+		start := time.Now()
+		expired = idleExpired(s.FirstClientTimeout, func() time.Duration { return a.read.idleSince(start) }, stop)
 	}
 	select {
 	case <-ctx.Done():
@@ -353,6 +369,8 @@ type acceptor struct {
 	// joined は、編集の client の Hello を送った接続を、届いた順に渡す。最初のものは firstClient が、後のものは attachLoop が受け取る。
 	joined chan joined
 	done   chan struct{}
+	// read は、受け付けたどれかの接続で最後に読めた時刻である（firstClient の期限）。
+	read progress
 }
 
 // joined は、編集の client の Hello を送った接続である。
@@ -370,25 +388,20 @@ func (s *Server) startAccept(ln net.Listener) *acceptor {
 			if err != nil {
 				return // ln を閉じた
 			}
-			go s.admit(a, protocol.NewServerSocket(c))
+			pc := newProgressConn(c, &a.read)
+			go s.admit(a, protocol.NewServerSocket(pc), pc)
 		}
 	}()
 	return a
 }
 
-// admit は、受け付けた接続 conn の Hello を helloTimeout まで待ち、編集の client なら a.joined へ渡す。
+// admit は、受け付けた接続 conn の Hello を待ち、編集の client なら a.joined へ渡す。
+// 何も読めないまま helloTimeout が経ったら待つのをやめる（helloContext。Hello に続く標準入力の中身を受けている間は延ばす）。
 // Hello を送らない接続は閉じ、編集の client でない種類の Hello を送った接続は、理由付きの終わりの知らせを送って閉じる。
 // 1 つの接続の Hello を待つ間も、他の接続を受け付けられるように、接続ごとの goroutine で呼ぶ。
-func (s *Server) admit(a *acceptor, conn protocol.ServerConn) {
+func (s *Server) admit(a *acceptor, conn protocol.ServerConn, pc *progressConn) {
 	defer s.client.recoverPanic()
-	ctx, cancel := context.WithTimeout(context.Background(), helloTimeout)
-	go func() {
-		select {
-		case <-a.done:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
+	ctx, cancel := helloContext(pc, helloTimeout, a.done)
 	h, err := handshakeKinds(ctx, conn, protocol.KindEdit, protocol.KindWait, protocol.KindPopup, protocol.KindPane)
 	cancel()
 	switch {
@@ -434,9 +447,10 @@ func (s *Server) serveWait(a *acceptor, conn protocol.ServerConn, h protocol.Hel
 	}()
 	ended := make(chan string, 1)
 	stopWait, err := s.ed.Wait(ctx, editor.WaitInfo{
-		Files: h.Files, ReadOnly: h.ReadOnly, Parent: editor.ClientID(h.Parent),
+		Files: h.Files, ReadOnly: h.ReadOnly, Stdin: h.Stdin, Parent: editor.ClientID(h.Parent),
 		Done: func(reason string) { ended <- reason },
 	})
+	h.Stdin = nil // 中身はバッファが持つ。待つ間は覚えておかない
 	if err != nil {
 		reason := err.Error()
 		if errors.Is(err, editor.ErrStopped) || errors.Is(err, context.Canceled) {

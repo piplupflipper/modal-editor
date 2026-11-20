@@ -37,9 +37,17 @@ func (e *Editor) addTab(bs *bufferState) {
 //
 // req: FR-151
 func (e *Editor) newTab() {
-	b := buffer.New("")
+	e.enter(e.newUnnamedBuffer(""))
+}
+
+// newUnnamedBuffer は、text を中身にする名前の無いバッファを作る（タブにはしない）。
+// 名前の無いバッファはすべてここで作る（起動したときと client を繋いだときの空のバッファ、待つだけの client の空のタブ、:tab.new、
+// 起動の引数の - で読んだ中身。FR-158）。名前の無いバッファの扱いを変えるときは、ここを変えればどの経路も同じに動く。
+// 中身は buffer.New で行に分ける（ファイルを読むときと同じ。基本設計 4.1）。種類は空で、:set filetype= で決める。
+func (e *Editor) newUnnamedBuffer(text string) *bufferState {
+	b := buffer.New(text)
 	b.SetFixEndOfLine(e.fixEOL)
-	e.enter(e.newBuffer(b, "", ""))
+	return e.newBuffer(b, "", "")
 }
 
 // withView は、client c を読み込んで f を呼び、元の client へ戻す。

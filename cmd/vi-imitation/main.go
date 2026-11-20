@@ -103,11 +103,46 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 		return component(kind, view, in, out, *logPath, *connect)
 	}
-	if sock := os.Getenv(envSocket); sock != "" && !*newServer && countSet(*listen, *connect, *serverPath) == 0 {
+	files := flags.Args()
+	fromStdin, err := hasStdinArg(files)
+	if err != nil {
+		return err
+	}
+	sock := os.Getenv(envSocket)
+	waiting := sock != "" && !*newServer && countSet(*listen, *connect, *serverPath) == 0
+	var stdinText *string
+	var tty *os.File
+	if fromStdin {
+		// req: FR-158
+		if *listen != "" || *serverPath != "" {
+			return errors.New("-listen と -server では - を指定できない")
+		}
+		// 読んでから断ると読んだ中身を失うので、読む前に、待つだけの client かエディタとして動けるかを確かめる。
+		// VI_IMITATION_SOCKET の server がもういなければ（古い環境変数が残っている）、エディタとして動く（下の waiting の Dial と同じ）。
+		if waiting && !serverAlive(sock) {
+			waiting = false
+		}
+		if !waiting {
+			// エディタとして動くには、標準出力が端末で、キーを読む端末を開ける必要がある。
+			if out, ok := stdout.(*os.File); !ok || !term.IsTerminal(out) {
+				return errNotTerminal
+			}
+			if tty, err = os.OpenFile(ttyPath, os.O_RDWR, 0); err != nil {
+				return fmt.Errorf("キーを読む端末を開けない: %w", err)
+			}
+			defer func() { _ = tty.Close() }() // 閉じる誤りは扱えない
+		}
+		text, rerr := readStdin(stdin, stderr)
+		if rerr != nil {
+			return rerr
+		}
+		stdinText, files = &text, nil
+	}
+	if waiting {
 		// :! などの子孫として起動した vi-imitation は、待つだけの client になる（FR-83）。
 		// VI_IMITATION_SOCKET の server がもう無ければ、規則 2 以降でソケットを決める編集の client として動く（基本設計 1.2）。
-		if conn, err := protocol.Dial(sock); err == nil {
-			return waitClient(conn, os.Getenv, flags.Args(), *readOnly)
+		if conn, derr := protocol.Dial(sock); derr == nil {
+			return waitClient(conn, os.Getenv, files, stdinText, *readOnly)
 		}
 	}
 	switch {
@@ -124,10 +159,39 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	in, inOK := stdin.(*os.File)
 	out, outOK := stdout.(*os.File)
+	if stdinText != nil {
+		// 標準入力は読み終えたので、キーは端末から読む（FR-158。Vim 9.1 も読み終えた後は端末から読む）。
+		if tty == nil {
+			// 読む前には VI_IMITATION_SOCKET の server がいたが、読む間に終わった。端末は読む前に確かめていない
+			if tty, err = os.OpenFile(ttyPath, os.O_RDWR, 0); err != nil {
+				return fmt.Errorf("キーを読む端末を開けない: %w", err)
+			}
+			defer func() { _ = tty.Close() }() // 閉じる誤りは扱えない
+		}
+		in, inOK = tty, true
+	}
 	if !inOK || !outOK {
 		return errNotTerminal
 	}
-	return edit(flags.Args(), *readOnly, in, out, *logPath, *connect, *newServer)
+	return edit(launch{files: files, stdin: stdinText, readOnly: *readOnly}, in, out, *logPath, *connect, *newServer)
+}
+
+// launch は、起動の引数で開くものである。
+type launch struct {
+	// files は、起動の引数のファイルである。
+	files []string
+	// stdin は、起動の引数の - で標準入力から読んだ中身である（FR-158）。nil なら - を書いていない。files とは一緒にならない（hasStdinArg）。
+	stdin *string
+	// readOnly は、起動のオプション -R で、files と stdin を編集を禁止した状態で開く（FR-119）。
+	readOnly bool
+}
+
+// releaseStdin は、server へ送り終えた標準入力の中身を、この client で手放す（FR-158。releaseMemory）。
+func (a *launch) releaseStdin() {
+	if a.stdin != nil {
+		a.stdin = nil
+		releaseMemory()
+	}
 }
 
 var errNotTerminal = errors.New("標準入力と標準出力が端末のときだけ起動できる")
@@ -160,14 +224,15 @@ func countSet(values ...string) int {
 // 標準ライブラリの関数だけを呼ぶ goroutine（signal.NotifyContext の中のもの、exthost の子プロセスの回収の cmd.Wait、
 // exthost の context.AfterFunc が取り消しの関数を呼ぶもの）の panic と、
 // SIGKILL で終わったときは戻せない。
-// readOnly は起動のオプション -R で、files を編集を禁止した状態で開く（editor.Config.ReadOnlyArgs）。
-// connect が空でなければ、server を動かさずに、そのパスの server に編集の client として繋ぎ、files をその client のタブに開かせる。
+// args は起動の引数で開くもので、ファイルか、- で標準入力から読んだ中身（FR-158）である。args.readOnly（-R）なら編集を禁止した状態で開く（editor.Config.ReadOnlyArgs）。
+// in は、キーを読む端末である。- で標準入力を読んだときは、呼び出し側が開いた /dev/tty である。
+// connect が空でなければ、server を動かさずに、そのパスの server に編集の client として繋ぎ、args をその client のタブに開かせる。
 // newServer（--new。FR-84）なら、端末多重化ソフトの中でも同じ window の server に繋がず、1 つのプロセスの構成で新しい server と client を動かす
 // （server のソケットは、プロセス ID と乱数の名前のディレクトリに置く。基本設計 4.9）。
 //
 // 端末を子プロセスへ渡している間（:!。FR-80）は、端末の <C-c> と <C-\> が本体にも SIGINT と SIGQUIT で届くので、
 // その間は internal/client が signal.Ignore で無視にし、終わったら signalContext の受け取りを登録し直す（term.Terminal.SetInterruptRestore）。
-func edit(files []string, readOnly bool, in, out *os.File, logPath, connect string, newServer bool) (err error) {
+func edit(args launch, in, out *os.File, logPath, connect string, newServer bool) (err error) {
 	logger, closeLog, err := openLog(logPath)
 	if err != nil {
 		return err
@@ -196,16 +261,17 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 			}
 			// ファイルとペインと作業ディレクトリを載せた Hello で繋ぐ（server が分割したペインの client は、
 			// 見比べの印の環境変数とペインを知らせる要がある。#245）。
-			first, problem := startClient(conn, tm, files, readOnly)
+			first, problem := startClient(conn, tm, args)
 			if problem != nil {
 				_ = conn.Close() // 使わない接続。閉じる誤りは扱えない
 				return problem
 			}
+			args.releaseStdin()
 			return continueClient(ctx, conn, first, tm, logger)
 		}
 		if newServer {
 			// req: FR-84
-			return runEditor(ctx, files, readOnly, tm, logger, nil)
+			return runEditor(ctx, args, tm, logger, nil)
 		}
 		start := func(path string) (*serverChild, error) {
 			return startServerProcess(path, startOptions{logPath: logPath})
@@ -213,8 +279,9 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 		conn, problem := connectAuto(ctx, os.Getenv, mux.Detect(os.Getenv), start, logger)
 		if conn != nil {
 			var first protocol.ServerMessage
-			first, problem = startClient(conn, tm, files, readOnly)
+			first, problem = startClient(conn, tm, args)
 			if problem == nil {
+				args.releaseStdin()
 				return continueClient(ctx, conn, first, tm, logger)
 			}
 			_ = conn.Close() // 使わない接続。閉じる誤りは扱えない
@@ -222,7 +289,7 @@ func edit(files []string, readOnly bool, in, out *os.File, logPath, connect stri
 		if problem != nil {
 			logger.Warn("server を使えない", "err", problem)
 		}
-		return runEditor(ctx, files, readOnly, tm, logger, problem)
+		return runEditor(ctx, args, tm, logger, problem)
 	})
 }
 
@@ -243,16 +310,17 @@ func guard(restore func() error, f func() error) (err error) {
 	return err
 }
 
-// runEditor は、server と編集の client を 1 つのプロセスの中で組み立て（FR-60 の構成。基本設計 1.2）、files を開いて、server の Run が戻るまで動かす。
+// runEditor は、server と編集の client を 1 つのプロセスの中で組み立て（FR-60 の構成。基本設計 1.2）、args を開いて、server の Run が戻るまで動かす。
+// args.stdin（FR-158）は、同じプロセスの中なので写さずに server へ渡す。
 // server と client の間は protocol.Pipe でつなぐ。server の Run はこの goroutine で、client の Run は別の goroutine で動かす。
 // server の Run が戻ると接続が閉じ、client が端末を戻す。それを待ってから拡張機能を止める（editor.Editor.Close の doc の順序）。
 // ctx はシグナルで取り消される。起動の途中で取り消されていれば、Run は直ちに戻る。
 // problem が nil でなければ、端末多重化ソフトの中なのに server を使えなかった理由で、起動後のメッセージで知らせる（基本設計 1.2）。
 //
 // req: FR-60
-func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Terminal, logger *slog.Logger, problem error) error {
+func runEditor(ctx context.Context, args launch, tm *term.Terminal, logger *slog.Logger, problem error) error {
 	cfg := loadConfig(logger)
-	cfg.ReadOnlyArgs = readOnly
+	cfg.ReadOnlyArgs = args.readOnly
 	if problem != nil {
 		cfg.Problems = append(cfg.Problems, problem)
 	}
@@ -278,7 +346,11 @@ func runEditor(ctx context.Context, files []string, readOnly bool, tm *term.Term
 	if err != nil {
 		return fmt.Errorf("エディタを作れない: %w", err)
 	}
-	if err = openFiles(srv, files); err != nil {
+	if args.stdin != nil {
+		// req: FR-158
+		srv.OpenStdin(*args.stdin, args.readOnly)
+	}
+	if err = openFiles(srv, args.files); err != nil {
 		closeServer(srv, logger)
 		return err
 	}
@@ -382,9 +454,10 @@ func continueClient(ctx context.Context, conn protocol.ClientConn, first protoco
 //
 // 最初のメッセージの前に接続が切れたときは、problem に理由を入れて返す。呼び出し側は、それを知らせて 1 つのプロセスで動かす。
 // 理由付きの終わりの知らせ（ファイルを開けないなど）は first として返し、client.Continue がその理由で終わる。
-func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, readOnly bool) (first protocol.ServerMessage, problem error) {
-	abs := make([]string, len(files))
-	for i, f := range files {
+// args.stdin（FR-158）は Hello.Stdin に載せる。server はそれを名前の無いバッファのタブとして開く。
+func startClient(conn protocol.ClientConn, tm *term.Terminal, args launch) (first protocol.ServerMessage, problem error) {
+	abs := make([]string, len(args.files))
+	for i, f := range args.files {
 		a, err := filepath.Abs(f)
 		if err != nil {
 			return nil, fmt.Errorf("%s の絶対パスを決められないので 1 つのプロセスで動かす: %w", f, err)
@@ -392,7 +465,8 @@ func startClient(conn protocol.ClientConn, tm *term.Terminal, files []string, re
 		abs[i] = a
 	}
 	w, h := tm.Size()
-	hello := clientHello(os.Getenv, abs, readOnly, w, h)
+	hello := clientHello(os.Getenv, abs, args.readOnly, w, h)
+	hello.Stdin = args.stdin // req: FR-158
 	// 見比べの待ちの印は Hello で知らせたら要らない。この client が端末を渡して起動する子プロセス（:! のシェル）に残さない（PR #247 の再レビューの推奨 2）。
 	_ = os.Unsetenv(editor.EnvSplit) // 外せなくても、印は server が照らし合わせ済みの値なので害は無い
 	hello.Features = client.Features(tm)

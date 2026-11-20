@@ -46,11 +46,12 @@ var errWaitServerLost = errors.New("server との接続が切れた（ファイ�
 // （理由の無い終わりの知らせ）まで待ち、nil で戻る（終了コード 0。git はコミットを続ける）。
 // ファイルを開けない、タブを開いた client が終わったなど、理由付きの終わりの知らせを受けたら、その理由の誤りで戻る（0 でない終了コード。
 // git はコミットをやめる）。終わりの知らせを受けずに接続が切れたときも誤りで戻る。
-// files が空なら、名前の無い空のタブを開かせる。
+// stdin が nil でなければ、起動の引数の - で標準入力から読んだその中身を、名前の無いバッファのタブとして開かせる（FR-158）。
+// files と stdin がどちらも空なら、名前の無い空のタブを開かせる。
 // タブを開く先は、環境変数 VI_IMITATION_CLIENT（editor.EnvClient）の client（:! を実行した client）である。
 //
 // req: FR-83
-func waitClient(conn protocol.ClientConn, getenv func(string) string, files []string, readOnly bool) error {
+func waitClient(conn protocol.ClientConn, getenv func(string) string, files []string, stdin *string, readOnly bool) error {
 	defer func() { _ = conn.Close() }() // 閉じる誤りは扱えない
 	abs := make([]string, len(files))
 	for i, f := range files {
@@ -60,7 +61,7 @@ func waitClient(conn protocol.ClientConn, getenv func(string) string, files []st
 		}
 		abs[i] = a
 	}
-	hello := protocol.Hello{Kind: protocol.KindWait, Files: abs, ReadOnly: readOnly}
+	hello := protocol.Hello{Kind: protocol.KindWait, Files: abs, ReadOnly: readOnly, Stdin: stdin}
 	if wd, err := os.Getwd(); err == nil {
 		hello.WorkDir = wd
 	}
@@ -71,6 +72,10 @@ func waitClient(conn protocol.ClientConn, getenv func(string) string, files []st
 	}
 	if err := conn.Send(hello); err != nil {
 		return fmt.Errorf("server に繋げない: %w", err)
+	}
+	if stdin != nil {
+		// 送り終えた標準入力の中身は、タブが閉じられるまで待つ間に要らない（FR-158）。hello と stdin は、この後は使わない。
+		releaseMemory()
 	}
 	for {
 		m, err := conn.Recv()

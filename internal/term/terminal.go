@@ -53,6 +53,13 @@ type Options struct {
 // ErrNotTerminal は、Open に渡したファイルが端末でないことを表す。
 var ErrNotTerminal = errors.New("term: not a terminal")
 
+// IsTerminal は、f が端末かを返す。Open の前に、端末を使えるかだけを確かめるのに使う
+// （起動の引数の - で標準入力を読む前に、標準出力が端末かを確かめる。FR-158）。
+func IsTerminal(f *os.File) bool {
+	fd, err := fdOf(f)
+	return err == nil && xterm.IsTerminal(fd)
+}
+
 // Terminal は、raw モードにした実物の端末である。Open で開き、Restore で端末を元に戻し、Close で入力の読み取りを止める。
 //
 // 入力は、Open が起こす goroutine が in から読んで解読し、Input のチャネルへ送る。

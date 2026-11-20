@@ -624,6 +624,18 @@ func TestModified(t *testing.T) {
 	b.MarkSaved()
 	check(b, "保存し直した後", false)
 
+	u := New("x")
+	u.MarkUnsaved()
+	check(u, "MarkUnsaved の直後", true)
+	if u.CanUndo() {
+		t.Error("MarkUnsaved の後に CanUndo() = true, want false")
+	}
+	insert(u, "a")
+	u.Undo()
+	check(u, "MarkUnsaved の後の編集をアンドゥした", true)
+	u.MarkSaved()
+	check(u, "MarkUnsaved の後に保存した", false)
+
 	g := New("")
 	g.BeginUndoGroup()
 	insert(g, "a")

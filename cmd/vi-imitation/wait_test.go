@@ -32,7 +32,7 @@ func TestWaitClient(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c, s := protocol.Pipe()
 			done := make(chan error, 1)
-			go func() { done <- waitClient(c, getenv, []string{"rel.txt"}, true) }()
+			go func() { done <- waitClient(c, getenv, []string{"rel.txt"}, nil, true) }()
 			m, err := s.Recv()
 			if err != nil {
 				t.Fatal(err)

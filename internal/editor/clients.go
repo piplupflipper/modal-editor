@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/piplupflipper/vi-imitation/ext"
-	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
@@ -73,8 +72,11 @@ type ClientInfo struct {
 	Env []string
 	// Files は、client の起動の引数のファイル（絶対パス）である。Attach が、その client のタブとして開く。
 	Files []string
-	// ReadOnly は、Files を編集を禁止した状態で開くことを表す（-R。FR-119）。
+	// ReadOnly は、Files と Stdin を編集を禁止した状態で開くことを表す（-R。FR-119）。
 	ReadOnly bool
+	// Stdin は、client が起動の引数の - で標準入力から読んだ中身である（FR-158）。nil なら - を書いていない。
+	// Attach が、Files より前に、名前の無いバッファのタブとして開く（newStdinBuffer）。開いた後は覚えておかない。
+	Stdin *string
 }
 
 // viewFields は、編集の client ごとの画面の状態である。イベントループが扱う client のものを Editor に埋め込み、他は clientView に退避する。
@@ -166,8 +168,9 @@ func (e *Editor) newClientView(term Terminal, remap *remapper) *clientView {
 }
 
 // SetClientInfo は、最初の編集の client（New に渡した端末）の情報を設定する。Run の前に、Run と同じ goroutine から呼ぶ。
-// info.Files は読まない（開くのは呼び出し側が OpenWith で行う）。
+// info.Files と info.Stdin は読まない（開くのは呼び出し側が OpenWith と OpenStdin で行う）。
 func (e *Editor) SetClientInfo(info ClientInfo) {
+	info.Stdin = nil
 	e.clients[0].info = info
 }
 
@@ -194,11 +197,12 @@ func (e *Editor) Attach(term Terminal, info ClientInfo) error {
 func (e *Editor) attach(req attachRequest) {
 	c := e.newClientView(req.term, nil)
 	c.info = req.info
+	c.info.Stdin = nil // 中身はバッファが持つ。client の情報には残さない
 	token := takeSplitToken(&c.info)
 	e.clients = append(e.clients, c)
 	prev := e.op
 	e.useClient(c)
-	if err := e.openClientFiles(req.info.Files, req.info.ReadOnly); err != nil {
+	if err := e.openClientFiles(req.info.Stdin, req.info.Files, req.info.ReadOnly); err != nil {
 		// 開けたタブも閉じて、client を繋がずに戻す。
 		for _, bs := range slices.Clone(c.tabs) {
 			e.closeBufferState(bs)
@@ -218,8 +222,14 @@ func (e *Editor) attach(req attachRequest) {
 
 // openClientFiles は、client の起動の引数のファイルを、引数の順にタブとして開き、最初のファイルのタブへ移る（Server.OpenArgs と同じ順）。
 // 他の client のタブになっているファイルは、開かずに飛ばす（FR-62 のタブとバッファの 1 対 1 を保つため。フォーカスは移さない）。
-func (e *Editor) openClientFiles(files []string, readOnly bool) error {
+// stdin が nil でなければ、その中身の名前の無いバッファ（FR-158）を、files より前のタブとして開く。
+func (e *Editor) openClientFiles(stdin *string, files []string, readOnly bool) error {
 	var firstTab *bufferState
+	if stdin != nil {
+		// req: FR-158
+		firstTab = e.newStdinBuffer(*stdin, readOnly)
+		e.enter(firstTab)
+	}
 	for _, f := range files {
 		abs := e.absPath(f)
 		if o := e.findPath(abs); o != nil && o.owner != nil && o.owner != e.view {
@@ -249,9 +259,7 @@ func (e *Editor) startClient(c *clientView) {
 	prev := e.view
 	e.switchView(c)
 	if e.cur == nil {
-		b := buffer.New("")
-		b.SetFixEndOfLine(e.fixEOL)
-		e.enter(e.newBuffer(b, "", ""))
+		e.enter(e.newUnnamedBuffer(""))
 	}
 	w, h := e.term.Size()
 	e.setSize(w, h)
