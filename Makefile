@@ -44,6 +44,9 @@ DIST_PACKAGES := ./cmd/vi-imitation ./cmd/vi-imitation-mcp-bridge $(addprefix ./
 # internal/diff は go-udiff（BSD-3-Clause と MIT。LICENSE-BSD と LICENSE-MIT）を使い、本体の server から使う（基本設計 6.8）。
 # 本体が import すると DIST_PACKAGES の依存に含まれるので、そのときにここから外してよい（残しても結果は変わらない）。
 DIST_LICENSE_PACKAGES := $(DIST_PACKAGES) ./internal/diff
+# Go のモジュールでなく、データを写して本体に入れたもののライセンスの文面。licenses/ の下に同じ並びで写す。
+# 既定のアイコンの表（internal/ui の icons_default.go。FR-152）は、nvim-web-devicons と neo-tree.nvim（どちらも MIT）から写した。
+DIST_DATA_LICENSES := internal/ui/licenses
 # 配布物を起動して確かめるコンテナのイメージ。ビルド用の道具が無く、C の標準ライブラリが異なるものを選ぶ。
 # 結果が docs/measurements/nfr-dist.md の記録と同じものを指すように、版のタグで固定する。
 DIST_SMOKE_IMAGES := debian:13.7-slim almalinux:8.10-minimal alpine:3.24.1 busybox:1.36.1
@@ -139,6 +142,7 @@ dist: build ## 配布物を dist/ に作る（実行ファイルと宣言ファ�
 		while read -r p d; do \
 			mkdir -p $(DIST_DIR)/licenses/$$p && cp $$d/LICENSE* $(DIST_DIR)/licenses/$$p/ || exit 1; \
 		done
+	cp -R $(DIST_DATA_LICENSES)/. $(DIST_DIR)/licenses/
 	tar -C $(DIST_ROOT) -czf $(DIST_DIR).tar.gz $(DIST_NAME)
 
 .PHONY: dist-check

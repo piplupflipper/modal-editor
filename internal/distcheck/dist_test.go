@@ -84,7 +84,8 @@ func TestDistLayout(t *testing.T) {
 }
 
 // TestDistLicenses は、配布物が、実行ファイルに静的にリンクするサードパーティのライセンスの文面を含むことを確かめる。
-// Go の標準ライブラリとランタイム、tree-sitter とその文法は、配布するときに著作権の表示とライセンスの文面を添える必要がある。
+// Go の標準ライブラリとランタイム、tree-sitter とその文法、本体に写したアイコンの表の出どころは、
+// 配布するときに著作権の表示とライセンスの文面を添える必要がある。
 // tree-sitter の拡張機能は glibc に動的にリンクし、配布物は C の標準ライブラリを含まないので、その文面は無い。
 func TestDistLicenses(t *testing.T) {
 	dir := distDir(t)
@@ -97,6 +98,9 @@ func TestDistLicenses(t *testing.T) {
 		// go-udiff は、Go の作者の BSD-3-Clause と、go-udiff の作者の MIT の 2 つの文面を持つ（基本設計 6.8）。
 		"licenses/github.com/aymanbagabas/go-udiff/LICENSE-BSD",
 		"licenses/github.com/aymanbagabas/go-udiff/LICENSE-MIT",
+		// 本体の既定のアイコンの表は、nvim-web-devicons と neo-tree.nvim から写した（FR-152。internal/ui の icons_default.go）。
+		"licenses/github.com/nvim-tree/nvim-web-devicons/LICENSE",
+		"licenses/github.com/nvim-neo-tree/neo-tree.nvim/LICENSE",
 	} {
 		info, err := os.Stat(filepath.Join(dir, rel))
 		if err != nil {

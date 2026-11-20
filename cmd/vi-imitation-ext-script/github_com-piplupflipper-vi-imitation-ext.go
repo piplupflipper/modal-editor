@@ -12,7 +12,7 @@ import (
 func init() {
 	Symbols["github.com/piplupflipper/vi-imitation/ext/ext"] = map[string]reflect.Value{
 		// function, constant and variable definitions
-		"APIVersion":                 reflect.ValueOf(constant.MakeFromLiteral("\"0.11.0\"", token.STRING, 0)),
+		"APIVersion":                 reflect.ValueOf(constant.MakeFromLiteral("\"0.12.0\"", token.STRING, 0)),
 		"ActivationCommand":          reflect.ValueOf(ext.ActivationCommand),
 		"ActivationFileType":         reflect.ValueOf(ext.ActivationFileType),
 		"ActivationMotion":           reflect.ValueOf(ext.ActivationMotion),
@@ -230,6 +230,7 @@ func init() {
 		"ViewClosedParams":        reflect.ValueOf((*ext.ViewClosedParams)(nil)),
 		"ViewComponent":           reflect.ValueOf((*ext.ViewComponent)(nil)),
 		"ViewExpandParams":        reflect.ValueOf((*ext.ViewExpandParams)(nil)),
+		"ViewFile":                reflect.ValueOf((*ext.ViewFile)(nil)),
 		"ViewID":                  reflect.ValueOf((*ext.ViewID)(nil)),
 		"ViewItem":                reflect.ValueOf((*ext.ViewItem)(nil)),
 		"ViewKeyParams":           reflect.ValueOf((*ext.ViewKeyParams)(nil)),

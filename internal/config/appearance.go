@@ -67,12 +67,16 @@ type AppearanceCheck struct {
 	StatusPart func(id string) bool
 	// TabLinePart は、id が本体のタブ行の部品の ID かを返す。
 	TabLinePart func(id string) bool
+	// Icon は、設定の icons のアイコンの文字列 text を使えるかを確かめ、使えなければ理由を返す（FR-152）。
+	Icon func(text string) error
 }
 
 // appearancePos は、見た目の設定の項目を書いた位置である。CheckAppearance と LoadColorScheme が誤りの位置に使う。
 type appearancePos struct {
 	colors, symbols map[string]*Error
-	parts           []partPos
+	// icons は、Icons の各アイコンの text を書いた位置である。
+	icons map[string]*Error
+	parts []partPos
 	// colorScheme は、colorscheme の値を書いた位置である。
 	colorScheme *Error
 }
@@ -85,11 +89,12 @@ type partPos struct {
 	err  *Error
 }
 
-// CheckAppearance は、Colors、Symbols、StatusLine、TabLineParts の名前と値を check で確かめ、使えない項目を除いて、位置と内容を誤りとして返す。
+// CheckAppearance は、Colors、Symbols、StatusLine、TabLineParts の名前と値と、Icons のアイコンの文字列を check で確かめ、
+// 使えない項目を除いて、位置と内容を誤りとして返す。
 // Parse は名前の一覧を知らないので、呼び出し側が Parse の後に 1 回呼ぶ。
 // 拡張機能の部品の ID（IsExtPartID）は確かめずに残す。
 //
-// req: FR-91, FR-92, FR-93
+// req: FR-91, FR-92, FR-93, FR-152
 func (c *Config) CheckAppearance(check AppearanceCheck) []error {
 	var errs []error
 	if check.Color != nil {
@@ -105,6 +110,14 @@ func (c *Config) CheckAppearance(check AppearanceCheck) []error {
 			if err := check.Symbol(name, v); err != nil {
 				errs = append(errs, c.pos.symbols[name].with("symbols の %s を使えない: %v", name, err))
 				delete(c.Symbols, name)
+			}
+		}
+	}
+	if check.Icon != nil {
+		for name, ic := range c.Icons {
+			if err := check.Icon(ic.Text); err != nil {
+				errs = append(errs, c.pos.icons[name].with("icons の %s の text を使えない: %v", name, err))
+				delete(c.Icons, name)
 			}
 		}
 	}
@@ -181,46 +194,56 @@ func (s *source) style(v *hujson.Value, path string) (Style, bool) {
 	}
 	ok = true
 	for _, m := range s.members(obj, path) {
-		p := join(path, m.name)
-		var flag *bool
-		switch m.name {
-		case "fg", "bg", "sp":
-			c, cok := s.color(m.value, p)
-			if !cok {
-				ok = false
-				continue
-			}
-			switch m.name {
-			case "fg":
-				st.Fg = c
-			case "bg":
-				st.Bg = c
-			default:
-				st.Sp = c
-			}
-			continue
-		case "bold":
-			flag = &st.Bold
-		case "italic":
-			flag = &st.Italic
-		case "underline":
-			flag = &st.Underline
-		case "undercurl":
-			flag = &st.Undercurl
-		case "reverse":
-			flag = &st.Reverse
-		default:
-			s.report(m.nameOff, "未知の項目 %s を無視する", p)
+		known, fok := s.styleField(m, path, &st)
+		if !known {
+			s.report(m.nameOff, "未知の項目 %s を無視する", join(path, m.name))
 			continue
 		}
-		b, bok := s.boolean(m.value, p)
-		if !bok {
-			ok = false
-			continue
-		}
-		*flag = b
+		ok = ok && fok
 	}
 	return st, ok
+}
+
+// styleField は、属性のオブジェクト（位置は path）の項目 m が属性の項目（fg、bg、sp、bold など）なら読んで st に入れる。
+// 属性の項目でなければ、何も読まずに known を false で返す（呼び出し側が、未知の項目か自分の項目として扱う）。
+// 値に誤りがあれば、誤りを記録して ok を false で返す。設定の icons のアイコン（text と属性の項目）でも使う。
+func (s *source) styleField(m member, path string, st *Style) (known, ok bool) {
+	p := join(path, m.name)
+	var flag *bool
+	switch m.name {
+	case "fg", "bg", "sp":
+		c, cok := s.color(m.value, p)
+		if !cok {
+			return true, false
+		}
+		switch m.name {
+		case "fg":
+			st.Fg = c
+		case "bg":
+			st.Bg = c
+		default:
+			st.Sp = c
+		}
+		return true, true
+	case "bold":
+		flag = &st.Bold
+	case "italic":
+		flag = &st.Italic
+	case "underline":
+		flag = &st.Underline
+	case "undercurl":
+		flag = &st.Undercurl
+	case "reverse":
+		flag = &st.Reverse
+	default:
+		return false, false
+	}
+	b, bok := s.boolean(m.value, p)
+	if !bok {
+		return true, false
+	}
+	*flag = b
+	return true, true
 }
 
 // color は、"#rrggbb" の文字列か、0〜255 の整数の色を読む。

@@ -596,7 +596,7 @@ func TestStandardPreviews(t *testing.T) {
 	wide := func(t *testing.T, w int) (*harness, func() *previewState) {
 		term := newFakeTerm()
 		term.w, term.h = w, 24
-		h := startTerm(t, term, Config{WorkDir: dir, Extensions: specs}, "c.txt")
+		h := startTerm(t, term, Config{WorkDir: dir, Extensions: specs, Options: noIcons}, "c.txt")
 		return h, func() *previewState {
 			if h.e.float == nil {
 				return nil

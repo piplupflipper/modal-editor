@@ -59,6 +59,10 @@ func TestConfigExample(t *testing.T) {
 	if got := uiColor(config.Color{Kind: config.ColorIndexed, Index: 3}); got != ui.Indexed(3) {
 		t.Errorf("uiColor(3) = %v", got)
 	}
+	// 例は、アイコン（FR-152）を出す設定を書く（Nerd Font の無い環境で切る場所を示すため）。
+	if v, ok := cfg.Options["icons.show"]; !ok || !v.Bool() {
+		t.Errorf("icons.show = %v %v", v, ok)
+	}
 	for show, want := range map[string]ui.TabLineMode{"": ui.TabLineAlways, config.TabLineAlways: ui.TabLineAlways, config.TabLineMultiple: ui.TabLineMultiple} {
 		if got := uiTabLine(show); got != want {
 			t.Errorf("uiTabLine(%q) = %v, want %v", show, got, want)
@@ -136,5 +140,32 @@ func TestLoadConfigColorScheme(t *testing.T) {
 	}
 	if len(cfg.Problems) != 1 || cfg.Problems[0].Error() != "config.jsonc:2:18: E185: 配色 nosuch が見つからない" {
 		t.Errorf("Problems = %v", cfg.Problems)
+	}
+}
+
+// 設定の icons のアイコンは、描画の表示幅の規則（ui.CheckIcon）で確かめ、使えるものだけを、文字と色を写して editor に渡す。
+//
+// req: FR-152
+func TestIconsConfig(t *testing.T) {
+	// U+F0868 は、サロゲートの組で書けば 1 つの文字として読む。\u の 4 桁で書き損じた "\uf0868" は、U+F086 と "8" の 2 文字なので
+	// 誤りにする（PR #305 のレビューの推奨 3）。
+	src := "{\n  \"icons\": { \"directory\": { \"text\": \"D\", \"fg\": 4, \"bold\": true },\n" +
+		"    \"fileTypes\": { \"go\": { \"text\": \"wide\" }, \"dockerfile\": { \"text\": \"\\udb82\\udc68\" },\n" +
+		"      \"make\": { \"text\": \"\\uf0868\" } } }\n}"
+	cfg, errs := config.Parse("config.jsonc", []byte(src))
+	errs = append(errs, cfg.CheckAppearance(appearanceCheck)...)
+	if len(errs) != 2 || !strings.Contains(errs[0].Error(), "icons の fileTypes.go の text を使えない") ||
+		!strings.Contains(errs[1].Error(), "icons の fileTypes.make の text を使えない: アイコンは 1 つの文字にする") {
+		t.Errorf("errs = %v", errs)
+	}
+	want := ui.Icons{
+		ui.IconDirectory:              {Text: "D", Attr: ui.Attr{Fg: ui.Indexed(4), Bold: true}},
+		ui.IconFileType("dockerfile"): {Text: "\U000f0868"},
+	}
+	if got := uiIcons(cfg.Icons); !reflect.DeepEqual(got, want) {
+		t.Errorf("uiIcons = %+v, want %+v", got, want)
+	}
+	if uiIcons(nil) != nil {
+		t.Error("uiIcons(nil) != nil")
 	}
 }

@@ -200,6 +200,45 @@ func TestItemPreviews(t *testing.T) {
 	}
 }
 
+// ファイル、検索、ファイルのタブ、ファイルのジャンプの候補には、本体がアイコンを付けるファイル（FR-152）としてそのパスを付け、
+// 一覧に送る項目に載せる。行、ファイルでないバッファのタブとジャンプ、キー、コマンド、レジスターの候補には付けない。
+//
+// req: FR-152
+func TestItemFiles(t *testing.T) {
+	if f := grepItem("/w", grepMatch{Path: "a.go", Line: 3, Col: 1, Text: "x"}).file; f == nil || *f != (ext.ViewFile{Path: "/w/a.go"}) {
+		t.Errorf("grep file = %+v", f)
+	}
+	r := ext.EditorListResult{
+		Jumps:     []ext.ListJump{{Buffer: 1, Path: "/w/b.go", Position: ext.Position{Line: 5}}, {Buffer: 4, Position: ext.Position{Line: 1}}},
+		Tabs:      []ext.ListTab{{Buffer: 1, Path: "/w/b.go", Name: "b.go"}, {Buffer: 4, Name: "[No Name]"}},
+		Keys:      []ext.ListKey{{Keys: "gq"}},
+		Commands:  []ext.ListCommand{{Name: "write"}},
+		Registers: []ext.ListRegister{{Name: "a", Text: "x"}},
+	}
+	_, jumps := listItems(ext.ListJumps, r)
+	if f := jumps[1].file; f == nil || f.Path != "/w/b.go" || f.Dir || jumps[0].file != nil {
+		t.Errorf("jump files = %+v, %+v", jumps[1].file, jumps[0].file)
+	}
+	_, tabs := listItems(ext.ListTabs, r)
+	if f := tabs[0].file; f == nil || f.Path != "/w/b.go" || tabs[1].file != nil {
+		t.Errorf("tab files = %+v, %+v", tabs[0].file, tabs[1].file)
+	}
+	for _, kind := range []ext.EditorListKind{ext.ListKeys, ext.ListCommands, ext.ListRegisters} {
+		_, its := listItems(kind, r)
+		for _, it := range its {
+			if it.file != nil {
+				t.Errorf("%s item %q has a file", kind, it.label)
+			}
+		}
+	}
+	p := newFinder(context.Background()).newPicker("files", "t", "", "")
+	p.add(item{id: "a", label: "a.go", file: &ext.ViewFile{Path: "/w/a.go"}}, item{id: "b", label: "b"})
+	c, _ := p.component()
+	if len(c.Items) != 2 || c.Items[0].File == nil || c.Items[0].File.Path != "/w/a.go" || c.Items[1].File != nil {
+		t.Errorf("component items = %+v", c.Items)
+	}
+}
+
 // rg が無ければ、検索のコマンドは開かずに理由を返す。
 func TestGrepWithoutRG(t *testing.T) {
 	old := lookPath

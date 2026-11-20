@@ -15,6 +15,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/command/ex"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/exthost"
+	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
@@ -138,6 +139,9 @@ type floatState struct {
 	// 開いたときと view/update のたびに決め直す。preview は、カーソルの項目のプレビューの状態である（preview.go）。
 	hasPreview bool
 	preview    previewState
+	// iconColumn は、一覧と木の行にアイコンの列を置くこと（FR-152）を表す。開いてから一度でもファイルを指す項目が来たら true にし、
+	// その後は戻さない（iconColumnFor）。
+	iconColumn bool
 	// screen は、中央のポップアップを端末多重化ソフトのポップアップに出すときに、その幅の百分率を数えた端末の列数である
 	// （Config.PopupScreenWidth。requestPopup）。0 なら、編集の client の画面に描く窓として、その画面の幅で数える。
 	// screenPending は、端末の列数を問い合わせている間であることを表す。その間はプレビューを出さない（previewShown）。
@@ -758,9 +762,75 @@ func (e *Editor) notifyInputChange(f *floatState) {
 	}
 }
 
+// itemIcons は、一覧と木の項目のアイコンの決め方である（FR-152）。
+type itemIcons struct {
+	// lookup は、項目が指すファイル f（open は、木で子を開いたディレクトリであること）のアイコンの文字列と、その色の名前を返す。
+	// アイコンが決まらなければ ok が false である。
+	lookup func(f *ext.ViewFile, open bool) (text, style string, ok bool)
+	// width は、アイコンの列の幅（表のアイコンの表示幅の最大。ui.Icons.Width）である。
+	// どのアイコンも、この幅に足りない分を空白で埋めてから区切りの空白 1 つを置くので、表示の文字列はどの行でも同じ列から始まる。
+	width int
+	// column は、アイコンの列を置くことである。部品の項目のどれかがファイルを指すとき（floatState.iconColumn）に true にする。
+	column bool
+}
+
+// itemIcons は、一覧と木の項目のアイコンの決め方を返す（FR-152）。設定の icons.show が false なら nil を返す。
+// column は、アイコンの列を置くか（floatState.iconColumn）である。
+// ファイルの種類は、バッファを開くときと同じ対応表（既定の対応に設定の fileTypes を重ねたもの）で、項目のパスから決める。
+// 項目の指すファイルを開いたバッファの filetype（:set filetype= で変えたもの）は見ない（項目はパスだけを持つため）。
+//
+// req: FR-152
+func (e *Editor) itemIcons(column bool) *itemIcons {
+	if !e.options.Get(option.IconsShow).Bool() {
+		return nil
+	}
+	return &itemIcons{
+		lookup: func(f *ext.ViewFile, open bool) (string, string, bool) {
+			ft := ""
+			if !f.Dir {
+				ft = e.detectFileType(f.Path)
+			}
+			name, icon, ok := e.icons.Lookup(ft, f.Dir, open)
+			if !ok {
+				return "", "", false
+			}
+			return icon.Text, ui.IconStyle(name), true
+		},
+		width:  e.icons.Width(),
+		column: column,
+	}
+}
+
+// iconColumnFor は、部品 f のアイコンの列を置くかを、新しい項目 items で決め直して返す。
+// 一度でもファイルを指す項目が来た部品は、その後の項目にファイルを指すものが無くても列を置き続ける
+// （ファインダーで絞り込んだ結果がファイルでないバッファのタブだけになっても、表示の文字列の列が動かないため。PR #305 のレビューの推奨 1）。
+func (f *floatState) iconColumnFor(items []ext.ViewItem) bool {
+	f.iconColumn = f.iconColumn || hasItemFile(items)
+	return f.iconColumn
+}
+
+// hasItemFile は、items（木の子を含む）のどれかがファイルを指す（ext.ViewItem.File を持つ）かを返す。
+func hasItemFile(items []ext.ViewItem) bool {
+	for _, it := range items {
+		if it.File != nil || hasItemFile(it.Children) {
+			return true
+		}
+	}
+	return false
+}
+
 // floatLines は、部品 c をバッファの中身にした行と、一覧と木の行ごとの項目と、色を付ける範囲を返す。
 // 木は、開いた項目の子を 2 列ずつ字下げし、子を持つ項目の前に開閉の印（▸ と ▾）を置く。
-func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, rows []floatRow, decs []ext.Decoration) {
+//
+// icons が nil でなく、その column が true なら、表示の文字列の前（木では開閉の印の後）にアイコンの列を置く（FR-152）。
+// ファイルを指す項目（ext.ViewItem.File）にはアイコンを置き、アイコンの文字に icons が返す色の名前の色を付ける。
+// アイコンの列は icons.width の幅と区切りの空白 1 つで、アイコンの表示幅が足りない分は空白で埋める。
+// ファイルを指さない項目（ファイルでないバッファのタブなど）には、列の全部を空白で置く。
+// どの行も表示の文字列が同じ列から始まる。項目の Highlights は、置いた列の分だけ後ろへずらす。
+// column が false の部品（キー、コマンド、レジスターの一覧）には、何も置かない。
+//
+// req: FR-152
+func floatLines(c ext.ViewComponent, expanded map[string]bool, icons *itemIcons) (lines []string, rows []floatRow, decs []ext.Decoration) {
 	switch c.Kind {
 	case ext.ViewText:
 		if c.Format == ext.PopupMarkdown {
@@ -771,6 +841,9 @@ func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, 
 	case ext.ViewInput:
 		return []string{c.Text}, nil, nil
 	case ext.ViewList, ext.ViewTree, ext.ViewFinder:
+	}
+	if icons != nil && !icons.column {
+		icons = nil
 	}
 	var walk func(items []ext.ViewItem, depth int)
 	walk = func(items []ext.ViewItem, depth int) {
@@ -787,6 +860,27 @@ func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, 
 				prefix = strings.Repeat("  ", depth) + mark
 			}
 			line := len(lines)
+			if icons != nil {
+				text, style, ok := "", "", false
+				if it.File != nil {
+					// 開いたディレクトリのアイコンは、木で子を開いた項目にだけ使う。
+					text, style, ok = icons.lookup(it.File, c.Kind == ext.ViewTree && expanded[it.ID])
+				}
+				if ok {
+					decs = append(decs, ext.Decoration{
+						Range: ext.Range{
+							Start: ext.Position{Line: line, Byte: len(prefix)},
+							End:   ext.Position{Line: line, Byte: len(prefix) + len(text)},
+						},
+						Style: style,
+					})
+				} else {
+					text = ""
+				}
+				// アイコンの表示幅を測り、列の幅に足りない分と区切りの 1 列を空白で埋める。
+				fill := max(icons.width-ui.StringWidth(text, ui.DefaultTabStop), 0) + 1
+				prefix += text + strings.Repeat(" ", fill)
+			}
 			lines = append(lines, prefix+it.Label)
 			rows = append(rows, floatRow{id: it.ID, parent: len(it.Children) > 0 || it.HasChildren, preview: it.Preview})
 			for _, s := range it.Highlights {
@@ -884,7 +978,7 @@ func (e *Editor) drawFloatContent(f *floatState, c ext.ViewComponent) {
 	// テキストで、カーソルが最後の行にあれば（末尾を見ていれば）、書き足した後も最後の行へ置き、表示が末尾を追うようにする
 	// （デバッグ対象の出力と ACP の返答のペイン。FR-108、FR-111。PR #248 のレビューの推奨 2）。
 	follow := f.kind == floatText && cursor.Line >= f.bs.buf.LineCount()-1
-	lines, rows, decs := floatLines(c, f.expanded)
+	lines, rows, decs := floatLines(c, f.expanded, e.itemIcons(f.iconColumnFor(c.Items)))
 	f.rows = rows
 	e.reload(f.bs, buffer.New(strings.Join(lines, "\n")))
 	line := min(cursor.Line, f.bs.buf.LineCount()-1)
@@ -930,7 +1024,7 @@ func (e *Editor) newComponentFloat(c ext.ViewComponent, extID string) *floatStat
 		return e.newFinderFloat(c, extID)
 	case ext.ViewText:
 	}
-	lines, rows, decs := floatLines(c, f.expanded)
+	lines, rows, decs := floatLines(c, f.expanded, e.itemIcons(f.iconColumnFor(c.Items)))
 	f.rows = rows
 	title := c.Title
 	if title == "" {
@@ -980,7 +1074,7 @@ func (e *Editor) newFinderFloat(c ext.ViewComponent, extID string) *floatState {
 func (e *Editor) setFinderList(f *floatState, items []ext.ViewItem, top bool) {
 	curID := floatItem(f)
 	line := f.list.state.Cursor().Line
-	lines, rows, decs := floatLines(ext.ViewComponent{Kind: ext.ViewFinder, Items: items}, nil)
+	lines, rows, decs := floatLines(ext.ViewComponent{Kind: ext.ViewFinder, Items: items}, nil, e.itemIcons(f.iconColumnFor(items)))
 	f.rows = rows
 	e.reload(f.list, buffer.New(strings.Join(lines, "\n")))
 	switch {

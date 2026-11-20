@@ -1,9 +1,7 @@
 package editor
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -118,43 +116,29 @@ func TestFinderPopup(t *testing.T) {
 // buildFinder は、ファジーファインダーの拡張機能（cmd/vi-imitation-ext-finder）を一時ディレクトリへビルドし、拡張機能の定義を返す。
 func buildFinder(t *testing.T) exthost.Spec {
 	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go が無い")
-	}
-	src := filepath.Join("..", "..", "cmd", "vi-imitation-ext-finder")
-	dir := t.TempDir()
-	out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "vi-imitation-ext-finder"), "./"+src).CombinedOutput() //nolint:gosec // テストのために一時ディレクトリへビルドする
-	if err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
-	raw, err := os.ReadFile(filepath.Join(src, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m ext.Manifest
-	if err = json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	return exthost.Spec{Manifest: m, Dir: dir}
+	return buildStdExt(t, "vi-imitation-ext-finder")
 }
 
 // 標準のファジーファインダーの拡張機能で、<Space>ff のファイル、<Space>fg の検索（rg があれば）、<Space>fb のタブを開き、
 // 打った入力で絞った一覧から選んだ先を開く。ファイルと検索の場所は、拡張機能のプロセスの作業ディレクトリでなく本体の作業ディレクトリである。
+// ファイル、検索の結果、タブの項目には、ファイルの種類のアイコンが付き、キーとコマンドの項目には付かない。
 //
-// req: FR-106, FR-107
+// req: FR-106, FR-107, FR-152
 func TestStandardFinder(t *testing.T) {
 	spec := buildFinder(t)
 	dir := writeFiles(t, map[string]string{
 		"a.txt": "alpha\n", "sub/beta.go": "package sub\n\nfunc Needle() {}\n", "sub/gamma.md": "# gamma\n",
 	})
 	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, "a.txt")
+	// ファイル、検索の結果、タブの項目には、既定の表のファイルの種類のアイコン（FR-152）が付く。キーとコマンドには付かない。
+	txt, gop, md := iconOf(t, "file"), iconOf(t, "fileTypes.go"), iconOf(t, "fileTypes.markdown")
 	h.keys("<Space>ff")
 	h.eventually("ファイルの一覧", func() bool { return finderText(h.e) != "" && !strings.Contains(h.e.float.title, "読み込み中") })
-	if text, _, title := h.finderList(); text != "a.txt\nsub/beta.go\nsub/gamma.md" || !strings.Contains(title, "3/3") {
+	if text, _, title := h.finderList(); text != txt+"a.txt\n"+gop+"sub/beta.go\n"+md+"sub/gamma.md" || !strings.Contains(title, "3/3") {
 		t.Errorf("files: %q %q", text, title)
 	}
 	h.keys("sbgo")
-	h.eventually("絞ったファイル", func() bool { return finderText(h.e) == "sub/beta.go" })
+	h.eventually("絞ったファイル", func() bool { return finderText(h.e) == gop+"sub/beta.go" })
 	h.keys("<CR>")
 	h.eventually("開いたファイル", func() bool { return h.e.float == nil && h.e.bufferName(h.e.cur) == filepath.Join("sub", "beta.go") })
 
@@ -162,7 +146,7 @@ func TestStandardFinder(t *testing.T) {
 		h.keys("<Space>fg")
 		h.eventually("検索のファインダー", func() bool { _, _, _, ok := finderOf(h.e); return ok })
 		h.keys("needle")
-		h.eventually("検索の結果", func() bool { return finderText(h.e) == "sub/beta.go:3:6: func Needle() {}" })
+		h.eventually("検索の結果", func() bool { return finderText(h.e) == gop+"sub/beta.go:3:6: func Needle() {}" })
 		h.keys("<CR>")
 		h.eventually("一致の位置", func() bool {
 			return h.e.float == nil && h.e.bufferName(h.e.cur) == filepath.Join("sub", "beta.go") && h.e.cur.state.Cursor() == buffer.Position{Line: 2, Byte: 5}
@@ -170,7 +154,7 @@ func TestStandardFinder(t *testing.T) {
 	}
 
 	h.keys("<Space>fb")
-	h.eventually("タブの一覧", func() bool { return finderText(h.e) == "a.txt\nsub/beta.go" })
+	h.eventually("タブの一覧", func() bool { return finderText(h.e) == txt+"a.txt\n"+gop+"sub/beta.go" })
 	h.keys("a.t<CR>")
 	h.eventually("移ったタブ", func() bool { return h.e.float == nil && h.e.bufferName(h.e.cur) == "a.txt" })
 
@@ -206,7 +190,7 @@ func TestStandardFinder(t *testing.T) {
 func TestFinderMacro(t *testing.T) {
 	spec := buildFinder(t)
 	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n", "b.txt": "beta\n"})
-	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, "a.txt")
+	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}, Options: noIcons}, "a.txt")
 	h.keys("qb<Space>ff")
 	h.eventually("記録中のファインダー", func() bool { _, _, _, ok := finderOf(h.e); return ok })
 	h.keys("xx<Esc>q")

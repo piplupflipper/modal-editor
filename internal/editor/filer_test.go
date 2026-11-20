@@ -70,7 +70,8 @@ func filerDir(t *testing.T) string {
 func TestStandardFilerPopup(t *testing.T) {
 	spec := buildStdExt(t, "vi-imitation-ext-filer")
 	dir := filerDir(t)
-	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, filepath.Join(dir, "sub", "deep", "c.txt"))
+	// アイコン（FR-152）は TestStandardFilerIcons で確かめ、ここでは木の形だけを見るので切る。
+	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}, Options: noIcons}, filepath.Join(dir, "sub", "deep", "c.txt"))
 	cursorItem := func() string {
 		var item string
 		h.e.do(func() { _, item = filerTree(h.e.float) })
@@ -158,7 +159,7 @@ func TestStandardFilerPane(t *testing.T) {
 	dir := filerDir(t)
 	p := func(rel string) string { return filepath.Join(dir, rel) }
 	var calls muxCalls
-	cfg := Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}
+	cfg := Config{WorkDir: dir, Extensions: []exthost.Spec{spec}, Options: noIcons}
 	calls.config(&cfg)
 	var mu sync.Mutex
 	var focused [][2]string

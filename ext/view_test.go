@@ -193,3 +193,31 @@ func TestViewItemPreview(t *testing.T) {
 		}
 	}
 }
+
+// 項目の指すファイル（FR-152 のアイコンのため）の JSON の形と検査。
+// ファイルは Dir を省けて、ディレクトリは "dir":true を持つ。パスの無いものは誤りにする。
+func TestViewItemFile(t *testing.T) {
+	roundTrip(t, ViewComponent{Kind: ViewTree, Items: []ViewItem{
+		{ID: "d", Label: "d", File: &ViewFile{Path: "/w/d", Dir: true}, HasChildren: true},
+		{ID: "a", Label: "a.go", File: &ViewFile{Path: "/w/a.go"}},
+	}}, `{"kind":"tree","items":[{"id":"d","label":"d","hasChildren":true,"file":{"path":"/w/d","dir":true}},`+
+		`{"id":"a","label":"a.go","file":{"path":"/w/a.go"}}]}`)
+	for _, tt := range []struct {
+		f    *ViewFile
+		want string // 誤りの文の一部。空なら誤りにしない
+	}{
+		{&ViewFile{Path: "a.go"}, ""},
+		{&ViewFile{Path: "d", Dir: true}, ""},
+		{&ViewFile{}, "file.path が空"},
+		{&ViewFile{Dir: true}, "file.path が空"},
+	} {
+		c := ViewComponent{Kind: ViewFinder, Items: []ViewItem{{ID: "a", Label: "A", File: tt.f}}}
+		err := c.Validate()
+		switch {
+		case tt.want == "" && err != nil:
+			t.Errorf("%+v: %v", tt.f, err)
+		case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
+			t.Errorf("%+v: err = %v, want %q", tt.f, err, tt.want)
+		}
+	}
+}
