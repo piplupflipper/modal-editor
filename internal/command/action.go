@@ -445,6 +445,7 @@ func actOpen(below bool) actionFunc {
 			}
 			s.cursor = pos(l, len(indent))
 		}
+		s.updateWant()
 		s.beginInsert(cmd, max(cmd.Count, 1), []buffer.Position{s.cursor}, c.auto)
 		return nil
 	}
