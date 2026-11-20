@@ -136,6 +136,9 @@ const (
 	// SearchHighlight は、直前の検索のパターンに一致する範囲に色を付けるかである（FR-137。Vim の 'hlsearch'）。
 	// 描画が、描くたびにこの値と直前の検索のパターンを読む。
 	SearchHighlight = "search.highlight"
+	// YankHighlightMs は、本体の y でヤンクした範囲に色を付けておくミリ秒である（FR-140。nvim の vim.hl.on_yank の timeout）。
+	// 0 なら付けない。範囲は 0 から 10000 である。Vim にこの設定は無い。
+	YankHighlightMs = "yank.highlightMs"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -145,6 +148,8 @@ var defs = []Def{
 	{Name: LineNumberShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: LineNumberMinWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}},
 	{Name: SearchHighlight, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	// 上限は、色を一瞬だけ付ける設定なので 10 秒にした（ミリ秒を時間の長さにしたときに溢れないためでもある）。
+	{Name: YankHighlightMs, Type: Int, Scope: ScopeEditor, Default: IntValue(0), Range: &IntRange{Min: 0, Max: 10000}},
 }
 
 // Defs は、設定の表の写しを表の順に返す（設定ファイルの読み込みと、後に作るコマンドラインの補完の一覧）。

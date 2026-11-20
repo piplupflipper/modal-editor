@@ -41,9 +41,9 @@ func TestParseColorSchemeName(t *testing.T) {
 }
 
 // 配色は設定ディレクトリの colors/<名前>.jsonc を先に探し、無ければ同梱の配色を使う。同じ名前なら利用者のファイルが勝つ。
-// colorscheme を書かなければ配色を読まない。
+// colorscheme を書かなければ配色を読まない。同梱の iceberg のヤンクの色は、選択と見分けられる背景の色を持つ。
 //
-// req: FR-125
+// req: FR-125, FR-140
 func TestLoadColorScheme(t *testing.T) {
 	dir := t.TempDir()
 	writeColorScheme(t, dir, "iceberg", `// 利用者の iceberg
@@ -71,6 +71,12 @@ func TestLoadColorScheme(t *testing.T) {
 		if got["keyword"] != (Style{Fg: Color{Kind: ColorRGB, R: 0x84, G: 0xa0, B: 0xc6}}) || len(got) < 10 {
 			t.Errorf("同梱の iceberg（dir %q）= %+v", d, got)
 		}
+	}
+
+	// 同梱の iceberg のヤンクの色は、反転でなく背景の色を持つ。選択（背景の色だけ）と重なったところで、選択の背景が上に出る
+	// （PR #287 のレビューの推奨 1。FR-140）。
+	if got := load("iceberg", "").SchemeColors; got["yank"].Reverse || got["yank"].Bg.Kind != ColorRGB || got["yank"].Bg == got["visual"].Bg {
+		t.Errorf("同梱の iceberg の yank = %+v、visual = %+v", got["yank"], got["visual"])
 	}
 
 	var cfg Config

@@ -71,6 +71,27 @@ func TestSearchHighlightDef(t *testing.T) {
 	}
 }
 
+// ヤンクした範囲の色付けの項目は、範囲がエディタ全体の整数で、既定は 0（付けない）、範囲は 0 から 10000 である。
+// 範囲の外の値は、項目の名前によらない範囲の検査（Check）で断る。
+//
+// req: FR-140
+func TestYankHighlightMsDef(t *testing.T) {
+	d, ok := Lookup(YankHighlightMs)
+	if !ok || d.Type != Int || d.Scope != ScopeEditor || d.Default != IntValue(0) || d.Range == nil || *d.Range != (IntRange{Min: 0, Max: 10000}) {
+		t.Fatalf("Lookup(YankHighlightMs) = %+v, %v", d, ok)
+	}
+	for _, tt := range []struct {
+		text string
+		want error
+	}{
+		{"0", nil}, {"300", nil}, {"10000", nil}, {"-1", ErrBelowMin}, {"10001", ErrAboveMax},
+	} {
+		if _, err := d.Parse(tt.text); !errors.Is(err, tt.want) {
+			t.Errorf("Parse(%q) = %v, want %v", tt.text, err, tt.want)
+		}
+	}
+}
+
 // Revision は、項目ごとに Set で値を入れた回数で、同じ値を入れ直しても増え、誤りで入れなかった Set と他の項目の Set では増えない。
 //
 // req: FR-138

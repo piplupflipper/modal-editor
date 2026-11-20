@@ -268,6 +268,9 @@ func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 }
 
 // opYank は、y である。カーソルは範囲の始まりへ移る（yy では動かない）。
+// ヤンクした範囲を Result.Yanked で知らせる（FR-140）。ビジュアルモードの y、Y と、ノーマルモードの yy、Y も、ここを通る。
+//
+// req: FR-140
 func opYank(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if err := checkRegister(cmd.Register); err != nil {
 		return err
@@ -277,6 +280,9 @@ func opYank(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 		return err
 	}
 	s.writeRegister(cmd.Register, Register{Text: text, Linewise: rg.linewise}, false, false)
+	if cmd.Register != '_' {
+		s.res.Yanked = &Yanked{Range: rg.r, Linewise: rg.linewise, Version: s.buf.Version(), Replayed: s.Replaying()}
+	}
 	s.setCursorNormal(rg.start)
 	return nil
 }
