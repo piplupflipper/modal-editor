@@ -1068,6 +1068,96 @@ Vim で同じ位置から `*N` を打ったときと同じ位置である（Vim 
 - 検索の一致の色（`search`）と重なったところは、ヤンクした範囲の色を上にし、ビジュアルモードの選択の色（`visual`）は、ヤンクした範囲の色の上にする
 - 付けるのはバッファの表示領域だけで、浮かべた窓（ホバーの説明、ファインダーなど）の中には付けない
 
+### 字下げとタブの幅
+
+字下げの文字と幅、タブ文字の表示幅、自動インデントは、バッファごとの設定で決める（Vim の `'expandtab'`、`'shiftwidth'`、`'tabstop'`、`'autoindent'`）。
+本体の既定は Vim と同じく、タブ文字で字下げし、字下げの幅とタブ文字の幅は 8、自動インデントは行わない。
+同梱の `config.example.jsonc` は、次のように 4 列のスペースで字下げし、自動インデントを行う設定にしている。
+
+```jsonc
+{
+  "indent": { "useSpaces": true, "width": 4, "auto": true },
+  "tab": { "width": 4 },
+  // ファイルの種類ごとの値。キーは filetype の値で、中は最上位と同じ形で書く
+  "fileTypeOptions": {
+    "python": { "indent": { "width": 4 } },
+  },
+}
+```
+
+| 名前 | `:set` の名前 | 内容 |
+|---|---|---|
+| `indent.useSpaces` | `expandtab`、`et` | `true` なら字下げをスペースで、`false` ならタブ文字で作る |
+| `indent.width` | `shiftwidth`、`sw` | 字下げの 1 段の幅。`0` なら `tab.width` と同じ幅 |
+| `tab.width` | `tabstop`、`ts` | タブ文字の表示幅 |
+| `indent.auto` | `autoindent`、`ai` | 自動インデントを行うか |
+
+実行中は `:set et sw=4 ts=4 ai` のように変える（短い名前も書ける）。`:option.set indent.width 2` も同じである。
+範囲がバッファごとなので、カーソルのあるバッファにだけ効く。変えた値は、次の入力と次の描画から効く。
+
+#### 値の決まり方
+
+バッファを開くと、次の順に値を当て、後に当てた値が勝つ。
+
+1. 本体の既定（上の Vim と同じ値）
+2. 設定ファイルの最上位に書いた値（`"indent": { "width": 4 }`）
+3. 本体のファイルの種類ごとの既定。`go` と `make` は、タブ文字で、`tab.width` と同じ幅で字下げする（Vim と Neovim の ftplugin と同じ）
+4. 設定ファイルの `fileTypeOptions` に、ファイルの種類ごとに書いた値
+5. 開いたファイルに当たる `.editorconfig` の値
+
+3 は 2 より後なので、最上位で `indent.useSpaces` を `true` にしても、Go のファイルと Makefile はタブ文字で字下げする（Neovim で `init.lua` に `expandtab` を書いたときと同じ）。
+Go のファイルもスペースにしたいときは、`"fileTypeOptions": { "go": { "indent": { "useSpaces": true, "width": 4 } } }` と書く。
+`fileTypeOptions` に書けるのは、範囲がバッファごとの項目（`filetype` を除く）だけで、範囲がエディタ全体の項目を書くと誤りとして知らせる。
+
+`:set filetype=go` のようにファイルの種類を変えると、新しい種類で 1 から 5 を当て直す。`:set` で変えたほかの字下げの値は捨てる。
+`:e` でファイルを開き直したときも、1 から 5 を当て直す（`.editorconfig` も読み直す）。
+
+#### `.editorconfig`
+
+開いたファイルのディレクトリから親のディレクトリへ `.editorconfig` を探して読む（[EditorConfig](https://editorconfig.org/) の仕様と同じ探し方。`root = true` のファイルで止まる）。
+読む項目は次の 3 つで、Neovim と同じく写す。
+
+| `.editorconfig` の項目 | 写し方 |
+|---|---|
+| `indent_style` | `space` なら `indent.useSpaces` を `true`、`tab` なら `false` にする。`tab` で `indent_size` が無ければ、`indent.width` を `0`（`tab.width` と同じ幅）にする |
+| `indent_size` | `indent.width` にする。`tab_width` が無ければ `tab.width` も同じ値にする。`tab` なら `indent.width` を `0` にする |
+| `tab_width` | `tab.width` にする |
+
+`end_of_line`、`charset`、`trim_trailing_whitespace`、`insert_final_newline`、`max_line_length` などのほかの項目は読まない。
+値が `unset` の項目は、書かなかったものとして扱う。正しくない値（`indent_size = x`、`tab_width = 0`）の項目は使わない（ログに残す）。
+`.editorconfig` を読むのは、バッファを開いたとき、`:e` で開き直したとき、名前の無いバッファに `:w ファイル` で名前を付けたときである。
+開いた後に `.editorconfig` を書き換えたら、`:e` で開き直すと効く。
+読まないようにするには、設定ファイルに `"editorConfig": { "enabled": false }` と書く（Neovim の `vim.g.editorconfig = false`）。
+
+#### 入力と字下げ
+
+`<Tab>` と `<BS>` は、Neovim の既定（`smarttab` がオン）で、`indent.useSpaces` に応じて次の組にしたときと同じに動く。
+Vim の `softtabstop` と `smarttab` は別の設定にしていない（`:set sts=4` は `E518` になる。[vim-differences.md](vim-differences.md)）。
+
+| `indent.useSpaces` | Neovim の組 | `<Tab>` | `<BS>` |
+|---|---|---|---|
+| `true` | `expandtab shiftwidth=N softtabstop=N` | 次の N の倍数の列までスペースを入れる | 前が空白なら、N の倍数の列まで空白を消す。ただし行頭の字下げの外では、そのインサートでスペースを打った後のスペースを 1 つずつ消す |
+| `false` | `noexpandtab shiftwidth=N softtabstop=0` | タブ文字を入れる。ただし行頭の字下げの中で、N と `tab.width` が違うときは、N の倍数の列まで字下げし、タブ文字を使えるだけ使う | 行頭の字下げの中なら、N の倍数の列まで空白を消す。それ以外は 1 文字消す |
+
+N は `indent.width`（`0` なら `tab.width`）である。
+
+ノーマルモードの `>` と `<`、ビジュアルモードの `>` と `<` は、字下げを N の幅だけ増やすか減らし、`indent.useSpaces` に従って字下げを作り直す。
+
+`indent.auto` が `true` なら、次のように前の行の字下げを写す。
+
+- インサートモードの `<CR>` は、カーソルより前の字下げを新しい行に写し、カーソルより後ろの先頭の空白を消す
+- `o` と `O` は、カーソルの行の字下げを開いた行に入れる
+- `cc` と `S`（行単位の `c`）は、行の字下げを残す
+- 写した字下げのまま何も打たずに `<Esc>` で抜けるか、カーソルキーで別の行へ移ると、その字下げは消える（空の行が残る）
+
+端末から貼り付けたテキストのタブ文字と改行には、字下げの設定と自動インデントを当てない。
+
+#### タブ文字の表示
+
+タブ文字は、そのバッファの `tab.width` の幅で描く。
+カーソルの列、`j` と `k` の列、長い行を折り返したときの見た目の行の分け方、`gj` と `gk` も、同じ幅で数える。
+ポップアップとプレビューの中身は、そのバッファの値で描く。
+
 ## 拡張機能のコマンドを呼ぶ
 
 拡張機能のコマンドは、コマンドラインで `:` の後にコマンドの ID を打って呼ぶ（`:acp.prompt`、`:mcp.status`）。

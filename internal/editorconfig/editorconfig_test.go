@@ -136,10 +136,10 @@ func TestLookup(t *testing.T) {
 	write := func(rel, text string) {
 		t.Helper()
 		p := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

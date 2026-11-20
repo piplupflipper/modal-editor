@@ -148,6 +148,8 @@ var readFile = os.ReadFile
 // Lookup は、絶対パス path のファイルに当たる項目を、ファイルのディレクトリから親のディレクトリへ .editorconfig を探して返す（パッケージの doc）。
 // 当たる項目が無ければ空の Properties を返す。.editorconfig が無いディレクトリは読み飛ばす。
 // 読めない .editorconfig（権限が無いなど）があれば、そのファイルを読み飛ばして、最初の誤りを返す（ほかのファイルの項目は返す）。
+//
+// req: FR-164
 func Lookup(path string) (Properties, error) {
 	props := Properties{}
 	var firstErr error
@@ -187,6 +189,8 @@ func Lookup(path string) (Properties, error) {
 //   - {num1..num2} は、num1 から num2 までの整数（負の数を含む）に当たる
 //   - \ は次の 1 文字を文字どおりにする
 //   - 閉じていない [ と { は、文字どおりの文字として扱う
+//
+// req: FR-164
 func Match(glob, name string) bool {
 	nodes, _ := parseGlob(glob, false)
 	return matchNodes(nodes, name)
@@ -196,13 +200,13 @@ func Match(glob, name string) bool {
 type nodeKind int
 
 const (
-	nodeLiteral nodeKind = iota // 1 文字
-	nodeStar                    // *
-	nodeDoubleStar              // **
-	nodeQuestion                // ?
-	nodeClass                   // [seq]、[!seq]
-	nodeAlt                     // {s1,s2}
-	nodeRange                   // {num1..num2}
+	nodeLiteral    nodeKind = iota // 1 文字
+	nodeStar                       // *
+	nodeDoubleStar                 // **
+	nodeQuestion                   // ?
+	nodeClass                      // [seq]、[!seq]
+	nodeAlt                        // {s1,s2}
+	nodeRange                      // {num1..num2}
 )
 
 // node は、glob の 1 つの要素である。

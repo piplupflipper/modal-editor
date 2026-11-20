@@ -590,11 +590,6 @@ func (s *State) prevWordStart(c buffer.Position) buffer.Position {
 	return res.Pos
 }
 
-// typeRune は、文字 1 つをカーソルの位置に入れる。'\n' は行を分け、他の文字（制御文字を含む）はそのまま入れる。
-func (s *State) typeRune(r rune) error {
-	return s.typeInput(editcmd.InsertInput{Op: editcmd.InsertRune, Rune: r})
-}
-
 // finishInsert は、インサートモードを抜ける（<Esc>）。
 //
 // 回数つきで入った場合（3ix、3o）は、入力したテキストを残りの回数だけ続けて入れる（typeRepeated）。o と O は、そのたびに行を開く。
