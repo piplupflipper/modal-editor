@@ -161,25 +161,52 @@ func TestRunGrep(t *testing.T) {
 
 // 検索の番号は入力が届いた順に決まるので、取り消した前の入力の検索の goroutine が、新しい入力の検索より後に動いても、
 // 新しい入力の結果が残る（#262）。前は番号を goroutine の中で進めていて、この順に動くと前の入力の検索が今の検索になり、
-// 一覧が空で「読み込み中」のまま、前の入力の番号で止まった。rg が無ければ飛ばす。
+// 一覧が空で「読み込み中」のまま、前の入力の番号で止まった。picker の goroutine（loop）を通し、grepHook で前の入力の
+// goroutine を、新しい入力の goroutine が終わるまで差し止めて、その順を作る。rg が無ければ飛ばす。
 func TestGrepGenerationOrder(t *testing.T) {
 	if _, err := lookPath("rg"); err != nil {
 		t.Skip("rg が無い")
 	}
 	dir := writeTree(t, map[string]string{"a.go": "func Needle() {}\n"})
-	p := newFinder(context.Background()).newPicker("grep", "検索", dir, "")
-	p.grep = true
 	oldIn, newIn := inputState{text: "needl", seq: 5}, inputState{text: "needle", seq: 6}
-	oldCtx, oldCancel := context.WithCancel(context.Background())
-	oldGen := p.beginGrep(oldIn)
-	oldCancel()
-	newGen := p.beginGrep(newIn)
-	p.runGrep(context.Background(), newIn, newGen)
-	p.runGrep(oldCtx, oldIn, oldGen)
+	oldStarted, releaseOld, oldDone, newDone := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	grepHook = func(in inputState) func() {
+		switch in {
+		case oldIn:
+			close(oldStarted)
+			<-releaseOld
+			return func() { close(oldDone) }
+		case newIn:
+			return func() { close(newDone) }
+		}
+		return func() {}
+	}
+	t.Cleanup(func() { grepHook = nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := newFinder(ctx).newPicker("grep", "検索", dir, "")
+	p.grep = true
+	go p.loop()
+	p.setInput(oldIn)
+	waitClosed(t, oldStarted, "前の入力の検索の始まり")
+	p.setInput(newIn)
+	waitClosed(t, newDone, "新しい入力の検索の終わり")
+	close(releaseOld)
+	waitClosed(t, oldDone, "前の入力の検索の終わり")
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.grepSeq != newIn.seq || p.loading || len(p.items) != 1 || p.items[0].label != "a.go:1:6: func Needle() {}" {
 		t.Errorf("grepSeq=%d loading=%v items=%+v", p.grepSeq, p.loading, p.items)
+	}
+}
+
+// waitClosed は、ch が閉じるのを待つ。10 秒待っても閉じなければ、what を書いて落とす。
+func waitClosed(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("待ちきれない: %s", what)
 	}
 }
 

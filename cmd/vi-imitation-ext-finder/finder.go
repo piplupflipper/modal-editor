@@ -408,10 +408,17 @@ func (p *picker) loop() {
 		gen := p.beginGrep(in)
 		go func() {
 			defer cancel()
+			if h := grepHook; h != nil {
+				defer h(in)()
+			}
 			p.runGrep(ctx, in, gen)
 		}()
 	}
 }
+
+// grepHook は、テストから検索の goroutine の動く順を決める口である。nil でなければ、検索の goroutine の最初に入力を渡して呼び、
+// 返った関数を goroutine の最後に呼ぶ。テストは、picker の goroutine（loop）を始める前に設定する。
+var grepHook func(in inputState) (done func())
 
 // send は、今の候補を今の入力で絞り込み、view/update で送る。
 func (p *picker) send() {
