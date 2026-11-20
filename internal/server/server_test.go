@@ -758,23 +758,25 @@ func TestServeOpensHelloFiles(t *testing.T) {
 	if err := c.Send(protocol.Hello{Kind: protocol.KindEdit, Width: 60, Height: 10, Files: []string{b, a}, ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
+	// 画面は、届いたのを確かめてからキーを送る。server は Run が終わった後に、まだ送っていない画面を送らない（clientTerm.finish）ので、
+	// キーを先に送ると、負荷で画面を 1 枚も送らないまま :qa! で終わることがある（#313）。
+	// 1 行目はタブの行で、2 行目からがバッファである。
+	if lines := strings.Split(recvScreen(t, c, "bee"), "\n"); len(lines) < 2 || !strings.HasPrefix(lines[0], " b.txt") || !strings.HasPrefix(lines[1], "bee ") {
+		t.Errorf("最初の画面の 1 行目が、最初の引数 b.txt の内容でない:\n%s", strings.Join(lines, "\n"))
+	}
+	// 編集を禁止したバッファの x は E21 で断る。
+	sendKeys(t, c, "xx")
+	if lines := strings.Split(recvScreen(t, c, "E21"), "\n"); len(lines) < 2 || !strings.HasPrefix(lines[1], "bee ") {
+		t.Errorf("xx の後の画面で、b.txt の内容が消えた:\n%s", strings.Join(lines, "\n"))
+	}
 	msgs := collect(c)
 	// 2 つのファイルは 2 つのタブになるので（FR-62）、:qa! で client のタブをすべて閉じて終える。
-	sendKeys(t, c, "xx:qa!<CR>")
+	sendKeys(t, c, ":qa!<CR>")
 	if err := <-done; err != nil {
 		t.Fatalf("Run = %v", err)
 	}
 	_ = c.Close()
-	var last string
-	for _, m := range <-msgs {
-		if d, ok := m.(protocol.Draw); ok {
-			last = d.Screen.Grid.String()
-		}
-	}
-	// 1 行目はタブの行で、2 行目からがバッファである。
-	if lines := strings.Split(last, "\n"); len(lines) < 2 || !strings.HasPrefix(lines[0], " b.txt") || !strings.HasPrefix(lines[1], "bee ") {
-		t.Errorf("最後の画面の 1 行目が、最初の引数 b.txt の内容（xx で消えない）でない:\n%s", last)
-	}
+	<-msgs
 	if got, err := os.ReadFile(b); err != nil || string(got) != "bee\n" {
 		t.Errorf("b.txt = %q, %v; want 変わらない", got, err)
 	}

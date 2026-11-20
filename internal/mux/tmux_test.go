@@ -334,34 +334,77 @@ func TestTmuxFocusPaneUnknown(t *testing.T) {
 }
 
 // TestTmuxPopupContextCanceled は、開いたか分かる前に ctx が終わっても、ポップアップを開いたまま残さないことを確かめる。
-// display-popup の起動を遅らせる包みのスクリプトを Bin にして、印ができる前に ctx を切る（PR #188 の再レビュー）。
+// display-popup を差し止める包みのスクリプトを Bin にして、display-popup が起動してから ctx を切り、
+// OpenPopup が ctx の誤りを返した後にポップアップを開かせる（PR #188 の再レビュー）。
+//
+// 時間の上限で順序を作らない。ctx を時間で切ると、負荷で client の問い合わせが上限を超えることがある。
+// また、層は印ができた時点で閉じるので、中のコマンドが何かを書く前に閉じることがあり、中のコマンドの出力は待てない（#313）。
+// display-popup はポップアップが閉じるまで戻らないので、包みのスクリプトが display-popup の終わりを書けば、閉じたことになる。
 func TestTmuxPopupContextCanceled(t *testing.T) {
 	tt := newTestTmux(t)
 	tt.attachClient(t, tt.session)
-	slow := filepath.Join(t.TempDir(), "slow-tmux")
-	// display-popup だけを遅らせる。
-	script := "#!/bin/sh\ncase \" $* \" in *' display-popup -E '*) sleep 0.5;; esac\nexec " + shellQuote(tt.Bin) + " \"$@\"\n"
+	dir := t.TempDir()
+	// OpenPopup の印のディレクトリ（os.MkdirTemp）を、このテストのディレクトリの下に作らせる。
+	popupTmp := filepath.Join(dir, "tmp")
+	if err := os.Mkdir(popupTmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", popupTmp)
+	started := filepath.Join(dir, "started")
+	goAhead := filepath.Join(dir, "go")
+	closed := filepath.Join(dir, "closed")
+	slow := filepath.Join(dir, "slow-tmux")
+	// display-popup だけを、started を作ってから go ができるまで止める。
+	// display-popup が戻ったら、そのときに印があったか（ポップアップが開いたか）を closed に書く。
+	// 印のディレクトリは、この包みが終わった後に層が消す。
+	script := "#!/bin/sh\n" +
+		"case \" $* \" in *' display-popup -E '*)\n" +
+		"\t: > " + shellQuote(started) + "\n" +
+		"\twhile [ ! -e " + shellQuote(goAhead) + " ]; do sleep 0.01; done\n" +
+		"\t" + shellQuote(tt.Bin) + " \"$@\"\n" +
+		"\tstatus=$?\n" +
+		"\tset -- " + shellQuote(popupTmp) + "/vi-imitation-popup-*/ready\n" +
+		"\tif [ -e \"$1\" ]; then echo opened; else echo not-opened; fi > " + shellQuote(closed+".tmp") + "\n" +
+		"\tmv " + shellQuote(closed+".tmp") + " " + shellQuote(closed) + "\n" +
+		"\texit $status;;\n" +
+		"esac\n" +
+		"exec " + shellQuote(tt.Bin) + " \"$@\"\n"
 	if err := os.WriteFile(slow, []byte(script), 0o700); err != nil { //nolint:gosec // テスト用の実行ファイル
 		t.Fatal(err)
 	}
 	slowTmux := &Tmux{Bin: slow, Socket: tt.Socket, Pane: tt.Pane}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	out := filepath.Join(t.TempDir(), "out")
-	err := slowTmux.OpenPopup(ctx, PopupOptions{Target: tt.Pane, Command: Command{Args: writeCommand(out)}})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	go func() {
+		// display-popup が起動してから ctx を切る。
+		for ctx.Err() == nil {
+			if _, err := os.Stat(started); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	err := slowTmux.OpenPopup(ctx, PopupOptions{Target: tt.Pane, Command: Command{Args: []string{"sleep", "600"}}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
-	// ポップアップは ctx が切れた後に開き、中のコマンドは起動するが、層がすぐ閉じる。
-	lines := strings.Split(waitFile(t, out), "\n")
-	pid, err := strconv.Atoi(lines[2])
-	if err != nil {
+	// ctx の誤りが返った後に、ポップアップを開かせる。層はそれを見つけて閉じる。
+	if err = os.WriteFile(goAhead, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if got := waitFile(t, closed); got != "opened\n" {
+		t.Fatalf("display-popup が戻ったときの印 = %q, want ポップアップが開いていた", got)
+	}
+	// 印のディレクトリは、display-popup が終わった後に層が消す。
 	deadline := time.Now().Add(5 * time.Second)
-	for syscall.Kill(pid, 0) == nil {
+	for {
+		left, _ := filepath.Glob(filepath.Join(popupTmp, "vi-imitation-popup-*"))
+		if len(left) == 0 {
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatalf("ctx が切れた後に開いたポップアップのプロセス %d が残っている", pid)
+			t.Fatalf("印のディレクトリが残っている: %v", left)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

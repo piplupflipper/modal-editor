@@ -205,12 +205,14 @@ func runFakeExt(mode string) int {
 			}()
 			return ext.CommandExecuteResult{OK: true}, nil
 		})
-		// fake.exec は、引数の JSON（ext.EditorExecuteParams と、待つ時間の "delay"（ミリ秒）、すぐ送るかの "now"、2 回送るかの "twice"）
-		// を覚え、次の view/select の後に、待ってからその選択の番号で editor/execute を送る（selection を書けばその番号で送る）。
+		// fake.exec は、引数の JSON（ext.EditorExecuteParams と、テストが送らせるまで待つかの "hold"、すぐ送るかの "now"、
+		// 2 回送るかの "twice"）を覚え、次の view/select の後に、その選択の番号で editor/execute を送る（selection を書けばその番号で送る）。
+		// hold なら、テストが fakeReleasePath(本体のプロセス ID, "exec") のファイルを作るまで送らない。時間で遅らせると、
+		// 負荷でテストが打つキーと送る順が入れ替わるためである（#313）。
 		// now なら、選択を待たずにすぐ送る。成功したら "exec ok" と出す（PR #249 の再レビューと 3 回目の確認の検証）。
 		type fakeExec struct {
 			ext.EditorExecuteParams
-			Delay int  `json:"delay"`
+			Hold  bool `json:"hold"`
 			Now   bool `json:"now"`
 			Twice bool `json:"twice"`
 		}
@@ -219,7 +221,10 @@ func runFakeExt(mode string) int {
 			if x.Selection == 0 {
 				x.Selection = selection
 			}
-			time.Sleep(time.Duration(x.Delay) * time.Millisecond)
+			if x.Hold && !fakeWaitRelease(hostCtx, fakeReleasePath(os.Getppid(), "exec")) {
+				_ = s.ShowMessage(ext.MessageError, "exec: not released")
+				return
+			}
 			n := 1
 			if x.Twice {
 				n = 2
@@ -300,11 +305,15 @@ func runFakeExt(mode string) int {
 			case (e.Kind == server.ViewSelected || e.Kind == server.ViewKey) && (e.Item == "open" || e.Item == "slow" || e.Item == "late"):
 				// ファイラと同じく、選んだファイルを editor/open で開く（#244 の PR #248 のレビューの必須）。フックの中では応答を待てない。
 				// 開くのは fakeOpenedPath のファイルで、開いたら "picked <項目>" を出す。
-				// slow は 300 ms 後に、late は 1.5 秒後（フォーカスを戻す上限の後）に開く（PR #248 の再レビューの必須）。
+				// slow と late は、テストが fakeReleasePath のファイルを作るまで開かない（PR #248 の再レビューの必須）。
+				// テストは、その間に別の client でキーを打つ（slow）か、選んだ時刻をフォーカスを戻す上限より前にずらす（late）。
+				// 時間で遅らせると、負荷でテストの操作と開く順が入れ替わるためである（#313）。
 				// popupKeys のキー（view/key）でも同じく開く（view/key の後はフォーカスを戻さないことを確かめるため）。
-				delay := map[string]time.Duration{"slow": 300 * time.Millisecond, "late": 1500 * time.Millisecond}[e.Item]
 				go func() {
-					time.Sleep(delay)
+					if e.Item != "open" && !fakeWaitRelease(hostCtx, fakeReleasePath(os.Getppid(), e.Item)) {
+						_ = s.ShowMessage(ext.MessageError, "open: not released: "+e.Item)
+						return
+					}
 					if _, err := s.OpenEditor(hostCtx, ext.EditorOpenParams{Path: fakeOpenedPath(os.Getppid()), Focus: true}); err != nil {
 						_ = s.ShowMessage(ext.MessageError, "open: "+err.Error())
 						return
@@ -568,6 +577,24 @@ func runFakeExt(mode string) int {
 // （偽の拡張機能はテストのプロセスの子なので、os.Getppid で同じパスを作れる）。
 func fakeOpenedPath(pid int) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("vi-imitation-fake-%d-opened.txt", pid))
+}
+
+// fakeReleasePath は、テストの実行ファイル（プロセス ID が pid）が、差し止めた送り出しを進めさせる印のファイルのパスである。
+// item は、fake.pane の項目（slow か late）か、fake.exec の hold（exec）である。
+func fakeReleasePath(pid int, item string) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("vi-imitation-fake-%d-release-%s", pid, item))
+}
+
+// fakeWaitRelease は、印のファイル path ができるまで待ち、できたら消して true を返す。ctx が終わるか 30 秒で false を返す。
+func fakeWaitRelease(ctx context.Context, path string) bool {
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		if err := os.Remove(path); err == nil {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
 }
 
 // fakePopup は、fake.popup の引数 kind の部品のポップアップの params を返す。
@@ -844,6 +871,30 @@ func (h *harness) message() string {
 	var s string
 	h.e.do(func() { s = h.e.message.Text })
 	return s
+}
+
+// waitPopupOpened は、fake.popup が popup/open の応答の後に出す "opened <view> err=<nil>" を、イベントループが処理するまで待つ。
+// fake.popup はこの知らせを popup/open の応答を待つ goroutine から出すので、負荷で遅れると、利用者の操作の知らせ（OnView）の後に届き、
+// そのメッセージを上書きする。waitMessage はいまのメッセージだけを見るので、上書きされると待ちきれなくなる（#313）。
+// ポップアップの操作を waitMessage で確かめるテストは、開いた後にこれを呼んでから操作する。
+func (h *harness) waitPopupOpened(view uint64) {
+	h.t.Helper()
+	h.waitShown(fmt.Sprintf("opened %d err=<nil>", view))
+}
+
+// waitPaneOpened は、fake.pane が pane/open の応答の後に出す "pane <view> err=<nil>" を、イベントループが処理するまで待つ。
+// waitPopupOpened と同じ理由で、ペインの操作を waitMessage で確かめるテストは、開いた後にこれを呼んでから操作する（#313）。
+func (h *harness) waitPaneOpened(view uint64) {
+	h.t.Helper()
+	h.waitShown(fmt.Sprintf("pane %d err=<nil>", view))
+}
+
+// waitShown は、text と同じメッセージがメッセージの履歴に入るまで待つ。
+func (h *harness) waitShown(text string) {
+	h.t.Helper()
+	h.eventually(text, func() bool {
+		return slices.ContainsFunc(h.e.msgHistory, func(m ui.Message) bool { return m.Text == text })
+	})
 }
 
 func (h *harness) state(id string) exthost.State {

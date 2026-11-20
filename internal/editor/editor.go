@@ -311,6 +311,9 @@ type Editor struct {
 	// extFromPane は、拡張機能の ID のうち、最後の操作がペインの部品の client のキーだったものから、そのキーを処理した時刻への表である
 	// （noteViewClient、focusAfterPane）。
 	extFromPane map[string]paneMark
+	// paneFocus は、ペインで選んでからフォーカスを戻すまでの上限である（focusAfterPane）。0 なら paneFocusWindow を使う。
+	// テストが長くして、負荷で応答が遅れても上限の内に届いたものとして扱わせる（#313）。
+	paneFocus time.Duration
 	// attachCh は、Attach が渡す新しい client を、イベントループへ送る。
 	attachCh chan attachRequest
 	// goneCh は、端末の入力が閉じた client を、イベントループへ送る（forwardInput）。

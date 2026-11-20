@@ -146,6 +146,7 @@ func TestComponentPopup(t *testing.T) {
 	}
 
 	// 部品の client のキーは、元の client の操作として処理する。
+	h.waitPopupOpened(call.view)
 	comp.keys("x")
 	h.waitMessage("kind=3 item=one key=fake.pick")
 	comp.keys("j")
@@ -165,8 +166,9 @@ func TestComponentPopup(t *testing.T) {
 	call, _ = calls.last(false)
 	comp = h.attachComponent(call.view, false)
 	comp.waitScreen("close me")
+	h.waitPopupOpened(call.view)
 	comp.term.closeInput()
-	h.waitMessage("kind=0 item= key=")
+	h.waitMessage(fmt.Sprintf("view %d kind=0 item= key=", call.view))
 	h.eventually("閉じたポップアップ", func() bool { return h.e.viewOf(h.clientOf(peer.term)).float == nil })
 
 	// 端末多重化ソフトのポップアップを開けなければ、理由を出し、元の client の画面の中央に描いたままにする。
@@ -252,7 +254,8 @@ func TestComponentPane(t *testing.T) {
 	if call.from != "%9" || call.opts != (PaneOptions{Down: true, Size: 30}) {
 		t.Errorf("OpenPane = %+v", call)
 	}
-	h.waitMessage("err=<nil>")
+	// fake.pane が後から出す "pane <ID>" の知らせが、操作の知らせを上書きしないように、先に届くのを待つ（#313）。
+	h.waitPaneOpened(call.view)
 	var floating bool
 	h.e.do(func() { floating = h.e.viewOf(h.clientOf(peer.term)).float != nil })
 	if floating {
@@ -313,8 +316,10 @@ func TestComponentPane(t *testing.T) {
 	call, _ = calls.last(true)
 	comp = h.attachComponent(call.view, true)
 	comp.waitScreen("close me")
+	h.waitPaneOpened(call.view)
 	comp.term.closeInput()
-	h.waitMessage("kind=0 item= key=")
+	// 1 つ目のペインの view/closed（kind=0）と取り違えないように、このペインの ID で待つ。
+	h.waitMessage(fmt.Sprintf("view %d kind=0 item= key=", call.view))
 	h.e.do(func() { panes = len(h.e.viewOf(h.clientOf(peer.term)).panes) })
 	if panes != 0 {
 		t.Errorf("panes after the component client is gone = %d", panes)
@@ -362,6 +367,9 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 		return active, nil
 	}
 	h := start(t, cfg)
+	// 上限（paneFocusWindow）の内に届いたかは、時計に任せず順序で決める（#313）。上限は長くし、上限を過ぎた場合（late）は
+	// 選んだ時刻を上限より前にずらす。負荷で選んでから届くまでが 1 秒を超えても、上限の内として扱う。
+	h.e.do(func() { h.e.paneFocus = time.Hour })
 	a := h.attach(ClientInfo{ID: 2, Pane: "%9"})
 	a.keys(":fake.pane files<CR>")
 	h.eventually("OpenPane", func() bool { _, ok := calls.last(true); return ok })
@@ -419,6 +427,25 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 		}
 		return n
 	}
+	// 最初に選んだ分の知らせ（picked open）を待つ。拡張機能は、editor/open の応答を受けてから知らせるので、タブが替わった後に届きうる。
+	// 待たずに次の pick で数え始めると、遅れて届いたこの知らせを次の選択の分と取り違え、前の選択が開く前に次を選ぶ（#313）。
+	h.eventually("最初に選んだファイルを開いた知らせ", func() bool { return picked() == 1 })
+	// selected は、拡張機能が項目 item を選んだ知らせを受けたか（OnView の message/show がイベントループに届いたか）を返す。
+	// 届いていれば、選んだキーは処理済みで、印（extFromPane）が立っている。イベントループの goroutine で呼ぶ。
+	selected := func(item string) bool {
+		return slices.ContainsFunc(h.e.msgHistory, func(m ui.Message) bool { return strings.HasSuffix(m.Text, "item="+item+" key=") })
+	}
+	// release は、fake.pane の項目 item（slow か late）の editor/open を送らせる。
+	release := func(item string) {
+		t.Helper()
+		if err := os.WriteFile(fakeReleasePath(os.Getpid(), item), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(fakeReleasePath(os.Getpid(), "slow"))
+		_ = os.Remove(fakeReleasePath(os.Getpid(), "late"))
+	})
 	pick := func(row string, between func()) {
 		t.Helper()
 		var before int
@@ -434,10 +461,26 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 		}
 	}
 	pick("j", func() { // slow: 選んだ後、届く前に別の client でキーを打つ
-		h.eventually("選んだ知らせ", func() bool { return strings.HasSuffix(h.e.msgHistory[len(h.e.msgHistory)-1].Text, "item=slow key=") })
+		h.eventually("選んだ知らせ", func() bool { return selected("slow") })
 		h.keys("ixy<Esc>")
+		h.settle()
+		release("slow")
 	})
-	pick("jj", func() {}) // late: 上限を過ぎて届く
+	pick("jj", func() { // late: 選んでから上限を過ぎて届く
+		h.eventually("選んだ知らせ", func() bool { return selected("late") })
+		var marked bool
+		h.e.do(func() {
+			var m paneMark
+			if m, marked = h.e.extFromPane["fake"]; marked {
+				m.at = m.at.Add(-2 * h.e.paneFocusLimit())
+				h.e.extFromPane["fake"] = m
+			}
+		})
+		if !marked {
+			t.Fatal("late を選んだ後に、フォーカスを戻す印が立っていない")
+		}
+		release("late")
+	})
 	time.Sleep(100 * time.Millisecond)
 	if n := focusCount(); n != 1 {
 		t.Errorf("FocusPane calls = %d, want 1 (only the first selection)", n)
@@ -454,8 +497,15 @@ func TestPaneSelectionGoesToOpener(t *testing.T) {
 	// 利用者がキーを打たずに部品のペインから離れていれば（別の window へ移った）、1 秒以内に届いても戻さない（3 回目の確認の推奨 1）。
 	mu.Lock()
 	active = false
+	askedBefore := len(asked)
 	mu.Unlock()
 	pick("", func() {})
+	// PaneFocused が問われてから active を戻す。問われる前に戻すと、フォーカスを戻してしまう（#313）。
+	h.eventually("PaneFocused の問い合わせ", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(asked) > askedBefore
+	})
 	time.Sleep(100 * time.Millisecond)
 	if n := focusCount(); n != 2 {
 		t.Errorf("FocusPane calls after leaving the pane = %d, want 2", n)
@@ -590,6 +640,10 @@ func TestPanePlacementAndCloseOnSelect(t *testing.T) {
 	if _, ok := calls.last(true); ok {
 		t.Error("pane/open with placement center split the pane")
 	}
+	// fake.pane が後から出す "pane <ID>" の知らせが、操作の知らせを上書きしないように、先に届くのを待つ（#313）。
+	var centerView uint64
+	h.e.do(func() { centerView = popup().id })
+	h.waitPaneOpened(centerView)
 	peer.keys("<CR>")
 	h.waitMessage("kind=4 item=dir key= expanded=true")
 	var open bool
@@ -616,8 +670,9 @@ func TestPanePlacementAndCloseOnSelect(t *testing.T) {
 	call, _ := calls.last(true)
 	comp := h.attachComponent(call.view, true)
 	comp.waitScreen("▸ dir")
+	h.waitPaneOpened(call.view)
 	comp.keys("G<CR>")
-	h.waitMessage("kind=1 item=top")
+	h.waitMessage(fmt.Sprintf("view %d kind=1 item=top", call.view))
 	h.settle()
 	var panes int
 	var tabChanges int

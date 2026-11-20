@@ -310,6 +310,14 @@ type paneMark struct {
 // ファイラが選んだファイルを開くのは、ふつうこれより早い。遅れたときはフォーカスを動かさずにタブだけを替える。
 const paneFocusWindow = time.Second
 
+// paneFocusLimit は、フォーカスを戻すまでの上限を返す。テストが替えていなければ paneFocusWindow である。
+func (e *Editor) paneFocusLimit() time.Duration {
+	if e.paneFocus > 0 {
+		return e.paneFocus
+	}
+	return paneFocusWindow
+}
+
 // focusAfterPane は、拡張機能 extID の editor/open を開いた後に呼ぶ。move は、focus が true で、読み込んでいる client のタブに開いたことを表す。
 // その拡張機能への最後の操作がペインの部品の client のキー（ファイラで選んだなど）で、その後に利用者がどの client でもキーを打っていなければ、
 // 端末多重化ソフトのフォーカスをそのペインから、開いたタブの client のペインへ移す（FR-105。PR #248 のレビューの推奨 1）。
@@ -327,7 +335,7 @@ func (e *Editor) focusAfterPane(extID string, move bool) {
 		return
 	}
 	delete(e.extFromPane, extID)
-	if !move || time.Since(m.at) > paneFocusWindow {
+	if !move || time.Since(m.at) > e.paneFocusLimit() {
 		return
 	}
 	to := e.view.info.Pane

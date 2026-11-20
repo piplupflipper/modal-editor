@@ -279,7 +279,8 @@ func TestPopupMacro(t *testing.T) {
 // req: FR-68, FR-69, FR-72
 func TestExtensionPopup(t *testing.T) {
 	h := start(t, Config{Extensions: fakeSpecs(t)})
-	open := func(kind string) {
+	// open は、kind のポップアップを開き、拡張機能の "opened" の知らせが届くまで待って、ポップアップの ID を返す。
+	open := func(kind string) uint64 {
 		t.Helper()
 		var id uint64
 		h.e.do(func() {
@@ -289,6 +290,9 @@ func TestExtensionPopup(t *testing.T) {
 		})
 		h.keys(":fake.popup " + kind + "<CR>")
 		h.eventually(kind+" のポップアップ", func() bool { return h.e.float != nil && h.e.float.id != id && h.e.float.ext == "fake" })
+		h.e.do(func() { id = h.e.float.id })
+		h.waitPopupOpened(id)
+		return id
 	}
 	open("list")
 	fi, _ := h.float()
@@ -328,7 +332,7 @@ func TestExtensionPopup(t *testing.T) {
 	h.eventually("view/update", func() bool { return popupText(h.e) == "updated" })
 	h.e.do(func() { view = h.e.float.id })
 	h.keys("<Esc>")
-	h.waitMessage("kind=0 item= key=")
+	h.waitMessage(fmt.Sprintf("view %d kind=0 item= key=", view))
 	if _, ok := h.float(); ok {
 		t.Errorf("<Esc> did not close the popup %d", view)
 	}
@@ -377,12 +381,13 @@ func TestExtensionPopup(t *testing.T) {
 	h.settle()
 
 	// placement が cursor のテキストは、フォーカスを入れずにカーソルの近くに出し、次のキーで閉じる。
-	open("text")
+	// 閉じた知らせは、このポップアップの ID で待つ。kind=0 だけで待つと、直前に閉じた入力の行の知らせに当たりうる（#313）。
+	view = open("text")
 	if fi, _ := h.float(); fi.text != "alpha beta\ngamma" || fi.focused || fi.center {
 		t.Errorf("text: %+v", fi)
 	}
 	h.keys("l")
-	h.waitMessage("kind=0")
+	h.waitMessage(fmt.Sprintf("view %d kind=0", view))
 	if _, ok := h.float(); ok {
 		t.Errorf("text popup is still open after l")
 	}
