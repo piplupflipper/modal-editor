@@ -479,7 +479,7 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 | `internal/editcmd` | キー入力の型と、キーの列から解釈した編集コマンドの値の型（3 章の表）。`internal/input` と `internal/command` が共有する | キーの解釈、値の実行 |
 | `internal/input` | キーの列から編集コマンドの値への解釈 | バッファの変更、端末のバイト列の解読（`internal/term`） |
 | `internal/command` | 編集コマンドの値の実行、レジスター、ドットリピートとマクロの記録 | キーの解釈、画面 |
-| `internal/ui` | 端末への描画（バッファの表示領域、印の列、ステータス行、コマンドラインの行、出力の欄、浮かべた窓。6.7 の表示のデータの描き方） | バッファの変更、表示のデータの保持と位置のずらし（`internal/editor`） |
+| `internal/ui` | 端末への描画（バッファの表示領域、印の列、行番号の列、ステータス行、コマンドラインの行、出力の欄、浮かべた窓。6.7 の表示のデータの描き方） | バッファの変更、表示のデータの保持と位置のずらし（`internal/editor`） |
 | `internal/term` | 端末の制御（raw モード、代替画面、端末のバイト列からキーへの解読、`internal/ui` の格子の差分の出力）。`internal/ui` を import するので `internal/editor` と同じ層に置き、`internal/editor` を import しない。使うのは編集の client（`internal/client`）である | 画面の内容の組み立て、編集の状態 |
 | `internal/exthost` | 拡張機能のプロセスの起動、監視、期限、再起動、差分の送信 | 個々の拡張機能の機能 |
 | `internal/config` | 設定ファイルと、拡張機能の宣言ファイルと、配色のファイル（同梱の配色を含む。7.1）の読み込み | 設定の適用 |
@@ -2260,6 +2260,7 @@ MCP の拡張機能は、このバージョン番号を `read_buffer` のバー�
 デバッガーの印を診断の印より上にするのは、デバッグ中に利用者が追う位置（止まった行と置いたブレークポイント）を、編集で出る診断で隠さないためである。
 表記は ASCII にし、端末の文字幅の設定で列がずれないようにする。
 知らない `kind` の印は描かない。
+印の列の右には、行番号の列を置ける（この節の後の「行番号の列」）。
 
 `popup/show` の params は次のとおりである。
 
@@ -2338,6 +2339,31 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 長い行は折り返し、選択肢が見えるように画面の半分を超えても広げ、収まらなければ問いの文の行から減らす。番号のキーで選べない 10 個目以降の選択肢は数だけを出す。
 答えはメッセージの行に 1 行で出し、利用者が問いの他のキーを打つまでに続けて届いた問いには、案内の前に何件目か（`問い 2:`）を、問いの文の上に前の問いへの答えを出す（#151。前の答えを受け取ってから次を送る拡張機能があるので、全体の件数は出さない）。
 番号と `<Esc>` 以外のキーと貼り付けは、Vim 9.1 の `confirm()` と同じく捨てて問いを続けるが、Vim と違って捨てた数を問いの上に出す（`docs/vim-differences.md`）。
+
+#### 行番号の列
+
+#268 で、印の列（「表示のデータ」の `sign/set`）の右、本文の左に行番号の列を置けるようにした（FR-135、FR-136）。
+出すかどうかと最小の列数は、設定の表（7.3）のエディタ全体の項目 `lineNumber.show` と `lineNumber.minWidth` で決める。
+
+| 項目 | 決めたこと |
+|---|---|
+| 並び | 左から、印の列（印か診断があるときだけ 2 列）、行番号の列、本文 |
+| 幅 | `lineNumber.minWidth` と、バッファの最後の行の番号の桁数に 1 を足した数の大きい方（Vim の `'numberwidth'` と同じ規則）。画面に見えている行でなく最後の行で決まるので、スクロールでは変わらず、行数の桁が上がったときに変わる。桁上がりで本文の位置がずれるのを避けるための特殊な処理（開いたときの幅を固定するなど）は入れず、`minWidth` を大きくして避ける |
+| 数字 | 列の最後の 1 列の手前で右に寄せ、最後の 1 列は空ける（Vim と同じ） |
+| 色 | 色の名前 `linenr`（7.1）を、右寄せの前の空白と最後の 1 列を含む列の全体に付ける（Vim の `LineNr`） |
+| 出す場所 | バッファの表示領域の、バッファの行だけ。最終行より後の `~` の行（`~` は Vim と同じく左の端に描く）と、見比べている間の詰め物の行には出さない。浮かべた窓の中、出力の欄、部品の client が描くペインとポップアップには出さない |
+| 本文の位置 | 本文を描く最初の列（`internal/ui` の `Renderer.textLeft`）が列の幅の分だけ右へ動く。カーソルの画面の列、カーソルの近くに浮かべる窓の位置、横のスクロールの幅（`textWidth`）は、どれもこの列から数えるので、行番号の列のための別の処理は無い |
+
+幅は、2026-11-20 に Vim 9.1（`vim -Nu NONE -n --not-a-term`）で `getwininfo()` の `textoff` を読んで確かめた値と合わせた（`internal/ui` の `TestLineNumberWidth`）。
+`'numberwidth'` が 4 なら 999 行までは 4 列、1000 行で 5 列、10000 行で 6 列、5 なら 9999 行まで 5 列である。
+
+描画は、描くたびに設定の今の値を読む。
+`internal/editor` が描画の入力（`ui.Frame`）を作るたびに、エディタ全体の値から `ui.Frame.LineNumbers` を詰める（`Editor.uiLineNumbers`）。
+`:set number` などで値を変えたときに呼ぶ処理は足していない（7.3 の「エディタ全体」の行の規則）。
+浮かべた窓の中を描く子の描画は、他の画面の部品の欄（`Output`、`Diff` など）と同じく、窓の中のバッファの `LineNumbers` を読まない。
+
+後に、カーソルのある行の番号の色（Vim の `CursorLineNr`）や相対の行番号（Vim の `'relativenumber'`）を足すときは、この列の描き方の上に足す。
+後に足す検索の一致の色付けでは、行番号の列に一致の色を付けない（#268 の本文）。
 
 #### 段階 3 での表示のデータ
 
@@ -2701,6 +2727,9 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 名前の一覧は `docs/usage.md` の「見た目の設定」と `internal/ui` の `StyleNames` にある。
 #215 で、タブの行の色の名前 `tabline`（ほかのタブ）、`tabline.selected`（いまのタブ）、`tabline.fill`（タブの右の空いた列）を足した（Vim の `TabLine`、`TabLineSel`、`TabLineFill` に当たる）。
 #228 で、見比べの色の名前 `diff.add`（片側にだけある行）、`diff.change`（内容が違う行）、`diff.delete`（詰め物の行）、`diff.text`（違う行の中の違う文字）を足した（Vim の `DiffAdd`、`DiffChange`、`DiffDelete`、`DiffText` に当たる。既定は Vim 9.1 の暗い背景の既定と同じ番号）。
+#268 で、行番号の列（6.7）の色の名前 `linenr` を足した（Vim の `LineNr` に当たる）。
+既定は端末の 16 色の 11 で、2026-11-20 に Vim 9.1 を `TERM=xterm-256color`、`background=dark` で起動して `:highlight LineNr` が `ctermfg=11` を出すことを確かめた。
+同梱の iceberg には、iceberg.vim の `LineNr` の色（文字 `#444b71`、背景 `#1e2132`）を写した。
 
 ```jsonc
 {
@@ -2859,8 +2888,11 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | 正規の名前 | 型 | 範囲 | 既定値 | `:set` で受け付ける Vim の名前 | 内容 |
 |---|---|---|---|---|---|
 | `filetype` | 文字列 | バッファごと | 空 | `filetype` | バッファのファイルの種類（6.7 のファイルの種類の判定）。ステータス行の部品の名前（7.1）と同じで、何の設定かが名前で分かるので、Vim と同じ名前のまま正規の名前にした |
+| `lineNumber.show` | 真偽 | エディタ全体 | `false` | `number` | バッファの表示領域の左に行番号の列を出すか（6.7 の「行番号の列」。FR-135）。既定は Vim と同じく出さない |
+| `lineNumber.minWidth` | 整数（1 から 20） | エディタ全体 | `4` | `numberwidth` | 行番号の列の最小の列数（FR-136）。範囲は Vim の `'numberwidth'` と同じ |
 
-後の issue で、行番号（`lineNumber.show`、`lineNumber.minWidth`）と検索の一致の色付け（`search.highlight`）を、範囲がエディタ全体の項目として足す予定である（#264 の本文）。
+`lineNumber.show` と `lineNumber.minWidth` は #268 で足した。
+後の issue で、検索の一致の色付け（`search.highlight`）を、範囲がエディタ全体の項目として足す予定である（#264 の本文）。
 
 表は、基本設計 2 章の土台の層の新しいパッケージ `internal/option` に置いた。
 表を引くのは、設定ファイルを読む `internal/config` と、Ex コマンドを解析する `internal/command/ex` で、どちらも機能の層にあり、互いに import できないためである。
@@ -2884,6 +2916,17 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 型の変換は経路ごとに持ち（コマンドラインの文字列からは `option.Def.Parse`、設定ファイルの JSON の値からは `internal/config` の `source.convertOption`）、
 値の検査は、どの経路も同じ `option.Def.Check` を通す（`option.Values.Set` も通す）。
 #264 の時点の検査は型だけである。項目ごとの制約（文字列の列挙、整数の範囲）を表に足すときは `Check` で確かめ、どの経路にも効くようにする（FR-131）。
+#268 で、整数の範囲を表の欄（`option.Def.Range`。`nil` なら範囲を限らない）にし、`Check` が範囲の外の値を、下限より小さい（`option.ErrBelowMin`）と上限より大きい（`option.ErrAboveMax`）に分けて断るようにした。
+どちらも `option.ErrOutOfRange` を包む。
+検査は項目の名前で分けない（`lineNumber.minWidth` のための分岐は無い）。
+誤りの出し方は経路ごとに持つ。
+
+| 経路 | 下限より小さい値 | 上限より大きい値 |
+|---|---|---|
+| `:option.set` と `:set` | `E487`（Vim 9.1 の `:set numberwidth=0` と同じ番号） | `E474`（Vim 9.1 の `:set numberwidth=21` と同じ番号） |
+| 設定ファイル | 位置付きの誤り（`{ "lineNumber": { "minWidth": 0 } }` なら `config.jsonc:1:31: lineNumber.minWidth は 1 から 20 の整数にする: 0`）として知らせ、値を入れずに表の既定値を使う | 同左 |
+
+Vim 9.1 は、下限が 0 の項目の負の値（`:set textwidth=-1`）も `E487` にする（2026-11-20 に確かめた）ので、下限の側を `E487` にする規則は下限によらない。
 
 名前の無いバッファに `:w ファイル` で名前を付けたとき、ファイルの種類は、空のときだけ新しい名前から判定し、`:set filetype=` で決めた種類は残す（Vim 9.1 も、`'filetype'` が空のときだけ判定し直す。2026-11-20 に確かめた）。
 空のファイルから書き始めて種類を決め、拡張子の無い名前で保存しても、種類が消えないようにするためである。
@@ -2942,7 +2985,7 @@ Vim との完全な互換は目指さない（オーナーの方針。設計の�
 | `:set <Vim の名前>?` | `option.get <正規の名前>` |
 | `:set <名前> <名前> …` | 空白で区切った引数ごとに上のどれかへ変換し、左から順に実行する。途中の引数が誤りなら止め、前の引数の設定は残す（Vim 9.1 の `:set ts=4 foo ts=8` と同じ） |
 
-- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけである
+- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を足した
 - `inv` の接頭辞、`+=`、`-=`、`^=`、`&`（既定値に戻す）、短い名前（`nu`、`ft`）は受け付けず、知らない設定のエラー（`E518`）にする
 - 引数の無い `:set` は `E471` にする
 - `:setlocal` は、別名の表に行が無いので、知らないコマンドのエラー（`E492`）になる（#264 の本文は「知らない設定のエラーにする」としたが、`:setlocal` は設定でなくコマンドの名前なので、他の知らないコマンドと同じにした）
@@ -2952,7 +2995,7 @@ Vim との完全な互換は目指さない（オーナーの方針。設計の�
 
 #### この上に載るもの
 
-- 行番号の issue が `lineNumber.show` と `lineNumber.minWidth` を表に足し、描画が今の値を読む。`:set number` と `:set numberwidth=5` は、`vimOptionNames` に 2 行を足すだけで使える
+- 行番号（#268）は、`lineNumber.show` と `lineNumber.minWidth` を表に足し、描画が描くたびに今の値を読む形で入った（6.7 の「行番号の列」）。`:set number` と `:set numberwidth=5` は、`vimOptionNames` に 2 行を足して使えるようにした
 - 検索の一致の色付けの issue が `search.highlight` を表に足し、正規の Ex コマンド `search.clearHighlight` と、その別名 `:nohlsearch`（`:noh` まで省略できる）を別名の表に足す（名前を付け替えるだけの項目）
 - コマンドラインを画面の上部の窓に描く issue が、描く位置の項目を表に足す
 - この一連の作業の後に、既存の Ex コマンドへ正規の名前を付け、今の名前を別名へ移す
