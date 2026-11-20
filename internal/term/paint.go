@@ -19,6 +19,19 @@ import (
 //     ui.Cell の約束（続きのセルは左のセルと同じ属性）を守る格子では片側だけが変わることは無いが、守らない格子でも画面を崩さないために行う
 //   - 文字の属性（SGR）は、前に書いたセルと属性が違うときだけ切り替える。切り替えは、0 で戻してから要る属性を並べる 1 つの SGR にする
 //   - 書いている間はカーソルを隠し（DECTCEM）、書き終えたらカーソルを置いて形（DECSCUSR）を変え、表示する
+//   - 既定の属性の空白（以下、既定の空白）は、空白の文字を並べずに消す制御シーケンスで書くことがある。
+//     変わったセルから行末までが既定の空白なら、EL（行末まで消す）で消し、その行の残りは書かない。
+//     そうでなくても、変わった既定の空白の並びが、前回の全角文字の右の半分の列を含むなら、ECH（n 文字を消す）で消す。
+//     どちらも、消す前に属性を既定に戻す（EL と ECH は今の属性の背景の色で消すため）
+//
+// 既定の空白を消す制御シーケンスで書くのは、tmux の中で、前回の全角文字の右の半分が端末に残るのを避けるためである（#297）。
+// tmux 3.6 は、全角文字の左の半分に空白が書かれると、自分の画面の右の半分を既定の空白にし、外側の端末には知らせない。
+// 行末での折り返しを止めているとき（DECRST 7。Terminal は止めている）は、続けて右の半分の列に既定の空白が書かれても、
+// 自分の画面と同じなので、外側の端末へは空白を送らずにカーソルを右へ進める（CUF）。
+// 折り返しが有効なペインでは、tmux は同じ空白をそのまま外側へ送った（PR #302 のレビュー）。
+// 外側の端末が、左の半分を上書きされた全角文字の右の半分を消さないと、右の半分が残る。
+// 右の半分の文字は消しても、その列の背景の色（選択やポップアップの色）を残す端末なら、背景の色だけが 1 列おきに残る（推測）。
+// tmux は、中で書かれた EL と ECH を、外側の端末へも消す操作として送る。
 //
 // 端末の状態（属性、カーソルの位置と形と表示）は Painter が覚えている前提で差分を書く。
 // 端末へ別のものを書いた後（端末を一時的に戻して別のプログラムを動かした後など）は Invalidate を呼ぶ。
@@ -78,35 +91,37 @@ func (p *Painter) Paint(buf *bytes.Buffer, s ui.Screen) {
 		if !markChanged(changed, cur, prev) {
 			continue
 		}
+		// tail は、行末まで既定の空白が続く並びの先頭の列である。
+		tail := w
+		for tail > 0 && isDefaultBlank(cur, tail-1) {
+			tail--
+		}
 		for c := 0; c < w; c++ {
 			if !changed[c] {
 				continue
 			}
-			cell := cur[c]
-			if cell.Width == 0 {
-				if c > 0 && cur[c-1].Width == 2 {
-					continue // 左の全角文字と一緒に書いた
-				}
-				cell = ui.Cell{Text: " ", Width: 1, Attr: cell.Attr}
+			text, width, attr, ok := outCell(cur, c)
+			if !ok {
+				continue // 左の全角文字と一緒に書いた
 			}
-			text, width := cell.Text, cell.Width
-			if text == "" {
-				text = " "
+			if c >= tail {
+				hide()
+				p.erase(buf, &row, &col, r, c, "\x1b[K")
+				break
 			}
-			if width == 2 && c+1 >= w {
-				// 右端からはみ出す全角文字は書けないので、空白にする。
-				text, width = " ", 1
-			}
-			if width != 2 {
-				width = 1
+			if n, wide := blankRun(changed, cur, prev, c); wide {
+				hide()
+				p.erase(buf, &row, &col, r, c, "\x1b["+strconv.Itoa(n)+"X")
+				c += n - 1
+				continue
 			}
 			hide()
 			if row != r || col != c {
 				writeCUP(buf, r, c)
 			}
-			if cell.Attr != p.attr {
-				writeSGR(buf, cell.Attr)
-				p.attr = cell.Attr
+			if attr != p.attr {
+				writeSGR(buf, attr)
+				p.attr = attr
 			}
 			buf.WriteString(text)
 			row, col = r, c+width
@@ -171,6 +186,60 @@ func markChanged(changed []bool, cur, prev []ui.Cell) bool {
 		}
 	}
 	return true
+}
+
+// erase は、端末の row 行 col 列（0 から数える）へ移り、属性を既定に戻してから、消す制御シーケンス seq（EL か ECH）を書く。
+// curRow と curCol は端末のカーソルの位置の記憶で、seq はカーソルを動かさないので、row 行 col 列にする。
+func (p *Painter) erase(buf *bytes.Buffer, curRow, curCol *int, row, col int, seq string) {
+	if *curRow != row || *curCol != col {
+		writeCUP(buf, row, col)
+	}
+	if p.attr != (ui.Attr{}) {
+		writeSGR(buf, ui.Attr{})
+		p.attr = ui.Attr{}
+	}
+	buf.WriteString(seq)
+	*curRow, *curCol = row, col
+}
+
+// outCell は、行 cur の c 列目のセルを、端末へ書く文字と、その幅（1 か 2）と属性にする。
+// 左の全角文字と一緒に書く続きのセルなら、ok を false にする。
+// 左に全角文字の無い続きのセルと、右端からはみ出す全角文字は、書けないので、その属性の空白にする。
+func outCell(cur []ui.Cell, c int) (text string, width int, attr ui.Attr, ok bool) {
+	cell := cur[c]
+	if cell.Width == 0 {
+		if c > 0 && cur[c-1].Width == 2 {
+			return "", 0, ui.Attr{}, false
+		}
+		return " ", 1, cell.Attr, true
+	}
+	text, width = cell.Text, cell.Width
+	if text == "" {
+		text = " "
+	}
+	if width == 2 && c+1 >= len(cur) {
+		text, width = " ", 1
+	}
+	if width != 2 {
+		width = 1
+	}
+	return text, width, cell.Attr, true
+}
+
+// isDefaultBlank は、行 cur の c 列目のセルが、端末へ書くと既定の属性の空白になるかどうかである。
+func isDefaultBlank(cur []ui.Cell, c int) bool {
+	text, width, attr, ok := outCell(cur, c)
+	return ok && text == " " && width == 1 && attr == ui.Attr{}
+}
+
+// blankRun は、c 列目から続く、変わった既定の空白の並びの長さ n を返す。
+// 並びが前回の全角文字の右の半分の列を含むなら、wide を true にする。c 列目が既定の空白でなければ、n は 0 である。
+func blankRun(changed []bool, cur, prev []ui.Cell, c int) (n int, wide bool) {
+	for i := c; i < len(cur) && changed[i] && isDefaultBlank(cur, i); i++ {
+		n++
+		wide = wide || prev[i].Width == 0
+	}
+	return n, wide
 }
 
 // decscusr は、カーソルの形を DECSCUSR の引数にする。点滅しない形を使う。

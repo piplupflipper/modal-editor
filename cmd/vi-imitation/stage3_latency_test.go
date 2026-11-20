@@ -488,7 +488,7 @@ func appendLog(t *testing.T, dir, name, s string) {
 }
 
 // vscreen は、本体が端末へ書いた出力から作った画面の文字である。internal/term の Painter が使う制御シーケンスだけを解釈する
-// （CUP で位置を決め、ED 2 で消す。属性とカーソルの形は読み飛ばす）。
+// （CUP で位置を決め、ED 2 と EL と ECH で消す。属性とカーソルの形は読み飛ばす）。
 type vscreen struct {
 	w, h    int
 	cells   [][]rune
@@ -571,6 +571,19 @@ func (v *vscreen) escape(b []byte) int {
 				case 'J':
 					if params == "2" {
 						v.clear()
+					}
+				case 'K', 'X':
+					// EL（行末まで）と ECH（n 文字）。カーソルは動かさない（#297）。
+					n := v.w
+					if b[i] == 'X' {
+						if n, _ = strconv.Atoi(params); n < 1 {
+							n = 1
+						}
+					}
+					if v.rowCur >= 0 && v.rowCur < v.h {
+						for c := max(v.col, 0); c < min(v.col+n, v.w); c++ {
+							v.cells[v.rowCur][c] = ' '
+						}
 					}
 				}
 				return i + 1
