@@ -38,11 +38,13 @@ type visualExtent struct {
 // ビジュアルモードでなければ ok が false である。
 // 端は行末の後（Byte が行の長さ）にあることがあり、そのときはその行の改行を選んでいることを表す（visualCursor）。
 // 選択は anchor と head から作り、カーソルの位置には依らない（visualState の doc）。カーソルは選択の端に無いことがある（select-all の後）。
+// 両端はバッファの中に丸めて返す。外からの編集の後に ShiftPositions を通らずにバッファが縮んでも（読み直しなど）、
+// 呼び出し側（描画、editor/state、オペレーターの範囲）がバッファの外の行を読まない。
 func (s *State) Selection() (start, end buffer.Position, linewise, ok bool) {
 	if !s.mode.visual() {
 		return buffer.Position{}, buffer.Position{}, false, false
 	}
-	start, end = s.visual.anchor, s.visual.head
+	start, end = s.clampPos(s.visual.anchor), s.clampPos(s.visual.head)
 	if end.Less(start) {
 		start, end = end, start
 	}
@@ -77,11 +79,13 @@ func actVisual(m Mode) actionFunc {
 
 // actSelectAll は、select-all である。文字単位のビジュアルモードに入り（行単位のビジュアルモードの中なら文字単位に切り替え）、
 // バッファの全体を選ぶ。選択は、最初の行の最初の文字から、最後の行の最後の文字までで、最後の行の改行は含めない
-// （Vim の ggvG$ と同じ範囲。Vim 9.1 で ggvG$y がレジスターに最後の改行を入れないことを確かめた）。
+// （Vim 9.1 で ggvG$y がレジスターに最後の改行を入れないことを確かめた）。
 //
 // カーソルと望みの列は動かさない。画面もスクロールせず、ジャンプリストにも記録しない。
-// anchor をバッファの先頭、head をバッファの末尾に置くだけで、その後の各キーの振る舞いは
-// ビジュアルモードの汎用の規則から決まる（visualState の doc。#263）。
+// anchor をバッファの先頭に、head を最後の行の行末の後（ggvG$ の後のカーソルと同じ位置。visualCursor）に置くだけで、
+// その後の各キーの振る舞いはビジュアルモードの汎用の規則から決まる（visualState の doc。#263）。
+// 最後の行には改行が無いので、行末の後の端は改行を選ばない（charRegion）。
+// head を最後の文字でなく行末の後に置くので、> で行が伸びても、ggvG$> と同じく最後の文字が選択に残る（FR-77）。
 //
 // req: FR-130
 func actSelectAll(s *State, _ editcmd.Command) error {
@@ -89,9 +93,8 @@ func actSelectAll(s *State, _ editcmd.Command) error {
 		s.parser.SetVisual(true)
 	}
 	s.mode = ModeVisual
-	last := s.lastLine()
 	s.visual.anchor = pos(0, 0)
-	s.visual.head = pos(last, lastCharStart(s.line(last)))
+	s.visual.head = s.lineEnd(s.lastLine())
 	return nil
 }
 
@@ -101,7 +104,8 @@ func actVisualSwap(s *State, _ editcmd.Command) error {
 	if !s.mode.visual() {
 		return failf("not in visual mode")
 	}
-	s.visual.anchor, s.visual.head = s.visual.head, s.visual.anchor
+	// 端がバッファの外を指していても、カーソルはバッファの中に置く（Selection の doc）。
+	s.visual.anchor, s.visual.head = s.clampPos(s.visual.head), s.clampPos(s.visual.anchor)
 	s.cursor = s.visual.head
 	s.updateWant()
 	return nil
@@ -176,7 +180,7 @@ func (s *State) visualRight(cmd editcmd.Command) error {
 // Vim は、選択を広げる方向（カーソルが端より前か）や、i( を重ねたときの外側の括弧への広げ方を細かく扱うが、
 // ここでは前へ広げることだけを扱う。
 func (s *State) visualTextObject(cmd editcmd.Command) error {
-	from := s.visual.head
+	from := s.clampPos(s.visual.head) // バッファの外を指していても読まない（Selection の doc）
 	extend := s.visual.head != s.visual.anchor
 	if extend {
 		line := s.line(from.Line)
@@ -222,7 +226,7 @@ func (s *State) visualRegion() region {
 		// head が行末の後（NUL の位置）にあれば、その列を残す（vkC のアンドゥの後のカーソル。#86）。
 		at := pos(start.Line, 0)
 		if s.visual.head.Less(s.visual.anchor) {
-			at = s.visual.head
+			at = s.clampPos(s.visual.head)
 		}
 		return region{
 			start:    at,

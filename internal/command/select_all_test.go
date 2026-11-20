@@ -155,7 +155,7 @@ func TestVisualYankKeepsCursor(t *testing.T) {
 }
 
 // selectAllCase は、select-all（<C-a>）を含む keys を打った後の状態である。
-// sel は、ビジュアルモードのままなら選択の両端（"0:0-2:4"）、ノーマルモードなら空である。
+// sel は、ビジュアルモードのままなら選択の両端（"0:0-2:5"）、ノーマルモードなら空である。
 type selectAllCase struct {
 	text, keys   string
 	want, cursor string
@@ -173,12 +173,12 @@ const selectAllText = "abc\nd|e\nfghij"
 // req: FR-130
 func TestSelectAll(t *testing.T) {
 	tests := []selectAllCase{
-		// 選ぶだけ。カーソルは動かない。
-		{selectAllText, "<C-a>", "abc\nde\nfghij", "1:1", ModeVisual, "0:0-2:4", ""},
+		// 選ぶだけ。カーソルは動かない。選択の終わりは、最後の行の行末の後（ggvG$ の後のカーソルと同じ位置）である。
+		{selectAllText, "<C-a>", "abc\nde\nfghij", "1:1", ModeVisual, "0:0-2:5", ""},
 		// 行単位のビジュアルモードの中では、文字単位に切り替える。
-		{selectAllText, "V<C-a>", "abc\nde\nfghij", "1:1", ModeVisual, "0:0-2:4", ""},
+		{selectAllText, "V<C-a>", "abc\nde\nfghij", "1:1", ModeVisual, "0:0-2:5", ""},
 		// ビジュアルモードの中で、もう一度使っても同じ。
-		{selectAllText, "vj<C-a>", "abc\nde\nfghij", "2:1", ModeVisual, "0:0-2:4", ""},
+		{selectAllText, "vj<C-a>", "abc\nde\nfghij", "2:1", ModeVisual, "0:0-2:5", ""},
 		// y は全体をヤンクし、カーソルは元の位置（FR-129）。最後の行の改行は含めない。
 		{selectAllText, "<C-a>y", "abc\nde\nfghij", "1:1", ModeNormal, "", "v:abc\nde\nfghij"},
 		{selectAllText, "<C-a>Y", "abc\nde\nfghij", "1:1", ModeNormal, "", "V:abc\nde\nfghij\n"},
@@ -187,8 +187,9 @@ func TestSelectAll(t *testing.T) {
 		{selectAllText, "<C-a>x", "", "0:0", ModeNormal, "", "v:abc\nde\nfghij"},
 		// c は全体を消してインサートモードに入る。
 		{selectAllText, "<C-a>cX<Esc>", "X", "0:0", ModeNormal, "", "v:abc\nde\nfghij"},
-		// > と < は全体をずらし、選択を保つ。カーソルは元の位置（FR-77）。
-		{selectAllText, "<C-a>>", "\tabc\n\tde\n\tfghij", "1:1", ModeVisual, "0:0-2:4", ""},
+		// > と < は全体をずらし、選択を保つ。カーソルは元の位置（FR-77）。最後の文字は選択に残る（ggvG$>y と同じ）。
+		{selectAllText, "<C-a>>", "\tabc\n\tde\n\tfghij", "1:1", ModeVisual, "0:0-2:5", ""},
+		{selectAllText, "<C-a>>y", "\tabc\n\tde\n\tfghij", "1:1", ModeNormal, "", "v:\tabc\n\tde\n\tfghij"},
 		// モーションは、カーソルから動き、head をカーソルに合わせる。
 		{selectAllText, "<C-a>j", "abc\nde\nfghij", "2:1", ModeVisual, "0:0-2:1", ""},
 		{selectAllText, "<C-a>k", "abc\nde\nfghij", "0:1", ModeVisual, "0:0-0:1", ""},
@@ -197,21 +198,23 @@ func TestSelectAll(t *testing.T) {
 		// 失敗したモーションは、カーソルも head も動かさない。
 		{"abc\nde\nfg|hij", "<C-a>jy", "abc\nde\nfghij", "2:2", ModeNormal, "", "v:abc\nde\nfghij"},
 		// o は、カーソルを 1 行目の最初の文字へ移し、普通のビジュアルモードになる。
-		{selectAllText, "<C-a>o", "abc\nde\nfghij", "0:0", ModeVisual, "0:0-2:4", ""},
-		{selectAllText, "<C-a>oj", "abc\nde\nfghij", "1:0", ModeVisual, "1:0-2:4", ""},
+		{selectAllText, "<C-a>o", "abc\nde\nfghij", "0:0", ModeVisual, "0:0-2:5", ""},
+		{selectAllText, "<C-a>oj", "abc\nde\nfghij", "1:0", ModeVisual, "1:0-2:5", ""},
+		// もう一度 o を打つと、カーソルは最後の行の行末の後（ビジュアルモードの $ の後と同じ）へ移る。
+		{selectAllText, "<C-a>oo", "abc\nde\nfghij", "2:5", ModeVisual, "0:0-2:5", ""},
 		// <Esc> はノーマルモードへ戻る。カーソルは元の位置。
 		{selectAllText, "<C-a><Esc>", "abc\nde\nfghij", "1:1", ModeNormal, "", ""},
 		// : の '<,'> はバッファの全体を指す。
 		{selectAllText, "<C-a>:s/^/#/<CR>", "#abc\n#de\n#fghij", "2:0", ModeNormal, "", ""},
 		// テキストオブジェクトは head の次の文字から広げる。バッファの末尾の後には無いので失敗する。
-		{selectAllText, "<C-a>iw", "abc\nde\nfghij", "1:1", ModeVisual, "0:0-2:4", ""},
+		{selectAllText, "<C-a>iw", "abc\nde\nfghij", "1:1", ModeVisual, "0:0-2:5", ""},
 		// 空のバッファ、1 行だけのバッファ、多バイト文字で終わる最後の行、空の最後の行。
 		{"|", "<C-a>", "", "0:0", ModeVisual, "0:0-0:0", ""},
 		{"|", "<C-a>d", "", "0:0", ModeNormal, "", ""},
-		{"ab|c", "<C-a>", "abc", "0:2", ModeVisual, "0:0-0:2", ""},
+		{"ab|c", "<C-a>", "abc", "0:2", ModeVisual, "0:0-0:3", ""},
 		{"ab|c", "<C-a>y", "abc", "0:2", ModeNormal, "", "v:abc"},
 		{"ab|c", "<C-a>d", "", "0:0", ModeNormal, "", "v:abc"},
-		{"abc\nあ|いう", "<C-a>", "abc\nあいう", "1:3", ModeVisual, "0:0-1:6", ""},
+		{"abc\nあ|いう", "<C-a>", "abc\nあいう", "1:3", ModeVisual, "0:0-1:9", ""},
 		{"abc\nあ|いう", "<C-a>y", "abc\nあいう", "1:3", ModeNormal, "", "v:abc\nあいう"},
 		{"abc\nあ|いう", "<C-a>d", "", "0:0", ModeNormal, "", "v:abc\nあいう"},
 		// 最後の行が空の行なら、その前の行の改行までを選ぶ（Vim の ggvG$y も "abc\n"）。
@@ -291,7 +294,7 @@ func TestSelectAllKeepsView(t *testing.T) {
 	// 呼び出し側が同じ位置へ置き直したとき（外からの編集の後の SetCursor）は、カーソルが動かないので選択は全体のまま。
 	feedKeys(s, "<Esc><C-a>")
 	s.SetCursor(s.Cursor())
-	if start, end, _, _ := s.Selection(); start.String() != "0:0" || end.String() != "29:1" {
+	if start, end, _, _ := s.Selection(); start.String() != "0:0" || end.String() != "29:2" {
 		t.Errorf("同じ位置の SetCursor の後の selection = %s-%s", start, end)
 	}
 	// 呼び出し側がカーソルを動かしたとき（SetCursor）は、head をカーソルに合わせる。
@@ -313,8 +316,10 @@ func TestSelectAllExtension(t *testing.T) {
 		mode             Mode
 		sel              string
 	}{
-		// dup.line（操作）はカーソルを動かさないので、選択は全体のまま（head は元の末尾）。
-		{"操作", selectAllText, "<C-a>gD", false, "abc\nde\nde\nfghij", "1:1", ModeVisual, "0:0-2:4"},
+		// dup.line（操作）はカーソルを動かさないので、head をカーソルへ合わせない。
+		// 拡張機能の操作の編集では選択の両端をずらさない（main からの anchor と同じ）ので、head は元の 2:5 のままで、
+		// Selection はそれを編集の後のバッファの中（3 行目の de の行末の後）に丸めて返す。
+		{"操作", selectAllText, "<C-a>gD", false, "abc\nde\nde\nfghij", "1:1", ModeVisual, "0:0-2:2"},
 		// jump.x（モーション）は、カーソルから動き、head をカーソルに合わせる。
 		{"モーション", "abc\nd|e x\nfghij", "<C-a>gx", false, "abc\nde x\nfghij", "1:3", ModeVisual, "0:0-1:3"},
 		// surround.add（オペレーター）を保留し、後から適用すると、選択の全体を囲む。

@@ -444,7 +444,7 @@ func TestSelectAllConfig(t *testing.T) {
 	h.e.do(func() {
 		st := h.e.cur.state
 		start, end, linewise, ok := st.Selection()
-		if !ok || linewise || st.Mode() != command.ModeVisual || start != (buffer.Position{}) || end != (buffer.Position{Line: 59, Byte: 6}) {
+		if !ok || linewise || st.Mode() != command.ModeVisual || start != (buffer.Position{}) || end != (buffer.Position{Line: 59, Byte: 7}) {
 			t.Errorf("selection = %v-%v linewise %v ok %v mode %v", start, end, linewise, ok, st.Mode())
 		}
 		if st.Cursor() != cur || h.e.renderer.Top() != top {
