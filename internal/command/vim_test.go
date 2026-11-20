@@ -330,12 +330,18 @@ func TestVim(t *testing.T) {
 // Vim と意図して違うケース（visualYankDiffs）は、バッファとカーソルをその表の値と比べる。
 func runVimCases(t *testing.T, cases []vimCase) {
 	t.Helper()
+	runVimCasesKeymap(t, cases, input.DefaultKeymap)
+}
+
+// runVimCasesKeymap は、runVimCases を、keymap が返すキーマップで解釈して行う。
+func runVimCasesKeymap(t *testing.T, cases []vimCase, keymap func() *input.Keymap) {
+	t.Helper()
 	for _, tc := range cases {
 		if d, ok := visualYankDiffs[[2]string{tc.text, tc.keys}]; ok {
 			tc.want, tc.cursor = d.want, d.cursor
 		}
 		t.Run(fmt.Sprintf("%q/%s", tc.text, tc.keys), func(t *testing.T) {
-			s := setup(t, tc.text)
+			s := setupKeymap(t, tc.text, keymap())
 			s.registers.history = []Register{{Text: "U", filled: true}}
 			s.registers.named[0] = Register{Text: "A"}
 			s.registers.named[1] = Register{Text: "L1\nL2", Linewise: true}
@@ -368,12 +374,18 @@ func runVimCases(t *testing.T, cases []vimCase) {
 // setup は、text（"|" がカーソル）を内容とするバッファの State を作る。
 func setup(t *testing.T, text string) *State {
 	t.Helper()
+	return setupKeymap(t, text, input.DefaultKeymap())
+}
+
+// setupKeymap は、setup を、km で解釈する State で行う。
+func setupKeymap(t *testing.T, text string, km *input.Keymap) *State {
+	t.Helper()
 	before, after, ok := strings.Cut(text, "|")
 	if !ok {
 		after, before = before, ""
 	}
 	lines := strings.Split(before, "\n")
-	s := New(newBuffer(before+after), input.NewParser(input.DefaultKeymap()))
+	s := New(newBuffer(before+after), input.NewParser(km))
 	s.SetCursor(pos(len(lines)-1, len(lines[len(lines)-1])))
 	return s
 }

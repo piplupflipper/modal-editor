@@ -118,8 +118,14 @@ func TestParserBuiltin(t *testing.T) {
 		{"省略形の S はインサートモードへ", "S", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindAction, Count: 1, Action: builtin("substitute-line"), Mode: editcmd.ModeInsert,
 		})}},
-		{"省略形の Y", "Y", []editcmd.Result{done(editcmd.Command{
-			Kind: editcmd.KindAction, Count: 1, Action: builtin("yank-line"),
+		{"省略形の Y は y$（FR-146）", `"a3Y`, []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Register: 'a', Count: 3, CountGiven: true, Action: builtin("yank-to-line-end"),
+		})}},
+		{"U はリドゥ（FR-145）", "2U", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 2, CountGiven: true, Action: builtin("redo"),
+		})}},
+		{"<C-r> もリドゥ", "<C-r>", []editcmd.Result{done(editcmd.Command{
+			Kind: editcmd.KindAction, Count: 1, Action: builtin("redo"),
 		})}},
 		{"i はインサートモードへ", "i", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindAction, Count: 1, Action: builtin("insert"), Mode: editcmd.ModeInsert,
@@ -323,6 +329,9 @@ func TestParserVisual(t *testing.T) {
 		})}},
 		{"S", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("change-lines"), Mode: editcmd.ModeInsert})}},
 		{"Y", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("yank-lines")})}},
+		// ノーマルモードの U（リドゥ。FR-145）は、ビジュアルモードの u と U（小文字と大文字にする）を変えない。
+		{"u", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("lowercase")})}},
+		{"U", []editcmd.Result{done(editcmd.Command{Kind: editcmd.KindOperator, Count: 1, Operator: builtin("uppercase")})}},
 		{"iw", []editcmd.Result{done(editcmd.Command{
 			Kind: editcmd.KindMotion, Count: 1, Target: editcmd.Target{Kind: editcmd.TargetTextObject, Ref: builtin("inner-word")},
 		})}},

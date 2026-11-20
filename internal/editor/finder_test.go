@@ -183,12 +183,12 @@ func TestStandardFinder(t *testing.T) {
 	// キーとコマンドの候補は、選ぶと本体が打ったのと同じく実行する（editor/execute。PR #249 のレビューの必須 1）。
 	h.keys("<Space>fk")
 	h.eventually("キーの一覧", func() bool { _, _, _, ok := finderOf(h.e); return ok })
-	h.keys("（yy）")
+	h.keys("（y$）")
 	h.eventually("絞ったキー", func() bool { return strings.HasPrefix(finderText(h.e), "Y ") })
 	h.keys("<CR>")
 	h.eventually("実行した Y", func() bool {
 		r, ok := h.e.cur.state.Registers().Head()
-		return h.e.float == nil && ok && r.Text == "alpha" && r.Linewise
+		return h.e.float == nil && ok && r.Text == "alpha" && !r.Linewise
 	})
 	h.keys("<Space>fc")
 	h.eventually("コマンドの一覧", func() bool { _, _, _, ok := finderOf(h.e); return ok })

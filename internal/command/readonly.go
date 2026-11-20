@@ -11,6 +11,7 @@ import (
 // 操作を足したときに入れ忘れると、禁止中に使えないだけで、テキストが変わることは無い（断る側に倒す）。
 var keepsTextActions = map[string]bool{
 	"yank-line":          true,
+	"yank-to-line-end":   true,
 	"command-line":       true,
 	"visual":             true,
 	"visual-line":        true,
