@@ -61,6 +61,7 @@ import (
 const flushTimeout = time.Second
 
 // helloTimeout は、server のソケットで受け付けた接続が Hello を送るのを待つ上限である（仮）。
+// Hello に続く標準入力の中身（FR-158）を受けている間は、何も読めない時間がこれを超えるまで待つ（helloContext）。
 // 超えたら接続を閉じ、次の接続を待つ（Hello を送らない接続で、編集の client を受け付けられなくならないため）。
 const helloTimeout = 5 * time.Second
 
@@ -381,25 +382,20 @@ func (s *Server) startAccept(ln net.Listener) *acceptor {
 			if err != nil {
 				return // ln を閉じた
 			}
-			go s.admit(a, protocol.NewServerSocket(c))
+			pc := newProgressConn(c)
+			go s.admit(a, protocol.NewServerSocket(pc), pc)
 		}
 	}()
 	return a
 }
 
-// admit は、受け付けた接続 conn の Hello を helloTimeout まで待ち、編集の client なら a.joined へ渡す。
+// admit は、受け付けた接続 conn の Hello を待ち、編集の client なら a.joined へ渡す。
+// 何も読めないまま helloTimeout が経ったら待つのをやめる（helloContext。Hello に続く標準入力の中身を受けている間は延ばす）。
 // Hello を送らない接続は閉じ、編集の client でない種類の Hello を送った接続は、理由付きの終わりの知らせを送って閉じる。
 // 1 つの接続の Hello を待つ間も、他の接続を受け付けられるように、接続ごとの goroutine で呼ぶ。
-func (s *Server) admit(a *acceptor, conn protocol.ServerConn) {
+func (s *Server) admit(a *acceptor, conn protocol.ServerConn, pc *progressConn) {
 	defer s.client.recoverPanic()
-	ctx, cancel := context.WithTimeout(context.Background(), helloTimeout)
-	go func() {
-		select {
-		case <-a.done:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
+	ctx, cancel := helloContext(pc, helloTimeout, a.done)
 	h, err := handshakeKinds(ctx, conn, protocol.KindEdit, protocol.KindWait, protocol.KindPopup, protocol.KindPane)
 	cancel()
 	switch {

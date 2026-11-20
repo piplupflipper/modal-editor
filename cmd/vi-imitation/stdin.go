@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -43,8 +44,9 @@ func hasStdinArg(files []string) (bool, error) {
 // （2026-11-20 に Vim 9.1 で、SIGINT を無視する書く側でも、<C-c> の後に書く側が閉じるまで待ち、空のバッファで開くことを確かめた）。
 // 読む間のほかのシグナル（SIGTERM、SIGHUP）は、既定の動作で終わる（端末をまだ変えていないので、戻すものが無い）。
 //
-// 中身は、読んだ大きさに対して取っておいた領域が 1.25 倍を超えて余れば、ちょうどの大きさへ写し直す。
-// 中身の行は、この文字列の一部を指したままバッファに入るので、余った領域も編集の間ずっと残るからである。
+// 読んだものは stdinBlockSize ごとの塊に溜め、読み終えたら中身の大きさちょうどの文字列へ写す（stdinSink.text）。
+// 1 つの領域を倍々に広げて溜めると、広げるたびに前の領域が残り、最後に余った領域も返す文字列ごと残る
+// （中身の行は、この文字列の一部を指したままバッファに入る）。塊に溜めれば、読む間の最大は中身のおよそ 2 倍で、読んだ後は中身の大きさになる。
 //
 // req: FR-158
 func readStdin(r io.Reader, msg io.Writer) (string, error) {
@@ -59,24 +61,27 @@ func readStdin(r io.Reader, msg io.Writer) (string, error) {
 func readStdinUntil(r io.Reader, msg io.Writer, intr <-chan os.Signal) (string, error) {
 	_, _ = fmt.Fprintln(msg, stdinMessage) // 出せなくても読む
 	sink := &stdinSink{intr: intr}
-	if f, ok := r.(*os.File); ok {
-		// ファイルをつないだとき（vi-imitation - < a.txt）は、大きさが分かるので先に取っておく。
-		if st, err := f.Stat(); err == nil && st.Mode().IsRegular() {
-			sink.b.Grow(int(st.Size()))
-		}
-	}
 	if _, err := io.Copy(sink, r); err != nil {
 		return "", fmt.Errorf("標準入力を読めない: %w", err)
 	}
-	return sink.text(), nil
+	text := sink.text()
+	// 写し終えた塊（中身と同じ大きさ）を、ここで回収しておく。回収しないと、次の GC の目安が塊と文字列の両方を数えた大きさになり、
+	// server へ送る間の一時的な領域（塊ごとの JSON）が回収されずに溜まる
+	// （2026-11-20 に 900 MB の入力を別のプロセスの server へ送ったとき、client の最大の RSS が入力の約 4.1 倍になった）。
+	runtime.GC()
+	return text, nil
 }
 
-// stdinSink は、readStdin が読んだ中身を溜める。intr に届いた後は、溜めた中身を手放し、後の塊も捨てる。
+// stdinBlockSize は、readStdin が読んだものを溜める塊 1 つの大きさである（仮）。
+const stdinBlockSize = 1 << 20
+
+// stdinSink は、readStdin が読んだ中身を stdinBlockSize ごとの塊に溜める。intr に届いた後は、溜めた中身を手放し、後の塊も捨てる。
 // 読む goroutine だけが触る。
 type stdinSink struct {
 	intr        <-chan os.Signal
 	interrupted bool
-	b           strings.Builder
+	blocks      [][]byte
+	size        int
 }
 
 // stopped は、intr に届いたかを返す。
@@ -85,7 +90,7 @@ func (s *stdinSink) stopped() bool {
 		select {
 		case <-s.intr:
 			s.interrupted = true
-			s.b.Reset() // 溜めた中身を手放す
+			s.blocks, s.size = nil, 0 // 溜めた中身を手放す
 		default:
 		}
 	}
@@ -96,17 +101,31 @@ func (s *stdinSink) Write(p []byte) (int, error) {
 	if s.stopped() {
 		return len(p), nil
 	}
-	return s.b.Write(p)
+	n := len(p)
+	for len(p) > 0 {
+		if len(s.blocks) == 0 || len(s.blocks[len(s.blocks)-1]) == stdinBlockSize {
+			s.blocks = append(s.blocks, make([]byte, 0, stdinBlockSize))
+		}
+		last := &s.blocks[len(s.blocks)-1]
+		k := min(len(p), stdinBlockSize-len(*last))
+		*last = append(*last, p[:k]...)
+		p = p[k:]
+	}
+	s.size += n
+	return n, nil
 }
 
-// text は、溜めた中身を返す。intr に届いていたら空を返す。
+// text は、溜めた中身を、大きさちょうどの文字列にして返す。写した塊から手放す。intr に届いていたら空を返す。
 func (s *stdinSink) text() string {
 	if s.stopped() {
 		return ""
 	}
-	t := s.b.String()
-	if s.b.Cap() > len(t)+len(t)/4 {
-		t = strings.Clone(t)
+	var b strings.Builder
+	b.Grow(s.size)
+	for i, blk := range s.blocks {
+		b.Write(blk)
+		s.blocks[i] = nil
 	}
-	return t
+	s.blocks = nil
+	return b.String()
 }
