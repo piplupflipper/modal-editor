@@ -3,7 +3,8 @@
   "command": "./vi-imitation-ext-treesitter",
   "activation": [
     { "on": "filetype", "pattern": "go" },
-    { "on": "filetype", "pattern": "json" }
+    { "on": "filetype", "pattern": "json" },
+    { "on": "filetype", "pattern": "jsonc" }
   ],
   "contributes": {
     "textObjects": [
