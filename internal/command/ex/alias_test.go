@@ -58,6 +58,42 @@ func TestAddedAliasLookup(t *testing.T) {
 	}
 }
 
+// :global と :vglobal へ付け替えた別名は、打った名前の頭文字ではなく、付け替えた先のコマンドの動作になる
+// （PR #293 のレビューの必須 1。:verb が v で始まっても :g、:keep が v で始まらなくても :v）。
+//
+// req: FR-150
+func TestAliasToGlobal(t *testing.T) {
+	al := NewAliases()
+	for _, a := range []RenameAlias{{Name: "verb", Min: 2, Target: "global"}, {Name: "keep", Min: 4, Target: "vglobal"}} {
+		if err := al.Add(a, nil); err != nil {
+			t.Fatalf("%s: %v", a.Name, err)
+		}
+	}
+	for _, tt := range []struct{ cmdline, want string }{
+		{"verb/x/d", "y1\ny2"},
+		{"ve/x/d", "y1\ny2"},
+		{"verb!/x/d", "x1\nx2"},
+		{"keep/x/d", "x1\nx2"},
+		// 付け替えない本体のコマンドも、これまでと同じ動作である。
+		{"g/x/d", "y1\ny2"},
+		{"g!/x/d", "x1\nx2"},
+		{"v/x/d", "x1\nx2"},
+		{"vglobal/x/d", "x1\nx2"},
+	} {
+		b := buffer.New("x1\ny1\nx2\ny2\n")
+		if _, err := Execute(b, &State{Aliases: al}, 0, tt.cmdline); err != nil {
+			t.Errorf("%s: %v", tt.cmdline, err)
+			continue
+		}
+		if got := b.Text(); got != tt.want {
+			t.Errorf("%s: text = %q, want %q", tt.cmdline, got, tt.want)
+		}
+	}
+	if _, err := Execute(buffer.New("x1\n"), &State{Aliases: al}, 0, "keep!/x/d"); errCode(t, err) != "E477" {
+		t.Errorf(":keep!: err = %v, want E477", err)
+	}
+}
+
 // 足せない別名は、表を変えずに誤りを返す。
 //
 // req: FR-150
