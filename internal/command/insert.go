@@ -295,16 +295,22 @@ func (s *State) insertRune(r rune) {
 
 // insertInput は、入力（文字か削除の操作）を記録して、バッファに行う。
 //
-// 位置の前を消す操作（insert.delete-prev-char、insert.delete-prev-word、insert.delete-to-line-start）が、
-// どの位置でも何もしない（バッファの先頭の <BS> など）なら、記録せず、カーソルキーで区切った後の入力も始め直さない（#289）。
+// 位置の前を消す操作（insert.delete-prev-char、insert.delete-prev-word、insert.delete-to-line-start）を、
+// カーソルがバッファの先頭にあるときに打ち、バッファもカーソルも変わらない（どの位置でも編集が無い。inputApplies）なら、
+// 記録せず、カーソルキーで区切った後の入力も始め直さない（#289）。
 // 記録すると、回数による繰り返しとドットリピートで、その操作が前の回に入れた文字を消す（100ia<BS><BS>b<Esc> が babc になる）。
-// Vim 9.1 も、消すものの無い <BS>、<C-w>、<C-u> は、鳴らすだけで記録に入れず、区切った入力も始め直さない（src/edit.c の ins_bs）。
-// 位置の後ろを消す操作（insert.delete-char、insert.delete-to-line-end）は、何もしなくても記録する（Vim 9.1 の ins_del と同じ）。
-// 何もしないのは位置がバッファの末尾にあるときだけで、入力の間に位置の後ろのテキストは増えないので、繰り返しでも何もしない。
+// Vim 9.1 も、バッファの先頭と空のバッファの <BS>、<C-w>、<C-u> は、鳴らすだけで記録に入れず、区切った入力も始め直さない
+// （'backspace' が "indent,eol,start" のときの src/edit.c の ins_bs）。
+//
+// バッファの先頭のほかでは、何もしなくても記録する。行の先頭の insert.delete-to-line-start は、前の行とつながない（#260 の決め）ので
+// 何もしないが、Vim 9.1 の <C-u> は前の行とつなぐ（記録に入る）。記録から落とすと、繰り返しと . の結果が Vim からさらに離れる
+// （abc、|def で 3i<C-u>x<Esc> は Vim が abcxdef、記録すると abc、xdef、落とすと abc、xxxdef。PR #314 のレビュー）。
+// 位置の後ろを消す操作（insert.delete-char、insert.delete-to-line-end）も、何もしなくても記録する（Vim 9.1 の ins_del と同じ）。
+// 空のバッファの i<Del>x<Esc> の記録の <Del> は、後の . で位置の文字を消す。
 //
 // req: FR-06, FR-127
 func (s *State) insertInput(in editcmd.InsertInput) {
-	if isDeleteBefore(in.Op) && !s.inputApplies(in) {
+	if isDeleteBefore(in.Op) && s.cursor == (buffer.Position{}) && !s.inputApplies(in) {
 		return
 	}
 	s.resumeInsert()

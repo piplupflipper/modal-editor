@@ -166,10 +166,13 @@ func TestDotRepeatLongInsert(t *testing.T) {
 	}
 }
 
-// 位置の前を消す操作（<BS>、<C-w>、<C-u>）が何もしなかったとき（バッファの先頭など）は、入力の記録に入れない（#289）。
+// 位置の前を消す操作（<BS>、<C-w>、<C-u>）をバッファの先頭で打ち、何もしなかったときは、入力の記録に入れない（#289）。
 // 記録すると、回数による繰り返しとドットリピートで、その操作が前の回に入れた文字を消す。
 // カーソルキーで区切った後に何もしなかったときは、入力を始め直さず、. は区切る前の入力を繰り返す。
+// バッファの先頭のほかでは記録する。行の先頭の <C-u> は、こちらでは何もしない（#260 の決め）が、Vim 9.1 では前の行とつなぐので記録に入る。
+// <Del> は、何もしなくても記録する（Vim 9.1 の ins_del と同じ）。
 // 期待値は Vim 9.1（vim -Nu NONE -n --not-a-term、set bs=indent,eol,start）で確かめた（2026-11-21）。
+// Vim と違う結果になる行は、違いと理由を書いた。
 //
 // req: FR-06, FR-07, FR-127
 func TestInsertNoopDeleteNotRecorded(t *testing.T) {
@@ -184,8 +187,21 @@ func TestInsertNoopDeleteNotRecorded(t *testing.T) {
 		{"|abc", "3i<C-w>x<Esc>", "xxxabc", "0:2"},
 		{"|abc", "3i<C-u>x<Esc>", "xxxabc", "0:2"},
 		{"|abc", "3ia<C-w><C-w>b<Esc>", "babc", "0:0"},
+		// 行の先頭（バッファの先頭でない）の <BS> と <C-w> は、前の行とつなぐ。
+		{"abc\n|def", "3i<BS>x<Esc>", "abcxdef", "0:3"},
+		{"abc\n|def ghi", "i<BS>x<Esc>$.", "abcxdef gxi", "0:9"},
+		{"abc\n|def ghi", "i<C-w>x<Esc>$.", "abcxdef xi", "0:8"},
+		// 繰り返しの <C-w> は、前の回の x と前の行を消す。Vim 9.1 は入力の始まりで止まり、abcxdef になる（#260 の決め。
+		// docs/vim-differences.md）。
+		{"abc\n|def", "3i<C-w>x<Esc>", "xdef", "0:0"},
+		// 行の先頭の <C-u> は何もしないが、記録する（PR #314 のレビュー）。繰り返しと . の <C-u> は、位置から行の先頭までを消す。
+		// Vim 9.1 は前の行とつなぎ、abcxdef と xi（1 行）になる（#260 の決め。docs/vim-differences.md）。
+		{"abc\n|def", "3i<C-u>x<Esc>", "abc\nxdef", "1:0"},
+		{"abc\n|def ghi", "i<C-u>x<Esc>$.", "abc\nxi", "1:0"},
 		// 位置の後ろを消す <Del> は、何もしなくても記録する（Vim 9.1 の ins_del と同じ）。繰り返しでも何もしない。
 		{"ab|c", "3a<Del>x<Esc>", "abcxxx", "0:5"},
+		// 空のバッファでも記録するので、. は位置の文字を消してから入れる。
+		{"|", "i<Del>x<Esc>0.", "x", "0:0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.text+"/"+tt.keys, func(t *testing.T) {

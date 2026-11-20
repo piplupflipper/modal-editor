@@ -721,10 +721,14 @@ client の接続ごとの読み取りは別の goroutine で行い、キーを�
 インサートモードの入力の記録（ドットリピートの値の `editcmd.Command.Inserted`）は、文字と削除の操作（`insert.delete-prev-char`、`insert.delete-char`、`insert.delete-to-line-end`、`insert.delete-prev-word`、`insert.delete-to-line-start`）を別の種類（`editcmd.InsertInput` の `Op`）として持つ列である（後の 2 つは #260。FR-128）。
 このため、アンドゥの単位、ドットリピート、回数による繰り返し（`3i`）、マクロの再生で、5 つの削除は同じ扱いになり、
 キーの列の展開などから入った制御文字（`\b`、`\x0b`、`\x7f`）は削除と取り違えずに文字として入る（PR #258 のレビュー。それまでは記録が文字列で、`<BS>` を `\b` として持っていた）。
-位置の前を消す 3 つの操作（`insert.delete-prev-char`、`insert.delete-prev-word`、`insert.delete-to-line-start`）が何もしなかったとき（バッファの先頭など）は、記録に入れない（#289）。
+位置の前を消す 3 つの操作（`insert.delete-prev-char`、`insert.delete-prev-word`、`insert.delete-to-line-start`）を、カーソルがバッファの先頭にあるときに打ち、バッファもカーソルも変わらなかったときは、記録に入れない（#289）。
 記録すると、回数による繰り返しとドットリピートで、その操作が前の回に入れた文字を消し、`100ia<BS><BS>b<Esc>` が Vim 9.1 と違う結果になった。
-Vim 9.1 も、消すものの無い `<BS>`、`<C-w>`、`<C-u>` は、記録に入れる（`AppendCharToRedobuff`）前に戻る（[src/edit.c の `ins_bs`](https://github.com/vim/vim/blob/v9.1.0000/src/edit.c#L3993-L4018)）。
-位置の後ろを消す 2 つの操作は、何もしなくても記録する（Vim 9.1 の [`ins_del`](https://github.com/vim/vim/blob/v9.1.0000/src/edit.c#L3919-L3950) も、消せなくても記録する）。何もしないのは位置がバッファの末尾にあるときだけで、入力の間に位置の後ろのテキストは増えないので、繰り返しでも何もしない。
+Vim 9.1 も、バッファの先頭と空のバッファの `<BS>`、`<C-w>`、`<C-u>` は、記録に入れる（`AppendCharToRedobuff`）前に戻る（`'backspace'` が `indent,eol,start` のとき。[src/edit.c の `ins_bs`](https://github.com/vim/vim/blob/v9.1.0000/src/edit.c#L3993-L4018)）。
+バッファの先頭のほかでは、何もしなくても記録する。
+行の先頭の `insert.delete-to-line-start` は前の行とつながない（#260 の決め）ので何もしないが、Vim 9.1 の `<C-u>` は前の行とつないで記録に入る。
+記録から落とすと、`abc`、`|def` での `3i<C-u>x<Esc>` などの繰り返しと `.` の結果が、Vim からさらに離れる（PR #314 のレビュー）。
+位置の後ろを消す 2 つの操作は、バッファの先頭でも、何もしなくても記録する（Vim 9.1 の [`ins_del`](https://github.com/vim/vim/blob/v9.1.0000/src/edit.c#L3919-L3950) も、消せなくても記録する）。
+空のバッファの `i<Del>x<Esc>` の記録の `<Del>` は、後の `.` で位置の文字を消すので、落とすと Vim と違う結果になる。
 
 段階 3 では、キーの列の解釈の途中の状態（`d2` まで受け取った状態など）とモードは編集の client ごとに持つ（仮）。
 部品の client で受けたキーは、元の client（1.2）の操作として扱う。
