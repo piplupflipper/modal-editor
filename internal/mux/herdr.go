@@ -128,6 +128,7 @@ func (h *Herdr) SplitPane(ctx context.Context, opts SplitOptions) (string, error
 }
 
 // OpenPopup は、同梱するプラグインの entrypoint を、placement を popup にして plugin.pane.open で開く。
+// opts.KeepOnFailure なら、コマンドを keepOnFailure で包み、0 でない終了コードで終わったときにキーを待ってから閉じる。
 // herdr 0.9.0 は、ポップアップの target_pane_id を受け付けず（invalid_params）、アクティブなペインの上に開く。
 // このため opts.Target は使わない。元の client のペインでキーを受けて開くときは、ふつうそのペインがアクティブだが、
 // キーを受けてからこの呼び出しが herdr に届くまでの間に利用者が別のタブへ移ると、移った先に開く。
@@ -142,7 +143,11 @@ func (h *Herdr) OpenPopup(ctx context.Context, opts PopupOptions) error {
 	if err := checkPercent("height", opts.Height); err != nil {
 		return err
 	}
-	params := h.openParams("popup", opts.Command)
+	c := opts.Command
+	if opts.KeepOnFailure {
+		c = keepOnFailure(c)
+	}
+	params := h.openParams("popup", c)
 	if opts.Width > 0 {
 		params["width"] = strconv.Itoa(opts.Width) + "%"
 	}

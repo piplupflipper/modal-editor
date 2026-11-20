@@ -13,6 +13,7 @@
 // 待つだけの client（FR-83）は、server のソケットで受け付け、editor.Editor.Wait でファイルを開かせて、タブが閉じられるまで繋いでおく（serveWait）。
 // 部品の client（FR-67、FR-115）は、server のソケットで受け付け、editor.Editor.AttachComponent で、その部品を開いた元の編集の client に繋ぐ
 // （component.go）。server は、端末多重化ソフトの層で部品の client を起動する関数を editor.Config.OpenPopup と OpenPane に入れる。
+// :terminal.popup（FR-168）のコマンドを端末多重化ソフトのポップアップで動かす関数は、editor.Config.RunPopup に入れる（component.go の runPopup）。
 //
 // # 端末の受け渡し
 //
@@ -114,6 +115,9 @@ func New(cfg editor.Config) (*Server, error) {
 	}
 	if cfg.OpenPane == nil {
 		cfg.OpenPane = s.openPane
+	}
+	if cfg.RunPopup == nil {
+		cfg.RunPopup = s.runPopup
 	}
 	s.client = s.newTerm()
 	ed, err := editor.New(s.client, cfg)

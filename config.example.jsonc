@@ -26,6 +26,12 @@
       "<C-w>": { "action": "insert.delete-prev-word" }, // 前の単語を消す（行の先頭では前の行とつなげる）
       "<C-u>": { "action": "insert.delete-to-line-start" }, // カーソルから行の先頭まで消す
     },
+    // 外部の TUI を、端末多重化ソフト（tmux、herdr）の画面の中央のポップアップで開く（:terminal.popup keifu-wt に当たる）。
+    // 端末多重化ソフトの外では :! と同じく端末を渡して動かす。使うときはコメントを外し、keifu-wt を手元にあるコマンドに替える。
+    // 説明は docs/usage.md の「コマンドをポップアップで動かす」にある
+    // "normal": {
+    //   "<Leader>gk": { "command": "terminal.popup", "args": "keifu-wt" },
+    // },
   },
 
   "colorscheme": "iceberg",

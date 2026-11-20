@@ -115,6 +115,9 @@ func init() {
 		{name: optionToggleName, min: len(optionToggleName), rng: rangeNone, run: runOptionToggle},
 		// 検索の一致の色を消す（FR-138）。点を含む正規の名前で、省略できない。Vim の :noh[lsearch] は別名の表にある。
 		{name: clearHighlightName, min: len(clearHighlightName), rng: rangeNone, run: runClearHighlight},
+		// 任意のコマンドを端末多重化ソフトのポップアップで動かす（FR-168）。点を含む正規の名前で、省略できない。
+		// コマンドは :! と同じく "|" を含めて行末までなので barNone にする。:! と同じく :g の中では使えない。
+		{name: terminalPopupName, min: len(terminalPopupName), rng: rangeNone, bar: barNone, run: runTerminalPopup},
 	}
 }
 

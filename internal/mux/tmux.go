@@ -101,7 +101,7 @@ const popupReadyScript = `: > "$0" && exec "$@"`
 // popupPoll は、ポップアップの中のコマンドが起動したかを確かめる間隔である。
 const popupPoll = 5 * time.Millisecond
 
-// OpenPopup は、display-popup -E でポップアップを開く。
+// OpenPopup は、display-popup -E でポップアップを開く。opts.KeepOnFailure なら、コマンドを keepOnFailure で包む。
 //
 // display-popup は、ポップアップを出す tmux の client（-c）が要る。server は tmux の client ではないので、
 // 元のペインの window を表示している tmux の client を探して -c に渡す（client）。
@@ -151,8 +151,13 @@ func (t *Tmux) OpenPopup(ctx context.Context, opts PopupOptions) error {
 	if opts.Height > 0 {
 		args = append(args, "-h", strconv.Itoa(opts.Height)+"%")
 	}
-	wrapped := opts.Command
-	wrapped.Args = append([]string{"sh", "-c", popupReadyScript, ready}, opts.Command.Args...)
+	inner := opts.Command
+	if opts.KeepOnFailure {
+		// 0 でなければキーを待ってから終わるので、-E のまま閉じるのを遅らせる（keepScript の doc）。
+		inner = keepOnFailure(inner)
+	}
+	wrapped := inner
+	wrapped.Args = append([]string{"sh", "-c", popupReadyScript, ready}, inner.Args...)
 	args = append(args, t.commandArgs("-d", wrapped)...)
 
 	// ポップアップの寿命は呼び出しの ctx に結びつけないので、exec.CommandContext を使わない。

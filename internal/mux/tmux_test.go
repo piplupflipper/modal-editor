@@ -614,6 +614,60 @@ func TestTmuxClosePopupOnlyOwn(t *testing.T) {
 	}
 }
 
+// TestTmuxPopupKeepOnFailure は、KeepOnFailure のポップアップ（keepScript で包む）が、コマンドが 0 でない終了コードで終わったときだけ
+// キーを待って開いたまま残り、0 で終わったときと、KeepOnFailure でないポップアップは閉じることを確かめる（FR-168）。
+// 開いているかは、層が開いた display-popup のプロセスが動いているか（tmuxPopup.exited）で見る（display-popup はポップアップが閉じるまで戻らない）。
+//
+// req: FR-168
+func TestTmuxPopupKeepOnFailure(t *testing.T) {
+	tt := newTestTmux(t)
+	tt.attachClient(t, tt.session)
+	ctx := testCtx(t)
+	for _, tc := range []struct {
+		name     string
+		keep     bool
+		status   int
+		wantOpen bool
+	}{
+		{"keep の 0 は閉じる", true, 0, false},
+		{"keep の 3 は残す", true, 3, true},
+		{"keep でない 3 は閉じる", false, 3, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "out")
+			// 層が開いたと見て表に入れるまで（印のファイルを見張る間隔）、すぐには終わらない。
+			script := fmt.Sprintf(`echo done > "$1"; sleep 0.3; exit %d`, tc.status)
+			err := tt.OpenPopup(ctx, PopupOptions{
+				Target: tt.Pane, KeepOnFailure: tc.keep,
+				Command: Command{Args: []string{"sh", "-c", script, "sh", out}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitFile(t, out)
+			tt.mu.Lock()
+			p := tt.popups[tt.Pane]
+			tt.mu.Unlock()
+			if p == nil {
+				t.Fatal("開いたポップアップが表に無い")
+			}
+			select {
+			case <-p.exited:
+				if tc.wantOpen {
+					t.Error("終了コードが 0 でないのに、ポップアップが閉じた")
+				}
+			case <-time.After(2 * time.Second):
+				if !tc.wantOpen {
+					t.Error("コマンドが終わった後も、ポップアップが開いている")
+				}
+			}
+			if err := tt.ClosePopup(ctx, tt.Pane); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestTmuxPopup(t *testing.T) {
 	tt := newTestTmux(t)
 	tt.attachClient(t, tt.session)

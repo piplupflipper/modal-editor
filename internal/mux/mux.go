@@ -22,6 +22,7 @@ package mux
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 )
 
@@ -113,6 +114,11 @@ type PopupOptions struct {
 	Width, Height int
 	// Command は、ポップアップの中で起動するコマンドである。コマンドが終わるとポップアップは閉じる。
 	Command Command
+	// KeepOnFailure は、コマンドが 0 でない終了コードで終わったときに、ポップアップを閉じずに残すことを表す（FR-168）。
+	// 残したポップアップには、コマンドの最後の出力と、終了コードと閉じ方の案内が見えたままになり、利用者が何かキーを打つと閉じる。
+	// tmux も herdr も、コマンドを同じ sh のスクリプトで包む（keepOnFailure）。
+	// false なら、終了コードに依らずコマンドが終わると閉じる（tmux の display-popup -E。部品の client）。
+	KeepOnFailure bool
 }
 
 // Mux は、端末多重化ソフトを操作する口である（基本設計 1.3）。
@@ -137,8 +143,9 @@ type Mux interface {
 	// コマンドが終わるとペインは閉じる。
 	SplitPane(ctx context.Context, opts SplitOptions) (string, error)
 
-	// OpenPopup は、画面の中央のポップアップを開き、中でコマンドを起動する（FR-67）。
-	// コマンドが終わるとポップアップは閉じる。中のコマンドが起動したら、終わりを待たずに戻る。
+	// OpenPopup は、画面の中央のポップアップを開き、中でコマンドを起動する（FR-67、FR-168）。
+	// コマンドが終わるとポップアップは閉じる（PopupOptions.KeepOnFailure なら、0 で終わったときだけ閉じる）。
+	// 中のコマンドが起動したら、終わりを待たずに戻る。
 	// ポップアップが既に開いていて開けないときは ErrPopupBusy を返す。開いているのが誰のポップアップでも同じである。
 	OpenPopup(ctx context.Context, opts PopupOptions) error
 
@@ -224,6 +231,64 @@ func (None) ClosePane(context.Context, string) error { return ErrUnsupported }
 
 // PaneFocused は ErrUnsupported を返す。
 func (None) PaneFocused(context.Context, string) (bool, error) { return false, ErrUnsupported }
+
+// keepScript は、PopupOptions.KeepOnFailure のときにポップアップのコマンドを包む sh のスクリプトである（FR-168）。
+// 引数のコマンドを動かし、0 で終わればそのまま終わる（ポップアップが閉じる）。
+// 0 でなければ、終了コードと閉じ方を出し、端末を 1 文字ずつ読む形にして、何かキーを 1 つ読んでから同じ終了コードで終わる。
+// キーを待つ前に、コマンドの実行中に打って端末に溜まっていた入力を、待たずに読む形（min 0 time 0）で読み捨てる。
+// 溜まった入力で、出力を読む前に閉じないためである（PR #323 の再レビューの推奨。実行中の j 1 つで閉じた）。
+// 1 回の読み捨ては 4096 バイトまでで、それより多く溜まっていれば残りで閉じうる。
+// :! の後の問い（internal/client の handover.go）と同じく終了コードを出し、q で閉じる癖のある TUI の利用者が q でも閉じられるように、
+// Enter に限らずどのキーでも閉じる。端末でなければ（テスト）stty は失敗し、標準入力の 1 バイトを読む。
+//
+// tmux の display-popup -EE（0 で終わったときだけ閉じる）は、残したポップアップに閉じ方を出さず、Escape と C-c でしか閉じない
+// （2026-11-21 に tmux 3.6 で確かめた。q、Enter、Space では閉じなかった。PR #323 のレビュー）。herdr 0.9.0 のプラグインのポップアップには
+// 同じ指定が無い。このため、どちらもこのスクリプトで包み、tmux は display-popup -E で開く。
+const keepScript = `"$@"; s=$?; [ "$s" -eq 0 ] && exit 0; ` +
+	`printf '\nシェルが %d を返しました\n閉じるには何かキーを押してください' "$s"; ` +
+	`stty -icanon -echo min 0 time 0 2>/dev/null && dd bs=4096 count=1 >/dev/null 2>&1; ` +
+	`stty min 1 2>/dev/null; dd bs=1 count=1 >/dev/null 2>&1; exit "$s"`
+
+// herdrPaneEnv は、herdr のポップアップの中へ下のペインの識別子を渡す環境変数の名前である（InPane）。
+const herdrPaneEnv = "VI_IMITATION_MUX_PANE"
+
+// herdrPaneScript は、herdrPaneEnv の値を HERDR_PANE_ID に入れてから、引数のコマンドを exec する sh のスクリプトである（InPane）。
+const herdrPaneScript = `HERDR_PANE_ID=$` + herdrPaneEnv + `; export HERDR_PANE_ID; unset ` + herdrPaneEnv + `; exec "$@"`
+
+// InPane は、ペイン pane の上に開くポップアップの中で c を起動したときに、c とその子のプロセスが、pane で起動したプロセスと同じく
+// 端末多重化ソフトと自分のペインを判定できる（Detect が同じ実装を選び、Unit が pane の window かタブを返す）ように、
+// c の環境変数を足すか、c を包んだコマンドを返す（FR-168）。端末多重化ソフトの外（None）なら c をそのまま返す。
+// ポップアップの中で起動した vi-imitation が、pane で起動したときと同じ server（同じ window かタブの server。FR-59）に繋ぐためである。
+//
+// tmux 3.6 の display-popup は、ポップアップの中に TMUX は入れるが、TMUX_PANE は入れない（中の TMUX_PANE は tmux のグローバルな環境の値で、
+// ふつうは無い。2026-11-21 に確かめた。PR #323 の再レビュー）。このため -e で TMUX_PANE に pane を入れる。
+// herdr 0.9.0 のプラグインのポップアップには、HERDR_ENV と HERDR_SOCKET_PATH は入るが HERDR_PANE_ID は入らず、plugin.pane.open の env で
+// HERDR_PANE_ID を渡しても中のプロセスに届かなかった（2026-11-21 に確かめた。ほかの名前の環境変数は届いた）。
+// このため別の名前（herdrPaneEnv）で渡し、中で HERDR_PANE_ID に入れ直してから c を exec する sh のスクリプト（herdrPaneScript）で包む。
+func InPane(m Mux, pane string, c Command) Command {
+	switch m.(type) {
+	case *Tmux:
+		c.Env = withEnv(c.Env, "TMUX_PANE", pane)
+	case *Herdr:
+		c.Env = withEnv(c.Env, herdrPaneEnv, pane)
+		c.Args = append([]string{"sh", "-c", herdrPaneScript, "sh"}, c.Args...)
+	}
+	return c
+}
+
+// withEnv は、env の写しに name=value を足したものを返す。
+func withEnv(env map[string]string, name, value string) map[string]string {
+	out := make(map[string]string, len(env)+1)
+	maps.Copy(out, env)
+	out[name] = value
+	return out
+}
+
+// keepOnFailure は、c のコマンドを keepScript で包んだコマンドを返す。
+func keepOnFailure(c Command) Command {
+	c.Args = append([]string{"sh", "-c", keepScript, "sh"}, c.Args...)
+	return c
+}
 
 // shellJoin は、args の各要素を POSIX のシェルの単一引用で囲み、空白でつないだ 1 つのコマンドの文字列にする。
 // 引用の要らない文字だけの要素は囲まない。

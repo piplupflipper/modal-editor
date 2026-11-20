@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -278,6 +279,79 @@ func TestHerdrOpenPopup(t *testing.T) {
 	// herdr 0.9.0 はポップアップの target_pane_id を invalid_params で断るので、送らない。
 	if req := f.only(t); req.Method != "plugin.pane.open" || !reflect.DeepEqual(req.Params, want) {
 		t.Errorf("リクエスト = %s %v\nwant plugin.pane.open %v", req.Method, req.Params, want)
+	}
+}
+
+// TestHerdrOpenPopupKeepOnFailure は、KeepOnFailure のポップアップのコマンドを keepScript で包むことと、
+// 包んだコマンドを宣言ファイルの command で動かすと、0 で終わればすぐ終わり、0 でなければ終了コードを出し、
+// キーを 1 つ（Enter でなく q でもよい）読むまで待ってから、同じ終了コードで終わることを確かめる（FR-168）。
+//
+// req: FR-168
+func TestHerdrOpenPopupKeepOnFailure(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh が無い")
+	}
+	f := newFakeHerdr(t, func(herdrRequest) map[string]any { return ok(map[string]any{"type": "ok"}) })
+	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
+	for _, status := range []int{0, 3} {
+		args := []string{"sh", "-c", `echo ran; exit "$1"`, "sh", strconv.Itoa(status)}
+		if err := h.OpenPopup(testCtx(t), PopupOptions{Target: "wW:p7", KeepOnFailure: true, Command: Command{Args: args}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reqs := f.requests()
+	if len(reqs) != 2 {
+		t.Fatalf("リクエストの数 = %d, want 2", len(reqs))
+	}
+	manifest := manifestCommand(t)
+	for i, status := range []int{0, 3} {
+		env, _ := reqs[i].Params["env"].(map[string]any)
+		command, _ := env[HerdrCommandEnv].(string)
+		if !strings.HasPrefix(command, shellJoin([]string{"sh", "-c", keepScript, "sh"})) {
+			t.Fatalf("コマンドを包んでいない: %q", command)
+		}
+		c := exec.CommandContext(testCtx(t), manifest[0], manifest[1:]...) //nolint:gosec // 同梱する宣言ファイルの command を試す
+		c.Env = append(os.Environ(), HerdrCommandEnv+"="+command)
+		in, err := c.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		c.Stdout = &out
+		if err = c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- c.Wait() }()
+		if status != 0 {
+			// 0 でないときは、キーを打つまで終わらない。
+			select {
+			case werr := <-done:
+				t.Fatalf("キーを待たずに終わった: %v, %q", werr, out.String())
+			case <-time.After(300 * time.Millisecond):
+			}
+			if _, err = in.Write([]byte("q")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err = <-done
+		_ = in.Close()
+		got := 0
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			got = ee.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if got != status {
+			t.Errorf("終了コード = %d, want %d", got, status)
+		}
+		prompted := strings.Contains(out.String(), "閉じるには何かキーを押してください")
+		if !strings.HasPrefix(out.String(), "ran\n") || prompted != (status != 0) {
+			t.Errorf("終了コード %d の出力 = %q", status, out.String())
+		}
+		if status != 0 && !strings.Contains(out.String(), "シェルが 3 を返しました") {
+			t.Errorf("終了コードを出していない: %q", out.String())
+		}
 	}
 }
 

@@ -215,6 +215,12 @@ type Config struct {
 	// 起動する関数である（internal/mux の Mux.SplitPane を包んだもの。component.go）。使い方は OpenPopup と同じである。
 	// nil か、元の client のペインを知らないときは、ペインに代えて中央のポップアップに出す（FR-123）。
 	OpenPane func(from string, view uint64, dir string, opts PaneOptions) error
+	// RunPopup は、:terminal.popup（FR-168）で、元の client のペイン from の上に端末多重化ソフトのポップアップを開き、
+	// その中で argv を作業ディレクトリ dir で起動する関数である（internal/mux の Mux.OpenPopup を包んだもの。terminalpopup.go）。
+	// コマンドが 0 で終わったらポップアップを閉じ、0 でなければ開いたまま残す（mux.PopupOptions.KeepOnFailure）。
+	// 中のコマンドが起動したら、終わりを待たずに戻る。イベントループを止めないよう、別の goroutine で呼ぶ。
+	// nil か、元の client のペインを知らない（端末多重化ソフトの外）ときは、:! と同じく端末を子プロセスへ渡して動かす。
+	RunPopup func(from string, argv []string, dir string, opts PopupOptions) error
 	// Problems は、呼び出し側が設定ファイルと宣言ファイルを読んだときの誤り（位置と内容）である（基本設計 8 章）。
 	// New は、すべてをログに記録し、New 自身が見つけた設定の誤りより先に並べて、最初の 1 件を起動後のメッセージで知らせる。
 	Problems []error
