@@ -114,7 +114,7 @@ func TestVimShorthand(t *testing.T) {
 // Neovim は既定で Y を y$ に割り当てている（`:nmap Y` が `Y * y$` を返し、`:help Y-default` に書かれている）。
 // 期待値の形と入力の前のレジスターは vimCase と同じである。Neovim 0.12.5 を `nvim --clean --headless` で起動し、
 // ケースごとに新しいバッファへ undolevels を -1 にして text を置き、レジスターを入れてから、keys を feedkeys(keys, "xt") で入力した
-// （PR #280 の説明に方法を書いた）。
+// （PR #284 の説明に方法を書いた）。
 // 回数は D と同じく y$ の回数で（3Y は 3y$）、カーソルは動かない。ヤンクは変更ではないので、. は直前の変更（x）を繰り返す。
 var yankToLineEndCases = []vimCase{
 	{"a\nb|c\nd", "Y", "a\nbc\nd", "1:1", "v:c", "v:c", ":", ":", "v:A"},

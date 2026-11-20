@@ -281,7 +281,7 @@ func TestVimUndoCursor(t *testing.T) {
 }
 
 // redoCases は、リドゥ（<C-r>）の、回数、リドゥするものが無いとき、マクロ、ドットリピートと、ビジュアルモードの U を
-// Vim 9.1 と突き合わせたケースである。期待値の取り方は undoCursorCases と同じである（PR #280 の説明に方法を書いた）。
+// Vim 9.1 と突き合わせたケースである。期待値の取り方は undoCursorCases と同じである（PR #284 の説明に方法を書いた）。
 // ビジュアルモードの U（選択を大文字にする）は、ノーマルモードの U をリドゥにしても変わらない（FR-145）。
 var redoCases = []vimCase{
 	{"|abc", "x<C-r>", "bc", "0:0", "v:a", "v:U", ":", "v:a", "v:A"},
