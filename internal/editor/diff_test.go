@@ -28,9 +28,15 @@ func recordSplit(calls chan<- diffCall) func(from, file, dir, token string) erro
 // 2 つのタブの見比べを始めた harness と client 2 を返す。SplitPane の偽物は、呼ばれた引数を記録するだけで、client 2 はテストが繋ぐ。
 func startDiffPair(t *testing.T, files map[string]string) (*harness, *peer, string, diffCall) {
 	t.Helper()
+	return startDiffPairTerm(t, newFakeTerm(), files)
+}
+
+// startDiffPairTerm は、startDiffPair の、client 1 の偽の端末を term（大きさを変えたもの）にする形である。
+func startDiffPairTerm(t *testing.T, term *fakeTerm, files map[string]string) (*harness, *peer, string, diffCall) {
+	t.Helper()
 	dir := writeFiles(t, files)
 	calls := make(chan diffCall, 1)
-	h := start(t, Config{WorkDir: dir, SplitPane: recordSplit(calls)}, "a.txt")
+	h := startTerm(t, term, Config{WorkDir: dir, SplitPane: recordSplit(calls)}, "a.txt")
 	h.e.do(func() { h.e.clients[0].info = ClientInfo{ID: 1, Pane: "%1"} })
 	h.keys(":diffsplit b.txt<CR>")
 	h.settle()

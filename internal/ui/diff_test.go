@@ -113,6 +113,19 @@ func TestRenderDiffTopFill(t *testing.T) {
 		t.Errorf("カーソルの行 = %d, want 2", s.Cursor.Row)
 	}
 
+	// ScrollPos で読んだ表示の位置を SetScrollPos で戻すと、詰め物の行の数も戻る（SetScroll は詰め物を 0 にする）。
+	// 打つたびの検索（FR-153）が、打ち始めたときの位置へ戻すのに使う。
+	f.Cursor = buffer.Position{}
+	r.SetDiffTop(0, 2)
+	r.Render(f)
+	pos := r.ScrollPos()
+	r.SetScroll(0, 0)
+	r.SetScrollPos(pos)
+	s = r.Render(f)
+	if got, want := rowTexts(s, 3), []string{"------", "------", "c"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("SetScrollPos = %q, want %q", got, want)
+	}
+
 	// 見比べを終えたら（Diff が nil）、詰め物を描かない。
 	f.Diff = nil
 	s = r.Render(f)

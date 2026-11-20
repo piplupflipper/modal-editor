@@ -27,6 +27,9 @@
   "specialkey": { "fg": "#515e97" }, // SpecialKey（Neovim の側。Vim では Whitespace へのリンク）
   "linenr": { "fg": "#444b71", "bg": "#1e2132" }, // LineNr
   "search": { "fg": "#392313", "bg": "#e4aa80" }, // Search
+  // 打つたびの検索の今の一致。IncSearch は gui=reverse だけで、nvim は Search の色を重ねずに Normal の文字と背景の色を入れ替えて出す。
+  // 本体の reverse は下の search の色を入れ替えるので、Normal（guifg=#c6c8d1 guibg=#161821）を入れ替えた色を書いた
+  "incsearch": { "fg": "#161821", "bg": "#c6c8d1" }, // IncSearch
   // ヤンクした範囲。iceberg.vim に対応するグループは無い。nvim の vim.hl.on_yank が既定で使う IncSearch は反転だけで、
   // 選択（visual）と重なると反転が残って選択の色が上に出ないので、文字と背景の色を持ち、visual と search と見分けられる色を選んだ
   "yank": { "fg": "#eff0f4", "bg": "#5b6389" }, // PmenuSel

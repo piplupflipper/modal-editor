@@ -211,5 +211,7 @@ func (s *State) request(cmd editcmd.Command, op target.Operator) target.Request 
 		Last:       s.lastFind,
 		Operator:   op,
 		Search:     target.Search{Pattern: cmp.Or(cmd.Target.Pattern, s.Ex.LastPattern), Backward: s.searchBackward},
+		// / と ? を <CR> で決めたときだけ 0 でない（finishSearch）。
+		SearchSteps: s.searchSteps,
 	}
 }

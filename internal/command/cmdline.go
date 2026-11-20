@@ -32,10 +32,13 @@ func (s *State) CommandLine() string { return string(s.cmdline) }
 //
 // 検索（/ と ?）のパターンの入力も、同じ行の編集を使う。<CR> で検索を実行し、<Esc> と空の行の <BS> で、
 // 入力を始めたモード（ノーマルモードかビジュアルモード）へ戻る（startSearch）。
+// 検索のパターンの入力では、<C-g> と <C-t> で、打つたびの検索で出す一致を次と前の一致へ動かす（stepSearch。FR-153）。
 //
 // req: FR-01
 func (s *State) cmdlineKey(k editcmd.Key) {
 	switch {
+	case s.search != nil && k.Mod == editcmd.ModCtrl && k.Code == editcmd.CodeRune && (k.Rune == 'g' || k.Rune == 't'):
+		s.stepSearch(k.Rune == 'g')
 	case k.Mod != 0:
 	case k.Code == editcmd.CodeEsc:
 		if s.search != nil {
