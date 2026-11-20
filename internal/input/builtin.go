@@ -166,8 +166,9 @@ var (
 		{keys: "O", id: "open-above", next: editcmd.ModeInsert, desc: "上に行を足して入力する"},
 		{keys: "i", id: "insert", next: editcmd.ModeInsert, desc: "カーソルの前から入力する"},
 		{keys: "a", id: "append", next: editcmd.ModeInsert, desc: "カーソルの後から入力する"},
-		{keys: "I", id: "insert-line-start", next: editcmd.ModeInsert, desc: "行の最初の空白でない文字の前から入力する"},
-		{keys: "A", id: "append-line-end", next: editcmd.ModeInsert, desc: "行の末尾から入力する"},
+		// I と A は、ビジュアルモードでは選んだ行ごとに同じ位置から同時に入力する（FR-141）。文字単位と行単位で同じである。
+		{keys: "I", id: "insert-line-start", next: editcmd.ModeInsert, modes: MapNormal | MapVisual, desc: "行の最初の空白でない文字の前から入力する（ビジュアルモードでは選んだ行ごと）"},
+		{keys: "A", id: "append-line-end", next: editcmd.ModeInsert, modes: MapNormal | MapVisual, desc: "行の末尾から入力する（ビジュアルモードでは選んだ行ごと）"},
 		{keys: "u", id: "undo", desc: "アンドゥ"},
 		{keys: "<C-r>", id: "redo", desc: "リドゥ"},
 		// Ex コマンド（:w など）の一覧と解釈はコマンドラインの担当で、ここでは切り替えだけを持つ。

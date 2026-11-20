@@ -435,21 +435,49 @@ func actOpen(below bool) actionFunc {
 	}
 }
 
-// actInsert は、i、a、I、A である。カーソルを挿入の位置へ移してインサートモードへ移る。
-// I は行の最初の空白でない文字の前、A は行末である。
+// linePlacements は、行ごとに入力の位置を置く操作（I と A）の、行の中の位置の決め方である（FR-141）。
+// キーは input の表の ID、値は行のテキストから入力を始めるバイトの位置を返す関数である。
+// I は行の最初の空白でない文字の前（空白だけの行と空の行では行末）、A は行末である。
+var linePlacements = map[string]func(line string) int{
+	"insert-line-start": func(line string) int { return len(line) - len(strings.TrimLeft(line, " \t")) },
+	"append-line-end":   func(line string) int { return len(line) },
+}
+
+// actInsert は、i、a、I、A である。入力の位置を置いてインサートモードへ移る。
+// i と a は、カーソルの前と後の 1 つの位置である。
+//
+// I と A は、行の範囲（insertLines）の各行に、linePlacements の決め方で位置を 1 つずつ置き（lineSites）、
+// すべての位置に同時に入力する（startInsertAt）。ノーマルモードでは範囲がカーソルの行だけなので、位置は 1 つで普段のインサートモードになる。
+// ビジュアルモードでは選んだ行のすべてに置く。文字単位と行単位で同じ規則で、モードでは分けない。
+//
+// req: FR-141
 func actInsert(s *State, cmd editcmd.Command) error {
-	l := s.cursor.Line
-	line := s.line(l)
-	switch cmd.Action.ID {
-	case "append":
-		s.cursor.Byte = nextChar(line, s.cursor.Byte)
-	case "insert-line-start":
-		s.cursor.Byte = len(line) - len(strings.TrimLeft(line, " \t"))
-	case "append-line-end":
-		s.cursor.Byte = len(line)
+	first, last := s.insertLines()
+	place, perLine := linePlacements[cmd.Action.ID]
+	if !perLine {
+		if cmd.Action.ID == "append" {
+			s.cursor.Byte = nextChar(s.line(s.cursor.Line), s.cursor.Byte)
+		}
+		s.startInsert(cmd, max(cmd.Count, 1))
+		return nil
 	}
-	s.startInsert(cmd, max(cmd.Count, 1))
+	s.startInsertAt(cmd, max(cmd.Count, 1), s.lineSites(first, last, place))
 	return nil
+}
+
+// insertLines は、インサートモードへ移る操作が入力の位置を置く行の範囲を返す（FR-141）。
+//
+//   - ビジュアルモードなら、選んだ行である（文字単位と行単位で同じ）。ビジュアルモードを抜け、選択をマーク '< と '> に残す
+//   - ドットリピートの中（repeatLines が 0 でない）なら、カーソルの行から記録した数の行である。バッファの最後の行で止める。
+//     Vim 9.1 の矩形選択の I の後の . と同じく、マーク '< と '> は変えない
+//   - それ以外は、カーソルの行だけである
+func (s *State) insertLines() (first, last int) {
+	if start, end, _, ok := s.Selection(); ok {
+		s.exitVisual()
+		return start.Line, end.Line
+	}
+	first = s.cursor.Line
+	return first, min(first+max(s.repeatLines, 1)-1, s.lastLine())
 }
 
 // actUndo は、u（redo が false）と <C-r> である。回数の単位を取り消すかやり直す（FR-07）。

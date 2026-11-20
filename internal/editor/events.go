@@ -234,8 +234,21 @@ func (e *Editor) applyExternal(bs *bufferState, tx buffer.Transaction) (buffer.C
 	}
 	e.commitChange(bs, ch)
 	// カーソルとビジュアルモードの選択の両端を、それぞれ編集に合わせてずらす（select-all の後に末尾の行を消しても、選択がバッファの外を指さない）。
-	bs.state.ShiftPositions(func(p buffer.Position) buffer.Position { return shiftAll(p, ch.Edits) })
+	bs.state.ShiftPositions(func(p buffer.Position) (buffer.Position, bool) { return shiftKept(p, ch.Edits) })
 	return ch, nil
+}
+
+// shiftKept は、shiftAll と同じく位置 p を編集の列 eds で順にずらし、p がどれかの編集の範囲の内側
+// （範囲の始まりより後ろで、終わりより前）にあったかを一緒に返す（command.State.ShiftPositions の inside）。
+func shiftKept(p buffer.Position, eds []buffer.Edit) (buffer.Position, bool) {
+	inside := false
+	for _, ed := range eds {
+		if ed.Range.Start.Less(p) && p.Less(ed.Range.End) {
+			inside = true
+		}
+		p = shiftPos(p, ed)
+	}
+	return p, inside
 }
 
 // popupMark は、拡張機能の操作を問い合わせた State と、その時点で State が解釈していたキーの数である。

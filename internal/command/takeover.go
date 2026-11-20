@@ -42,6 +42,6 @@ func (s *State) TakeOverShared(prev *State) {
 	s.Ex.LastPattern, s.searchBackward = prev.Ex.LastPattern, prev.searchBackward
 	s.Ex.LastSubstitute = prev.Ex.LastSubstitute
 	s.lastFind = prev.lastFind
-	s.dot, s.lastChange, s.dotVisual = prev.dot, prev.lastChange, prev.dotVisual
+	s.dot, s.lastChange, s.dotVisual, s.dotLines = prev.dot, prev.lastChange, prev.dotVisual, prev.dotLines
 	s.lastPlayed = prev.lastPlayed
 }

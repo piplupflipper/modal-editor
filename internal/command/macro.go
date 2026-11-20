@@ -415,5 +415,11 @@ func (s *State) repeat(cmd editcmd.Command) error {
 		rg := s.regionFromExtent(s.dotVisual)
 		return s.change(d, func() error { return s.regionOperator(d, rg) })
 	}
+	if s.dotLines.cmd == s.dot {
+		// 選んだ行ごとに同時に入力した操作（FR-141）は、カーソルの行から同じ数の行に位置を置き直す（insertLines）。
+		lines := s.repeatLines
+		s.repeatLines = s.dotLines.lines
+		defer func() { s.repeatLines = lines }()
+	}
 	return s.execute(d)
 }

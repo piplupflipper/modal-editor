@@ -54,6 +54,7 @@ type repeatState struct {
 	dot            *editcmd.Command
 	lastChange     *editcmd.Command
 	dotVisual      visualExtent
+	dotLines       dotLines
 	lastPlayed     rune
 }
 
@@ -61,7 +62,8 @@ type repeatState struct {
 func (s *State) repeatState() repeatState {
 	return repeatState{
 		lastPattern: s.Ex.LastPattern, searchBackward: s.searchBackward, lastSubstitute: s.Ex.LastSubstitute,
-		lastFind: s.lastFind, dot: s.dot, lastChange: s.lastChange, dotVisual: s.dotVisual, lastPlayed: s.lastPlayed,
+		lastFind: s.lastFind, dot: s.dot, lastChange: s.lastChange, dotVisual: s.dotVisual, dotLines: s.dotLines,
+		lastPlayed: s.lastPlayed,
 	}
 }
 
@@ -69,6 +71,7 @@ func (s *State) repeatState() repeatState {
 func (s *State) setRepeatState(r repeatState) {
 	s.Ex.LastPattern, s.searchBackward, s.Ex.LastSubstitute = r.lastPattern, r.searchBackward, r.lastSubstitute
 	s.lastFind, s.dot, s.lastChange, s.dotVisual, s.lastPlayed = r.lastFind, r.dot, r.lastChange, r.dotVisual, r.lastPlayed
+	s.dotLines = r.dotLines
 }
 
 // ApplyDeferred は、保留した操作 d を、届いた結果で実行し直す（FR-18、基本設計 5.4 の「期限が 0」）。

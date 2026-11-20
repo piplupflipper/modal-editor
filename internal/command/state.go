@@ -162,11 +162,16 @@ type State struct {
 	// State.dot が再生ではない値の間は、dot より古いことがある（再生の始まりと終わりの noteChange で追いつく）。
 	lastChange *editcmd.Command
 	dotVisual  visualExtent
-	replaying  bool // ドットリピートの再実行中
-	insert     insertState
-	visual     visualState
-	cmdline    []rune
-	search     *pendingSearch // / か ? でパターンを入力している間の値。Ex コマンドの入力中は nil
+	// dotLines は、インサートモードの入力の記録をドットリピートの対象にしたときの、入力の位置を置いた行の数である（FR-141）。
+	dotLines dotLines
+	// repeatLines は、. が行ごとに入力の位置を置く操作（I と A）を繰り返している間の、位置を置く行の数である（repeat）。
+	// 0 なら繰り返しの中ではない。actInsert が読む。
+	repeatLines int
+	replaying   bool // ドットリピートの再実行中
+	insert      insertState
+	visual      visualState
+	cmdline     []rune
+	search      *pendingSearch // / か ? でパターンを入力している間の値。Ex コマンドの入力中は nil
 	// searchBackward は、直前の検索（/、?、*、#）が後ろ向きだったかである。n と N の向きを決める。
 	searchBackward bool
 	recording      rune // マクロの記録先。0 なら記録していない
@@ -230,28 +235,42 @@ func (s *State) Cursor() buffer.Position { return s.cursor }
 // ビジュアルモードで NUL の位置を残す。拡張機能の編集の後に呼び出し側が置き直しても、選択が改行を含んだままになる。#89）。
 // ビジュアルモードでは、カーソルが動いたなら、カーソルを動かす他の操作と同じく、選択の動く側の端（head）をカーソルに合わせる
 // （visualState の doc）。動かなければ head に触れないので、呼び出し側が同じ位置へ置き直しても select-all の選択は残る。
+// インサートモードの同時の入力（FR-141）の間にカーソルが動いたなら、カーソルキーで動いたときと同じく同時の入力を終える（endSites）。
 // 外からの編集に合わせてカーソルをずらすときは、SetCursor ではなく ShiftPositions を使う。
 func (s *State) SetCursor(pos buffer.Position) {
 	old := s.cursor
 	s.placeCursor(pos)
 	if s.cursor != old {
 		s.followCursor()
+		s.endSites()
 	}
 	s.updateWant()
 }
 
 // ShiftPositions は、利用者の操作でない編集（拡張機能の buffer/edit など）をバッファへ適用した後に、
-// カーソルと、ビジュアルモードの選択の両端（anchor と head）を、それぞれ shift でずらしてバッファの中に丸める。
-// shift は、編集の前の位置を編集の後の位置へ写す関数である（editor の shiftAll）。
+// カーソルと、ビジュアルモードの選択の両端（anchor と head）と、インサートモードの同時の入力の位置（FR-141）を、
+// それぞれ shift でずらしてバッファの中に丸める。
+// shift は、編集の前の位置を編集の後の位置へ写す関数である（editor の shiftKept）。
+// inside は、位置が編集で置き換えた範囲の内側（範囲の始まりより後ろで、終わりより前）にあったかである。
+// 内側の位置は、写した先が範囲の始まりに寄せた位置で、もとの文字との対応が無い。
 // 選択の両端は、カーソルのずれではなく自分の位置のずれで動く（SetCursor のように head をカーソルへ合わせない）。
 // 普段の状態（head がカーソルにある）では、両方が同じ位置へずれるので、head はカーソルにあるままである。
+// カーソルと選択の両端は、内側にあっても寄せた位置に置く。
+// 同時の入力の位置も自分の位置のずれで動き、内側にあった位置、バッファの外へ出た位置、ほかの位置と同じ行へ寄った位置は落とす（shiftSites）。
 // 望みの列は、ずらした後のカーソルの列にする（SetCursor と同じ）。
-func (s *State) ShiftPositions(shift func(buffer.Position) buffer.Position) {
-	if s.mode.visual() {
-		s.visual.anchor = s.clampPos(shift(s.visual.anchor))
-		s.visual.head = s.clampPos(shift(s.visual.head))
+//
+// req: FR-141
+func (s *State) ShiftPositions(shift func(buffer.Position) (p buffer.Position, inside bool)) {
+	to := func(p buffer.Position) buffer.Position {
+		q, _ := shift(p)
+		return q
 	}
-	s.placeCursor(shift(s.cursor))
+	if s.mode.visual() {
+		s.visual.anchor = s.clampPos(to(s.visual.anchor))
+		s.visual.head = s.clampPos(to(s.visual.head))
+	}
+	s.placeCursor(to(s.cursor))
+	s.shiftSites(shift)
 	s.updateWant()
 }
 
