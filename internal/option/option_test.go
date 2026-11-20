@@ -85,6 +85,21 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// Check は、型が項目の型と違う値を断る。Parse と Values.Set は Check を通る。
+//
+// req: FR-131
+func TestCheck(t *testing.T) {
+	d, _ := Lookup(FileType)
+	if err := d.Check(StringValue("go")); err != nil {
+		t.Errorf("Check(文字列) = %v", err)
+	}
+	for _, v := range []Value{BoolValue(true), IntValue(1), {}} {
+		if err := d.Check(v); !errors.Is(err, ErrTypeMismatch) {
+			t.Errorf("Check(%+v) = %v, want ErrTypeMismatch", v, err)
+		}
+	}
+}
+
 // Values は、設定していない項目に表の既定値を返し、型の違う値を設定しない。
 //
 // req: FR-131

@@ -359,7 +359,14 @@ func (e *Editor) edit(bs *bufferState, a ex.Action) error {
 	}
 	// Vim 9.1 と同じく、:e の読み直しもジャンプとして記録する。
 	e.markJumpAt(bs, bs.state.Cursor())
-	return e.reloadFile(bs)
+	if err := e.reloadFile(bs); err != nil {
+		return err
+	}
+	// ファイルを開き直したので、バッファごとの設定の項目を初めの値に戻す（Vim 9.1 の :e と :e! も 'filetype' を判定し直す）。
+	// 外での変更の読み直し（autoread と W11 の (L)oad File）では戻さない（Vim 9.1 の buf_reload も 'filetype' を残す）。
+	e.resetBufferOptions(bs)
+	e.notifyBufferAttrs(bs)
+	return nil
 }
 
 // reload は、バッファ bs の内容を、読み直した b の内容にする。バッファの番号は変えない（Vim の :e と同じ）。

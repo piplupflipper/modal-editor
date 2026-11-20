@@ -2,6 +2,7 @@ package ex
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/piplupflipper/vi-imitation/internal/option"
 )
@@ -59,6 +60,8 @@ func splitName(arg string, pos int) (name string, rest string, restPos int) {
 
 // runOptionSet は :option.set <名前> <値> を実行する（FR-132）。表で名前を引き、値を項目の型に合わせて読んで設定する。
 // 真偽は true と false、整数は 10 進、文字列は名前の後の空白の後の行末まで（"|" を含む。空も許す）である。
+// 値の末尾の空白は、型によらず除いて読む（末尾に空白を打っても E474 や E521 にならず、文字列の値にも入らない。
+// #264 の本文の「空白の後の行末まで」との違いで、今の項目に末尾の空白を入れたい値は無い）。
 // 知らない名前は E518、真偽でない値は E474、整数でない値は E521 にする（Vim 9.1 の :set と同じ番号）。名前が無ければ E471 にする。
 //
 // req: FR-131, FR-132
@@ -67,6 +70,7 @@ func runOptionSet(c *execCtx, inv *invocation) error {
 	if name == "" {
 		return errAt(inv.argPos, codeArgRequired, "引数が必要です")
 	}
+	text = strings.TrimRight(text, " \t")
 	d, err := lookupOption(name, inv.argPos)
 	if err != nil {
 		return err

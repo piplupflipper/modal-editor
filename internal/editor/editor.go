@@ -970,7 +970,8 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 		// Vim 9.1 と同じく、移る前の位置（1 行目）をジャンプリストに足す。番号が同じなので、開いたファイルの 1 行目を指す。
 		e.markJumpAt(prev, prev.state.Cursor())
 		prev.path = abs
-		prev.setFileType(e.detectFileType(abs))
+		// 使い回す前に名前の無いバッファで決めた設定の値は、開いたファイルへ引き継がない。
+		e.resetBufferOptions(prev)
 		e.replaceBuffer(prev, b)
 		prev.setDisk(st)
 		return prev, nil

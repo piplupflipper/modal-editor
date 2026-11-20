@@ -71,6 +71,17 @@ func (bs *bufferState) setFileType(ft string) {
 	_ = bs.options.Set(d, option.StringValue(ft))
 }
 
+// resetBufferOptions は、bs のバッファごとの設定の項目を、ファイルを開いたときの初めの値に戻す（FR-134）。
+// ファイルから開き直したとき（:e と :e!）と、名前の無いバッファを開いたファイルのバッファとして使い回すときに呼ぶ。
+// 項目の名前によらず、それまでの値をすべて捨て、ファイルを開くときに決まる値（bs.path からのファイルの種類の判定）だけを入れ直す。
+// 拡張機能へは知らせない（呼び出し側が buffer/open か notifyBufferAttrs で知らせる）。
+//
+// req: FR-134
+func (e *Editor) resetBufferOptions(bs *bufferState) {
+	bs.options = option.Values{}
+	bs.setFileType(e.detectFileType(bs.path))
+}
+
 // editorOptions は、設定ファイルから読んだエディタ全体の項目の値 vals から、エディタの初めの値を作る。
 // 表に無い名前と、範囲がエディタ全体でない項目と、型の違う値は使わない（internal/config が読んだ値なので、ふつうは無い）。
 func editorOptions(vals map[string]option.Value) option.Values {

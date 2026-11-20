@@ -551,13 +551,7 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 		s.next()
 		name, cmd = "!", &filterCommand
 	} else {
-		if id := extCommandName(s.rest()); strings.Contains(id, ".") && lookup(id) != nil {
-			// 点を含む正規の名前（:option.set）は、拡張機能のコマンドの ID と同じく、空白、"|"、"!" の手前までを名前として読む。
-			name = id
-			s.i += len(id)
-		} else {
-			name = s.letters()
-		}
+		name = readName(s)
 		if name == "" {
 			return "", 0, false, errAt(namePos, codeNotEditorCommand, "エディタのコマンドではありません: %s", strings.TrimSpace(src))
 		}
@@ -642,6 +636,17 @@ func (c *execCtx) runOne(src string, base int) (next string, nextPos int, more b
 	return inv.next, inv.nextPos, inv.hasNext, nil
 }
 
+// readName は、s の位置から本体のコマンドの名前を読む（runOne と addrKindAt）。
+// 点を含む正規の名前（:option.set）は、拡張機能のコマンドの ID と同じく、空白、"|"、"!" の手前までを名前として読み、
+// Ex コマンドの表にあるときだけその名前にする。それ以外は、続く英字の列を名前にする（:w、:se）。
+func readName(s *scanner) string {
+	if id := extCommandName(s.rest()); strings.Contains(id, ".") && lookup(id) != nil {
+		s.i += len(id)
+		return id
+	}
+	return s.letters()
+}
+
 // extCommandName は、拡張機能のコマンドの ID として読む、コマンド名の位置から続く文字列を返す。
 // 空白、"|"、"!" の手前までである。ID が空白を含むコマンドは、コマンドラインからは呼べない。
 func extCommandName(src string) string {
@@ -702,7 +707,7 @@ func (c *execCtx) runExtCommand(s *scanner, r lineRange) (done bool, err error) 
 func (c *execCtx) addrKindAt(src string) addrKind {
 	s := &scanner{src: src}
 	skipRange(s)
-	if cmd := resolve(s.letters()); cmd != nil && cmd.rng == rangeWindow {
+	if cmd := resolve(readName(s)); cmd != nil && cmd.rng == rangeWindow {
 		return addrWindows
 	}
 	return addrLines

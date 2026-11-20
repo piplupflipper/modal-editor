@@ -155,10 +155,32 @@ var (
 	ErrTypeMismatch = errors.New("option: value type does not match the option type")
 )
 
-// Parse は、文字列 text を項目の型の値として読む。
+// Check は、値 v が項目 d に入れられる値かを確かめる。型が項目の型と違えば ErrTypeMismatch を返す。
+// 値を項目に入れる経路（コマンドラインの文字列から読む Parse、設定ファイルの JSON の値から読む internal/config、Values.Set）は、
+// どれも型の変換の後にこれを通る（FR-131）。項目ごとの値の制約（列挙、範囲）を表に足すときは、ここで確かめる。
+func (d Def) Check(v Value) error {
+	if v.Type() != d.Type {
+		return ErrTypeMismatch
+	}
+	return nil
+}
+
+// Parse は、文字列 text を項目の型の値に変換し、Check で確かめて返す。
 // 真偽は true と false だけ、整数は 10 進（先頭の - を許し、+ と 0x は許さない）、文字列は text をそのまま値にする（空も許す）。
-// 読めなければ ErrInvalidBool か ErrNumberRequired を返す。
+// 変換できなければ ErrInvalidBool か ErrNumberRequired を、確かめて誤りなら Check の誤りを返す。
 func (d Def) Parse(text string) (Value, error) {
+	v, err := d.convert(text)
+	if err != nil {
+		return Value{}, err
+	}
+	if err := d.Check(v); err != nil {
+		return Value{}, err
+	}
+	return v, nil
+}
+
+// convert は、文字列 text を項目の型の値に変換する。値の検査はしない（Check）。
+func (d Def) convert(text string) (Value, error) {
 	switch d.Type {
 	case Bool:
 		switch text {
@@ -199,10 +221,10 @@ func (vs *Values) Get(name string) Value {
 	return d.Default
 }
 
-// Set は、項目 d の値を v にする。v の型が d の型と違えば、値を変えずに ErrTypeMismatch を返す。
+// Set は、項目 d の値を v にする。v が d に入れられない値（Def.Check。型が違うなど）なら、値を変えずにその誤りを返す。
 func (vs *Values) Set(d Def, v Value) error {
-	if v.Type() != d.Type {
-		return ErrTypeMismatch
+	if err := d.Check(v); err != nil {
+		return err
 	}
 	if vs.m == nil {
 		vs.m = map[string]Value{}

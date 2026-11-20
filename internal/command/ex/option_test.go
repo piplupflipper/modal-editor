@@ -73,7 +73,10 @@ func TestOptionCommands(t *testing.T) {
 	}{
 		// :option.set
 		{name: "文字列", cmdline: "option.set filetype go", wantSets: []string{"filetype=go"}},
-		{name: "文字列は空白の後の行末まで", cmdline: "option.set  filetype   a|b c ", wantSets: []string{"filetype=a|b c "}},
+		{name: "文字列は空白の後の行末まで（末尾の空白は除く）", cmdline: "option.set  filetype   a|b c \t ", wantSets: []string{"filetype=a|b c"}},
+		{name: "真偽の末尾の空白", cmdline: "option.set test.flag true ", wantSets: []string{"test.flag=true"}},
+		{name: "整数の末尾の空白", cmdline: "option.set test.count 5\t", wantSets: []string{"test.count=5"}},
+		{name: "空白だけの値", cmdline: "option.set filetype   ", wantSets: []string{"filetype="}},
 		{name: "空の文字列", cmdline: "option.set filetype", wantSets: []string{"filetype="}},
 		{name: "値は | を含めて読む", cmdline: "option.set test.flag true|option.set test.flag false", wantCode: "E474", wantPos: 21},
 		{name: "真偽の true", cmdline: "option.set test.flag true", wantSets: []string{"test.flag=true"}},
@@ -217,6 +220,41 @@ func TestRenameAlias(t *testing.T) {
 	res, err := Execute(b, &State{Options: &fakeOptions{}}, 0, "xget filetype")
 	if err != nil || res.Notice.Text != "filetype=" {
 		t.Errorf(":xget: notice = %q, err = %v", res.Notice.Text, err)
+	}
+}
+
+// Names は、Ex コマンドの表の行の後に、別名の表の行（:set と、名前を付け替えるだけの行）を表の順に返す。
+//
+// req: FR-133
+func TestNamesIncludeAliases(t *testing.T) {
+	prev := aliases
+	aliases = append(slices.Clone(aliases), alias{name: "xdelete", min: 2, target: "delete"})
+	t.Cleanup(func() { aliases = prev })
+	names := Names()
+	if len(names) != len(commands)+len(aliases) {
+		t.Fatalf("len = %d, want %d", len(names), len(commands)+len(aliases))
+	}
+	if got := names[len(commands):]; !slices.Equal(got, []Name{{Full: "set", Short: "se"}, {Full: "xdelete", Short: "xd"}}) {
+		t.Errorf("別名の行 = %+v", got)
+	}
+	if names[0] != (Name{Full: "write", Short: "w"}) {
+		t.Errorf("先頭 = %+v", names[0])
+	}
+}
+
+// 範囲がウィンドウの番号かの判定（addrKindAt）も、点を含む正規の名前を runOne と同じく読む。
+func TestAddrKindDottedName(t *testing.T) {
+	prev := commands
+	commands = append(slices.Clone(commands), command{name: "window.quit", min: len("window.quit"), bang: true, rng: rangeWindow, run: runQuit})
+	t.Cleanup(func() { commands = prev })
+	for _, cmdline := range []string{"$quit", "$window.quit", "1window.quit!"} {
+		res, err := Execute(buffer.New("a\nb\nc\n"), nil, 0, cmdline)
+		if err != nil || len(res.Actions) != 1 || res.Actions[0].Kind != ActionQuit {
+			t.Errorf("%s: actions = %+v, err = %v", cmdline, res.Actions, err)
+		}
+	}
+	if _, err := Execute(buffer.New("a\nb\nc\n"), nil, 0, "2window.quit"); errCode(t, err) != "E16" {
+		t.Errorf(":2window.quit: err = %v, want E16", err)
 	}
 }
 

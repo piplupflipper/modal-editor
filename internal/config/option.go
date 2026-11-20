@@ -64,8 +64,23 @@ func hasOptionUnder(defs []option.Def, prefix string) bool {
 	return false
 }
 
-// optionValue は、v を項目 d の型の値として読む。型が違えば誤りを記録して false を返す。
+// optionValue は、v を項目 d の型の値に変換し、コマンドラインから読む値と同じ検査（option.Def.Check）を通して返す。
+// 変換できないか、検査で誤りなら、誤りを記録して false を返す。
 func (s *source) optionValue(v *hujson.Value, d option.Def) (option.Value, bool) {
+	val, ok := s.convertOption(v, d)
+	if !ok {
+		return option.Value{}, false
+	}
+	if err := d.Check(val); err != nil {
+		s.report(v.StartOffset, "%s の値が正しくない: %s", d.Name, val)
+		return option.Value{}, false
+	}
+	return val, true
+}
+
+// convertOption は、JSON の値 v を項目 d の型の値に変換する（真偽、整数、文字列の JSON の値）。値の検査はしない。
+// 型が違えば誤りを記録して false を返す。
+func (s *source) convertOption(v *hujson.Value, d option.Def) (option.Value, bool) {
 	switch d.Type {
 	case option.Bool:
 		if b, ok := s.boolean(v, d.Name); ok {

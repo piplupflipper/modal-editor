@@ -78,6 +78,37 @@ func TestWriteDetectsFileType(t *testing.T) {
 	})
 }
 
+// :e と :e! でファイルを開き直すと、バッファごとの項目を初めの値に戻し、拡張機能へ知らせ直す（Vim 9.1 も 'filetype' を判定し直す）。
+// 名前の無いバッファを開いたファイルのバッファとして使い回すときも、名前の無いバッファで決めた値を引き継がない。
+//
+// req: FR-134
+func TestReopenResetsBufferOptions(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"b.fakeft": "x\n", "a.txt": "a\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: fakeSpecs(t), FileTypes: map[string]string{".fakeft": "fakeft"}})
+	h.keys(":set filetype=go<CR>:e a.txt<CR>")
+	h.settle()
+	h.e.do(func() {
+		if got, want := h.e.cur.fileType(), h.e.detectFileType(filepath.Join(dir, "a.txt")); h.e.cur.path == "" || got != want {
+			t.Errorf("使い回した後の種類 = %q, want %q（path = %q）", got, want, h.e.cur.path)
+		}
+	})
+	h.keys(":e b.fakeft<CR>")
+	h.eventually("ftx の起動", func() bool { return h.state("ftx") == exthost.StateRunning })
+	for _, cmd := range []string{":e<CR>", ":e!<CR>"} {
+		h.keys(":set filetype=other<CR>")
+		h.keys(`\y`)
+		h.eventually(cmd+" の前の複製の種類", func() bool { return h.e.message.Text == "b2 b.fakeft ft=other" })
+		h.keys(cmd)
+		h.keys(`\y`)
+		h.eventually(cmd+" の後の複製の種類", func() bool { return h.e.message.Text == "b2 b.fakeft ft=fakeft" })
+		h.e.do(func() {
+			if got := h.e.cur.fileType(); got != "fakeft" {
+				t.Errorf("%s の後の種類 = %q, want fakeft", cmd, got)
+			}
+		})
+	}
+}
+
 // バッファごとの項目は、バッファごとに値を持つ。別のバッファへ移ると、移った先の値を読む。
 //
 // req: FR-132

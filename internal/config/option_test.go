@@ -1,7 +1,10 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tailscale/hujson"
@@ -85,6 +88,48 @@ func TestParseOptionsErrors(t *testing.T) {
 	if want := map[string]option.Value{"top": option.StringValue("ok")}; !reflect.DeepEqual(cfg.Options, want) {
 		t.Errorf("Options = %+v, want %+v", cfg.Options, want)
 	}
+}
+
+// 本体の設定の表のどの項目も、Parse の既存の項目（keymap、tabline など）の読み方に吸われず、表の項目として読まれる。
+// 表の項目の最上位の段が既存の項目の名前と重なると、既存の項目として読まれて、誤りも出ずに Options に入らない（基本設計 7.3）。
+// 範囲がエディタ全体の項目は既定値を書いて Options に入ることを、バッファごとの項目は書けない誤りになることを確かめる。
+//
+// req: FR-131
+func TestOptionDefsReadByParse(t *testing.T) {
+	for _, d := range option.Defs() {
+		val, err := json.Marshal(optionJSON(d.Default))
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(val)
+		parts := strings.Split(d.Name, ".")
+		for i := len(parts) - 1; i >= 0; i-- {
+			src = fmt.Sprintf("{%q: %s}", parts[i], src)
+		}
+		cfg, errs := Parse("config.jsonc", []byte(src))
+		if d.Scope == option.ScopeEditor {
+			if len(errs) != 0 || cfg.Options[d.Name] != d.Default {
+				t.Errorf("%s: Options = %+v, errs = %v（既存の項目と最上位の段が重なっていないか）", d.Name, cfg.Options, errs)
+			}
+			continue
+		}
+		if len(errs) != 1 || !strings.Contains(errs[0].Error(), d.Name+" はバッファごとの設定") {
+			t.Errorf("%s: errs = %v（既存の項目と最上位の段が重なっていないか）", d.Name, errs)
+		}
+	}
+}
+
+// optionJSON は、v を JSON に書くときの Go の値にする。
+func optionJSON(v option.Value) any {
+	switch v.Type() {
+	case option.Bool:
+		return v.Bool()
+	case option.Int:
+		return v.Int()
+	case option.String:
+		return v.String()
+	}
+	return nil
 }
 
 // 本体の表の filetype はバッファごとの項目なので、設定ファイルに書けば誤りとして知らせる。
