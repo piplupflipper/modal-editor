@@ -156,9 +156,3 @@ func (d *drawer) diffFillRest(row, line, col int) {
 		d.g.set(row, x0+x, blank(a))
 	}
 }
-
-// 差分の色を重ねる順。構文の色（0 以上）より下に置き、構文の文字の色が差分の背景の色の上に出るようにする。
-const (
-	diffLineOrder = -2
-	diffTextOrder = -1
-)

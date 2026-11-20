@@ -387,12 +387,9 @@ func (r *Renderer) fitHeight(lineCount int, cur cursorPlace) bool {
 // end が行の長さより大きければ、行末の 1 セル（行の区切りを表すセル）も含む。
 type span struct {
 	start, end int
-	order      int // 重ねる順。大きい方を上に重ねる
+	order      int // 重ねる順。大きい方を上に重ねる（色の種類ごとの順は layers.go の表）
 	attr       Attr
 }
-
-// 重ねる順の基準。構文の色、診断の順に重ねる。
-const diagnosticOrder = 1 << 40
 
 // drawer は、1 回の描画の作業の状態である。
 type drawer struct {
@@ -529,7 +526,10 @@ func (d *drawer) prepare(row, line int, s string) {
 	}
 	n := len(w.spans)
 	w.spans = append(append(w.spans, d.diags[row]...), d.diffSpans(line, ln)...)
-	w.spans = d.searchSpans(w.spans, s)
+	if d.f.Search != nil {
+		from, to := d.visibleBytes(s)
+		w.spans = d.searchSpans(w.spans, s, from, to)
+	}
 	if len(w.spans) > n {
 		slices.SortStableFunc(w.spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
 	}

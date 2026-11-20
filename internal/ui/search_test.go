@@ -2,6 +2,7 @@ package ui
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -131,6 +132,64 @@ func TestRenderSearchNotInFloat(t *testing.T) {
 		if got := marks(s, row, hl); got != "" {
 			t.Errorf("%d 行目に一致の色 = %q（%q）", row, got, s.Grid.RowText(row))
 		}
+	}
+}
+
+// 一致を集めるのは表示の範囲の右の端までで、左の端より左で終わる一致も範囲にしない。
+// パターンは行の全体に当てるので、^、$、\b のような前後の文字に依る一致は、右の端で行を切ったときと違って変わらない。
+//
+// req: FR-137
+func TestSearchSpansVisibleRange(t *testing.T) {
+	line := strings.Repeat("ab ", 1000) // 3000 バイト。ab の一致は 1000 個
+	tests := []struct {
+		pattern  string
+		from, to int
+		want     []int // 範囲の先頭
+	}{
+		{"ab", 0, 10, []int{0, 3, 6, 9}},
+		{"ab", 4, 10, []int{3, 6, 9}}, // 3 からの ab は左の端（4）に掛かる
+		{"ab", 5, 10, []int{6, 9}},
+		{`\bab\b`, 0, 7, []int{0, 3, 6}},
+		// 右の端の直前の b の後は空白なので \b が成り立つ。行を 8 バイトで切ると ^ が先頭以外にも、$ が切った所にも一致してしまう。
+		{`b\b`, 0, 8, []int{1, 4, 7}},
+		{`^ab`, 0, 3000, []int{0}},
+		{`^ab`, 3, 3000, nil},
+		{`b $`, 0, 8, nil},
+		{`b $`, 0, 3000, []int{2998}},
+		// 空の一致は、行末の位置のものも、右の端が行末なら範囲にする。
+		{`$`, 2990, 3000, []int{3000}},
+		{`$`, 0, 2990, nil},
+	}
+	for _, tt := range tests {
+		d := &drawer{f: &Frame{Search: regexp.MustCompile(tt.pattern)}, theme: searchTheme}
+		var got []int
+		for _, sp := range d.searchSpans(nil, line, tt.from, tt.to) {
+			got = append(got, sp.start)
+		}
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("%q [%d, %d) = %v, want %v", tt.pattern, tt.from, tt.to, got, tt.want)
+		}
+	}
+
+	// 横にスクロールした長い行でも、見えている列の一致に色が付き、行の先頭だけに一致する ^ は付かない。
+	hl := searchTheme[StyleSearch]
+	r := &Renderer{Width: 20, Height: 8, Theme: searchTheme}
+	b := buffer.New(line + "\n")
+	s := r.Render(&Frame{Text: b, Cursor: pos(0, 2400), Search: regexp.MustCompile(`^ab|ab $|b `)})
+	if r.Left() == 0 {
+		t.Fatalf("横にスクロールしていない")
+	}
+	// 見えている列の文字は "ab ab ..." のどこかから始まる。"b " の一致だけが、b と空白の 2 列ずつに付く。
+	want := strings.Builder{}
+	for c := range 20 {
+		if ch := line[r.Left()+c]; ch == 'b' || ch == ' ' {
+			want.WriteByte('^')
+		} else {
+			want.WriteByte(' ')
+		}
+	}
+	if got := marks(s, 0, hl); got != strings.TrimRight(want.String(), " ") {
+		t.Errorf("横にスクロールした行 = %q, want %q（%q）", got, strings.TrimRight(want.String(), " "), s.Grid.RowText(0))
 	}
 }
 

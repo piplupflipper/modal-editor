@@ -65,6 +65,10 @@ var searchCases = []searchCase{
 	{"abc foo b|ar", "v?foo<CR>d", "abc r", "0:4", "foo", true, "foo ba", ""},
 	{"foo |foo foo", "*N", "foo foo foo", "0:0", `\bfoo\b`, false, "U", ""},
 	{"foo |foo foo", "*n", "foo foo foo", "0:8", `\bfoo\b`, false, "U", ""},
+	// 単語の途中の # の後の n と、* の後の N は、カーソルのある単語の先頭へ移る（Vim 9.1 の同じ位置からの n と N、*N と同じ）。
+	{"fo|o bar foo baz", "#n", "foo bar foo baz", "0:0", `\bfoo\b`, true, "U", ""},
+	{"fo|o bar foo baz", "*N", "foo bar foo baz", "0:0", `\bfoo\b`, false, "U", ""},
+	{"fo|o bar foo baz", "*n", "foo bar foo baz", "0:8", `\bfoo\b`, false, "U", ""},
 	{"|abc", "/zzz<CR>", "abc", "0:0", "zzz", false, "U", "E486"},
 	{"|f f f f", "/f<CR>2n", "f f f f", "0:6", "f", false, "U", ""},
 	{"|abc", "/<BS>x", "bc", "0:0", "", false, "a", ""},
