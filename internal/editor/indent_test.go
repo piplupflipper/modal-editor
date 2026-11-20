@@ -14,8 +14,8 @@ import (
 
 // indentValues は、バッファ bs の字下げの 3 つの項目を "useSpaces width tab" の形で返す。
 func indentValues(bs *bufferState) string {
-	return bs.options.Get(option.IndentUseSpaces).String() + " " + bs.options.Get(option.IndentWidth).String() + " " +
-		bs.options.Get(option.TabWidth).String()
+	return bs.option(option.IndentUseSpaces).String() + " " + bs.option(option.IndentWidth).String() + " " +
+		bs.option(option.TabWidth).String()
 }
 
 // bufferAt は、パスの最後の要素が name のバッファを返す。
@@ -68,7 +68,7 @@ func TestOptionLayers(t *testing.T) {
 			if got := indentValues(bs); got != tt.want {
 				t.Errorf("%s: %s, want %s", tt.name, got, tt.want)
 			}
-			if !bs.options.Get(option.IndentAuto).Bool() {
+			if !bs.option(option.IndentAuto).Bool() {
 				t.Errorf("%s: indent.auto が設定ファイルの値になっていない", tt.name)
 			}
 		}
@@ -109,6 +109,53 @@ func TestEditorConfigOptions(t *testing.T) {
 			t.Errorf("%v: %q（%d 項目）, want %q", tt.props, s, len(got), tt.want)
 		}
 	}
+}
+
+// 後で拡張機能から設定を変える口を作るときは、optionLayers の .editorconfig の後に段を 1 つ足し、値が届いたら refreshOptionLayers を呼ぶ。
+// ここでは、その段を Editor.layers の末尾に足すだけで（ほかの箇所は直さずに）、次のとおりになることを確かめる（PR #324 のレビューの必須 2）。
+//
+//   - 足した段の値が .editorconfig の値に勝つ
+//   - 利用者が :set で変えた値は、足した段の値が後から届いても（buffer/open を送り直した後でも）上書きされない
+//   - :set filetype= で段を当て直すと、利用者が変えた値を捨て、足した段の値に戻る
+//   - 名前の無いバッファに名前を付けたときも、足した段が .editorconfig より後に当たり、:set で変えたほかの値は残る
+//
+// req: FR-163, FR-164
+func TestOptionLayerAddedLater(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		".editorconfig": "root = true\n[*]\nindent_style = space\nindent_size = 2\n",
+		"a.txt":         "x\n",
+	})
+	extWidth := 6
+	h := startWith(t, Config{WorkDir: dir}, func(e *Editor) error {
+		e.layers = append(e.layers, func(*Editor, *bufferState) map[string]option.Value {
+			return map[string]option.Value{option.IndentWidth: option.IntValue(extWidth)}
+		})
+		return e.Open("a.txt")
+	})
+	h.settle()
+	want := func(what, values string) {
+		t.Helper()
+		h.e.do(func() {
+			if got := indentValues(h.e.cur); got != values {
+				t.Errorf("%s: %s, want %s", what, got, values)
+			}
+		})
+	}
+	want("開いたとき", "true 6 2")
+	h.keys(":set sw=3<CR>")
+	h.settle()
+	want(":set sw=3 の後", "true 3 2")
+	h.e.do(func() {
+		extWidth = 7
+		h.e.refreshOptionLayers(h.e.cur)
+	})
+	want("足した段の値が後から届いた後", "true 3 2")
+	h.keys(":set filetype=go<CR>")
+	h.settle()
+	want(":set filetype=go の後", "true 7 2")
+	h.keys(":tab.new<CR>:set ts=5<CR>:w b.txt<CR>")
+	h.settle()
+	want(":w b.txt の後", "true 7 5")
 }
 
 // editorConfig.enabled が false なら .editorconfig を読まない。
@@ -153,7 +200,7 @@ func TestEditorConfigReadOnOpen(t *testing.T) {
 }
 
 // :set filetype= でファイルの種類を変えると、初めの値の段を新しい種類で当て直す。.editorconfig は、開いたときに読んだものを当てる。
-// 名前の無いバッファに名前を付けたときは、種類が変わらなければ、.editorconfig の値だけを今の値の上に当てる（:set で変えたほかの値は残る）。
+// 名前の無いバッファに名前を付けたときは、種類が変わらなければ、.editorconfig を読み直して段を作り直し、:set で変えた値はどの段よりも勝つ。
 //
 // req: FR-163, FR-164
 func TestFileTypeChangeReappliesLayers(t *testing.T) {
@@ -184,8 +231,8 @@ func TestFileTypeChangeReappliesLayers(t *testing.T) {
 	h.keys(":tab.new<CR>:set ts=5 noet<CR>:w b.dat<CR>")
 	h.settle()
 	h.e.do(func() {
-		if got := indentValues(h.e.cur); got != "false 3 3" {
-			t.Errorf(":w b.dat の後: %s, want false 3 3（.editorconfig の indent_size は tab.width にもなる。noet は残る）", got)
+		if got := indentValues(h.e.cur); got != "false 3 5" {
+			t.Errorf(":w b.dat の後: %s, want false 3 5（.editorconfig の indent_size は当たり、:set で変えた noet と ts=5 は残る）", got)
 		}
 	})
 }
@@ -198,14 +245,14 @@ func TestSetIndentOptions(t *testing.T) {
 	h.keys(":set et sw=2 ts=3 ai<CR>")
 	h.settle()
 	h.e.do(func() {
-		if got := indentValues(h.e.cur); got != "true 2 3" || !h.e.cur.options.Get(option.IndentAuto).Bool() {
+		if got := indentValues(h.e.cur); got != "true 2 3" || !h.e.cur.option(option.IndentAuto).Bool() {
 			t.Errorf(":set et sw=2 ts=3 ai: %s", got)
 		}
 	})
 	h.keys(":set noexpandtab shiftwidth=0 tabstop=4 noautoindent<CR>")
 	h.settle()
 	h.e.do(func() {
-		if got := indentValues(h.e.cur); got != "false 0 4" || h.e.cur.options.Get(option.IndentAuto).Bool() {
+		if got := indentValues(h.e.cur); got != "false 0 4" || h.e.cur.option(option.IndentAuto).Bool() {
 			t.Errorf(":set noexpandtab shiftwidth=0 tabstop=4 noautoindent: %s", got)
 		}
 	})

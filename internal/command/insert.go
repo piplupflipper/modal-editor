@@ -34,9 +34,9 @@ type insertState struct {
 	// typedSpace は、このインサートでスペースを打ったかである（Vim の inserted_space。softBackspace）。
 	// <Tab> と、字下げの幅の単位で消した <BS> で戻す。
 	typedSpace bool
-	// autoIndent は、カーソルの行が、自動インデント（FR-162）で入れた字下げのまま、まだ何も入力していないかである（Vim の did_ai）。
-	// このまま入力を終えるか（finishInsert）、別の行へ移るか（afterInsertMove）、<CR> を打つ（lineBreakEdit）と、行の末尾の空白を消す。
-	// <CR> 以外の入力と、カーソルキーで同じ行の中を動いたときに戻す。
+	// autoIndent は、カーソルの行が、自動インデント（FR-162）で入れた字下げのまま、<BS> などの位置の前を消す操作のほかに何も入力していないか
+	// である（Vim の did_ai）。このまま入力を終えるか（finishInsert）、別の行へ移るか（afterInsertMove）、<CR> を打つ（lineBreakEdit）と、
+	// 字下げの空白を消す。位置の前を消す操作のほかの入力と、カーソルキーで同じ行の中を動いたときに戻す（noteInput）。
 	autoIndent bool
 }
 
@@ -246,7 +246,7 @@ func (s *State) afterInsertMove(old buffer.Position) {
 	if s.insert.autoIndent {
 		s.insert.autoIndent = false
 		if s.cursor.Line != old.Line {
-			if err := s.dropAutoIndent(old.Line); err != nil {
+			if err := s.dropAutoIndent(old); err != nil {
 				s.fail(err)
 			}
 		}
@@ -380,10 +380,11 @@ func (s *State) typeInput(in editcmd.InsertInput) error {
 			return err
 		}
 	}
-	soft := in.Op == editcmd.InsertDeletePrev && s.softBackspace(s.cursor)
-	ed, after, ok := s.inputEdit(in, s.cursor)
+	from := s.cursor
+	soft := in.Op == editcmd.InsertDeletePrev && s.softBackspace(from)
+	ed, after, ok := s.inputEdit(in, from)
 	if !ok {
-		s.noteInput(in, soft)
+		s.noteInput(in, from, soft)
 		return nil
 	}
 	if err := s.apply(ed); err != nil {
@@ -391,23 +392,35 @@ func (s *State) typeInput(in editcmd.InsertInput) error {
 	}
 	s.cursor = after
 	s.updateWant()
-	s.noteInput(in, soft)
+	s.noteInput(in, from, soft)
 	return nil
 }
 
-// noteInput は、入力の記録の 1 件 in をカーソルの位置に行った後に、字下げの状態（insertState の typedSpace と autoIndent）を進める
+// noteInput は、入力の記録の 1 件 in をカーソルの位置 from で行った後に、字下げの状態（insertState の typedSpace と autoIndent）を進める
 // （FR-160、FR-162）。soft は、in が字下げの幅の単位で消した <BS>（softBackspace）だったかである。
 //
 //   - スペースの文字を入れたら typedSpace を立て、<Tab> と soft の <BS> で戻す（Vim の inserted_space）
-//   - 自動インデントを行う <CR> の後は autoIndent を立て、ほかの入力で戻す（Vim の did_ai）
-func (s *State) noteInput(in editcmd.InsertInput, soft bool) {
+//   - 自動インデントを行う <CR> の後は autoIndent を立てる（Vim の did_ai）
+//   - 位置の前を消す操作（<BS>、insert.delete-prev-word、insert.delete-to-line-start）は、autoIndent を残す。
+//     ただし、行の先頭で打った（前の行とつないだ）か、消した後のカーソルが行の 2 バイト目より前なら戻す。
+//     Neovim 0.12.5 の ins_bs の末尾の「if (curwin->w_cursor.col <= 1) did_ai = false」と同じで、`noet sw=8 ts=8` の
+//     タブ文字 2 つの字下げで o<BS><Esc> を打つと、タブ文字 1 つが残る（Vim 9.1 も同じ）
+//   - ほかの入力は autoIndent を戻す
+func (s *State) noteInput(in editcmd.InsertInput, from buffer.Position, soft bool) {
 	switch {
 	case in.Op == editcmd.InsertRune && in.Rune == ' ':
 		s.insert.typedSpace = true
 	case in.Op == editcmd.InsertTab || soft:
 		s.insert.typedSpace = false
 	}
-	s.insert.autoIndent = in.Op == editcmd.InsertLineBreak && s.indentConfig().auto
+	switch {
+	case in.Op == editcmd.InsertLineBreak:
+		s.insert.autoIndent = s.indentConfig().auto
+	case isDeleteBefore(in.Op):
+		s.insert.autoIndent = s.insert.autoIndent && from.Byte > 0 && s.cursor.Byte > 1
+	default:
+		s.insert.autoIndent = false
+	}
 }
 
 // typeAtSites は、同時の入力（FR-141）で、入力の記録の 1 件 in を、カーソルと insert.others のすべての位置に行う。
@@ -424,7 +437,8 @@ func (s *State) noteInput(in editcmd.InsertInput, soft bool) {
 //
 // req: FR-141
 func (s *State) typeAtSites(in editcmd.InsertInput) (bool, error) {
-	soft := in.Op == editcmd.InsertDeletePrev && s.softBackspace(s.cursor)
+	from := s.cursor
+	soft := in.Op == editcmd.InsertDeletePrev && s.softBackspace(from)
 	sites := append([]buffer.Position{s.cursor}, s.insert.others...)
 	edits := make([]buffer.Edit, 0, len(sites))
 	for i, p := range sites {
@@ -445,7 +459,7 @@ func (s *State) typeAtSites(in editcmd.InsertInput) (bool, error) {
 	s.cursor = sites[0]
 	copy(s.insert.others, sites[1:])
 	s.updateWant()
-	s.noteInput(in, soft)
+	s.noteInput(in, from, soft)
 	return true, nil
 }
 
@@ -619,7 +633,7 @@ func (s *State) finishInsert() {
 	if s.insert.autoIndent {
 		// 自動インデントで入れた字下げのまま抜けるなら、字下げを消す（FR-162。Vim の o<Esc> は空の行を残す）。
 		s.insert.autoIndent = false
-		if err := s.dropAutoIndent(s.cursor.Line); err != nil {
+		if err := s.dropAutoIndent(s.cursor); err != nil {
 			s.fail(err)
 		}
 	}

@@ -117,7 +117,7 @@ func wideTextWidth(s string, tabStop int) int {
 //
 // req: FR-160, FR-162
 func TestIndentNvim(t *testing.T) {
-	for _, tc := range indentCases {
+	for _, tc := range append(indentCases, indentBSCases...) {
 		t.Run(fmt.Sprintf("%s/ai=%v/%q/%s", tc.cfg, tc.auto, tc.text, tc.keys), func(t *testing.T) {
 			s := setupIndent(t, tc.cfg, tc.auto, tc.text)
 			feedKeys(s, tc.keys)

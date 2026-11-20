@@ -134,10 +134,10 @@ type Config struct {
 	FileTypes map[string]string
 	// Options は、設定の項目（option の表。基本設計 7.3）の初めの値である（設定ファイルの最上位から読んだもの。config.Config.Options）。
 	// 正規の名前から値への対応で、無い項目は表の既定値を使う。範囲がエディタ全体の項目はエディタの初めの値に、範囲がバッファごとの項目は
-	// バッファを開くときの初めの値（options.go の段の 2 つ目。FR-163）に使う。表に無い名前は使わない。
+	// バッファを開くときの初めの値（options.go の optionLayers の 1 の段。FR-163）に使う。表に無い名前は使わない。
 	Options map[string]option.Value
 	// FileTypeOptions は、ファイルの種類の名前から、そのファイルの種類のバッファを開くときに当てる値への対応である
-	// （設定ファイルの fileTypeOptions。config.Config.FileTypeOptions。options.go の段の 4 つ目。FR-163）。
+	// （設定ファイルの fileTypeOptions。config.Config.FileTypeOptions。options.go の optionLayers の 3 の段。FR-163）。
 	FileTypeOptions map[string]map[string]option.Value
 	// CommandAliases は、Ex コマンドの別名の表である（本体の別名に設定ファイルの commandAliases を足したもの。FR-150）。
 	// 作るのは呼び出し側で、CommandAliases（この関数に Extensions と同じ定義を渡す）で作り、設定の別名を足してから入れる。
@@ -279,6 +279,9 @@ type Editor struct {
 	icons ui.Icons
 	// options は、範囲がエディタ全体の設定の項目の値である（options.go。初めの値は Config.Options）。
 	options option.Values
+	// layers は、バッファごとの設定の項目の初めの値の段を当てる順に並べたものである（options.go の optionLayers の写し）。
+	// テストは、後で足す段（拡張機能から設定を変える口）を、この末尾に足して確かめる。
+	layers []optionLayer
 	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
 	fixEOL bool
 	// popupKeys は、拡張機能の ID から、その拡張機能の contributes.popupKeys のキーへの表である（FR-69。popup.go）。
@@ -456,9 +459,13 @@ type bufferState struct {
 	buf       *buffer.Buffer
 	state     *command.State
 	path      string
-	// options は、範囲がバッファごとの設定の項目の値である（options.go。ファイルの種類は fileType で読む）。
+	// options は、範囲がバッファごとの設定の項目のうち、利用者が :set で変えた値と、ファイルから判定して決める項目（filetype）の値である
+	// （options.go。読むときは option、ファイルの種類は fileType で読む）。
 	options option.Values
-	// layeredType は、options に初めの値の段（applyOptionLayers）を当てたときのファイルの種類である。
+	// layered は、範囲がバッファごとの設定の項目の、初めの値の段（optionLayers）を順に当てた値である（refreshOptionLayers）。
+	// options に値の無い項目は、この値を使う。
+	layered option.Values
+	// layeredType は、layered を作ったときのファイルの種類である。
 	// ファイルの種類が変わったら（:set filetype=）、段を当て直す（FR-163）。
 	layeredType string
 	// editorConfig は、バッファを開いたとき（と、:e で開き直したとき、名前を付けたとき）に読んだ .editorconfig の項目である（FR-164）。
@@ -582,6 +589,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	e.icons = ui.DefaultIcons().With(cfg.Icons)
 	e.fixEOL = cfg.FixEndOfLine == nil || *cfg.FixEndOfLine
 	e.options = editorOptions(cfg.Options)
+	e.layers = optionLayers()
 	warnings := slices.Clone(cfg.Problems)
 	leader, err := leaderKeys(cfg.Leader)
 	if err != nil {

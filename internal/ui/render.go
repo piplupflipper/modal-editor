@@ -1018,7 +1018,8 @@ const messageRightMargin = 2
 //
 // req: FR-167
 func (r *Renderer) drawMessageRight(g *Grid, row, col, width int, text, right string, a Attr) {
-	tabStop := tabStopOr(r.TabStop)
+	// 幅は、text と right を描く drawText と同じく、描いている Frame のタブ文字の幅（Frame.TabStop）で数える。
+	tabStop := tabStopOr(r.tabStop)
 	end := col + width
 	start := end - messageRightMargin - StringWidth(right, tabStop)
 	if start < col {

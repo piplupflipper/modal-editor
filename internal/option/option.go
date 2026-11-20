@@ -380,6 +380,13 @@ func (vs *Values) Get(name string) Value {
 	return d.Default
 }
 
+// Lookup は、項目 name に Set で値を入れてあれば、その値と true を返す。入れていなければ（表の既定値のままなら）、ゼロ値と false を返す。
+// 2 つの Values を重ねて読む使い方（利用者が :set で変えた値を、初めの値の段の値より優先する。internal/editor）に使う。
+func (vs *Values) Lookup(name string) (Value, bool) {
+	v, ok := vs.m[name]
+	return v, ok
+}
+
 // Set は、項目 d の値を v にする。v が d に入れられない値（Def.Check。型が違うなど）なら、値を変えずにその誤りを返す。
 func (vs *Values) Set(d Def, v Value) error {
 	if err := d.Check(v); err != nil {

@@ -11,8 +11,8 @@ import (
 //
 // バッファを開くとき（newBuffer）、ファイルから開き直すとき（:e。resetBufferOptions）、名前の無いバッファに名前を付けたとき
 // （renameBufferOptions）に、バッファのファイルに当たる項目を読み（internal/editorconfig）、バッファの bufferState.editorConfig に覚える。
-// 開いた後に .editorconfig を書き換えても、そのバッファには効かない。:e で開き直すと効く（Neovim 0.12.5 の runtime/lua/editorconfig.lua と
-// plugin/editorconfig.lua が、BufNewFile、BufRead、BufFilePost でだけ読むのと同じ）。
+// 開いた後に .editorconfig を書き換えても、そのバッファには効かない。:e で開き直すと効く（Neovim 0.12.5 の plugin/editorconfig.lua が、
+// BufNewFile、BufRead、BufFilePost でだけ読むのと同じ。ただし Neovim は :w ファイル で名前を付けたときは読まない。docs/vim-differences.md）。
 // 読むのは indent_style、indent_size、tab_width の 3 つで、ほかの項目（end_of_line、charset など）は読まない（#318 の決め）。
 
 // readEditorConfig は、パス path のファイルに当たる .editorconfig の項目を読む。

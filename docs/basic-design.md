@@ -848,7 +848,7 @@ N は `indent.width`（0 なら `tab.width`）、`'tabstop'` は `tab.width` で
 | `<CR>` | `indent.auto` が `true` なら、Neovim の `open_line` と同じく、カーソルより前の部分の先頭の空白の幅を新しい行の字下げにし、カーソルより後ろの部分の先頭の空白を消す。字下げは `indent.useSpaces` に従って作り直す（Vim の `'copyindent'` がオフ）。カーソルの行が自動インデントで入れた字下げのまま（何も打っていない）なら、カーソルより前の部分の末尾の空白を消す |
 | `o`、`O` | `indent.auto` が `true` なら、開いた行にカーソルの行の字下げを入れる（`O` では下へずれる行の字下げ）。回数の分の行も同じく開く |
 | 行単位の `c`（`cc`、`S`、行単位のビジュアルモードの `c`） | `indent.auto` が `true` なら、最初の行の字下げを残す（Vim の `op_change`）。レジスターには字下げを含めた行を書く |
-| 自動インデントで入れた字下げのままの行 | 何も打たずに `<Esc>` で抜けるか、カーソルキーで別の行へ移ると、行の末尾の空白を消す（Vim の `did_ai` と `stop_insert`）。同じ行の中でカーソルキーを動かしたとき、`<CR>` 以外の入力（`<BS>`、`<Del>` を含む）をしたときは、消さずに残す |
+| 自動インデントで入れた字下げのままの行 | `<BS>`（と、位置の前を消すほかの操作）のほかに何も打たずに、`<Esc>` で抜けるか、カーソルキーで別の行へ移るか、`<CR>` を打つと、カーソルの位置から空白を消す（Vim の `did_ai` と `stop_insert`。`:help 'autoindent'`）。ただし、`<BS>` の後のカーソルが行の 2 バイト目より前のとき（タブ文字 1 つが残ったとき）は消さない（Neovim 0.12.5 の `ins_bs` の末尾の `if (curwin->w_cursor.col <= 1) did_ai = false`。Vim 9.1 も同じ）。同じ行の中でカーソルキーを動かしたとき、ほかの入力（文字、`<Tab>`、`<Del>`）をしたときは、消さずに残す。#318 の初めの実装は `<BS>` でも消さずに残し、字下げを 1 段戻して抜けると行末に空白が残った（PR #324 のレビューの必須 1。`<BS>` の後の 150 件を Neovim 0.12.5 と Vim 9.1 と突き合わせて `indent_bs_cases_test.go` に入れた） |
 
 `<Tab>` と `<CR>` は、入力の記録（`editcmd.InsertInput`）に、文字と別の種類（`editcmd.InsertTab`、`editcmd.InsertLineBreak`）として入れる。
 ドットリピートと回数による繰り返しでは、繰り返す位置で設定を当て直す（Vim の redo の記録が `<Tab>` と `<CR>` のキーであるのと同じ）。
@@ -3800,7 +3800,8 @@ Vim 9.1 も、`autoread` で読み直したときは `'filetype'` を残す（20
 #### バッファごとの項目の初めの値
 
 2026-11-21 のオーナーとの相談（#318）で、範囲がバッファごとの項目（`filetype` を除く）の初めの値を、次の段を順に当てて決めることにした（FR-163、FR-164）。
-後に当てた段の値が勝つ。段を当てるのは `internal/editor` の `applyOptionLayers` で、段の並びは `optionLayers` の 1 か所にある。
+後に当てた段の値が勝つ。段を当てるのは `internal/editor` の `refreshOptionLayers` で、段の並びは `optionLayers` の 1 か所にある。
+利用者が `:option.set` と `:set` で変えた値は段に入れず、どの段の値よりも勝つ（下の「段の値と `:set` の値」）。
 
 | 順 | 段 | 置き場所 |
 |---|---|---|
@@ -3822,7 +3823,7 @@ Neovim は、利用者の設定（`init.lua` の `:set`）の後に ftplugin を
 | バッファを開くとき（`newBuffer`） | ファイルの種類を判定し、`.editorconfig` を読み（`bufferState.editorConfig` に覚える）、段を 1 から当てる |
 | ファイルから開き直したとき（`:e`、`:e!`）と、名前の無いバッファを開いたファイルのバッファとして使い回すとき（`resetBufferOptions`） | 上と同じ。`:set` で変えた値は捨てる |
 | ファイルの種類が変わったとき（`:set filetype=`。`optionAccess.Set`） | 段を 1 から、新しい種類で当て直す。`.editorconfig` は読み直さず、開いたときに読んだものを当てる。`:set` で変えたほかの項目の値は捨てる。項目の名前では分けず、ファイルの種類の値が、段を当てたときの種類（`bufferState.layeredType`）から変わったかで決める |
-| 名前の無いバッファに名前を付けたとき（`:w ファイル`。`renameBufferOptions`） | `.editorconfig` を新しい名前で読み直す。名前からファイルの種類が決まって変わったなら、段を 1 から当て直す。変わらなければ、`.editorconfig` の段だけを今の値の上に当てる（`:set` で変えたほかの値は残す） |
+| 名前の無いバッファに名前を付けたとき（`:w ファイル`。`renameBufferOptions`） | `.editorconfig` を新しい名前で読み直す。名前からファイルの種類が決まって変わったなら、上の行と同じく段を 1 から当て直し、`:set` の値を捨てる。変わらなければ、段の値を作り直すだけにし（`refreshOptionLayers`）、`:set` の値を残す。どちらも段の並びは `optionLayers` のとおりで、`.editorconfig` がどの段かを前提にしない。Neovim 0.12.5 は、`:w ファイル` では `BufFilePost` が起きないので `.editorconfig` を読まず、`:file` と `:saveas` では `.editorconfig` の項目を今の値の上に当てる（`:set ts=5` の後なら `.editorconfig` の値になる）。本体は `:w ファイル` で読み、`:set` の値を残す（`docs/vim-differences.md`） |
 
 Vim の `FileType` と比べた（2026-11-21 に Neovim 0.12.5 で、`.editorconfig` に `indent_size = 2` を書いた `.txt` のファイルを開き、`:set ft=go` を打った）。
 Neovim は `FileType` で ftplugin を当て直すので、`'shiftwidth'` が `.editorconfig` の 2 から go の ftplugin の 0 になる。本体は、開いたときと同じく `.editorconfig` の段を最後に当てるので、2 のまま残る。
@@ -3834,18 +3835,35 @@ Neovim は `FileType` で ftplugin を当て直すので、`'shiftwidth'` が `.
 | 項目 | 決めたこと |
 |---|---|
 | 探し方 | EditorConfig の仕様（https://spec.editorconfig.org/）に合わせた。ファイルのディレクトリから親のディレクトリへ順に探し、近いファイルの値が勝つ。前文に `root = true` と書いたファイルで止まる。1 つのファイルの中では、当たるセクションのうち後に書いたものの値が勝つ。値が `unset` の項目は書かなかったものとして扱う（遠いファイルの値も打ち消す） |
-| glob | 仕様の `*`、`**`、`?`、`[seq]`、`[!seq]`、`{s1,s2}`、`{num1..num2}`、`\` を、外部ライブラリを足さずに自前で書いた（`editorconfig.Match`）。仕様の例は `editorconfig_test.go` にある。`/` を含むセクションは `.editorconfig` のあるディレクトリからのパスに当て、含まないセクションはどの深さのファイルの名前にも当てる |
+| glob | 仕様の `*`、`**`、`?`、`[seq]`、`[!seq]`、`{s1,s2}`、`{num1..num2}`、`\` を、外部ライブラリを足さずに自前で書いた（`editorconfig.Match`）。仕様の例は `editorconfig_test.go` に、EditorConfig の公式のテスト（`editorconfig-core-test` の `glob/braces.in` と `glob/star_star.in`）の 98 件は `core_test.go` にある。`,` を含まない `{s}` は `{` と `}` で囲んだ文字どおりの並びに当て（`{word,{also},this}` は `{also}` に当たる）、`{num1..num2}` は 0 から始まる 2 桁以上の数字（`060`）に当てない（PR #324 のレビューの推奨 3）。`/` を含むセクションは `.editorconfig` のあるディレクトリからのパスに当て、含まないセクションはどの深さのファイルの名前にも当てる |
 | 読む項目 | `indent_style`、`indent_size`、`tab_width` の 3 つだけである（#318 の決め）。`end_of_line`、`charset`、`trim_trailing_whitespace`、`insert_final_newline`、`max_line_length` は読まない（`docs/usage.md` に書いた） |
 | 写し方 | Neovim 0.12.5 の `runtime/lua/editorconfig.lua` に合わせた。`indent_style = space` は `indent.useSpaces` を `true`、`tab` は `false` にし、`tab` で `indent_size` が無ければ `indent.width` を 0 にする。`indent_size` は `indent.width` にし、`tab_width` が無ければ `tab.width` も同じ値にする。`indent_size = tab` は `indent.width` を 0 にする。`tab_width` は `tab.width` にする |
 | 正しくない値 | その項目だけを使わず、ログに残す（Neovim は項目ごとに警告を出す）。範囲の外の幅（`tab_width = 0`）も、設定の表の検査（`option.Def.Check`）で断る |
-| 読む時点 | バッファを開くとき、`:e` で開き直すとき、名前の無いバッファに名前を付けたときである（Neovim の `plugin/editorconfig.lua` の `BufNewFile`、`BufRead`、`BufFilePost` と同じ）。開いた後に `.editorconfig` を書き換えても、そのバッファには効かず、`:e` で開き直すと効く（2026-11-21 に Neovim 0.12.5 で確かめた） |
+| 読む時点 | バッファを開くとき、`:e` で開き直すとき、名前の無いバッファに `:w ファイル` で名前を付けたときである。Neovim の `plugin/editorconfig.lua` は `BufNewFile`、`BufRead`、`BufFilePost` で読み、`:w ファイル` では `BufFilePost` が起きないので読まない（2026-11-21 に確かめた）。本体は、名前を付けた後のファイルに当たる値を使えるように、`:w ファイル` でも読む。開いた後に `.editorconfig` を書き換えても、そのバッファには効かず、`:e` で開き直すと効く（2026-11-21 に Neovim 0.12.5 で確かめた） |
 | 止め方 | エディタ全体の設定 `editorConfig.enabled`（Neovim の `g:editorconfig`）を `false` にする。名前の無いバッファとポップアップのバッファ（プレビューを含む）は読まない |
 
 Neovim は、`indent_size` を書くと `'softtabstop'` を `-1`（`'shiftwidth'` と同じ）にするので、`indent_style = tab` と `indent_size = 4` を書いたファイルでは、`<Tab>` と `<BS>` が `'softtabstop'` の動きをする。
 本体は `'softtabstop'` を `indent.useSpaces` に合わせて決める（3.2）ので、タブ文字のときは `'softtabstop'` が 0 の動きになる（`docs/vim-differences.md`）。
 
+##### 段の値と `:set` の値
+
+範囲がバッファごとの項目の値は、バッファごとに 2 つに分けて持つ（PR #324 のレビューの必須 2）。
+
+| 持つもの | 中身 | 作り方 |
+|---|---|---|
+| `bufferState.layered` | 段を順に当てた値 | `refreshOptionLayers` が `Editor.layers`（`optionLayers` の写し）の段を順に当てて作り直す |
+| `bufferState.options` | 利用者が `:option.set` と `:set` で変えた値と、ファイルから判定して決める項目（`filetype`）の値 | `optionAccess.Set` が入れる。`applyOptionLayers`（開いたとき、`:e`、ファイルの種類が変わったとき）が `filetype` のほかを捨てる |
+
+読むときは、`options` に値があればそれを、無ければ `layered` の値を使う（`bufferState.option`。`option.Values.Lookup` で値を入れたかを見分ける）。
+このため、段の値を後から作り直しても、利用者が変えた値はどの段の値よりも勝つ。
+
 拡張機能から設定を変える口（`option/set`）と、プロジェクトの整形ツールの設定（`biome.json`、`.prettierrc`、`pyproject.toml` の ruff）を読む拡張機能（#318 の決めの 5）は、別の issue で作る。
-その口から来た値は、`optionLayers` の `.editorconfig` の後に段を足して当てる。
+その口は、`optionLayers` の `.editorconfig` の後に段を 1 つ足し（段はバッファの拡張機能の値を返す）、値が届いたら `refreshOptionLayers` を呼ぶ。
+ほかの箇所は直さなくてよい。
+このとき、利用者の `:set sw=2` の後に拡張機能の値（`indent.width` 4）が届いても、`:set` の値が勝つ。
+範囲がバッファごとの項目を `:set` で変えるたびに `notifyBufferAttrs` が拡張機能へ `buffer/open` を送り直すが、その送り直しから設定の値を変える経路は無く、
+拡張機能が `buffer/open` を受けて値を送り直しても、値は段に入るので `:set` の値を上書きしない。
+これを、`Editor.layers` の末尾に段を足しただけで確かめるテスト（`internal/editor` の `TestOptionLayerAddedLater`）で確かめた。開いたとき、`:set` の後、段の値が後から届いたとき、`:set filetype=` の後、名前を付けたときの値を比べる。
 
 #### `:option.set`、`:option.get`、`:option.toggle`
 

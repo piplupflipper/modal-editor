@@ -345,7 +345,12 @@ func parseBrace(s string) (node, int, bool) {
 		i++ // ,
 	}
 	if len(n.alts) < 2 {
-		return node{}, 0, false
+		// , を含まない {s} は、文字どおりの { と } で s を囲んだものに当たる（中の s は glob として読む）。
+		// 選択肢の中の {also} のように入れ子でも、閉じた } を外側の選択肢の終わりと取り違えない（EditorConfig の公式のテストの
+		// [{word,{also},this}.g] は {also}.g に当たる。PR #324 のレビューの推奨 3）。
+		lit := append([]node{{kind: nodeLiteral, r: '{'}}, n.alts[0]...)
+		lit = append(lit, node{kind: nodeLiteral, r: '}'})
+		return node{kind: nodeAlt, alts: [][]node{lit}}, end + 1, true
 	}
 	return n, end + 1, true
 }
@@ -420,7 +425,7 @@ func matchNodes(nodes []node, s string) bool {
 	case nodeRange:
 		for i := 1; i <= len(s); i++ {
 			v, err := strconv.Atoi(s[:i])
-			if err != nil || s[0] == '+' {
+			if err != nil || s[0] == '+' || leadingZero(s[:i]) {
 				continue
 			}
 			if v >= n.lo && v <= n.hi && matchNodes(rest, s[i:]) {
@@ -430,6 +435,13 @@ func matchNodes(nodes []node, s string) bool {
 		return false
 	}
 	return false
+}
+
+// leadingZero は、整数の文字列 s（先頭の - を許す）の数字が、2 桁以上で 0 から始まるかを返す。
+// そのような文字列は {num1..num2} に当たる整数として読まない（EditorConfig の公式のテストの [{3..120}] は 060 に当たらない）。
+func leadingZero(s string) bool {
+	s = strings.TrimPrefix(s, "-")
+	return len(s) > 1 && s[0] == '0'
 }
 
 // contains は、文字の集まり n の範囲に r が入るかを返す。

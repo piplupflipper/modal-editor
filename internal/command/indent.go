@@ -207,22 +207,32 @@ func (s *State) lineIndent(l int) int {
 	return s.textWidth(line[:leadingBlanks(line)], s.indentConfig().tabWidth)
 }
 
-// dropAutoIndent は、行 l が自動インデントで入れた字下げのまま（insertState.autoIndent）で入力を終えるか、別の行へ移るときに、
-// 行の末尾の空白を消す（Vim の stop_insert の「If we just did an auto-indent, remove the white space from the end of the line」）。
-// カーソルがその行の消した範囲にあれば、残った行末へ寄せる。autoIndent は呼び出し側が戻す。
+// dropAutoIndent は、入力の位置 p の行が自動インデントで入れた字下げのまま（insertState.autoIndent）で入力を終えるか、別の行へ移るときに、
+// p から空白を消す（Neovim 0.12.5 の stop_insert の「If we just did an auto-indent, remove the white space from the end of the line」）。
+// Neovim と同じく、p から後ろへ続く空白を消し、行末まで空白なら p より前の空白も消す。p の後ろに空白でない文字があれば
+// （<CR> で行を分けた後ろの部分など）、何も消さない。カーソルがその行の消した範囲より後ろにあれば、消した範囲の始まりへ寄せる。
+// autoIndent は呼び出し側が戻す。
 //
 // req: FR-162
-func (s *State) dropAutoIndent(l int) error {
-	line := s.line(l)
-	keep := len(strings.TrimRight(line, " \t"))
-	if keep == len(line) {
+func (s *State) dropAutoIndent(p buffer.Position) error {
+	line := s.line(p.Line)
+	c := min(p.Byte, len(line))
+	end := c
+	for end < len(line) && isBlank(line[end]) {
+		end++
+	}
+	start := c
+	if end == len(line) {
+		start = len(strings.TrimRight(line[:c], " \t"))
+	}
+	if start == end {
 		return nil
 	}
-	if err := s.apply(buffer.Edit{Range: buffer.Range{Start: pos(l, keep), End: pos(l, len(line))}}); err != nil {
+	if err := s.apply(buffer.Edit{Range: buffer.Range{Start: pos(p.Line, start), End: pos(p.Line, end)}}); err != nil {
 		return err
 	}
-	if s.cursor.Line == l && s.cursor.Byte > keep {
-		s.cursor.Byte = keep
+	if s.cursor.Line == p.Line && s.cursor.Byte > start {
+		s.cursor.Byte = start
 	}
 	return nil
 }
