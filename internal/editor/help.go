@@ -107,7 +107,7 @@ func (e *Editor) openHelpFloat(text string, line int) {
 		if i == line {
 			at = len(lines)
 		}
-		w := ui.WrapText(l, width, e.renderer.TabStop)
+		w := ui.WrapText(l, width, e.scratchTabWidth())
 		if len(w) == 0 {
 			w = []string{""}
 		}

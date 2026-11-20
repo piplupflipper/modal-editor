@@ -9,8 +9,9 @@ import (
 	"unicode/utf8"
 )
 
-// DefaultTabStop は、タブ幅の既定値である（仮。Vim の 'tabstop' の既定と同じ 8）。
-// 設定で変える前提で、Renderer.TabStop と Columns.TabStop で差し替える。
+// DefaultTabStop は、タブ幅の既定値である（Vim の 'tabstop' の既定と同じ 8）。
+// バッファのテキストは、設定の tab.width（FR-161）を Frame.TabStop、Columns.TabStop、Renderer.WrapLines の引数で渡して数える。
+// 記号とアイコンの文字列の幅のように、バッファのテキストでない文字列は、この値で数える。
 const DefaultTabStop = 8
 
 // glyphKind は、1 つの文字を画面にどう出すかの種類である。

@@ -132,7 +132,7 @@ func (r *Renderer) drawPreview(g *Grid, theme Theme, p *Preview, top, x, w, h in
 	}
 	sub := r.floatPreview
 	sub.Width, sub.Height = w-2, rows+2
-	sub.TabStop, sub.Theme, sub.Symbols = r.TabStop, theme, r.Symbols
+	sub.Theme, sub.Symbols = theme, r.Symbols
 	view := *p.View
 	view.Tabs, view.Output, view.List, view.Choice, view.Float, view.Diff = nil, nil, nil, nil, nil, nil
 	view.Message, view.HitEnter, view.LineNumbers, view.Search, view.Highlights = Message{}, false, LineNumbers{}, nil, nil

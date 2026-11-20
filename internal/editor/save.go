@@ -238,6 +238,7 @@ func (e *Editor) write(bs *bufferState, a ex.Action) error {
 		if bs.fileType() == "" {
 			bs.setFileType(e.detectFileType(path))
 		}
+		e.renameBufferOptions(bs)
 		e.notifyBufferAttrs(bs)
 	}
 	if !a.Force {

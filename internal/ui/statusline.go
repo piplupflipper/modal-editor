@@ -171,7 +171,7 @@ const nameKeep = 20
 // 切り詰めた部品は、中身の最後の 1 列を ">" にする。中身が 1 列も残らなければ部品を落とす。
 // 返す列は、落とした部品を除いたものである。
 func (r *Renderer) trimExtSegs(over int, lists ...[]statusSeg) [][]statusSeg {
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(r.tabStop)
 	for over > 0 {
 		// 残っている拡張機能の部品のうち、最も幅の広いもの（同じなら後ろのもの）を選ぶ。
 		var s *statusSeg
@@ -179,7 +179,7 @@ func (r *Renderer) trimExtSegs(over int, lists ...[]statusSeg) [][]statusSeg {
 		for li := range lists {
 			for i := range lists[li] {
 				c := &lists[li][i]
-				if cw := StringWidth(c.text, r.TabStop); c.ext && c.text != "" && cw >= w {
+				if cw := StringWidth(c.text, r.tabStop); c.ext && c.text != "" && cw >= w {
 					s, w = c, cw
 				}
 			}
@@ -220,7 +220,7 @@ func (r *Renderer) trimExtSegs(over int, lists ...[]statusSeg) [][]statusSeg {
 func (r *Renderer) fitName(segs []statusSeg, width int) {
 	total := 0
 	for _, s := range segs {
-		total += StringWidth(s.text, r.TabStop)
+		total += StringWidth(s.text, r.tabStop)
 	}
 	over := total - width
 	if over <= 0 {
@@ -232,7 +232,7 @@ func (r *Renderer) fitName(segs []statusSeg, width int) {
 		}
 		// s.text は " " + 名前 + " "。"<" の 1 列を足すので、over+1 列以上を名前の先頭から落とす。
 		name := s.text[1 : len(s.text)-1]
-		tabStop := tabStopOr(r.TabStop)
+		tabStop := tabStopOr(r.tabStop)
 		dropped, off := 0, 0
 		for off < len(name) && dropped < over+1 {
 			gl := nextGlyph(name, off, dropped, tabStop)
@@ -275,7 +275,7 @@ func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cur
 	// 拡張機能の部品を先に切る。長いパスで拡張機能の部品がすべて消えないように、名前の全体は守らない（仮）。
 	over := -r.Width
 	for _, s := range slices.Concat(left, right) {
-		w := StringWidth(s.text, r.TabStop)
+		w := StringWidth(s.text, r.tabStop)
 		if s.id == StatusPartName {
 			w = min(w, nameKeep+2)
 		}
@@ -287,7 +287,7 @@ func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cur
 	}
 	rw := 0
 	for _, s := range right {
-		rw += StringWidth(s.text, r.TabStop)
+		rw += StringWidth(s.text, r.tabStop)
 	}
 	if rw > r.Width && len(right) > 0 {
 		// 右の部品だけで幅を超えるなら、左の端の余白を詰めて、右の部品の中身を 1 列でも多く出す（段階 2 までと同じ）。
@@ -302,7 +302,7 @@ func (r *Renderer) drawStatus(g *Grid, theme Theme, text Text, f *Frame, cur cur
 
 // drawSegs は、segs を row 行目の col 列から、列 limit の手前まで順に描く。収まらない文字の手前で止め、後の部品は描かない。
 func (r *Renderer) drawSegs(g *Grid, row, col, limit int, segs []statusSeg) {
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(r.tabStop)
 	for _, s := range segs {
 		want := col
 		for off := 0; off < len(s.text); {

@@ -1215,7 +1215,7 @@ func componentKind(k ext.ViewKind) floatKind {
 // center でなければカーソルの近くに、フォーカスを入れずに出し、次のキーかカーソルの移動で閉じる。
 // center なら画面の中央に、フォーカスを入れて出す。長い行は、窓の幅で空白の位置で折り返す。
 func (e *Editor) openTextFloat(title, text string, center bool) *floatState {
-	return e.openLinesFloat(title, ui.WrapText(text, ui.PopupTextWidth(e.renderer.Width), e.renderer.TabStop), center)
+	return e.openLinesFloat(title, ui.WrapText(text, ui.PopupTextWidth(e.renderer.Width), e.scratchTabWidth()), center)
 }
 
 // openLinesFloat は、openTextFloat の、行を折り返さない形である。長い行は窓の中で横にスクロールする（診断の一覧）。
@@ -1444,6 +1444,7 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 	st := f.bs.state
 	view := &ui.Frame{
 		Text:        f.bs.buf,
+		TabStop:     f.bs.tabWidth(),
 		Cursor:      st.Cursor(),
 		Decorations: f.bs.decoView,
 		Diagnostics: f.bs.uiDiagnostics(),
@@ -1462,7 +1463,7 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 		Wide:       f.kind == floatInput || f.kind == floatFinder,
 	}
 	if f.kind == floatFinder {
-		fl.List = &ui.Frame{Text: f.list.buf, Cursor: f.list.state.Cursor(), Decorations: f.list.decoView}
+		fl.List = &ui.Frame{Text: f.list.buf, TabStop: f.list.tabWidth(), Cursor: f.list.state.Cursor(), Decorations: f.list.decoView}
 		fl.ListCount = len(f.rows)
 	}
 	if e.previewShown(f) {

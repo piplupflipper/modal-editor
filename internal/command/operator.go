@@ -236,8 +236,10 @@ func opDelete(s *State, cmd editcmd.Command, rg region, o opOptions) error {
 }
 
 // opChange は、c である。範囲を消してインサートモードへ移る。
-// 行単位の範囲は、行の内容を消して空の行を 1 つ残す（'autoindent' がオフなので字下げも残さない）。
+// 行単位の範囲は、行の内容を消して空の行を 1 つ残す。設定 indent.auto が true なら、最初の行の字下げを残す（FR-162）。
 // cw が ce のように動く例外（`:help cw`）は、モーションの解決（target.ChangeOperator）が扱う。
+//
+// req: FR-162
 func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	if err := checkRegister(cmd.Register); err != nil {
 		return err
@@ -253,7 +255,14 @@ func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 		// アンドゥの後のカーソルは、その位置（cj の取り消しなら 2 行目）へ戻る。
 		s.markUndoCursor(pos(s.undoAt.Line+1, s.undoAt.Byte))
 	}
-	if err := s.apply(buffer.Edit{Range: rg.r}); err != nil {
+	// 行単位の c（cc、S、ビジュアルモードの行の c）は、設定 indent.auto が true なら、最初の行の字下げを残す。
+	// 何も入力せずに抜けると、字下げを消す（FR-162。Vim の op_change と同じ）。レジスターには、字下げを含めた行を書く。
+	del := rg.r
+	autoIndent := rg.linewise && !noLines && s.indentConfig().auto
+	if autoIndent {
+		del.Start.Byte = leadingBlanks(s.line(del.Start.Line))
+	}
+	if err := s.apply(buffer.Edit{Range: del}); err != nil {
 		return err
 	}
 	if !rg.empty && !noLines {
@@ -261,9 +270,9 @@ func opChange(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 		// 消したテキストをレジスターに書く。cl のような排他的で空の範囲では書かない。
 		s.writeRegister(cmd.Register, Register{Text: text, Linewise: rg.linewise}, true, false)
 	}
-	s.cursor = rg.r.Start
+	s.cursor = del.Start
 	s.updateWant()
-	s.startInsert(cmd, 1)
+	s.beginInsert(cmd, 1, []buffer.Position{s.cursor}, autoIndent)
 	return nil
 }
 
@@ -287,17 +296,15 @@ func opYank(s *State, cmd editcmd.Command, rg region, _ opOptions) error {
 	return nil
 }
 
-// 字下げの幅。Vim の既定の 'shiftwidth' と 'tabstop' は 8 で、'expandtab' はオフである。
-const (
-	shiftWidth = 8
-	tabStop    = 8
-)
-
-// opShift は、> と < である。範囲の行の字下げを 'shiftwidth' の幅だけ増やすか減らす。
-// > は空の行を字下げしない。字下げはタブで作り、端数をスペースで埋める（'expandtab' がオフ）。
+// opShift は、> と < である。範囲の行の字下げを、字下げの幅（indent.width。0 なら tab.width）だけ増やすか減らす（FR-160）。
+// > は空の行を字下げしない。字下げの幅は tab.width でタブ文字を数え、字下げは indent.useSpaces ならスペースだけで、
+// そうでなければタブ文字を使えるだけ使って端数をスペースで埋めて作り直す（makeIndent。Vim の 'shiftround' と 'preserveindent' がオフの動き）。
 // カーソルは最初の行の、最初の空白でない文字へ移る。
+//
+// req: FR-160
 func opShift(dir int) operatorFunc {
 	return func(s *State, _ editcmd.Command, rg region, o opOptions) error {
+		c := s.indentConfig()
 		times := max(o.times, 1)
 		// 文字単位の範囲が次の行の先頭で終わる（選択の終わりが行末の後で、その行の改行まで選んだ）なら、
 		// 次の行は字下げしない。Vim の op_shift は選択の終わりの行までを数える（#89。ab|c、d、e の vj> は e を残す）。
@@ -311,10 +318,9 @@ func opShift(dir int) operatorFunc {
 			if dir > 0 && line == "" {
 				continue
 			}
-			n := len(line) - len(strings.TrimLeft(line, " \t"))
-			w := indentWidth(line[:n])
-			nw := max(w+dir*shiftWidth*times, 0)
-			indent := strings.Repeat("\t", nw/tabStop) + strings.Repeat(" ", nw%tabStop)
+			n := leadingBlanks(line)
+			w := s.textWidth(line[:n], c.tabWidth)
+			indent := c.makeIndent(w + dir*c.width*times)
 			if indent != line[:n] {
 				edits = append(edits, buffer.Edit{Range: buffer.Range{Start: pos(l, 0), End: pos(l, n)}, Text: indent})
 			}
@@ -325,19 +331,6 @@ func opShift(dir int) operatorFunc {
 		s.setCursorNormal(s.firstNonBlankPos(rg.r.Start.Line))
 		return nil
 	}
-}
-
-// indentWidth は、字下げの表示の幅を返す。タブは次の 'tabstop' の倍数まで進める。
-func indentWidth(indent string) int {
-	w := 0
-	for _, c := range indent {
-		if c == '\t' {
-			w += tabStop - w%tabStop
-		} else {
-			w++
-		}
-	}
-	return w
 }
 
 // toggleCase は、大文字を小文字に、小文字を大文字にする。

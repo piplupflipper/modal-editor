@@ -68,11 +68,14 @@ import (
 //	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] },
 //	  "tabline": { "show": "always", "left": ["tabs"], "right": ["mrreview.status"] },
 //	  "elevateCommand": ["sudo"],
-//	  "commandAliases": { "tabedit": { "command": "tab.new", "min": 4 }, "tabnew": { "command": "tab.new" } }
+//	  "commandAliases": { "tabedit": { "command": "tab.new", "min": 4 }, "tabnew": { "command": "tab.new" } },
+//	  "indent": { "useSpaces": true, "width": 4 },
+//	  "fileTypeOptions": { "go": { "indent": { "useSpaces": false } } }
 //	}
 //
-// 設定の表（internal/option）の、範囲がエディタ全体の項目は、点で区切った名前を入れ子のキーにして書き、Options に入る
+// 設定の表（internal/option）の項目は、点で区切った名前を入れ子のキーにして書き、Options に入る
 // （lineNumber.show なら "lineNumber": { "show": true }。基本設計 7.3）。
+// 範囲がバッファごとの項目は、fileTypeOptions の下にファイルの種類ごとにも書け、FileTypeOptions に入る（FR-163）。
 type Config struct {
 	// Keymap は keymap の値で、editor.Config.Keymap にそのまま渡す。
 	// モードの名前（"normal"、"visual"、"insert"、"commandLine"）から、キーの列の表記から展開するキーの列の表記への対応である。
@@ -176,10 +179,15 @@ type Config struct {
 	// （基本設計 4.7。FR-79。項目の名前は仮）。項目が無いか誤りなら nil で、editor の既定（["sudo"]）を使う。
 	// editor.Config.ElevateCommand にそのまま渡す。
 	ElevateCommand []string
-	// Options は、設定の表（option の表。基本設計 7.3。FR-131）の、範囲がエディタ全体の項目の値である。
+	// Options は、設定の表（option の表。基本設計 7.3。FR-131）の項目の、最上位に書いた値である。
 	// 正規の名前から値への対応で、書かなかった項目と誤りのある項目は入らない（表の既定値を使う）。項目が無ければ nil である。
+	// 範囲がエディタ全体の項目はエディタの初めの値、範囲がバッファごとの項目はバッファを開くときの初めの値（FR-163）になる。
 	// editor.Config.Options にそのまま渡す。
 	Options map[string]option.Value
+	// FileTypeOptions は fileTypeOptions の値で、ファイルの種類の名前から、そのファイルの種類のバッファを開くときに当てる、
+	// 範囲がバッファごとの項目の値への対応である（FR-163。基本設計 7.3）。誤りのある項目は入らない。項目が無ければ nil である。
+	// editor.Config.FileTypeOptions にそのまま渡す。
+	FileTypeOptions map[string]map[string]option.Value
 	// CommandAliases は commandAliases の値で、Ex コマンドの名前を付け替えるだけの別名を、書いた順に並べたものである（基本設計 7.3。FR-150）。
 	// 形の誤りのある別名は除いてある。表に足せるか（名前、省略の長さ、付け替える先、重なり）は CheckCommandAliases で確かめる。
 	// 項目が無ければ nil である。
@@ -231,7 +239,7 @@ func Load(path string) (Config, []error) {
 // 並びは Parse の switch と同じにする（TestTopLevelNames が照合する）。
 var topLevelNames = []string{
 	"keymap", "leader", "fixendofline", "autoread", "checkIntervalMs", "fileTypes", "extensions", "registers", "readonlyPaths",
-	"colors", "colorscheme", "symbols", "icons", "statusline", "tabline", "elevateCommand", "commandAliases",
+	"colors", "colorscheme", "symbols", "icons", "statusline", "tabline", "elevateCommand", "commandAliases", "fileTypeOptions",
 }
 
 // TopLevelNames は、設定ファイルの最上位に書ける項目の名前のうち、設定の表（option.Defs）の項目でないものを返す。
@@ -309,6 +317,8 @@ func Parse(path string, data []byte) (Config, []error) {
 			cfg.ElevateCommand = s.elevateCommand(m.value)
 		case "commandAliases":
 			cfg.CommandAliases = s.commandAliases(m.value, &cfg)
+		case "fileTypeOptions":
+			cfg.FileTypeOptions = s.fileTypeOptions(m.value, option.Defs())
 		default:
 			// 上の項目でなければ、設定の表（option）の項目として読む。表の項目の名前の最上位の段は、上の項目と重ねない
 			// （icons だけは、表の項目 icons.show を icons が読む）。

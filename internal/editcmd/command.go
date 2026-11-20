@@ -127,7 +127,8 @@ type InsertOp uint8
 
 // 入力の記録の種類。
 const (
-	// InsertRune は、文字 Rune を入れる（<CR> は '\n'、<Tab> は '\t'）。制御文字も文字として入れる。
+	// InsertRune は、文字 Rune をそのまま入れる。'\n' は行を分け、'\t' はタブ文字を入れる。制御文字も文字として入れる。
+	// 端末から貼り付けたテキスト（bracketed paste）の改行とタブ文字もこれで入れ、字下げの設定と自動インデントを当てない。
 	InsertRune InsertOp = iota
 	// InsertDeletePrev は、カーソルの前の文字を消す（insert.delete-prev-char。<BS>）。
 	InsertDeletePrev
@@ -139,6 +140,11 @@ const (
 	InsertDeletePrevWord
 	// InsertDeleteToLineStart は、カーソルから行の先頭まで消す（insert.delete-to-line-start）。
 	InsertDeleteToLineStart
+	// InsertTab は、インサートモードで打った <Tab> である。字下げの設定（indent.useSpaces、indent.width、tab.width）に従って、
+	// タブ文字かスペースを入れる（FR-160）。ドットリピートでは、繰り返す位置で設定を当て直す（Vim の redo と同じ）。
+	InsertTab
+	// InsertLineBreak は、インサートモードで打った <CR> である。行を分け、設定 indent.auto が true なら前の行の字下げを写す（FR-162）。
+	InsertLineBreak
 )
 
 // InsertInput は、インサートモードの入力の記録の 1 件である。Op が InsertRune のときだけ Rune を使う。

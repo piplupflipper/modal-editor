@@ -33,6 +33,9 @@ func uiMode(m command.Mode) ui.Mode {
 //
 // フォーカスのあるポップアップがあれば、バッファの表示領域には開いたときのタブ（tab）を描き、
 // ステータス行、モード、コマンドラインは、キーを受けるポップアップのバッファ（cur）のものを出す。
+// タブ文字の幅（ui.Frame.TabStop）は、描くたびに、表示領域に描くバッファの設定の今の値（tab.width）を読む（FR-161）。
+//
+// req: FR-161
 //
 // 行番号の列（ui.Frame.LineNumbers）は詰めない。出すのは client の画面のバッファの表示領域だけなので、
 // その画面を描く renderView の 1 か所で詰める（bufferFrame）。frame を元に作る部品の client の画面（popupComponentFrame）には、
@@ -43,6 +46,7 @@ func (e *Editor) frame() *ui.Frame {
 	st := cur.state
 	f := &ui.Frame{
 		Text:            bs.buf,
+		TabStop:         bs.tabWidth(),
 		Name:            bufferTitle(cur),
 		Modified:        cur.buf.Modified(),
 		ReadOnly:        cur.buf.ReadOnly(),
@@ -191,12 +195,17 @@ func (e *Editor) lineWrap() bool {
 //
 // 同じ口で、State の望みの列の数え方（command.State.Columns。wrapColumns）も、折り返して数えるときは描画と同じ列（ui.WrapLines）にする。
 // Vim も 'wrap' のときは、j と k の望みの列（curswant）を、全角文字を送った ">" の列を含む列で数える。
+//
+// タブ文字の幅は、どちらの数え方も、State のバッファ（bs）の設定の今の値（tab.width。FR-161）で数える。描画（Frame.TabStop）と同じ値である。
 type screenLines struct {
 	e  *Editor
+	bs *bufferState
 	st *command.State
 }
 
 // lines は、折り返して数えるなら、その数え方を ok を true にして返す。
+//
+// req: FR-161
 func (s screenLines) lines() (l ui.WrapLines, ok bool) {
 	if !s.e.lineWrap() {
 		return l, false
@@ -211,7 +220,7 @@ func (s screenLines) lines() (l ui.WrapLines, ok bool) {
 	if r == nil || r.TextWidth() <= 0 {
 		return l, false
 	}
-	return r.WrapLines(), true
+	return r.WrapLines(s.bs.tabWidth()), true
 }
 
 // Wrap は、行を折り返して数えるかを返す。
@@ -240,17 +249,24 @@ func (s screenLines) Rows(line string) int {
 
 // wrapColumns は、State の望みの列の数え方（command.State.Columns）である。行を折り返して数えるとき（screenLines）は
 // 描画と同じ列（ui.WrapLines の Column と ByteAt）で、そうでなければ行の先頭からの表示の列（ui.Columns）で数える。
+// どちらも、タブ文字の幅は State のバッファの今の tab.width で数える（FR-161）。
 type wrapColumns struct {
-	sl    screenLines
-	plain ui.Columns
+	sl screenLines
+}
+
+// plain は、行を折り返さないときの数え方を返す。
+func (c wrapColumns) plain() ui.Columns {
+	return ui.Columns{TabStop: c.sl.bs.tabWidth()}
 }
 
 // Column は、target.Columns の Column である。
+//
+// req: FR-161
 func (c wrapColumns) Column(line string, byteOff int) int {
 	if l, ok := c.sl.lines(); ok {
 		return l.Column(line, byteOff)
 	}
-	return c.plain.Column(line, byteOff)
+	return c.plain().Column(line, byteOff)
 }
 
 // ByteAt は、target.Columns の ByteAt である。
@@ -258,7 +274,7 @@ func (c wrapColumns) ByteAt(line string, col int) int {
 	if l, ok := c.sl.lines(); ok {
 		return l.ByteAt(line, col)
 	}
-	return c.plain.ByteAt(line, col)
+	return c.plain().ByteAt(line, col)
 }
 
 // hitEnter は、改行を含むメッセージを出していて、Vim の hit-enter の問いと同じくキーを待っているかを返す。

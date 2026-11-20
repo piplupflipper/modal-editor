@@ -31,6 +31,13 @@ type insertState struct {
 	// lines は、入力の位置を置いた行の数である（ビジュアルモードの I と A なら選んだ行の数、それ以外は 1）。
 	// ドットリピートで同じ数の行に位置を置き直すために、記録と組で残す（recordInsertDot）。
 	lines int
+	// typedSpace は、このインサートでスペースを打ったかである（Vim の inserted_space。softBackspace）。
+	// <Tab> と、字下げの幅の単位で消した <BS> で戻す。
+	typedSpace bool
+	// autoIndent は、カーソルの行が、自動インデント（FR-162）で入れた字下げのまま、まだ何も入力していないかである（Vim の did_ai）。
+	// このまま入力を終えるか（finishInsert）、別の行へ移るか（afterInsertMove）、<CR> を打つ（lineBreakEdit）と、行の末尾の空白を消す。
+	// <CR> 以外の入力と、カーソルキーで同じ行の中を動いたときに戻す。
+	autoIndent bool
 }
 
 // dotLines は、インサートモードの入力の記録 cmd と、その入力の位置を置いた行の数 lines の組である（FR-141。recordInsertDot）。
@@ -55,12 +62,18 @@ func (s *State) startInsert(cmd editcmd.Command, repeat int) {
 //
 // req: FR-141
 func (s *State) startInsertAt(cmd editcmd.Command, repeat int, sites []buffer.Position) {
+	s.beginInsert(cmd, repeat, sites, false)
+}
+
+// beginInsert は、startInsertAt の、カーソルの行が自動インデント（FR-162）で入れた字下げのままか（autoIndent）を指定する形である。
+// o、O と、行単位の c（cc、S）が、字下げを入れてから呼ぶ。
+func (s *State) beginInsert(cmd editcmd.Command, repeat int, sites []buffer.Position, autoIndent bool) {
 	s.mode = ModeInsert
 	s.cursor = sites[0]
 	// . の中では、バッファの最後の行で位置が足りなくても、記録した行の数を保つ（Vim 9.1 の矩形選択の I の後の . と同じく、
 	// 次の . は記録した数の行に置く）。
 	lines := max(len(sites), s.repeatLines)
-	s.insert = insertState{cmd: cmd, repeat: repeat, others: slices.Clone(sites[1:]), lines: lines}
+	s.insert = insertState{cmd: cmd, repeat: repeat, others: slices.Clone(sites[1:]), lines: lines, autoIndent: autoIndent}
 	if s.replaying {
 		// 記録は、打ったときに記録したものをそのまま残す。再実行の位置で何もしない削除の操作があっても落とさない（insertInput と違う）。
 		// 入れ方は回数による繰り返しと同じで、続けて並んだ文字をまとめる（#289）。
@@ -74,7 +87,8 @@ func (s *State) startInsertAt(cmd editcmd.Command, repeat int, sites []buffer.Po
 
 // insertKey は、インサートモードのキーを 1 個処理する。キーは次の 2 つの経路に分ける（#257 の決定）。
 //
-//   - 1 文字の入力の経路: 修飾キーの付かない文字、<CR>、<Tab>、<Esc>。下の switch の各 case で直接処理し、操作の表を引かない。
+//   - 1 文字の入力の経路: 修飾キーの付かない文字、<CR>（editcmd.InsertLineBreak。自動インデント。FR-162）、
+//     <Tab>（editcmd.InsertTab。字下げの設定。FR-160）、<Esc>。下の switch の各 case で直接処理し、操作の表を引かない。
 //     1 文字の入力の速さ（要件定義 8.1 の計測の対象）に、表を引く処理を足さないためである
 //   - 操作の経路: それ以外のキー（<BS>、<Del>、カーソルキー、修飾キーの付いたキーなど）。switch を抜けた後で、操作の表の
 //     インサートモードの登録（KeyParser.InsertAction）を引き、割り当てた操作を insertAction で実行する（FR-127）。
@@ -90,10 +104,10 @@ func (s *State) insertKey(k editcmd.Key) {
 			s.finishInsert()
 			return
 		case editcmd.CodeEnter:
-			s.insertRune('\n')
+			s.insertInput(editcmd.InsertInput{Op: editcmd.InsertLineBreak})
 			return
 		case editcmd.CodeTab:
-			s.insertRune('\t')
+			s.insertInput(editcmd.InsertInput{Op: editcmd.InsertTab})
 			return
 		case editcmd.CodeRune:
 			s.insertRune(k.Rune)
@@ -221,10 +235,21 @@ func (s *State) insertMove(c editcmd.Code) {
 // 区切ると、続く入力を i の 1 か所の入力として記録し直すので、. でほかの行に入れ直せなくなるためである。
 // 同時の入力でなければ、Vim 9.1 と同じく動かなくても区切る（行末の <End> も start_arrow() を呼ぶ）。
 //
-// req: FR-141
+// 自動インデントで入れた字下げのままの行（insertState.autoIndent）から別の行へ移ったなら、その行の末尾の空白を消す。
+// 同じ行の中で動いたなら、消さずに字下げを残す（Neovim 0.12.5 の o<Up><Esc> は字下げを消し、o<Left><Esc> は残す。FR-162）。
+//
+// req: FR-141, FR-162
 func (s *State) afterInsertMove(old buffer.Position) {
 	if s.cursor == old && len(s.insert.others) > 0 {
 		return
+	}
+	if s.insert.autoIndent {
+		s.insert.autoIndent = false
+		if s.cursor.Line != old.Line {
+			if err := s.dropAutoIndent(old.Line); err != nil {
+				s.fail(err)
+			}
+		}
 	}
 	s.breakInsert()
 }
@@ -285,6 +310,7 @@ func (s *State) resumeInsert() {
 	s.insert.text = nil
 	s.insert.repeat = 1
 	s.insert.lines = 1
+	s.insert.typedSpace = false
 	s.insert.cmd = editcmd.Command{Kind: editcmd.KindAction, Action: editcmd.Ref{ID: "insert"}, Count: 1, Mode: editcmd.ModeInsert}
 }
 
@@ -354,8 +380,10 @@ func (s *State) typeInput(in editcmd.InsertInput) error {
 			return err
 		}
 	}
+	soft := in.Op == editcmd.InsertDeletePrev && s.softBackspace(s.cursor)
 	ed, after, ok := s.inputEdit(in, s.cursor)
 	if !ok {
+		s.noteInput(in, soft)
 		return nil
 	}
 	if err := s.apply(ed); err != nil {
@@ -363,7 +391,23 @@ func (s *State) typeInput(in editcmd.InsertInput) error {
 	}
 	s.cursor = after
 	s.updateWant()
+	s.noteInput(in, soft)
 	return nil
+}
+
+// noteInput は、入力の記録の 1 件 in をカーソルの位置に行った後に、字下げの状態（insertState の typedSpace と autoIndent）を進める
+// （FR-160、FR-162）。soft は、in が字下げの幅の単位で消した <BS>（softBackspace）だったかである。
+//
+//   - スペースの文字を入れたら typedSpace を立て、<Tab> と soft の <BS> で戻す（Vim の inserted_space）
+//   - 自動インデントを行う <CR> の後は autoIndent を立て、ほかの入力で戻す（Vim の did_ai）
+func (s *State) noteInput(in editcmd.InsertInput, soft bool) {
+	switch {
+	case in.Op == editcmd.InsertRune && in.Rune == ' ':
+		s.insert.typedSpace = true
+	case in.Op == editcmd.InsertTab || soft:
+		s.insert.typedSpace = false
+	}
+	s.insert.autoIndent = in.Op == editcmd.InsertLineBreak && s.indentConfig().auto
 }
 
 // typeAtSites は、同時の入力（FR-141）で、入力の記録の 1 件 in を、カーソルと insert.others のすべての位置に行う。
@@ -380,6 +424,7 @@ func (s *State) typeInput(in editcmd.InsertInput) error {
 //
 // req: FR-141
 func (s *State) typeAtSites(in editcmd.InsertInput) (bool, error) {
+	soft := in.Op == editcmd.InsertDeletePrev && s.softBackspace(s.cursor)
 	sites := append([]buffer.Position{s.cursor}, s.insert.others...)
 	edits := make([]buffer.Edit, 0, len(sites))
 	for i, p := range sites {
@@ -400,6 +445,7 @@ func (s *State) typeAtSites(in editcmd.InsertInput) (bool, error) {
 	s.cursor = sites[0]
 	copy(s.insert.others, sites[1:])
 	s.updateWant()
+	s.noteInput(in, soft)
 	return true, nil
 }
 
@@ -454,9 +500,12 @@ func (s *State) shiftSites(shift func(buffer.Position) (buffer.Position, bool)) 
 
 // inputEdit は、入力の記録の 1 件 in を位置 c に行う編集と、行った後の位置を返す。何もしない入力なら ok が false である。
 //
-//   - 文字（editcmd.InsertRune）は入れる。'\n' は行を分ける。他の制御文字は文字のまま入れる
+//   - 文字（editcmd.InsertRune）は入れる。'\n' は行を分ける。他の制御文字は文字のまま入れる。字下げの設定と自動インデントは当てない
+//   - editcmd.InsertTab は、字下げの設定に従ってタブ文字かスペースを入れる（tabEdit。FR-160）
+//   - editcmd.InsertLineBreak は行を分け、設定 indent.auto が true なら前の行の字下げを写す（lineBreakEdit。FR-162）
 //   - editcmd.InsertDeletePrev は位置の前の文字を消す。行の先頭では前の行とつなぎ、バッファの先頭では何もしない
-//     （'backspace' が "indent,eol,start" の動き）
+//     （'backspace' が "indent,eol,start" の動き）。位置の前が字下げのとき（と、indent.useSpaces が true で前の文字が空白のとき）は、
+//     字下げの幅の単位で消す（softBackspace。FR-160）
 //   - editcmd.InsertDeleteChar は位置の文字を消し、editcmd.InsertDeleteToLineEnd は位置から行末までを消す。
 //     どちらも位置は動かない。行末の位置では、どちらも次の行をつなげる（次の行の先頭の空白は残す）。
 //     最後の行の行末と空のバッファでは何もしない。InsertDeleteChar は Vim 9.1 のインサートモードの <Del>
@@ -470,7 +519,7 @@ func (s *State) shiftSites(shift func(buffer.Position) (buffer.Position, bool)) 
 //
 // 消したテキストは、レジスターにも履歴にも入れない。
 //
-// req: FR-127, FR-128
+// req: FR-127, FR-128, FR-160, FR-162
 func (s *State) inputEdit(in editcmd.InsertInput, c buffer.Position) (ed buffer.Edit, after buffer.Position, ok bool) {
 	switch in.Op {
 	case editcmd.InsertRune:
@@ -493,9 +542,18 @@ func (s *State) inputEdit(in editcmd.InsertInput, c buffer.Position) (ed buffer.
 			return buffer.Edit{}, c, false
 		}
 		return buffer.Edit{Range: buffer.Range{Start: c, End: to}}, c, true
+	case editcmd.InsertTab:
+		ed, after := s.tabEdit(c)
+		return ed, after, true
+	case editcmd.InsertLineBreak:
+		ed, after := s.lineBreakEdit(c)
+		return ed, after, true
 	case editcmd.InsertDeletePrev, editcmd.InsertDeletePrevWord, editcmd.InsertDeleteToLineStart:
 		var from buffer.Position
 		switch {
+		case in.Op == editcmd.InsertDeletePrev && s.softBackspace(c):
+			ed, after := s.softBackspaceEdit(c)
+			return ed, after, true
 		case c.Byte > 0 && in.Op == editcmd.InsertDeletePrev:
 			from = pos(c.Line, prevChar(s.line(c.Line), c.Byte))
 		case c.Byte > 0 && in.Op == editcmd.InsertDeletePrevWord:
@@ -541,11 +599,12 @@ func (s *State) typeRune(r rune) error {
 //
 // 回数つきで入った場合（3ix、3o）は、入力したテキストを残りの回数だけ続けて入れる（typeRepeated）。o と O は、そのたびに行を開く。
 // 同時の入力（FR-141）の間なら、残りの回数もすべての位置に入れる（typeInput。Vim 9.1 の矩形選択の 2I と同じ）。
+// カーソルの行が自動インデントで入れた字下げのままなら、行の末尾の空白を消す（dropAutoIndent。FR-162）。
 // カーソルを 1 文字左へ戻し、アンドゥのグループを閉じ、入力の記録を値の Inserted に埋めてドットリピートに記録する（FR-06）。
 // 同時の入力のすべての位置の変更は、この 1 つのアンドゥのグループに入る。
 // カーソルキーで区切った後、まだ文字を入力していなければ（moved）、区切ったときに閉じて記録してあるので、カーソルを戻すだけにする。
 //
-// req: FR-06, FR-07, FR-141
+// req: FR-06, FR-07, FR-141, FR-162
 func (s *State) finishInsert() {
 	in := s.insert
 	if n := in.repeat - 1; n > 0 && !in.moved {
@@ -559,6 +618,13 @@ func (s *State) finishInsert() {
 		}
 		open := in.cmd.Action.Builtin() && (in.cmd.Action.ID == "open-below" || in.cmd.Action.ID == "open-above")
 		if err := s.typeRepeated(in.text, n, open); err != nil {
+			s.fail(err)
+		}
+	}
+	if s.insert.autoIndent {
+		// 自動インデントで入れた字下げのまま抜けるなら、字下げを消す（FR-162。Vim の o<Esc> は空の行を残す）。
+		s.insert.autoIndent = false
+		if err := s.dropAutoIndent(s.cursor.Line); err != nil {
 			s.fail(err)
 		}
 	}
@@ -613,7 +679,8 @@ func (s *State) typeRepeated(text []editcmd.InsertInput, n int, open bool) error
 				return err
 			}
 			s.cursor = s.lineEnd(s.cursor.Line)
-			if err := s.typeRune('\n'); err != nil {
+			// o と O の回数の分の行も、<CR> と同じく自動インデントで開く（FR-162）。
+			if err := s.typeInput(editcmd.InsertInput{Op: editcmd.InsertLineBreak}); err != nil {
 				return err
 			}
 		}
@@ -623,7 +690,8 @@ func (s *State) typeRepeated(text []editcmd.InsertInput, n int, open bool) error
 				run = utf8.AppendRune(run, x.Rune)
 				continue
 			}
-			if x.Op == editcmd.InsertDeletePrev && len(run) > 0 {
+			if x.Op == editcmd.InsertDeletePrev && len(run) > 0 && !isBlank(run[len(run)-1]) {
+				// まとめている最後の文字が空白なら、字下げの幅の単位で消すことがある（softBackspace）ので、まとめた文字を入れてから行う。
 				_, size := utf8.DecodeLastRune(run)
 				run = run[:len(run)-size]
 				continue
@@ -657,5 +725,10 @@ func (s *State) typeText(str string) error {
 	s.cursor = sites[0]
 	copy(s.insert.others, sites[1:])
 	s.updateWant()
+	// 字下げの状態は、文字を 1 つずつ入れたとき（noteInput）と同じに進める。
+	if strings.Contains(str, " ") {
+		s.insert.typedSpace = true
+	}
+	s.insert.autoIndent = false
 	return nil
 }

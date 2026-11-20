@@ -216,8 +216,8 @@ func TestGoldenTab(t *testing.T) {
 		{"ノーマルモードではタブの最後の列", Frame{Text: b, Cursor: pos(0, 0)}},
 		{"インサートモードではタブの最初の列", Frame{Text: b, Mode: ModeInsert, Cursor: pos(1, 1)}},
 		{"8 列ちょうどの後のタブ", Frame{Text: b, Cursor: pos(2, 8)}},
-	})+"\n"+renderSteps(&Renderer{Width: 20, Height: 6, TabStop: 4, Theme: testTheme()}, []step{
-		{"タブ幅 4", Frame{Text: b, Cursor: pos(1, 1)}},
+	})+"\n"+renderSteps(&Renderer{Width: 20, Height: 6, Theme: testTheme()}, []step{
+		{"タブ幅 4", Frame{Text: b, Cursor: pos(1, 1), TabStop: 4}},
 	}))
 }
 

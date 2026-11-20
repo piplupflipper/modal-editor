@@ -15,11 +15,27 @@
 //
 // 範囲がエディタ全体の項目は、使う側（描画など）が使うたびに今の値を読む。値が変わったときに、その項目のためだけの処理は呼ばない。
 // 範囲がバッファごとの項目を変えたときは、項目の名前によらず、拡張機能へバッファの属性を知らせ直す（internal/editor）。
+// 範囲がバッファごとの項目も、使う側（インサートモードの <Tab>、描画など）が使うたびにそのバッファの今の値を読む。
+//
+// # バッファごとの項目の初めの値
+//
+// バッファを開くときに、範囲がバッファごとの項目（Def.Detected のものを除く）の初めの値を、次の段を順に当てて決める。
+// 後に当てた段の値が勝つ（#318 のオーナーの決め。基本設計 7.3。FR-163、FR-164）。
+//
+//  1. 表の既定値（Def.Default）
+//  2. 設定ファイルの最上位に書いた値
+//  3. 本体のファイルの種類ごとの既定（FileTypeDefaults）
+//  4. 設定ファイルのファイルの種類ごとの値（fileTypeOptions）
+//  5. 開いたファイルに当たる .editorconfig の値
+//
+// 3 を 2 の後に置くのは、Neovim が利用者の設定（init.lua の :set）の後にファイルの種類ごとの ftplugin を当てるのと同じにするためである。
+// 段を当てるのは internal/editor で、このパッケージは 1 と 3 の表を持つ。
 package option
 
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 )
 
@@ -56,7 +72,9 @@ type Scope int
 const (
 	// ScopeEditor は、エディタ全体に 1 つの値を持つ項目である。設定ファイルで初めの値を書ける。
 	ScopeEditor Scope = iota + 1
-	// ScopeBuffer は、バッファごとに値を持つ項目である。初めの値はバッファを開くときに決まり、設定ファイルには書けない。
+	// ScopeBuffer は、バッファごとに値を持つ項目である。初めの値はバッファを開くときに、パッケージの doc の段を順に当てて決まる。
+	// 設定ファイルの最上位に書いた値は、バッファを開くときの初めの値（2 の段）になる（FR-163）。
+	// ただし Def.Detected の項目は、バッファを開くときにファイルから判定して決め、設定ファイルには書けない。
 	ScopeBuffer
 )
 
@@ -116,6 +134,10 @@ type Def struct {
 	// Range は、整数の項目が取れる値の範囲である。nil なら範囲を限らない。整数でない項目では nil にする。
 	// 範囲は Check で確かめるので、値を項目に入れるどの経路（設定ファイル、:option.set、:set）にも効く。
 	Range *IntRange
+	// Detected は、範囲がバッファごとの項目のうち、初めの値をバッファを開くときにファイルから判定して決める項目であることを表す（filetype）。
+	// この項目は、設定ファイル（最上位と fileTypeOptions）にも .editorconfig にも書けず、初めの値の段（パッケージの doc）を当てない。
+	// 範囲がエディタ全体の項目では false にする。
+	Detected bool
 }
 
 // IntRange は、整数の項目が取れる値の範囲 [Min, Max] である（両端を含む）。
@@ -165,12 +187,28 @@ const (
 	// 既定は付ける（#295 のオーナーの決め）。アイコンは Nerd Font のグリフなので、Nerd Font の入っていない端末では false にする。
 	// 一覧と木を作り直すとき（開いたときと、拡張機能が中身を送り直したとき）に読む。Vim にこの設定は無い。
 	IconsShow = "icons.show"
+	// IndentUseSpaces は、字下げをスペースで作るかである（FR-160。Vim の 'expandtab'）。範囲はバッファごとで、既定は Vim と同じくタブ文字で作る。
+	// true なら、インサートモードの <Tab> と <BS> は Neovim 0.12.5 の expandtab shiftwidth=N softtabstop=N（N は IndentWidth の幅）と同じに、
+	// false なら noexpandtab shiftwidth=N softtabstop=0 と同じに動く。どちらも Neovim の既定の 'smarttab' がオンの動きである。
+	// Vim の 'softtabstop' と 'smarttab' は、別の設定にしない（#318 の決め）。
+	IndentUseSpaces = "indent.useSpaces"
+	// IndentWidth は、字下げの 1 段の幅である（FR-160。Vim の 'shiftwidth'）。範囲はバッファごとで、既定は Vim と同じく 8 である。
+	// 0 なら TabWidth の値を使う（Vim の shiftwidth=0 と同じ）。範囲は 0 から 9999 である（上限は TabWidth と同じにした）。
+	IndentWidth = "indent.width"
+	// TabWidth は、タブ文字の表示幅である（FR-161。Vim の 'tabstop'）。範囲はバッファごとで、既定は Vim と同じく 8 である。
+	// 描画、カーソルの列の数え方、gj と gk、字下げの幅の数え方が、使うたびにバッファの今の値を読む。範囲は Vim と同じく 1 から 9999 である。
+	TabWidth = "tab.width"
+	// IndentAuto は、自動インデントを行うかである（FR-162。Vim の 'autoindent'）。範囲はバッファごとで、既定は Vim と同じく行わない。
+	IndentAuto = "indent.auto"
+	// EditorConfigEnabled は、開いたファイルに当たる .editorconfig を読むかである（FR-164。Neovim の g:editorconfig）。
+	// 範囲はエディタ全体で、既定は Neovim と同じく読む。バッファを開くときに読むので、変えた後に開いたバッファから効く。
+	EditorConfigEnabled = "editorConfig.enabled"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
 // 順は、Defs が返す一覧の順である。
 var defs = []Def{
-	{Name: FileType, Type: String, Scope: ScopeBuffer, Default: StringValue("")},
+	{Name: FileType, Type: String, Scope: ScopeBuffer, Default: StringValue(""), Detected: true},
 	{Name: LineNumberShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: LineNumberMinWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}},
 	{Name: LineWrapEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
@@ -186,6 +224,26 @@ var defs = []Def{
 	// 下限は、窓が一覧とプレビューに分けられないほど狭くならないように 10 にした。
 	{Name: PreviewWindowWidthPercent, Type: Int, Scope: ScopeEditor, Default: IntValue(90), Range: &IntRange{Min: 10, Max: 100}},
 	{Name: IconsShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(true)},
+	{Name: IndentUseSpaces, Type: Bool, Scope: ScopeBuffer, Default: BoolValue(false)},
+	{Name: IndentWidth, Type: Int, Scope: ScopeBuffer, Default: IntValue(8), Range: &IntRange{Min: 0, Max: 9999}},
+	{Name: TabWidth, Type: Int, Scope: ScopeBuffer, Default: IntValue(8), Range: &IntRange{Min: 1, Max: 9999}},
+	{Name: IndentAuto, Type: Bool, Scope: ScopeBuffer, Default: BoolValue(false)},
+	{Name: EditorConfigEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(true)},
+}
+
+// fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。
+// Vim 9.1 と Neovim 0.12.5 の runtime の ftplugin/make.vim と ftplugin/go.vim は、どちらも
+// setlocal noexpandtab softtabstop=0 shiftwidth=0 とする（Makefile のレシピはタブ文字で始める。Go は gofmt がタブ文字で字下げする）。
+// 2026-11-21 に読んで写した。タブ文字の表示幅（tab.width）は ftplugin が変えないので、ここでも変えない。
+var fileTypeDefaults = map[string]map[string]Value{
+	"make": {IndentUseSpaces: BoolValue(false), IndentWidth: IntValue(0)},
+	"go":   {IndentUseSpaces: BoolValue(false), IndentWidth: IntValue(0)},
+}
+
+// FileTypeDefaults は、本体のファイルの種類 fileType の既定の値（正規の名前から値への対応）の写しを返す。無ければ nil を返す。
+// バッファを開くとき（と、ファイルの種類が変わったとき）に、設定ファイルの最上位の値の後に当てる（パッケージの doc の 3 の段）。
+func FileTypeDefaults(fileType string) map[string]Value {
+	return maps.Clone(fileTypeDefaults[fileType])
 }
 
 // Defs は、設定の表の写しを表の順に返す（設定ファイルの読み込みと、後に作るコマンドラインの補完の一覧）。

@@ -52,7 +52,7 @@ func (r *Renderer) wrapper() wrapper {
 	if sbw > w-2 {
 		sbw = 0
 	}
-	return wrapper{width: w, sbw: sbw, tabStop: tabStopOr(r.TabStop)}
+	return wrapper{width: w, sbw: sbw, tabStop: tabStopOr(r.tabStop)}
 }
 
 // rowStart は、見た目の row 行目の、文字を置き始める列を返す。
@@ -246,9 +246,13 @@ type WrapLines struct {
 	w wrapper
 }
 
-// WrapLines は、直前の Render の本文の幅で、行を折り返す数え方を返す。画面の大きさがまだ届いていなければ、幅を 1 列として数える。
-func (r *Renderer) WrapLines() WrapLines {
-	return WrapLines{w: r.wrapper()}
+// WrapLines は、直前の Render の本文の幅と、タブ文字の幅 tabStop（0 以下なら DefaultTabStop）で、行を折り返す数え方を返す。
+// 画面の大きさがまだ届いていなければ、幅を 1 列として数える。
+// タブ文字の幅を引数で受けるのは、次の Render の前に設定（tab.width）が変わっても、使う側が今の値で数えられるようにするためである（FR-161）。
+func (r *Renderer) WrapLines(tabStop int) WrapLines {
+	w := r.wrapper()
+	w.tabStop = tabStopOr(tabStop)
+	return WrapLines{w: w}
 }
 
 // Width は、見た目の行の列数（本文の幅）を返す。
