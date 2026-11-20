@@ -400,15 +400,19 @@ type drawer struct {
 	f     *Frame
 	cur   cursorPlace
 	diags [][]span // 表示領域の行ごとの診断の範囲
+	hls   [][]span // 表示領域の行ごとの、Frame.Highlights の範囲
 	sel   []span   // 表示領域の行ごとの、選択の範囲（end が 0 なら選択なし）
 	sweep sweep    // 行ごとに使い回す作業の領域
 }
 
-// collectSpans は、診断と選択の範囲を、表示領域の行ごとに分ける。
+// collectSpans は、診断、範囲の色（Frame.Highlights）、選択の範囲を、表示領域の行ごとに分ける。
 // 構文の色は Decorations が行ごとに分けて持っているので、ここでは分けない。
+//
+// 範囲の色は、行ごとに範囲に掛かる文字にだけ付け、行末の 1 セルには付けない（highlightSpans）。
 func (d *drawer) collectSpans(rows int) {
 	d.diags = make([][]span, rows)
 	d.sel = make([]span, rows)
+	d.highlightSpans(rows)
 	top := d.r.top
 	for i, dg := range d.f.Diagnostics {
 		a := d.theme.attr("diagnostic." + string(dg.Severity))
@@ -508,9 +512,10 @@ func (w *sweep) attr(base Attr) Attr {
 	return base
 }
 
-// prepare は、表示領域の row 行目（バッファの line 行目、テキスト s）の構文の色、見比べの色、診断、検索の一致の範囲を sweep に詰める。
+// prepare は、表示領域の row 行目（バッファの line 行目、テキスト s）の構文の色、見比べの色、診断、検索の一致、
+// 範囲の色（Frame.Highlights）の範囲を sweep に詰める。
 //
-// req: FR-35, FR-137
+// req: FR-35, FR-137, FR-140
 func (d *drawer) prepare(row, line int, s string) {
 	ln := len(s)
 	w := &d.sweep
@@ -530,6 +535,7 @@ func (d *drawer) prepare(row, line int, s string) {
 		from, to := d.visibleBytes(s)
 		w.spans = d.searchSpans(w.spans, s, from, to)
 	}
+	w.spans = append(w.spans, d.hls[row]...)
 	if len(w.spans) > n {
 		slices.SortStableFunc(w.spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
 	}

@@ -109,6 +109,26 @@ type Result struct {
 	// Shell は、Ex コマンド（:{range}! と :r !）が外部のコマンドの実行を求めたときに nil でない（FR-81）。
 	// 呼び出し側はコマンドを実行し、終わったら State.FinishShell に結果を渡す。
 	Shell *ex.ShellRequest
+	// Yanked は、呼び出しの中で本体の y（yy、Y、yiw、ビジュアルモードの y と Y を含む）がレジスターに写した範囲である。
+	// 呼び出しの中で何度ヤンクしても、最後の 1 つだけを持つ。無ければ nil。
+	// 呼び出し側は、ヤンクした範囲に一時的に色を付ける（FR-140。internal/editor）。
+	Yanked *Yanked
+}
+
+// Yanked は、本体の y がレジスターに写した範囲である（Result.Yanked）。
+// d、c、x のようにテキストを消すオペレーターは、消した範囲を知らせない。ブラックホールのレジスター（"_y）へのヤンクは、
+// どこにも写さないので知らせない（nvim 0.12.5 も、"_yy では TextYankPost を起こさない。2026-11-20 に確かめた）。
+type Yanked struct {
+	// Range は、ヤンクした範囲（半開区間）である。行単位の範囲は、始まりの行の先頭から終わりの行の行末までである。
+	// 位置は、ヤンクした時点のテキスト（バージョン番号 Version のテキスト）を指す。
+	Range buffer.Range
+	// Linewise は、行単位でヤンクしたかである。
+	Linewise bool
+	// Version は、ヤンクした時点のバッファのバージョン番号である。呼び出しの中でヤンクの後にバッファを変えていれば、今の番号と違う。
+	Version uint64
+	// Replayed は、マクロの再生かドットリピートの中のヤンクであるかである（Replaying）。
+	// nvim の vim.hl.on_yank が、マクロの実行中（reg_executing()）のヤンクに色を付けないのに当たる判断は、呼び出し側が行う。
+	Replayed bool
 }
 
 // State は、1 つのバッファを編集する状態である。

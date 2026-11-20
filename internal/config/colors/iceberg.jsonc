@@ -27,6 +27,8 @@
   "specialkey": { "fg": "#515e97" }, // SpecialKey（Neovim の側。Vim では Whitespace へのリンク）
   "linenr": { "fg": "#444b71", "bg": "#1e2132" }, // LineNr
   "search": { "fg": "#392313", "bg": "#e4aa80" }, // Search
+  // ヤンクした範囲。iceberg.vim に対応するグループは無いので、nvim の vim.hl.on_yank が既定で使う IncSearch を写した
+  "yank": { "reverse": true }, // IncSearch
   "message.warning": { "fg": "#e27878", "bg": "#161821" }, // WarningMsg
   "message.error": { "fg": "#e27878", "bg": "#161821" }, // ErrorMsg
   "popup": { "fg": "#c6c8d1", "bg": "#3d425b" }, // Pmenu

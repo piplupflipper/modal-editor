@@ -359,6 +359,8 @@ func (e *Editor) handleResult(bs *bufferState, res command.Result) error {
 		for _, ch := range res.Changes {
 			e.commitChange(bs, ch)
 		}
+		// ヤンクした範囲に一時的な色を付ける（FR-140）。
+		e.flashYank(bs, res.Yanked)
 	}
 	// 再生の途中で拡張機能の結果を待つために止めた。誤りではないので知らせない（残りは replayAnswered が続ける）。
 	queryPending := errors.Is(res.Err, command.ErrQueryPending)

@@ -34,6 +34,9 @@ const (
 	// StyleSearch は、直前の検索のパターンに一致する範囲（Frame.Search。FR-137）である（Vim の Search）。
 	// 構文の色、見比べの色、診断の上に重ね、選択の色（StyleVisual）の下に置く。
 	StyleSearch = "search"
+	// StyleYank は、ヤンクした範囲に一時的に付ける色（Frame.Highlights。FR-140）である。
+	// nvim の vim.hl.on_yank が既定で使う IncSearch に当たる。検索の一致の色（StyleSearch）の上に重ね、選択の色の下に置く。
+	StyleYank = "yank"
 	// StyleMessageInfo、StyleMessageWarning、StyleMessageError は、コマンドラインの行に出すメッセージである。
 	StyleMessageInfo    = "message.info"
 	StyleMessageWarning = "message.warning"
@@ -93,7 +96,7 @@ const (
 var styleNames = []string{
 	StyleComment, StyleKeyword, StyleString, StyleNumber, StyleConstant, StyleFunction, StyleType, StyleVariable,
 	StyleOperator, StylePunctuation,
-	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleLineNr, StyleSearch,
+	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleLineNr, StyleSearch, StyleYank,
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
 	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch,
@@ -153,7 +156,10 @@ func DefaultTheme() Theme {
 		// 行番号は、Vim 9.1 の暗い背景の既定（2026-11-20 に TERM=xterm-256color、background=dark の :hi LineNr で確かめた ctermfg=11）と同じ番号にした。
 		StyleLineNr: {Fg: Indexed(11)},
 		// 検索の一致は、Vim 9.1 の暗い背景の既定（2026-11-20 に同じ起動の :hi Search で確かめた ctermfg=0 ctermbg=11）と同じ番号にした。
-		StyleSearch:         {Fg: Indexed(0), Bg: Indexed(11)},
+		StyleSearch: {Fg: Indexed(0), Bg: Indexed(11)},
+		// ヤンクした範囲は、nvim の vim.hl.on_yank の既定の IncSearch の、Vim 9.1 の暗い背景の既定
+		// （2026-11-20 に同じ起動の :hi IncSearch で確かめた cterm=reverse）と同じにした。
+		StyleYank:           {Reverse: true},
 		StyleMessageWarning: {Fg: Indexed(11)},
 		StyleMessageError:   {Fg: Indexed(15), Bg: Indexed(1)},
 

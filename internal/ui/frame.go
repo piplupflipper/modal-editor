@@ -56,7 +56,7 @@ type Selection struct {
 	Linewise bool
 }
 
-// Highlight は、色を付ける 1 つの範囲である。構文の色（decoration/set の 1 要素）に使う。
+// Highlight は、色を付ける 1 つの範囲である。構文の色（decoration/set の 1 要素）と、Frame.Highlights の色に使う。
 type Highlight struct {
 	// Range は、色を付ける範囲である。位置は描画する時点のテキストを指す必要がある。
 	// 編集に合わせて位置をずらすのは、表示のデータを持つ internal/editor の役目である（基本設計 6.1、6.7）。
@@ -133,7 +133,8 @@ type Float struct {
 	// ID は、窓を見分ける番号である。替わったら窓の中のスクロールの位置を決め直す。0 も 1 つの窓として扱う。
 	ID uint64
 	// View は、窓の中に描くバッファの Frame である。Text、Cursor、Mode、Selection、Decorations、Diagnostics を読み、
-	// Tabs、Output、List、Choice、Float、Diff、Message、LineNumbers、Search は読まない（窓の中に行番号と検索の一致の色は出さない）。
+	// Tabs、Output、List、Choice、Float、Diff、Message、LineNumbers、Search、Highlights は読まない
+	// （窓の中に行番号と検索の一致の色とヤンクした範囲の色は出さない）。
 	// Text が nil なら窓を出さない。
 	View *Frame
 	// Title は、窓の見出しである。空なら出さない。
@@ -271,6 +272,9 @@ type Frame struct {
 	// internal/editor が、描くたびに設定の今の値（search.highlight）と直前の検索のパターンから詰める。
 	// 描き方は searchSpans の doc にある。
 	Search *regexp.Regexp
+	// Highlights は、バッファの範囲に付ける色の一覧である（ヤンクした範囲の一時的な色。FR-140）。nil なら付けない。
+	// 描画は、いつ付けていつ消すかを知らない。internal/editor が、描くたびに今の一覧を詰める。描き方は collectSpans の doc にある。
+	Highlights []Highlight
 	// Output は、開いている出力の欄である。nil なら欄を開いていない。
 	Output *Output
 	// Float は、バッファの表示領域の上に浮かべて出すポップアップである（基本設計 1.4。FR-68）。nil なら出さない。

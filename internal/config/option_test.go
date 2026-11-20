@@ -176,6 +176,32 @@ func TestParseLineNumberOptions(t *testing.T) {
 	}
 }
 
+// 本体の表の yank.highlightMs は、"yank": { "highlightMs": … } で書ける。
+// 範囲（0 から 10000）の外の値は、位置付きの誤りとして知らせて既定値を使う。
+//
+// req: FR-140
+func TestParseYankHighlightOption(t *testing.T) {
+	cfg, errs := Parse("config.jsonc", []byte(`{ "yank": { "highlightMs": 300 } }`))
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if want := map[string]option.Value{"yank.highlightMs": option.IntValue(300)}; !reflect.DeepEqual(cfg.Options, want) {
+		t.Errorf("Options = %+v, want %+v", cfg.Options, want)
+	}
+	for _, val := range []string{"-1", "10001"} {
+		cfg, errs := Parse("config.jsonc", []byte(`{ "yank": { "highlightMs": `+val+` } }`))
+		wantErrors(t, errs, []struct {
+			line, col int
+			msg       string
+		}{
+			{1, 28, "yank.highlightMs は 0 から 10000 の整数にする: " + val},
+		})
+		if cfg.Options != nil {
+			t.Errorf("%s: Options = %+v", val, cfg.Options)
+		}
+	}
+}
+
 // 本体の表の filetype はバッファごとの項目なので、設定ファイルに書けば誤りとして知らせる。
 //
 // req: FR-131
