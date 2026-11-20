@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/tailscale/hujson"
@@ -75,19 +74,26 @@ func (s *source) optionValue(v *hujson.Value, d option.Def) (option.Value, bool)
 	if !ok {
 		return option.Value{}, false
 	}
-	switch err := d.Check(val); {
-	case err == nil:
-		return val, true
-	case errors.Is(err, option.ErrOutOfRange) && d.Range != nil:
-		s.report(v.StartOffset, "%s は %d から %d の整数にする: %s", d.Name, d.Range.Min, d.Range.Max, val)
-	default:
-		s.report(v.StartOffset, "%s の値が正しくない: %s", d.Name, val)
+	if err := d.Check(val); err != nil {
+		s.reportInvalid(v, d, val.String(), err)
+		return option.Value{}, false
 	}
-	return option.Value{}, false
+	return val, true
+}
+
+// reportInvalid は、項目 d に入れられない値 text（検査の誤り err）を、v の位置の誤りとして記録する。
+// 整数の範囲の外（option.ErrOutOfRange）なら、範囲を添える。
+func (s *source) reportInvalid(v *hujson.Value, d option.Def, text string, err error) {
+	if errors.Is(err, option.ErrOutOfRange) && d.Range != nil {
+		s.report(v.StartOffset, "%s は %d から %d の整数にする: %s", d.Name, d.Range.Min, d.Range.Max, text)
+		return
+	}
+	s.report(v.StartOffset, "%s の値が正しくない: %s", d.Name, text)
 }
 
 // convertOption は、JSON の値 v を項目 d の型の値に変換する（真偽、整数、文字列の JSON の値）。値の検査はしない。
 // 型が違えば誤りを記録して false を返す。
+// 整数はコマンドラインの値と同じ option.ParseInt で読み、int に収まらない数は範囲の外の誤りとして記録する（FR-136）。
 func (s *source) convertOption(v *hujson.Value, d option.Def) (option.Value, bool) {
 	switch d.Type {
 	case option.Bool:
@@ -96,8 +102,13 @@ func (s *source) convertOption(v *hujson.Value, d option.Def) (option.Value, boo
 		}
 	case option.Int:
 		if l, ok := v.Value.(hujson.Literal); ok && l.Kind() == '0' {
-			if n, err := strconv.Atoi(string(l)); err == nil {
+			n, err := option.ParseInt(string(l))
+			switch {
+			case err == nil:
 				return option.IntValue(n), true
+			case errors.Is(err, option.ErrOutOfRange):
+				s.reportInvalid(v, d, string(l), err)
+				return option.Value{}, false
 			}
 		}
 		s.report(v.StartOffset, "%s は整数にする", d.Name)

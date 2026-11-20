@@ -153,6 +153,9 @@ func TestParseLineNumberOptions(t *testing.T) {
 		{`{ "lineNumber": { "minWidth": 0 } }`, 31},
 		{`{ "lineNumber": { "minWidth": -1 } }`, 31},
 		{`{ "lineNumber": { "minWidth": 21 } }`, 31},
+		// int に収まらない数も、範囲の外として知らせる（:set と同じ option.ParseInt で読む）。
+		{`{ "lineNumber": { "minWidth": 99999999999999999999 } }`, 31},
+		{`{ "lineNumber": { "minWidth": -99999999999999999999 } }`, 31},
 	} {
 		cfg, errs := Parse("config.jsonc", []byte(tt.src))
 		val := strings.TrimSuffix(strings.TrimPrefix(tt.src, `{ "lineNumber": { "minWidth": `), ` } }`)

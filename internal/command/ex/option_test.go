@@ -196,6 +196,10 @@ func TestLineNumberOptions(t *testing.T) {
 		{name: ":set numberwidth=-1", cmdline: "set numberwidth=-1", wantCode: "E487", wantPos: 4},
 		{name: ":set numberwidth=21", cmdline: "set numberwidth=21", wantCode: "E474", wantPos: 4},
 		{name: ":set numberwidth=abc", cmdline: "set numberwidth=abc", wantCode: "E521", wantPos: 4},
+		// int に収まらない値は、Vim 9.1 と同じく正なら E474、負なら E487（PR #272 のレビューの推奨 2）。
+		{name: ":set numberwidth の桁あふれ", cmdline: "set numberwidth=99999999999999999999", wantCode: "E474", wantPos: 4},
+		{name: ":set numberwidth の負の桁あふれ", cmdline: "set numberwidth=-99999999999999999999", wantCode: "E487", wantPos: 4},
+		{name: ":set numberwidth=2147483648", cmdline: "set numberwidth=2147483648", wantCode: "E474", wantPos: 4},
 		{name: ":set number=1", cmdline: "set number=1", wantCode: "E474", wantPos: 4},
 		{name: ":set nonumberwidth", cmdline: "set nonumberwidth", wantCode: "E474", wantPos: 4},
 		{name: ":set numberwidth!", cmdline: "set numberwidth!", wantCode: "E488", wantPos: 4},

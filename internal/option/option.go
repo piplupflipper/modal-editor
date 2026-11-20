@@ -200,7 +200,8 @@ func (d Def) Check(v Value) error {
 
 // Parse は、文字列 text を項目の型の値に変換し、Check で確かめて返す。
 // 真偽は true と false だけ、整数は 10 進（先頭の - を許し、+ と 0x は許さない）、文字列は text をそのまま値にする（空も許す）。
-// 変換できなければ ErrInvalidBool か ErrNumberRequired を、確かめて誤りなら Check の誤りを返す。
+// 変換できなければ ErrInvalidBool か ErrNumberRequired を（int に収まらない整数は ParseInt の ErrBelowMin か ErrAboveMax を）、
+// 確かめて誤りなら Check の誤りを返す。
 func (d Def) Parse(text string) (Value, error) {
 	v, err := d.convert(text)
 	if err != nil {
@@ -224,18 +225,38 @@ func (d Def) convert(text string) (Value, error) {
 		}
 		return Value{}, ErrInvalidBool
 	case Int:
-		if text == "" || text[0] == '+' {
-			return Value{}, ErrNumberRequired
-		}
-		n, err := strconv.Atoi(text)
+		n, err := ParseInt(text)
 		if err != nil {
-			return Value{}, ErrNumberRequired
+			return Value{}, err
 		}
 		return IntValue(n), nil
 	case String:
 		return StringValue(text), nil
 	}
 	return Value{}, ErrTypeMismatch
+}
+
+// ParseInt は、整数の項目の値の文字列 text を読む。10 進（先頭の - を許し、+ と 0x は許さない）で、読めなければ ErrNumberRequired を返す。
+// 数字だけの文字列が int に収まらなければ、符号で、正なら ErrAboveMax、負なら ErrBelowMin を返す（どちらも ErrOutOfRange を包む）。
+// 収まらない値はどの範囲の外でもあるとして扱うためで、Vim 9.1 も :set numberwidth=99999999999999999999 を E474、
+// -99999999999999999999 を E487 にする（2026-11-20 に確かめた。PR #272 のレビューの推奨 2）。
+// コマンドラインの文字列（Def.Parse）と設定ファイルの JSON の数（internal/config）は、どちらもこれで読む。項目の名前では分けない。
+//
+// req: FR-136
+func ParseInt(text string) (int, error) {
+	if text == "" || text[0] == '+' {
+		return 0, ErrNumberRequired
+	}
+	n, err := strconv.Atoi(text)
+	switch {
+	case errors.Is(err, strconv.ErrRange) && text[0] == '-':
+		return 0, ErrBelowMin
+	case errors.Is(err, strconv.ErrRange):
+		return 0, ErrAboveMax
+	case err != nil:
+		return 0, ErrNumberRequired
+	}
+	return n, nil
 }
 
 // Values は、1 つの範囲（エディタ全体か、1 つのバッファ）の項目の今の値である。

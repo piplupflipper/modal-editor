@@ -123,7 +123,12 @@ func TestParse(t *testing.T) {
 		{n, "0x10", Value{}, ErrNumberRequired},
 		{n, "4x", Value{}, ErrNumberRequired},
 		{n, "", Value{}, ErrNumberRequired},
-		{n, "99999999999999999999", Value{}, ErrNumberRequired},
+		// int に収まらない数字の列は、符号で範囲の外の誤りにする（Vim 9.1 の E474 と E487 に合わせる。範囲の無い項目でも同じ）。
+		{n, "99999999999999999999", Value{}, ErrAboveMax},
+		{n, "-99999999999999999999", Value{}, ErrBelowMin},
+		{n, "9223372036854775807", IntValue(9223372036854775807), nil},
+		{n, "1e1", Value{}, ErrNumberRequired},
+		{n, "1.5", Value{}, ErrNumberRequired},
 		{s, "go", StringValue("go"), nil},
 		{s, "", StringValue(""), nil},
 		{s, " a|b ", StringValue(" a|b "), nil},

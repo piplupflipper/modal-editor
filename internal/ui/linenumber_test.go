@@ -146,11 +146,29 @@ func TestRenderLineNumbersOnlyInBuffer(t *testing.T) {
 		t.Errorf("出力の欄の最初の行 = %q, want %q", got[0], "o1")
 	}
 
-	// 見比べている間の詰め物の行。
-	r = &Renderer{Width: 12, Height: 8}
+	// 見比べている間の詰め物の行。番号は出さず、行番号の列は linenr の色の空白で埋める（Vim 9.1 と同じ。PR #272 のレビューの推奨 1）。
+	// 印の列は色を付けずに空ける。
+	theme := Theme{StyleLineNr: {Fg: Indexed(1), Bg: Indexed(4)}, StyleDiffDelete: {Bg: Indexed(6)}}
+	r = &Renderer{Width: 12, Height: 8, Theme: theme}
 	s = r.Render(&Frame{Text: b, LineNumbers: ln, Diff: &Diff{Fill: map[int]int{1: 1, 3: 1}}})
 	want := []string{"  1 abc", "    --------", "  2 def", "  3 ghi", "    --------", "~"}
 	if got := rowTexts(s, len(want)); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("詰め物の行: rows = %q, want %q", got, want)
+	}
+	for c := range 4 {
+		if a := s.Grid.At(1, c).Attr; a != theme[StyleLineNr] {
+			t.Errorf("詰め物の行の行番号の列の %d 列目の色 = %+v, want linenr", c, a)
+		}
+	}
+	diag := []Diagnostic{{Range: buffer.Range{Start: pos(0, 0), End: pos(0, 1)}, Severity: SeverityError}}
+	s = r.Render(&Frame{Text: b, LineNumbers: ln, Diagnostics: diag, Diff: &Diff{Fill: map[int]int{1: 1}}})
+	for c := range 6 {
+		want := theme[StyleLineNr]
+		if c < 2 {
+			want = Attr{}
+		}
+		if a := s.Grid.At(1, c).Attr; a != want {
+			t.Errorf("印の列があるときの詰め物の行の %d 列目の色 = %+v, want %+v", c, a, want)
+		}
 	}
 }
