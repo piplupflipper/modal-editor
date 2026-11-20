@@ -140,7 +140,8 @@ type ListHelpWord struct {
 	// HelpKindOperation（拡張機能のオペレーター、モーション、テキストオブジェクトの ID）のどれかである。
 	Kind string `json:"kind"`
 	// Description は、語の 1 行の説明である。キー、操作の ID、拡張機能のコマンドと操作は、それを定めた所の説明文
-	// （キーの一覧、操作の表、宣言ファイルの description）で、それが無い語は、:help でその語を引いたときの説明の行から
+	// （キーの一覧、操作の表、宣言ファイルの description。description の無い拡張機能の操作は「拡張機能 <ID> の<種類>」）で、
+	// それが無い語（本体の Ex コマンド、設定の名前）は、:help でその語を引いたときの説明の行から
 	// Markdown の記号と語そのものを除いた 1 行である。無ければ空。
 	Description string `json:"description,omitempty"`
 }

@@ -459,8 +459,9 @@ func (h *helpIndex) find(word string) (int, bool) {
 //   - 拡張機能の操作の ID: 読み込んだ拡張機能のオペレーター、モーション、テキストオブジェクトの ID（:help の「読み込んだ拡張機能の操作」の節）
 //
 // 説明は、その語を定めた所の説明文である。キーは「本体のキー」の節の行の説明か宣言ファイルの description、拡張機能のコマンドと操作は
-// 宣言ファイルの description、操作の ID は操作の表の説明文である。定めた所に説明文が無い語（本体の Ex コマンド、設定の名前、
-// description の無い拡張機能の操作）だけ、:help で見つかった行を 1 行の要約にしたもの（helpSummary）にする。
+// 宣言ファイルの description（無ければ「拡張機能 <ID> の<種類>」）、操作の ID は操作の表の説明文である。
+// 定めた所に説明文が無い語（本体の Ex コマンド、設定の名前）だけ、:help で見つかった行を 1 行の要約にしたもの（helpSummary）にする。
+// 設定ファイルの最上位の名前は、docs/usage.md の「設定ファイルの項目」の表の行に当たる。
 // :help で見つかった行は、語の説明でない行（プレビューの表の行など）のことがあるためである（PR #309 のレビューの推奨 3）。
 // 文書は :help と同じもの（helpText）を 1 回だけ読む。
 //
@@ -491,29 +492,45 @@ func (e *Editor) listHelpWords() []ext.ListHelpWord {
 			add(spans[0], ext.HelpKindKey, desc)
 		}
 	}
+	// 拡張機能の操作の説明は宣言ファイルの description で、書いていなければ「拡張機能 <ID> の<種類>」にする
+	// （:help の「読み込んだ拡張機能の操作」の節の括弧の中と同じ。語そのものを説明に残さない。PR #309 の再レビューの推奨 4）。
 	type contribution struct {
 		c       ext.Contribution
+		desc    string
 		command bool
 	}
 	var contribs []contribution
 	for _, s := range e.cfg.Extensions {
-		c := s.Manifest.Contributes
-		for _, cs := range [][]ext.Contribution{c.Operators, c.Motions, c.TextObjects} {
-			for _, x := range cs {
-				contribs = append(contribs, contribution{c: x})
+		m := s.Manifest
+		for _, g := range []struct {
+			kind string
+			cs   []ext.Contribution
+		}{
+			{"オペレーター", m.Contributes.Operators},
+			{"モーション", m.Contributes.Motions},
+			{"テキストオブジェクト", m.Contributes.TextObjects},
+			{"コマンド", m.Contributes.Commands},
+		} {
+			for _, x := range g.cs {
+				desc := x.Description
+				if desc == "" {
+					desc = fmt.Sprintf("拡張機能 %s の%s", m.ID, g.kind)
+				}
+				contribs = append(contribs, contribution{c: x, desc: desc, command: g.kind == "コマンド"})
 			}
-		}
-		for _, x := range c.Commands {
-			contribs = append(contribs, contribution{c: x, command: true})
 		}
 	}
 	for _, x := range contribs {
 		if ks, err := editcmd.ParseKeysLeader(x.c.Keys, e.leader); err == nil && len(ks) > 0 {
-			add(editcmd.KeysString(ks), ext.HelpKindKey, x.c.Description)
+			add(editcmd.KeysString(ks), ext.HelpKindKey, x.desc)
 		}
 	}
 	for _, c := range e.listCommands() {
-		add(":"+c.Name, ext.HelpKindCommand, c.Description)
+		desc := c.Description
+		if desc == "" && c.Extension != "" {
+			desc = fmt.Sprintf("拡張機能 %s のコマンド", c.Extension)
+		}
+		add(":"+c.Name, ext.HelpKindCommand, desc)
 	}
 	for _, d := range option.Defs() {
 		add(d.Name, ext.HelpKindOption, "")
@@ -526,7 +543,7 @@ func (e *Editor) listHelpWords() []ext.ListHelpWord {
 	}
 	for _, x := range contribs {
 		if !x.command {
-			add(x.c.ID, ext.HelpKindOperation, x.c.Description)
+			add(x.c.ID, ext.HelpKindOperation, x.desc)
 		}
 	}
 	return out

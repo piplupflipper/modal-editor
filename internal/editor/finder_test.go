@@ -12,6 +12,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/config"
 	"github.com/piplupflipper/vi-imitation/internal/exthost"
 )
 
@@ -195,8 +196,8 @@ func TestStandardFinder(t *testing.T) {
 func TestStandardFinderHelp(t *testing.T) {
 	spec := buildFinder(t)
 	third := exthost.Spec{Manifest: ext.Manifest{ID: "peek3p", Command: "/bin/true", Contributes: ext.Contributes{
-		Commands:    []ext.Contribution{{ID: "peek3p.list", Description: "3p list"}},
-		TextObjects: []ext.Contribution{{ID: "peek3p.obj", Description: "3p obj"}},
+		Commands:    []ext.Contribution{{ID: "peek3p.list", Description: "3p list"}, {ID: "peek3p.nodesc"}},
+		TextObjects: []ext.Contribution{{ID: "peek3p.obj", Description: "3p obj"}, {ID: "peek3p.to"}},
 	}}}
 	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n"})
 	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec, third}}, "a.txt")
@@ -227,13 +228,24 @@ func TestStandardFinderHelp(t *testing.T) {
 		}
 	}
 	descs := map[string]string{
-		"w":            "次の単語の先頭へ（nvo）",
-		"<C-p>":        "貼った直後に、履歴の古い項目に貼り直す（n）",
-		":finder.keys": "キーの一覧を探す",
-		"<Space>ff":    "ファイルを探して開く",
-		":peek3p.list": "3p list",
-		"peek3p.obj":   "3p obj",
-		"visual":       "文字単位のビジュアルモード",
+		"w":              "次の単語の先頭へ（nvo）",
+		"<C-p>":          "貼った直後に、履歴の古い項目に貼り直す（n）",
+		":finder.keys":   "キーの一覧を探す",
+		"<Space>ff":      "ファイルを探して開く",
+		":peek3p.list":   "3p list",
+		"peek3p.obj":     "3p obj",
+		":peek3p.nodesc": "拡張機能 peek3p のコマンド",
+		"peek3p.to":      "拡張機能 peek3p のテキストオブジェクト",
+		"visual":         "文字単位のビジュアルモード",
+		// 設定ファイルの最上位の名前は、docs/usage.md の「設定ファイルの項目」の表の行に当たる（:registers のコマンドの行ではない）。
+		"registers":       "レジスターの履歴の件数（historySize）、1 件の最大のバイト数（maxEntryBytes）、削除を履歴に積むか（deleteToHistory）、ホストのクリップボードへ送る手段（clipboard）（レジスターと履歴）",
+		"checkIntervalMs": "開いているバッファのファイルが外で変わっていないかを確かめる間隔のミリ秒。既定は 1000。0 は定期的に確かめない",
+	}
+	// 設定ファイルの最上位の名前は、すべて一覧に出る（docs/usage.md に書き忘れると落ちる）。
+	for _, n := range config.TopLevelNames() {
+		if kinds[n] != ext.HelpKindOption {
+			t.Errorf("設定ファイルの項目 %q が一覧に無い（kind %q）", n, kinds[n])
+		}
 	}
 	for _, w := range words {
 		if want, ok := descs[w.Word]; ok && w.Description != want {
