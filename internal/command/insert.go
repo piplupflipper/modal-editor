@@ -62,8 +62,11 @@ func (s *State) startInsertAt(cmd editcmd.Command, repeat int, sites []buffer.Po
 	lines := max(len(sites), s.repeatLines)
 	s.insert = insertState{cmd: cmd, repeat: repeat, others: slices.Clone(sites[1:]), lines: lines}
 	if s.replaying {
-		for _, in := range cmd.Inserted {
-			s.insertInput(in)
+		// 記録は、打ったときに記録したものをそのまま残す。再実行の位置で何もしない削除の操作があっても落とさない（insertInput と違う）。
+		// 入れ方は回数による繰り返しと同じで、続けて並んだ文字をまとめる（#289）。
+		s.insert.text = slices.Clone(cmd.Inserted)
+		if err := s.typeRepeated(cmd.Inserted, 1, false); err != nil {
+			s.fail(err)
 		}
 		s.finishInsert()
 	}
@@ -291,12 +294,56 @@ func (s *State) insertRune(r rune) {
 }
 
 // insertInput は、入力（文字か削除の操作）を記録して、バッファに行う。
+//
+// 位置の前を消す操作（insert.delete-prev-char、insert.delete-prev-word、insert.delete-to-line-start）を、
+// カーソルがバッファの先頭にあるときに打ち、バッファもカーソルも変わらない（どの位置でも編集が無い。inputApplies）なら、
+// 記録せず、カーソルキーで区切った後の入力も始め直さない（#289）。
+// 記録すると、回数による繰り返しとドットリピートで、その操作が前の回に入れた文字を消す（100ia<BS><BS>b<Esc> が babc になる）。
+// Vim 9.1 も、バッファの先頭と空のバッファの <BS>、<C-w>、<C-u> は、鳴らすだけで記録に入れず、区切った入力も始め直さない
+// （'backspace' が "indent,eol,start" のときの src/edit.c の ins_bs）。
+//
+// バッファの先頭のほかでは、何もしなくても記録する。行の先頭の insert.delete-to-line-start は、前の行とつながない（#260 の決め）ので
+// 何もしないが、Vim 9.1 の <C-u> は前の行とつなぐ（記録に入る）。記録から落とすと、繰り返しと . の結果が Vim からさらに離れる
+// （abc、|def で 3i<C-u>x<Esc> は Vim が abcxdef、記録すると abc、xdef、落とすと abc、xxxdef。PR #314 のレビュー）。
+// 位置の後ろを消す操作（insert.delete-char、insert.delete-to-line-end）も、何もしなくても記録する（Vim 9.1 の ins_del と同じ）。
+// 空のバッファの i<Del>x<Esc> の記録の <Del> は、後の . で位置の文字を消す。
+//
+// req: FR-06, FR-127
 func (s *State) insertInput(in editcmd.InsertInput) {
+	if isDeleteBefore(in.Op) && s.cursor == (buffer.Position{}) && !s.inputApplies(in) {
+		return
+	}
 	s.resumeInsert()
 	s.insert.text = append(s.insert.text, in)
 	if err := s.typeInput(in); err != nil {
 		s.fail(err)
 	}
+}
+
+// isDeleteBefore は、op が位置の前を消す削除の操作かを返す（insertInput）。
+func isDeleteBefore(op editcmd.InsertOp) bool {
+	return op == editcmd.InsertDeletePrev || op == editcmd.InsertDeletePrevWord || op == editcmd.InsertDeleteToLineStart
+}
+
+// inputApplies は、入力の記録の 1 件 in を typeInput で行ったときに、編集を行うかを返す（insertInput）。
+// 同時の入力（FR-141）の間は、どれかの位置で編集を行うかである。
+// ただし、ある位置の編集が行の中に収まらなければ、typeAtSites は同時の入力を終えてカーソルの位置だけに行うので、カーソルの位置で決める。
+// バッファの先頭の行から選んだ行の I（字下げの無い行）で打った <BS> は、カーソルの位置（バッファの先頭）で何もしないので、
+// ほかの位置の行を前の行へつながず、同時の入力も終えずに捨てる（Vim 9.1 の矩形選択の I も、入力を続ける）。
+func (s *State) inputApplies(in editcmd.InsertInput) bool {
+	_, _, atCursor := s.inputEdit(in, s.cursor)
+	applies := atCursor
+	for _, p := range s.insert.others {
+		ed, _, ok := s.inputEdit(in, p)
+		if !ok {
+			continue
+		}
+		if !withinLine(ed, p.Line) {
+			return atCursor
+		}
+		applies = true
+	}
+	return applies
 }
 
 // typeInput は、入力の記録の 1 件をカーソルの位置に行う。同時の入力（FR-141）の間は、すべての位置に行う（typeAtSites）。
@@ -532,26 +579,32 @@ func (s *State) finishInsert() {
 	s.insert = insertState{}
 }
 
-// typeRepeated は、入力の記録 text を n 回続けて行う（finishInsert の回数による繰り返し）。open なら、各回の前に行末で行を開く（o と O）。
+// typeRepeated は、入力の記録 text を n 回続けて行う。open なら、各回の前に行末で行を開く（o と O）。
+// 回数による繰り返し（finishInsert）と、ドットリピートの再実行の 1 回目（startInsertAt）が使う。
 //
 // 続けて並んだ文字（改行を除く）は、回の区切りをまたいでまとめ、1 つの編集で入れる（typeText）。
-// 削除の操作と改行は、1 件ずつ typeInput で行う。結果のテキストと位置は、記録を 1 件ずつ typeInput で行ったときと同じである。
+// まとめている途中の文字を消す insert.delete-prev-char（<BS>）は、まとめている文字の最後の 1 文字を落として済ませる（#289）。
+// 位置の前の文字は、まとめている文字の最後の文字そのものだからである（prevChar は文字を UTF-8 の 1 文字ずつ戻る）。
+// まとめている文字が無いときの <BS>、ほかの削除の操作、改行は、まとめた文字を入れてから、1 件ずつ typeInput で行う。
+// 結果のテキストと位置は、記録を 1 件ずつ typeInput で行ったときと同じである。
+//
 // 1 件ずつ入れると、編集のたびに行の全体を作り直し、カーソルの表示の列を行の先頭から数え直すので、
 // 長い行になる繰り返し（100000afoo xy <Esc>）は行の長さの 2 乗の時間を要し、変更の記録も文字の数だけ溜まった（#279）。
+// <BS> を挟む繰り返し（100000axy<BS>z<Esc>）も、<BS> を 1 件ずつ行っていたので、同じく 2 乗の時間を要した（#289）。
 // Vim 9.1 も、先に届いている文字を 100 バイト（INPUT_BUFLEN）までまとめて行に入れる（src/edit.c の insertchar）。
 // ここでは記録の全体が手元にあるので、まとめる長さに上限を置かない（入れる量は finishInsert が maxPutBytes で抑える）。
 //
 // 途中で失敗すれば、そこで止めて誤りを返す。それまでに入れたテキストは残る。
 //
-// req: FR-02, FR-141
+// req: FR-02, FR-06, FR-141
 func (s *State) typeRepeated(text []editcmd.InsertInput, n int, open bool) error {
-	var run strings.Builder
+	var run []byte
 	flush := func() error {
-		if run.Len() == 0 {
+		if len(run) == 0 {
 			return nil
 		}
-		str := run.String()
-		run.Reset()
+		str := string(run)
+		run = run[:0]
 		return s.typeText(str)
 	}
 	for range n {
@@ -566,7 +619,13 @@ func (s *State) typeRepeated(text []editcmd.InsertInput, n int, open bool) error
 		}
 		for _, x := range text {
 			if x.Op == editcmd.InsertRune && x.Rune != '\n' {
-				run.WriteRune(x.Rune)
+				// string(rune) と同じく、正しくない値は U+FFFD にする（inputEdit）。
+				run = utf8.AppendRune(run, x.Rune)
+				continue
+			}
+			if x.Op == editcmd.InsertDeletePrev && len(run) > 0 {
+				_, size := utf8.DecodeLastRune(run)
+				run = run[:len(run)-size]
 				continue
 			}
 			if err := flush(); err != nil {
