@@ -116,7 +116,7 @@ func TestEditorConfigOptions(t *testing.T) {
 //
 //   - 足した段の値が .editorconfig の値に勝つ
 //   - 利用者が :set で変えた値は、足した段の値が後から届いても（buffer/open を送り直した後でも）上書きされない
-//   - :set filetype= で段を当て直すと、利用者が変えた値を捨て、足した段の値に戻る
+//   - :set filetype=go で段を当て直すと、go の段が値を持つ indent.width は :set の値を隠し、足した段の値になる
 //   - 名前の無いバッファに名前を付けたときも、足した段が .editorconfig より後に当たり、:set で変えたほかの値は残る
 //
 // req: FR-163, FR-164
@@ -127,9 +127,9 @@ func TestOptionLayerAddedLater(t *testing.T) {
 	})
 	extWidth := 6
 	h := startWith(t, Config{WorkDir: dir}, func(e *Editor) error {
-		e.layers = append(e.layers, func(*Editor, *bufferState) map[string]option.Value {
+		e.layers = append(e.layers, optionLayer{values: func(*Editor, *bufferState) map[string]option.Value {
 			return map[string]option.Value{option.IndentWidth: option.IntValue(extWidth)}
-		})
+		}})
 		return e.Open("a.txt")
 	})
 	h.settle()
@@ -200,6 +200,7 @@ func TestEditorConfigReadOnOpen(t *testing.T) {
 }
 
 // :set filetype= でファイルの種類を変えると、初めの値の段を新しい種類で当て直す。.editorconfig は、開いたときに読んだものを当てる。
+// 新しい種類の段が値を持つ項目だけ :set の値を隠し、ほかの項目の :set の値（ここでは tab.width）は残す。
 // 名前の無いバッファに名前を付けたときは、種類が変わらなければ、.editorconfig を読み直して段を作り直し、:set で変えた値はどの段よりも勝つ。
 //
 // req: FR-163, FR-164
@@ -215,15 +216,15 @@ func TestFileTypeChangeReappliesLayers(t *testing.T) {
 	h.keys(":set ts=2<CR>:set filetype=go<CR>")
 	h.settle()
 	h.e.do(func() {
-		if got := indentValues(h.e.cur); got != "false 0 6" {
-			t.Errorf(":set filetype=go の後: %s, want false 0 6", got)
+		if got := indentValues(h.e.cur); got != "false 0 2" {
+			t.Errorf(":set filetype=go の後: %s, want false 0 2", got)
 		}
 	})
 	h.keys(":set filetype=python<CR>")
 	h.settle()
 	h.e.do(func() {
-		if got := indentValues(h.e.cur); got != "true 2 6" {
-			t.Errorf(":set filetype=python の後: %s, want true 2 6", got)
+		if got := indentValues(h.e.cur); got != "true 2 2" {
+			t.Errorf(":set filetype=python の後: %s, want true 2 2", got)
 		}
 	})
 
@@ -233,6 +234,56 @@ func TestFileTypeChangeReappliesLayers(t *testing.T) {
 	h.e.do(func() {
 		if got := indentValues(h.e.cur); got != "false 3 5" {
 			t.Errorf(":w b.dat の後: %s, want false 3 5（.editorconfig の indent_size は当たり、:set で変えた noet と ts=5 は残る）", got)
+		}
+	})
+}
+
+// ファイルの種類が変わったときは、新しい種類の段（本体と設定ファイルのファイルの種類ごとの値）が値を持つ項目だけ :set の値を隠し、
+// ほかの :set の値は残す。前の種類が隠した項目は、新しい種類の段が値を持たなければ :set の値に戻る。
+// 期待値は、2026-11-21 に Neovim 0.12.5（nvim --clean）で、:enew、:set sw=3 et ts=5 ai の後に :w <名前> を打ち、
+// 同じく :set ft=go の後に :set ft=c を打って取った（本体の設定は Vim と同じ既定のまま）。
+//
+// req: FR-163
+func TestFileTypeChangeKeepsOtherSetValues(t *testing.T) {
+	dir := t.TempDir()
+	h := start(t, Config{WorkDir: dir})
+	h.settle()
+	tests := []struct{ name, want string }{
+		{"n.c", "true 3 5"},       // Neovim: ft=c et=1 sw=3 ts=5
+		{"n.go", "false 0 5"},     // Neovim: ft=go et=0 sw=0 ts=5
+		{"Makefile", "false 0 5"}, // Neovim: ft=make et=0 sw=0 ts=5
+		{"n.txt", "true 3 5"},     // Neovim: ft=text et=1 sw=3 ts=5
+	}
+	for _, tt := range tests {
+		h.keys(":tab.new<CR>:set sw=3 et ts=5 ai<CR>:w " + tt.name + "<CR>")
+		h.settle()
+		h.e.do(func() {
+			if got := indentValues(h.e.cur); got != tt.want || !h.e.cur.option(option.IndentAuto).Bool() {
+				t.Errorf(":w %s の後: %s（indent.auto %v）, want %s", tt.name, got, h.e.cur.option(option.IndentAuto).Bool(), tt.want)
+			}
+		})
+	}
+	// 本体の :set は短い名前の ft を受け付けないので、filetype と書く。
+	h.keys(":tab.new<CR>:set sw=3 et ts=5<CR>:set filetype=go<CR>")
+	h.settle()
+	h.e.do(func() {
+		if got := indentValues(h.e.cur); got != "false 0 5" {
+			t.Errorf(":set ft=go の後: %s, want false 0 5", got)
+		}
+	})
+	h.keys(":set filetype=c<CR>")
+	h.settle()
+	h.e.do(func() {
+		if got := indentValues(h.e.cur); got != "true 3 5" {
+			t.Errorf(":set ft=c の後: %s, want true 3 5（Neovim は et=1 sw=3 ts=5）", got)
+		}
+	})
+	// 隠した項目を :set で変えると、その値を使う。
+	h.keys(":set filetype=go<CR>:set sw=6<CR>")
+	h.settle()
+	h.e.do(func() {
+		if got := indentValues(h.e.cur); got != "false 6 5" {
+			t.Errorf(":set ft=go の後の :set sw=6: %s, want false 6 5", got)
 		}
 	})
 }

@@ -465,6 +465,9 @@ type bufferState struct {
 	// layered は、範囲がバッファごとの設定の項目の、初めの値の段（optionLayers）を順に当てた値である（refreshOptionLayers）。
 	// options に値の無い項目は、この値を使う。
 	layered option.Values
+	// masked は、ファイルの種類が変わったときに、新しい種類の段が値を持つので、options の値を隠して layered の値を使う項目の名前である
+	// （changeFileTypeOptions）。項目を :set で変えると外す。
+	masked map[string]bool
 	// layeredType は、layered を作ったときのファイルの種類である。
 	// ファイルの種類が変わったら（:set filetype=）、段を当て直す（FR-163）。
 	layeredType string

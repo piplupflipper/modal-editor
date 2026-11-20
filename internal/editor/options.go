@@ -15,6 +15,8 @@ import (
 //
 // 読むときは、options に値があればそれを、無ければ layered の値を使う（bufferState.option）。
 // このため、段を作り直しても、利用者が :set で変えた値はどの段よりも勝つ。
+// ただし、ファイルの種類が変わったときは、新しい種類の段が値を持つ項目だけ :set の値を隠し（bufferState.masked）、段の値を使う
+// （changeFileTypeOptions。Neovim の ftplugin が触る項目だけを変えるのと同じ）。
 // :option.set と :set（internal/command/ex）は、バッファの State の Ex.Options（optionAccess）を通して読み書きする。
 // どちらの Values を使うかは項目の範囲で決め、項目の名前では分けない。
 // 範囲がエディタ全体の項目は、使う側が使うたびに今の値を読む。範囲がバッファごとの項目を変えたら、
@@ -47,7 +49,8 @@ func (o optionAccess) Get(d option.Def) option.Value {
 
 // Set は、項目 d の値を v にする。範囲がバッファごとの項目なら、利用者が変えた値として持ち（初めの値の段より勝つ）、
 // 拡張機能へ bs の属性を知らせ直す（FR-134）。
-// 設定した結果、bs のファイルの種類が、初めの値の段を当てたときから変わっていれば、段を新しいファイルの種類で当て直す（applyOptionLayers。FR-163）。
+// 入れた項目は、ファイルの種類が変わって隠していた（bufferState.masked）なら、隠すのをやめる。
+// 設定した結果、bs のファイルの種類が、初めの値の段を当てたときから変わっていれば、段を新しいファイルの種類で当て直す（changeFileTypeOptions。FR-163）。
 // 項目の名前では分けず、ファイルの種類の値が変わったかで決める。
 //
 // 拡張機能へ buffer/open を送り直しても、拡張機能から設定の値を変える経路は無い。後で拡張機能から値を変える口を足すときも、
@@ -59,8 +62,9 @@ func (o optionAccess) Set(d option.Def, v option.Value) error {
 		return err
 	}
 	if d.Scope == option.ScopeBuffer {
+		delete(o.bs.masked, d.Name)
 		if o.bs.fileType() != o.bs.layeredType {
-			o.e.applyOptionLayers(o.bs)
+			o.e.changeFileTypeOptions(o.bs)
 		}
 		o.e.notifyBufferAttrs(o.bs)
 	}
@@ -87,8 +91,9 @@ func (e *Editor) notifyBufferAttrs(bs *bufferState) {
 
 // option は、bs の範囲がバッファごとの項目 name の今の値を返す。利用者が変えた値（options）があればそれを、無ければ初めの値の段を
 // 当てた値（layered）を返す。
+// ファイルの種類が変わって、新しい種類の段が値を持つ項目（masked）は、利用者が変えた値を隠し、段の値を返す。
 func (bs *bufferState) option(name string) option.Value {
-	if v, ok := bs.options.Lookup(name); ok {
+	if v, ok := bs.options.Lookup(name); ok && !bs.masked[name] {
 		return v
 	}
 	return bs.layered.Get(name)
@@ -123,8 +128,8 @@ func (e *Editor) resetBufferOptions(bs *bufferState) {
 
 // renameBufferOptions は、名前の無いバッファに名前（bs.path）を付けたときに、.editorconfig を新しい名前で読み直す（FR-164）。
 // ファイルの種類は呼び出し側が決めておく。名前からファイルの種類が決まって変わったなら、ファイルの種類を変えたとき（optionAccess.Set）と同じく
-// 利用者が変えた値を捨てて初めの値の段を当て直す（applyOptionLayers）。変わらなければ、段を作り直すだけにし（refreshOptionLayers）、
-// :set で変えた値を残す。Neovim 0.12.5 は :w ファイル では .editorconfig を読まず、:file と :saveas（BufFilePost）では読んで
+// changeFileTypeOptions で段を当て直す。変わらなければ、段を作り直すだけにする（refreshOptionLayers）。
+// Neovim 0.12.5 は :w ファイル では .editorconfig を読まず、:file と :saveas（BufFilePost）では読んで
 // .editorconfig の項目を :set の値の上にも当てる（docs/vim-differences.md）。
 // どちらも段の並びは optionLayers のとおりで、.editorconfig がどの段かをここでは前提にしない。
 //
@@ -132,10 +137,39 @@ func (e *Editor) resetBufferOptions(bs *bufferState) {
 func (e *Editor) renameBufferOptions(bs *bufferState) {
 	bs.editorConfig = e.readEditorConfig(bs.path)
 	if bs.fileType() != bs.layeredType {
-		e.applyOptionLayers(bs)
+		e.changeFileTypeOptions(bs)
 		return
 	}
 	e.refreshOptionLayers(bs)
+}
+
+// changeFileTypeOptions は、bs のファイルの種類が変わったとき（:set filetype=、:w ファイル で種類の決まる名前を付けたとき）に、
+// 段を新しい種類で作り直し、新しい種類の段（optionLayer.perType）が値を持つ項目だけ、利用者が :set で変えた値を隠す（bufferState.masked）。
+// ほかの項目の :set の値は残す。前の種類で隠していた項目は、新しい種類の段が値を持たなければ、:set の値に戻す。
+// 隠した項目を後で :set で変えると、その値を使う（optionAccess.Set）。
+//
+// Neovim 0.12.5 の FileType と同じにした。ftplugin は触る項目だけを setlocal で変え、前の種類の ftplugin が変えた項目は
+// b:undo_ftplugin で :set の値（全体の値）に戻す（2026-11-21 に、:set sw=3 et ts=5 の後の :w n.c は 3 つとも残し、:w n.go と
+// :w Makefile は et と sw だけを go と make の値にし、:set ft=go の後の :set ft=c は et=1 sw=3 に戻ることを確かめた）。
+// 項目の名前では分けず、段が値を持つかで決める。
+//
+// req: FR-163
+func (e *Editor) changeFileTypeOptions(bs *bufferState) {
+	e.refreshOptionLayers(bs)
+	bs.masked = nil
+	for _, layer := range e.layers {
+		if !layer.perType {
+			continue
+		}
+		for name := range layer.values(e, bs) {
+			if d, ok := option.Lookup(name); ok && d.Scope == option.ScopeBuffer && !d.Detected {
+				if bs.masked == nil {
+					bs.masked = map[string]bool{}
+				}
+				bs.masked[name] = true
+			}
+		}
+	}
 }
 
 // applyOptionLayers は、bs の範囲がバッファごとの項目（ファイルから判定して決める項目を除く）を、初めの値の段を順に当てた値にする
@@ -143,8 +177,7 @@ func (e *Editor) renameBufferOptions(bs *bufferState) {
 // ファイルの種類（filetype）は bs の今の値を使い、変えない。
 // 拡張機能へは知らせない（呼び出し側が buffer/open か notifyBufferAttrs で知らせる）。
 //
-// バッファを開いたとき（newBuffer）、ファイルから開き直したとき（resetBufferOptions）、ファイルの種類が変わったとき（optionAccess.Set と
-// renameBufferOptions）に呼ぶ。項目の名前では分けない。
+// バッファを開いたとき（newBuffer）と、ファイルから開き直したとき（resetBufferOptions）に呼ぶ。項目の名前では分けない。
 //
 // req: FR-163, FR-164
 func (e *Editor) applyOptionLayers(bs *bufferState) {
@@ -158,6 +191,7 @@ func (e *Editor) applyOptionLayers(bs *bufferState) {
 		}
 	}
 	bs.options = kept
+	bs.masked = nil
 	e.refreshOptionLayers(bs)
 }
 
@@ -169,7 +203,7 @@ func (e *Editor) applyOptionLayers(bs *bufferState) {
 func (e *Editor) refreshOptionLayers(bs *bufferState) {
 	var vs option.Values
 	for _, layer := range e.layers {
-		for name, v := range layer(e, bs) {
+		for name, v := range layer.values(e, bs) {
 			if d, ok := option.Lookup(name); ok && d.Scope == option.ScopeBuffer && !d.Detected {
 				_ = vs.Set(d, v) // 型の違う値と範囲の外の値は使わない
 			}
@@ -179,8 +213,14 @@ func (e *Editor) refreshOptionLayers(bs *bufferState) {
 	bs.layeredType = bs.fileType()
 }
 
-// optionLayer は、初めの値の段の 1 つで、バッファ bs に当てる値（正規の名前から値への対応）を返す。
-type optionLayer func(e *Editor, bs *bufferState) map[string]option.Value
+// optionLayer は、初めの値の段の 1 つである。
+type optionLayer struct {
+	// values は、バッファ bs に当てる値（正規の名前から値への対応）を返す。
+	values func(e *Editor, bs *bufferState) map[string]option.Value
+	// perType は、ファイルの種類ごとの段（値が bs のファイルの種類で決まる段）であることを表す。ファイルの種類が変わったとき、
+	// この段が値を持つ項目だけ、利用者が :set で変えた値を隠す（changeFileTypeOptions）。
+	perType bool
+}
 
 // optionLayers は、バッファごとの項目の初めの値の段を、当てる順に返す（表の既定値の段は、何も入れないことで表す）。後の段の値が勝つ。
 // 段の並びはここの 1 か所で決め、ほかの箇所は段の数と順を前提にしない（Editor.layers に写して使う）。
@@ -193,14 +233,16 @@ type optionLayer func(e *Editor, bs *bufferState) map[string]option.Value
 //  4. .editorconfig の値（editorConfigOptions）
 func optionLayers() []optionLayer {
 	return []optionLayer{
-		func(e *Editor, _ *bufferState) map[string]option.Value { return e.cfg.Options },
-		func(_ *Editor, bs *bufferState) map[string]option.Value {
+		{values: func(e *Editor, _ *bufferState) map[string]option.Value { return e.cfg.Options }},
+		{values: func(_ *Editor, bs *bufferState) map[string]option.Value {
 			return option.FileTypeDefaults(bs.fileType())
-		},
-		func(e *Editor, bs *bufferState) map[string]option.Value { return e.cfg.FileTypeOptions[bs.fileType()] },
-		func(e *Editor, bs *bufferState) map[string]option.Value {
+		}, perType: true},
+		{values: func(e *Editor, bs *bufferState) map[string]option.Value {
+			return e.cfg.FileTypeOptions[bs.fileType()]
+		}, perType: true},
+		{values: func(e *Editor, bs *bufferState) map[string]option.Value {
 			return e.editorConfigOptions(bs.editorConfig)
-		},
+		}},
 	}
 }
 

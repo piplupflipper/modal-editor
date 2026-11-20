@@ -3822,13 +3822,15 @@ Neovim は、利用者の設定（`init.lua` の `:set`）の後に ftplugin を
 |---|---|
 | バッファを開くとき（`newBuffer`） | ファイルの種類を判定し、`.editorconfig` を読み（`bufferState.editorConfig` に覚える）、段を 1 から当てる |
 | ファイルから開き直したとき（`:e`、`:e!`）と、名前の無いバッファを開いたファイルのバッファとして使い回すとき（`resetBufferOptions`） | 上と同じ。`:set` で変えた値は捨てる |
-| ファイルの種類が変わったとき（`:set filetype=`。`optionAccess.Set`） | 段を 1 から、新しい種類で当て直す。`.editorconfig` は読み直さず、開いたときに読んだものを当てる。`:set` で変えたほかの項目の値は捨てる。項目の名前では分けず、ファイルの種類の値が、段を当てたときの種類（`bufferState.layeredType`）から変わったかで決める |
-| 名前の無いバッファに名前を付けたとき（`:w ファイル`。`renameBufferOptions`） | `.editorconfig` を新しい名前で読み直す。名前からファイルの種類が決まって変わったなら、上の行と同じく段を 1 から当て直し、`:set` の値を捨てる。変わらなければ、段の値を作り直すだけにし（`refreshOptionLayers`）、`:set` の値を残す。どちらも段の並びは `optionLayers` のとおりで、`.editorconfig` がどの段かを前提にしない。Neovim 0.12.5 は、`:w ファイル` では `BufFilePost` が起きないので `.editorconfig` を読まず、`:file` と `:saveas` では `.editorconfig` の項目を今の値の上に当てる（`:set ts=5` の後なら `.editorconfig` の値になる）。本体は `:w ファイル` で読み、`:set` の値を残す（`docs/vim-differences.md`） |
+| ファイルの種類が変わったとき（`:set filetype=`。`optionAccess.Set` から `changeFileTypeOptions`） | 段を 1 から、新しい種類で当て直す。`.editorconfig` は読み直さず、開いたときに読んだものを当てる。新しい種類の段（`optionLayer.perType`。本体と設定ファイルのファイルの種類ごとの値）が値を持つ項目だけ、`:set` で変えた値を隠して段の値を使い（`bufferState.masked`）、ほかの項目の `:set` の値は残す。前の種類が隠した項目は、新しい種類の段が値を持たなければ `:set` の値に戻る。隠した項目も、後で `:set` で変えればその値を使う。項目の名前では分けず、ファイルの種類の値が、段を当てたときの種類（`bufferState.layeredType`）から変わったかと、段が値を持つかで決める |
+| 名前の無いバッファに名前を付けたとき（`:w ファイル`。`renameBufferOptions`） | `.editorconfig` を新しい名前で読み直す。名前からファイルの種類が決まって変わったなら、上の行と同じく当て直す（新しい種類の段が値を持つ項目だけ `:set` の値を隠す）。変わらなければ、段の値を作り直すだけにし（`refreshOptionLayers`）、`:set` の値を残す。どちらも段の並びは `optionLayers` のとおりで、`.editorconfig` がどの段かを前提にしない。Neovim 0.12.5 は、`:w ファイル` では `BufFilePost` が起きないので `.editorconfig` を読まず、`:file` と `:saveas` では `.editorconfig` の項目を今の値の上に当てる（`:set ts=5` の後なら `.editorconfig` の値になる）。本体は `:w ファイル` で読み、`:set` の値を残す（`docs/vim-differences.md`） |
 
 Vim の `FileType` と比べた（2026-11-21 に Neovim 0.12.5 で、`.editorconfig` に `indent_size = 2` を書いた `.txt` のファイルを開き、`:set ft=go` を打った）。
 Neovim は `FileType` で ftplugin を当て直すので、`'shiftwidth'` が `.editorconfig` の 2 から go の ftplugin の 0 になる。本体は、開いたときと同じく `.editorconfig` の段を最後に当てるので、2 のまま残る。
 ファイルを開いたときの値の決まり方と、種類を変えたときの決まり方を同じにするために、この形にした。
-また、Neovim は ftplugin の `b:undo_ftplugin` で前の種類の値だけを戻すので、ftplugin が触らない項目の `:set` の値は残る。本体は段を 1 から当て直すので、`:set` の値は残らない。
+`:set` の値は、Neovim に合わせた（PR #324 の再レビューの推奨。オーケストレータの判断）。Neovim は ftplugin が触る項目だけを `setlocal` で変え、前の種類の ftplugin が変えた項目は `b:undo_ftplugin` で全体の値（`:set` の値）に戻すので、ftplugin が触らない項目の `:set` の値は残る。
+本体の「新しい種類の段が値を持つ項目」は、Neovim の「ftplugin が触る項目」に当たる。
+2026-11-21 に Neovim 0.12.5 で、`:enew` と `:set sw=3 et ts=5 ai` の後に `:w n.c` を打つと 4 つとも残り、`:w n.go` と `:w Makefile` は `et` と `sw` だけが go と make の値（`noet`、`sw=0`）になり、`:w n.txt` は 4 つとも残った。`:set ft=go` の後の `:set ft=c` は、`et=1`、`sw=3` に戻った。本体も同じになる（`internal/editor` の `TestFileTypeChangeKeepsOtherSetValues`）。#318 の初めの実装は `:set` の値をすべて捨てていた。
 
 `.editorconfig` の読み方は次のとおりである（`internal/editorconfig`）。
 
@@ -3852,7 +3854,7 @@ Neovim は、`indent_size` を書くと `'softtabstop'` を `-1`（`'shiftwidth'
 | 持つもの | 中身 | 作り方 |
 |---|---|---|
 | `bufferState.layered` | 段を順に当てた値 | `refreshOptionLayers` が `Editor.layers`（`optionLayers` の写し）の段を順に当てて作り直す |
-| `bufferState.options` | 利用者が `:option.set` と `:set` で変えた値と、ファイルから判定して決める項目（`filetype`）の値 | `optionAccess.Set` が入れる。`applyOptionLayers`（開いたとき、`:e`、ファイルの種類が変わったとき）が `filetype` のほかを捨てる |
+| `bufferState.options` | 利用者が `:option.set` と `:set` で変えた値と、ファイルから判定して決める項目（`filetype`）の値 | `optionAccess.Set` が入れる。`applyOptionLayers`（開いたとき、`:e`）が `filetype` のほかを捨てる。ファイルの種類が変わったときは捨てず、新しい種類の段が値を持つ項目だけを隠す（`bufferState.masked`。`changeFileTypeOptions`） |
 
 読むときは、`options` に値があればそれを、無ければ `layered` の値を使う（`bufferState.option`。`option.Values.Lookup` で値を入れたかを見分ける）。
 このため、段の値を後から作り直しても、利用者が変えた値はどの段の値よりも勝つ。
