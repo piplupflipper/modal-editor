@@ -62,8 +62,9 @@ func TestVisualInsert(t *testing.T) {
 		{visualInsertText, "V4jA// x<C-w>y<Esc>", "  abc// y\n\tdefg// y\n// y\n   // y\nあいう// y", "0:8", ModeNormal},
 		// 行の先頭までの削除も、位置からの相対で書ける（それぞれの行の先頭まで消す）。
 		{"  ab\n  cd", "VjA<C-u>X<Esc>", "X\nX", "0:0", ModeNormal},
-		// 入力を始めた位置より前の文字も、それぞれの行で消す（字下げを 1 文字ずつ減らす）。
-		{"  abc\n\tdefg", "VjI<BS>X<Esc>", " Xabc\nXdefg", "0:1", ModeNormal},
+		// 入力を始めた位置より前の文字も、それぞれの行で消す。字下げの中の <BS> は、それぞれの行で字下げの幅（既定の 8）の単位で減らす
+		// （FR-160。Neovim の既定の 'smarttab'）。
+		{"  abc\n\tdefg", "VjI<BS>X<Esc>", "Xabc\nXdefg", "0:0", ModeNormal},
 		// 途中の行から選ぶ。
 		{visualInsertText, "jjVjAX<Esc>", "  abc\n\tdefg\nX\n   X\nあいう", "2:0", ModeNormal},
 		// バッファの最後の行を含む範囲。Vim の G<C-v>k$AX<Esc> と同じテキスト。

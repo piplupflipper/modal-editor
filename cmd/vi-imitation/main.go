@@ -555,6 +555,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		FileTypes:        cfg.FileTypes,
 		FixEndOfLine:     cfg.FixEndOfLine,
 		Options:          cfg.Options,
+		FileTypeOptions:  cfg.FileTypeOptions,
 		CommandAliases:   aliases,
 		ReadOnlyPaths:    cfg.ReadOnlyPaths,
 		ColorScheme:      uiColors(cfg.SchemeColors),

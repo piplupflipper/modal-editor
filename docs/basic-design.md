@@ -656,7 +656,13 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 
 | パッケージ | 責務 | 持たないもの |
 |---|---|---|
-| `internal/option` | 設定の表（項目の名前、型、効く範囲、既定値）と、値の型と、値を文字列から読む規則、1 つの範囲の値の入れ物（`option.Values`）。`internal/config` と `internal/command/ex` の両方が引く | 値の保持と適用（`internal/editor`）、Vim の名前から正規の名前への対応（`internal/command/ex` の `:set` の別名） |
+| `internal/option` | 設定の表（項目の名前、型、効く範囲、既定値）と、値の型と、値を文字列から読む規則、1 つの範囲の値の入れ物（`option.Values`）。`internal/config` と `internal/command/ex` の両方が引く。#318 で、本体のファイルの種類ごとの既定（`option.FileTypeDefaults`）も持った | 値の保持と適用（`internal/editor`）、Vim の名前から正規の名前への対応（`internal/command/ex` の `:set` の別名） |
+
+#318 で、次のパッケージを土台の層に足した（7.3 の「バッファごとの項目の初めの値」）。他のパッケージを import しない。図 2 にはまだ描いていない。
+
+| パッケージ | 責務 | 持たないもの |
+|---|---|---|
+| `internal/editorconfig` | 開いたファイルに当たる `.editorconfig` を親のディレクトリへ探して読み、ファイルに当たる項目（名前と値の文字列）を返す。EditorConfig の仕様の glob の解釈（外部ライブラリを足さずに自前で書いた） | 項目を本体の設定へ写すこと（`internal/editor`） |
 
 Go は、パッケージが互いを import する循環を、コンパイルエラーにする。
 層を決めておくのは、実装の途中で循環に行き当たるのを避けるためである。
@@ -815,6 +821,44 @@ Vim 9.1 も、バッファの先頭と空のバッファの `<BS>`、`<C-w>`、`
 カーソルと選択の両端は、範囲の内側にあっても今までどおり範囲の始まりへ寄せて残す。
 
 画面には、バッファの中身をそのまま描くので、打っている間からすべての行にテキストが出る。カーソルは最初の行の位置だけに出す。
+
+### 3.2 字下げと自動インデント
+
+2026-11-21 のオーナーとの相談（#318。索引は #317）で、インサートモードの字下げ（タブ文字かスペースか、幅）と、タブ文字の表示幅と、自動インデントを、バッファごとの設定で決めることにした（FR-160〜FR-162）。
+設定の項目は 7.3 の表の `indent.useSpaces`、`indent.width`、`tab.width`、`indent.auto` で、使う側（`internal/command` の `State.indentConfig`）が使うたびにバッファの今の値を読む。
+`indent.width` が 0 なら `tab.width` の値を使う（Vim の `shiftwidth=0`）。
+
+Vim の `'softtabstop'` と `'smarttab'` は、別の設定にしない（#318 の決め）。
+インサートモードの `<Tab>` と `<BS>` は、Neovim 0.12.5 の次の組と同じに動く。`'smarttab'` は Neovim の既定でオンである。
+
+| `indent.useSpaces` | Neovim の組 |
+|---|---|
+| `true` | `expandtab shiftwidth=N softtabstop=N smarttab` |
+| `false` | `noexpandtab shiftwidth=N softtabstop=0 smarttab` |
+
+N は `indent.width`（0 なら `tab.width`）、`'tabstop'` は `tab.width` である。
+`'smarttab'` の動き（行頭の `<Tab>` で字下げの幅だけ字下げする）は、`true` の組では `'softtabstop'` と結果が同じなので、別の設定は要らない。
+`false` の組では、字下げの幅とタブ文字の幅が違うとき（`indent.width` が 4、`tab.width` が 8）に、行頭の `<Tab>` がスペースとタブ文字を混ぜて字下げの幅の単位で字下げする。Neovim の既定の `'smarttab'` と同じなので、そのまま写した。
+写したのは Neovim 0.12.5 の `src/nvim/edit.c` の `ins_tab` と `ins_bs` の、上の組で通る道である（`internal/command` の `indent.go`）。
+
+| 入力 | 動き |
+|---|---|
+| `<Tab>` | `indent.useSpaces` が `false` で、カーソルの前が字下げ（空白だけ）でないか、字下げの幅とタブ文字の幅が同じなら、タブ文字を 1 つ入れる。それ以外は、次の字下げの幅の倍数の列までスペースを入れる。`false` なら、入れた後に、カーソルの前に続く空白をタブ文字を使えるだけ使う形に直す（Neovim の「Replace spaces by TABs where possible」と同じ手順。空白の途中にタブ文字があるときの結果も Neovim と同じにした） |
+| `<BS>` | カーソルの前が字下げなら、前の文字の最後の列より左の、字下げの幅の倍数の列まで、カーソルの前の空白を消し、消しすぎた（タブ文字を消した）分をスペースで埋める（`'smarttab'`）。`indent.useSpaces` が `true` なら、カーソルの前の文字がタブ文字か、スペースでこのインサートでスペースを打っていない（Neovim の `inserted_space`）ときも同じにする（`'softtabstop'`）。それ以外は 1 文字消す |
+| `<CR>` | `indent.auto` が `true` なら、Neovim の `open_line` と同じく、カーソルより前の部分の先頭の空白の幅を新しい行の字下げにし、カーソルより後ろの部分の先頭の空白を消す。字下げは `indent.useSpaces` に従って作り直す（Vim の `'copyindent'` がオフ）。カーソルの行が自動インデントで入れた字下げのまま（何も打っていない）なら、カーソルより前の部分の末尾の空白を消す |
+| `o`、`O` | `indent.auto` が `true` なら、開いた行にカーソルの行の字下げを入れる（`O` では下へずれる行の字下げ）。回数の分の行も同じく開く |
+| 行単位の `c`（`cc`、`S`、行単位のビジュアルモードの `c`） | `indent.auto` が `true` なら、最初の行の字下げを残す（Vim の `op_change`）。レジスターには字下げを含めた行を書く |
+| 自動インデントで入れた字下げのままの行 | `<BS>`（と、位置の前を消すほかの操作）のほかに何も打たずに、`<Esc>` で抜けるか、カーソルキーで別の行へ移るか、`<CR>` を打つと、カーソルの位置から空白を消す（Vim の `did_ai` と `stop_insert`。`:help 'autoindent'`）。ただし、`<BS>` の後のカーソルが行の 2 バイト目より前のとき（タブ文字 1 つが残ったとき）は消さない（Neovim 0.12.5 の `ins_bs` の末尾の `if (curwin->w_cursor.col <= 1) did_ai = false`。Vim 9.1 も同じ）。同じ行の中でカーソルキーを動かしたとき、ほかの入力（文字、`<Tab>`、`<Del>`）をしたときは、消さずに残す。#318 の初めの実装は `<BS>` でも消さずに残し、字下げを 1 段戻して抜けると行末に空白が残った（PR #324 のレビューの必須 1。`<BS>` の後の 150 件を Neovim 0.12.5 と Vim 9.1 と突き合わせて `indent_bs_cases_test.go` に入れた） |
+
+`<Tab>` と `<CR>` は、入力の記録（`editcmd.InsertInput`）に、文字と別の種類（`editcmd.InsertTab`、`editcmd.InsertLineBreak`）として入れる。
+ドットリピートと回数による繰り返しでは、繰り返す位置で設定を当て直す（Vim の redo の記録が `<Tab>` と `<CR>` のキーであるのと同じ）。
+端末から貼り付けたテキスト（bracketed paste）のタブ文字と改行は、文字（`editcmd.InsertRune`）として入れ、字下げの設定と自動インデントを当てない（Neovim の貼り付けと同じ）。
+回数による繰り返しで続けて並んだ文字をまとめるとき（`typeRepeated`）、まとめている最後の文字が空白なら `<BS>` を最後の文字を落とすだけで済ませず、まとめた文字を入れてから `<BS>` を行う（字下げの幅の単位で消すことがあるため）。
+
+ノーマルモードの `>` と `<`（FR-76）とビジュアルモードの `>` と `<`（FR-77）は、行の字下げの幅（タブ文字は `tab.width` で数える）に、字下げの幅に回数を掛けた幅を足すか引き、`indent.useSpaces` に従って字下げを作り直す（Vim の `'shiftround'` と `'preserveindent'` がオフの動き）。
+
+期待値は、2026-11-21 に手元の Neovim 0.12.5（`nvim --clean`）で、設定の組を 5 つ（`indent.useSpaces`、`indent.width`、`tab.width` が `false 8 8`、`true 4 4`、`false 4 4`、`true 2 8`、`false 4 8`）にして取った（`internal/command` の `indent_cases_test.go`。338 件）。
+`>` と `<` の後のカーソルは、Neovim の既定の `'nostartofline'` で Vim 9.1 と違うので、今までどおり Vim 9.1 に合わせ（`shift_test.go`）、Neovim とはテキストだけを比べた。
 
 ## 4. バッファと編集
 
@@ -2823,6 +2867,23 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 `make dist` の本体を tmux の 200 列 60 行で動かし、`300000aあb<Tab>c<Esc>` で作った 180 万バイトの行で、キーを送ってからルーラーが変わるまでを測ると（2026-11-20。load average は 1.5 から 1.7）、行末からの `gk` は 239〜248 ms、`$` は 96 ms、行頭からの `gj` は 91 ms だった。PR #310 のレビューの同じ測り方では、直す前の `gk` は 368〜399 ms、nvim 0.12.5 は 84〜106 ms である。
 残る差は、キーを打つたびに行の先頭から数え直すこと（`gk` は行の最後の列と望みの列の文字を、描画はカーソルの行と描く見た目の行までを数える）による。行の途中の位置を覚えて数え直さない形（行ごとの見た目の行の始まりの表を、編集で消す覚え）は、この節の範囲に入れていない。
 
+#### タブ文字の表示幅
+
+#318 で、タブ文字の表示幅を、バッファごとの設定 `tab.width`（7.3。Vim の `'tabstop'`）で決めるようにした（FR-161）。
+それまでは `internal/ui` の定数 `DefaultTabStop`（8）を `Renderer.TabStop` の既定に使い、`Renderer.TabStop` に値を入れる箇所が無かった。
+特別な分岐を入れず、タブ文字の幅を使う箇所は、どれも同じ値を引数か描く Frame で受け取る形にした。
+
+| 使う箇所 | 受け取り方 |
+|---|---|
+| 本文の描画、カーソルの位置、折り返し、ルーラーの列、ステータス行とポップアップの窓の幅 | `ui.Frame.TabStop`。`internal/editor` が描くたびに、表示領域に描くバッファの今の値を詰める（`Editor.frame`）。`Renderer.Render` が描く間の値（`Renderer.tabStop`）にし、描画の中でタブ幅を使う箇所が読む。公開していた `Renderer.TabStop` は無くした |
+| ポップアップとプレビューの中身 | それぞれの中身のバッファの値を `Float.View.TabStop`、`Preview.View.TabStop` に詰める（`Editor.floatFrame`、`Editor.uiPreview`）。プレビューに開いたファイルは、ファイルの種類ごとの値で描く（プレビューのバッファは名前を持たないので、`.editorconfig` は読まない） |
+| `gj` と `gk`、ページ単位のスクロール（`command.State.ScreenLines`） | `ui.Renderer.WrapLines(tabStop)` の引数。`internal/editor` の `screenLines` が State のバッファの今の値を渡す。次の描画の前に `:set tabstop=` で変えても、今の値で数える |
+| 望みの列（`command.State.Columns`） | `internal/editor` の `wrapColumns` が、そのつど `ui.Columns{TabStop: …}` を作る。それまでは State を作るときに `Renderer.Columns()` で写した値を使い続けていた |
+| 字下げの幅（3.2） | `command.State.TextWidth`（`ui.StringWidth`）の引数 |
+| ホバーとヘルプのポップアップの中身を窓の幅で折り返すとき（`ui.WrapText`） | 名前もファイルの種類も無いバッファの初めの値（`Editor.scratchTabWidth`。設定ファイルの最上位の `tab.width`）。そのバッファを描くときと同じ幅で数える |
+
+記号、アイコン、続きの行の記号の幅のように、バッファのテキストでない文字列は、今までどおり `DefaultTabStop` で数える。
+
 
 
 #### 検索の一致の色付け
@@ -3411,8 +3472,9 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 | `elevateCommand` | 権限の不足で保存できないときに使うコマンドの列。既定は `["sudo"]` | 4.7 |
 | `extensions.install` | 取得する拡張機能の列 | 5.6 |
 | `commandAliases` | Ex コマンドの名前を付け替えるだけの別名。名前から、付け替える先（`command`）と省略できる最短の長さ（`min`）への対応（FR-150。#291） | 7.3 |
+| `fileTypeOptions` | ファイルの種類の名前から、そのファイルの種類のバッファを開くときに当てる、範囲がバッファごとの設定の項目の値への対応（FR-163。#318） | 7.3 |
 
-設定の表（7.3）の、範囲がエディタ全体の項目も設定ファイルに書く。点で区切った名前を入れ子のキーにする（#264）。
+設定の表（7.3）の項目（`filetype` を除く）も設定ファイルに書く。点で区切った名前を入れ子のキーにする（#264）。範囲がバッファごとの項目は、バッファを開くときの初めの値になる（#318）。
 
 ### 7.1 見た目の設定
 
@@ -3664,8 +3726,14 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `preview.widthPercent` | 整数（1 から 99） | エディタ全体 | `60` | 無し | 窓の幅のうちプレビューに使う百分率。既定は fzf-lua の `winopts.preview.horizontal` の既定（`right:60%`）と同じ |
 | `preview.windowWidthPercent` | 整数（10 から 100） | エディタ全体 | `90` | 無し | プレビューを出すときの、中央のポップアップの窓の幅の、開いた client の画面の幅に対する百分率。既定はオーナーの nvim の fzf-lua の `winopts.width`（0.9）と同じ。端末多重化ソフトのポップアップに出すときも、この百分率の幅でポップアップを開く（1.4 の「#288 のプレビュー」）。分割したペインでは読まない |
 | `icons.show` | 真偽 | エディタ全体 | `true` | 無し | 一覧と木の、ファイルかディレクトリを指す項目の前に、ファイルの種類のアイコンを付けるか（1.4 の「#295 のアイコン」。FR-152）。既定はオーナーの決めで付ける。一覧を作り直すときに読む。アイコンの表は設定の `icons` のほかの項目で書き換える（7.1） |
+| `indent.useSpaces` | 真偽 | バッファごと | `false` | `expandtab`、`et` | 字下げをスペースで作るか（3.2。FR-160）。既定は Vim と同じくタブ文字で作る。同梱の `config.example.jsonc` では `true` |
+| `indent.width` | 整数（0 から 9999） | バッファごと | `8` | `shiftwidth`、`sw` | 字下げの 1 段の幅（3.2。FR-160）。0 なら `tab.width` の値を使う（Vim の `shiftwidth=0`）。Vim の `'shiftwidth'` に上限は無いが、`tab.width` と同じ 9999 にした。同梱の `config.example.jsonc` では `4` |
+| `tab.width` | 整数（1 から 9999） | バッファごと | `8` | `tabstop`、`ts` | タブ文字の表示幅（6.7 の「タブ文字の表示幅」。FR-161）。範囲は Vim の `'tabstop'` と同じ（2026-11-21 に Vim 9.1 と Neovim 0.12.5 の `:set ts=0` が `E487`、`:set ts=10000` が `E474` になることを確かめた）。同梱の `config.example.jsonc` では `4` |
+| `indent.auto` | 真偽 | バッファごと | `false` | `autoindent`、`ai` | 自動インデントを行うか（3.2。FR-162）。既定は Vim と同じく行わない（Neovim の既定は行う）。同梱の `config.example.jsonc` では `true` |
+| `editorConfig.enabled` | 真偽 | エディタ全体 | `true` | 無し | 開いたファイルに当たる `.editorconfig` を読むか（「バッファごとの項目の初めの値」。FR-164）。既定は Neovim 0.12.5 の `g:editorconfig` と同じく読む（Vim 9.1 は同梱の editorconfig のプラグインを `:packadd` するまで読まない）。バッファを開くときに読むので、変えた後に開いたバッファから効く |
 
-`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で足した。
+`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で足した。
+#318 の 4 つの名前は、issue の案のとおりにした。インデントの文字と幅は `indent.` の下に、タブ文字の表示幅は字下げに限らない（行の途中のタブ文字も描く）ので `tab.` の下に置いた。
 `preview.*` の名前は、何の窓の何の値かが分かるように、窓の幅の境目（`minWindowWidth`）、プレビューの割合（`widthPercent`）、窓の割合（`windowWidthPercent`）にした（fzf-lua の `flip_columns` は、何を反転するのかが名前から分からないため写さなかった）。
 
 値の入れ物（`option.Values`）は、項目ごとに値を入れた回数も数える（`option.Values.Revision`。#275）。
@@ -3681,12 +3749,13 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | 範囲 | 初めの値 | 実行中に変えたとき |
 |---|---|---|
 | エディタ全体 | 設定ファイルの値。書かなければ表の既定値 | 値を変えるだけにする。描画などの使う側が、使うたびに今の値を読む。その項目のためだけの処理は呼ばない |
-| バッファごと | バッファを開くときに決まる（`filetype` は、今どおり設定の `fileTypes` の対応表と自動の判定で決まる）。設定ファイルには書けない | 項目の名前によらず、拡張機能へバッファの属性を知らせ直す（`exthost.Host.UpdateBuffer`。別名で保存したときと同じ経路で、`buffer/open` を新しいパスとファイルの種類で送り直し、ファイルの種類の契機で拡張機能を起動する。FR-14、FR-134） |
+| バッファごと | バッファを開くときに決まる。`filetype`（表の欄 `option.Def.Detected`）は、今どおり設定の `fileTypes` の対応表と自動の判定で決まる。ほかの項目は、次の「バッファごとの項目の初めの値」の段を当てて決まる（#318） | 項目の名前によらず、拡張機能へバッファの属性を知らせ直す（`exthost.Host.UpdateBuffer`。別名で保存したときと同じ経路で、`buffer/open` を新しいパスとファイルの種類で送り直し、ファイルの種類の契機で拡張機能を起動する。FR-14、FR-134）。ファイルの種類が変わったら、段を当て直す（#318） |
 
 設定ファイルでは、点で区切った名前を入れ子のキーとして書く（`"lineNumber": { "show": true }`）。
-読むのは範囲がエディタ全体の項目だけで、値は項目の型の JSON の値（`true`、整数、文字列）で書く。
-範囲がバッファごとの項目を書けば、位置付きの誤りとして知らせて使わない（`config.jsonc:1:3: filetype はバッファごとの設定なので、設定ファイルには書けない`）。
-この規則は範囲で決め、項目の名前では分けない（`internal/config` の `source.option`）。
+値は項目の型の JSON の値（`true`、整数、文字列）で書く。
+範囲がエディタ全体の項目はエディタの初めの値に、範囲がバッファごとの項目はバッファを開くときの初めの値になる（#318。FR-163。#264 では範囲がバッファごとの項目を書けなかった）。
+ファイルから判定して決める項目（`option.Def.Detected`。`filetype`）を書けば、位置付きの誤りとして知らせて使わない（`config.jsonc:1:3: filetype はバッファを開くときに決まる設定なので、設定ファイルには書けない`）。
+この規則は範囲と表の欄で決め、項目の名前では分けない（`internal/config` の `source.option`）。
 表の項目の名前の最上位の段は、既存の項目（`keymap`、`tabline` など）と重ねない。既存の項目を先に読むためである。
 例外は `icons` で、`icons.show` を、アイコンの表の項目（7.1）を読む `source.icons` が表の項目として読む（#295）。
 重ねていないことは、表のすべての項目を `config.Parse` に読ませるテスト（`TestOptionDefsReadByParse`）が確かめる。
@@ -3727,6 +3796,76 @@ Vim 9.1 も、`:set numberwidth=99999999999999999999` と `=2147483648` を `E47
 
 外での変更の読み直し（`autoread` と、W11〜W13 の問いの (L)oad File）では戻さない。
 Vim 9.1 も、`autoread` で読み直したときは `'filetype'` を残す（2026-11-20 に `:checktime` で確かめた）。
+
+#### バッファごとの項目の初めの値
+
+2026-11-21 のオーナーとの相談（#318）で、範囲がバッファごとの項目（`filetype` を除く）の初めの値を、次の段を順に当てて決めることにした（FR-163、FR-164）。
+後に当てた段の値が勝つ。段を当てるのは `internal/editor` の `refreshOptionLayers` で、段の並びは `optionLayers` の 1 か所にある。
+利用者が `:option.set` と `:set` で変えた値は段に入れず、どの段の値よりも勝つ（下の「段の値と `:set` の値」）。
+
+| 順 | 段 | 置き場所 |
+|---|---|---|
+| 1 | 表の既定値 | `option.Def.Default`。Vim の既定に合わせる |
+| 2 | 設定ファイルの最上位に書いた値 | `config.Config.Options`（`"indent": { "width": 4 }`） |
+| 3 | 本体のファイルの種類ごとの既定 | `option.FileTypeDefaults`。`go` と `make` は `indent.useSpaces` を `false`、`indent.width` を 0 にする |
+| 4 | 設定ファイルのファイルの種類ごとの値 | `config.Config.FileTypeOptions`（`"fileTypeOptions": { "go": { "tab": { "width": 4 } } }`） |
+| 5 | 開いたファイルに当たる `.editorconfig` の値 | `internal/editorconfig` で読み、`internal/editor` の `editorConfigOptions` で写す |
+
+オーナーの決めの順（本体の既定、設定ファイルの値、設定ファイルのファイルの種類ごとの値、`.editorconfig`、プロジェクトの整形ツールの設定）に、本体のファイルの種類ごとの既定を足した。
+本体のファイルの種類ごとの既定は、Vim 9.1 と Neovim 0.12.5 の runtime の `ftplugin/make.vim` と `ftplugin/go.vim` が、どちらも `setlocal noexpandtab softtabstop=0 shiftwidth=0` とすることから持つことにした（2026-11-21 に読んだ。Makefile のレシピはタブ文字で始め、Go は gofmt がタブ文字で字下げする）。
+#318 の本文は、これを本体の既定の段（1）に置き、設定ファイル（2、3）で上書きできるようにするとしていたが、設定ファイルの最上位の値（2）の後、ファイルの種類ごとの値（4）の前に置いた。
+Neovim は、利用者の設定（`init.lua` の `:set`）の後に ftplugin を当てるので、最上位に `expandtab` を書いても Go と Makefile はタブ文字で字下げする（オーナーの nvim も `expandtab` を全体に書き、Go はタブ文字になる）。
+本体の段 1 に置くと、同梱の設定の例のように最上位で `indent.useSpaces` を `true` にしたとき、Makefile のレシピがスペースで字下げされて動かなくなる。
+本体のファイルの種類ごとの既定を変えるときは、設定ファイルの `fileTypeOptions` に書く。
+
+| いつ当てるか | 当て方 |
+|---|---|
+| バッファを開くとき（`newBuffer`） | ファイルの種類を判定し、`.editorconfig` を読み（`bufferState.editorConfig` に覚える）、段を 1 から当てる |
+| ファイルから開き直したとき（`:e`、`:e!`）と、名前の無いバッファを開いたファイルのバッファとして使い回すとき（`resetBufferOptions`） | 上と同じ。`:set` で変えた値は捨てる |
+| ファイルの種類が変わったとき（`:set filetype=`。`optionAccess.Set` から `changeFileTypeOptions`） | 段を 1 から、新しい種類で当て直す。`.editorconfig` は読み直さず、開いたときに読んだものを当てる。新しい種類の段（`optionLayer.perType`。本体と設定ファイルのファイルの種類ごとの値）が値を持つ項目だけ、`:set` で変えた値を隠して段の値を使い（`bufferState.masked`）、ほかの項目の `:set` の値は残す。前の種類が隠した項目は、新しい種類の段が値を持たなければ `:set` の値に戻る。隠した項目も、後で `:set` で変えればその値を使う。項目の名前では分けず、ファイルの種類の値が、段を当てたときの種類（`bufferState.layeredType`）から変わったかと、段が値を持つかで決める |
+| 名前の無いバッファに名前を付けたとき（`:w ファイル`。`renameBufferOptions`） | `.editorconfig` を新しい名前で読み直す。名前からファイルの種類が決まって変わったなら、上の行と同じく当て直す（新しい種類の段が値を持つ項目だけ `:set` の値を隠す）。変わらなければ、段の値を作り直すだけにし（`refreshOptionLayers`）、`:set` の値を残す。どちらも段の並びは `optionLayers` のとおりで、`.editorconfig` がどの段かを前提にしない。Neovim 0.12.5 は、`:w ファイル` では `BufFilePost` が起きないので `.editorconfig` を読まず、`:file` と `:saveas` では `.editorconfig` の項目を今の値の上に当てる（`:set ts=5` の後なら `.editorconfig` の値になる）。本体は `:w ファイル` で読み、`:set` の値を残す（`docs/vim-differences.md`） |
+
+Vim の `FileType` と比べた（2026-11-21 に Neovim 0.12.5 で、`.editorconfig` に `indent_size = 2` を書いた `.txt` のファイルを開き、`:set ft=go` を打った）。
+Neovim は `FileType` で ftplugin を当て直すので、`'shiftwidth'` が `.editorconfig` の 2 から go の ftplugin の 0 になる。本体は、開いたときと同じく `.editorconfig` の段を最後に当てるので、2 のまま残る。
+ファイルを開いたときの値の決まり方と、種類を変えたときの決まり方を同じにするために、この形にした。
+`:set` の値は、Neovim に合わせた（PR #324 の再レビューの推奨。オーケストレータの判断）。Neovim は ftplugin が触る項目だけを `setlocal` で変え、前の種類の ftplugin が変えた項目は `b:undo_ftplugin` で全体の値（`:set` の値）に戻すので、ftplugin が触らない項目の `:set` の値は残る。
+本体の「新しい種類の段が値を持つ項目」は、Neovim の「ftplugin が触る項目」に当たる。
+2026-11-21 に Neovim 0.12.5 で、`:enew` と `:set sw=3 et ts=5 ai` の後に `:w n.c` を打つと 4 つとも残り、`:w n.go` と `:w Makefile` は `et` と `sw` だけが go と make の値（`noet`、`sw=0`）になり、`:w n.txt` は 4 つとも残った。`:set ft=go` の後の `:set ft=c` は、`et=1`、`sw=3` に戻った。本体も同じになる（`internal/editor` の `TestFileTypeChangeKeepsOtherSetValues`）。#318 の初めの実装は `:set` の値をすべて捨てていた。
+
+`.editorconfig` の読み方は次のとおりである（`internal/editorconfig`）。
+
+| 項目 | 決めたこと |
+|---|---|
+| 探し方 | EditorConfig の仕様（https://spec.editorconfig.org/）に合わせた。ファイルのディレクトリから親のディレクトリへ順に探し、近いファイルの値が勝つ。前文に `root = true` と書いたファイルで止まる。1 つのファイルの中では、当たるセクションのうち後に書いたものの値が勝つ。値が `unset` の項目は書かなかったものとして扱う（遠いファイルの値も打ち消す） |
+| glob | 仕様の `*`、`**`、`?`、`[seq]`、`[!seq]`、`{s1,s2}`、`{num1..num2}`、`\` を、外部ライブラリを足さずに自前で書いた（`editorconfig.Match`）。仕様の例は `editorconfig_test.go` に、EditorConfig の公式のテスト（`editorconfig-core-test` の `glob/braces.in` と `glob/star_star.in`）の 98 件は `core_test.go` にある。`,` を含まない `{s}` は `{` と `}` で囲んだ文字どおりの並びに当て（`{word,{also},this}` は `{also}` に当たる）、`{num1..num2}` は 0 から始まる 2 桁以上の数字（`060`）に当てない（PR #324 のレビューの推奨 3）。`/` を含むセクションは `.editorconfig` のあるディレクトリからのパスに当て、含まないセクションはどの深さのファイルの名前にも当てる |
+| 読む項目 | `indent_style`、`indent_size`、`tab_width` の 3 つだけである（#318 の決め）。`end_of_line`、`charset`、`trim_trailing_whitespace`、`insert_final_newline`、`max_line_length` は読まない（`docs/usage.md` に書いた） |
+| 写し方 | Neovim 0.12.5 の `runtime/lua/editorconfig.lua` に合わせた。`indent_style = space` は `indent.useSpaces` を `true`、`tab` は `false` にし、`tab` で `indent_size` が無ければ `indent.width` を 0 にする。`indent_size` は `indent.width` にし、`tab_width` が無ければ `tab.width` も同じ値にする。`indent_size = tab` は `indent.width` を 0 にする。`tab_width` は `tab.width` にする |
+| 正しくない値 | その項目だけを使わず、ログに残す（Neovim は項目ごとに警告を出す）。範囲の外の幅（`tab_width = 0`）も、設定の表の検査（`option.Def.Check`）で断る |
+| 読む時点 | バッファを開くとき、`:e` で開き直すとき、名前の無いバッファに `:w ファイル` で名前を付けたときである。Neovim の `plugin/editorconfig.lua` は `BufNewFile`、`BufRead`、`BufFilePost` で読み、`:w ファイル` では `BufFilePost` が起きないので読まない（2026-11-21 に確かめた）。本体は、名前を付けた後のファイルに当たる値を使えるように、`:w ファイル` でも読む。開いた後に `.editorconfig` を書き換えても、そのバッファには効かず、`:e` で開き直すと効く（2026-11-21 に Neovim 0.12.5 で確かめた） |
+| 止め方 | エディタ全体の設定 `editorConfig.enabled`（Neovim の `g:editorconfig`）を `false` にする。名前の無いバッファとポップアップのバッファ（プレビューを含む）は読まない |
+
+Neovim は、`indent_size` を書くと `'softtabstop'` を `-1`（`'shiftwidth'` と同じ）にするので、`indent_style = tab` と `indent_size = 4` を書いたファイルでは、`<Tab>` と `<BS>` が `'softtabstop'` の動きをする。
+本体は `'softtabstop'` を `indent.useSpaces` に合わせて決める（3.2）ので、タブ文字のときは `'softtabstop'` が 0 の動きになる（`docs/vim-differences.md`）。
+
+##### 段の値と `:set` の値
+
+範囲がバッファごとの項目の値は、バッファごとに 2 つに分けて持つ（PR #324 のレビューの必須 2）。
+
+| 持つもの | 中身 | 作り方 |
+|---|---|---|
+| `bufferState.layered` | 段を順に当てた値 | `refreshOptionLayers` が `Editor.layers`（`optionLayers` の写し）の段を順に当てて作り直す |
+| `bufferState.options` | 利用者が `:option.set` と `:set` で変えた値と、ファイルから判定して決める項目（`filetype`）の値 | `optionAccess.Set` が入れる。`applyOptionLayers`（開いたとき、`:e`）が `filetype` のほかを捨てる。ファイルの種類が変わったときは捨てず、新しい種類の段が値を持つ項目だけを隠す（`bufferState.masked`。`changeFileTypeOptions`） |
+
+読むときは、`options` に値があればそれを、無ければ `layered` の値を使う（`bufferState.option`。`option.Values.Lookup` で値を入れたかを見分ける）。
+このため、段の値を後から作り直しても、利用者が変えた値はどの段の値よりも勝つ。
+
+拡張機能から設定を変える口（`option/set`）と、プロジェクトの整形ツールの設定（`biome.json`、`.prettierrc`、`pyproject.toml` の ruff）を読む拡張機能（#318 の決めの 5）は、別の issue で作る。
+その口は、`optionLayers` の `.editorconfig` の後に段を 1 つ足し（段はバッファの拡張機能の値を返す）、値が届いたら `refreshOptionLayers` を呼ぶ。
+ほかの箇所は直さなくてよい。
+このとき、利用者の `:set sw=2` の後に拡張機能の値（`indent.width` 4）が届いても、`:set` の値が勝つ。
+範囲がバッファごとの項目を `:set` で変えるたびに `notifyBufferAttrs` が拡張機能へ `buffer/open` を送り直すが、その送り直しから設定の値を変える経路は無く、
+拡張機能が `buffer/open` を受けて値を送り直しても、値は段に入るので `:set` の値を上書きしない。
+これを、`Editor.layers` の末尾に段を足しただけで確かめるテスト（`internal/editor` の `TestOptionLayerAddedLater`）で確かめた。開いたとき、`:set` の後、段の値が後から届いたとき、`:set filetype=` の後、名前を付けたときの値を比べる。
 
 #### `:option.set`、`:option.get`、`:option.toggle`
 
@@ -3772,8 +3911,8 @@ Vim との完全な互換は目指さない（オーナーの方針。設計の�
 | `:set <Vim の名前>?` | `option.get <正規の名前>` |
 | `:set <名前> <名前> …` | 空白で区切った引数ごとに上のどれかへ変換し、左から順に実行する。途中の引数が誤りなら止め、前の引数の設定は残す（Vim 9.1 の `:set ts=4 foo ts=8` と同じ） |
 
-- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を、#275 で `hlsearch` から `search.highlight` を、#300 で `wrap` から `lineWrap.enabled` を足した
-- `inv` の接頭辞、`+=`、`-=`、`^=`、`&`（既定値に戻す）、短い名前（`nu`、`ft`）は受け付けず、知らない設定のエラー（`E518`）にする
+- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を、#275 で `hlsearch` から `search.highlight` を、#300 で `wrap` から `lineWrap.enabled` を、#318 で `expandtab`（`et`）、`shiftwidth`（`sw`）、`tabstop`（`ts`）、`autoindent`（`ai`）を足した
+- `inv` の接頭辞、`+=`、`-=`、`^=`、`&`（既定値に戻す）、短い名前（`nu`、`ft`）は受け付けず、知らない設定のエラー（`E518`）にする。ただし字下げの 4 項目の短い名前（`et`、`sw`、`ts`、`ai`）は、`:set et sw=4 ts=4` の形で書くことが多いので、#318 の決めで受け付ける。Vim の `'softtabstop'`（`sts`）と `'smarttab'`（`sta`）は、別の設定にしない（3.2）ので `E518` になる
 - 引数の無い `:set` は `E471` にする
 - `:setlocal` は、別名の表に行が無いので、知らないコマンドのエラー（`E492`）になる（#264 の本文は「知らない設定のエラーにする」としたが、`:setlocal` は設定でなくコマンドの名前なので、他の知らないコマンドと同じにした）
 - `:set` の引数は、`:w` と同じく `\` の付かない `|` で終わり、`\|` は `|` になる
@@ -3841,6 +3980,8 @@ Vim 9.1 の `:tabe` を引数なしで打つと、`:tabnew` と同じく空の�
 - 行の折り返し（#300）は、`lineWrap.enabled` を表に足し、描画が描くたびに、gj と gk が見た目の行を数えるたびに今の値を読む形で入った（6.7 の「行の折り返し」）。`:set wrap` は、`vimOptionNames` に 1 行を足して使えるようにした
 - 打つたびの検索（#296）は、`search.incrementalTimeoutMs` を表に足し、検索を始めるたびに今の値を読む形で入った（6.7 の「打つたびの検索」）。Vim に対応する設定が無いので、`vimOptionNames` には行を足していない。`:set incsearch` に当たる真偽の項目は、常に行うので作っていない
 - 検索の一致の件数（#320）は、`search.showCount` を表に足し、検索するたびに今の値を読む形で入った（6.7 の「検索の一致の件数」）。`'shortmess'` は多くのフラグをまとめた設定で、別名にするとほかのフラグの意味まで受け付けることになるので、`vimOptionNames` には行を足していない（#320 のオーナーの決め）
+- 字下げとタブの表示幅（#318）は、範囲がバッファごとの 4 項目と `editorConfig.enabled` を表に足し、バッファごとの項目を設定ファイルに書けるようにして、初めの値の段（「バッファごとの項目の初めの値」）を足した。使う側（3.2、6.7 の「タブ文字の表示幅」）は、使うたびにバッファの今の値を読む
+- 拡張機能から設定を変える口（`option/set`）は、`optionLayers` の最後に段を足す。コメントの切り替え（`gc`）は、行の字下げの位置にコメント記号を置くので、`indent.useSpaces` と `tab.width` で字下げの幅を数える
 - コマンドラインを画面の上部の窓に描く issue が、描く位置の項目を表に足す
 - この一連の作業の後に、既存の Ex コマンドへ正規の名前を付け、今の名前を別名へ移す。そのとき、Vim に合わせた名前を本体の別名の表に残すか、設定ファイルの別名（#291）に移すかを決める
 - コマンドの一覧（`ex.Names`。`editor/list` の `commands` と `:finder.commands`。6.9）は、Ex コマンドの表の行の後に、別名の表の行（`:set`（`:se`）、`:nohlsearch`（`:noh`）、設定ファイルの別名）を表の順に並べる。名前を付け替えるだけの別名に付け替えた先の名前を持たせる欄は、既存の Ex コマンドを別名へ移す issue で決める（#291 の `:help` の節は、`ex.Aliases.Added` から付け替えた先を出す）

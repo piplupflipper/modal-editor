@@ -51,8 +51,6 @@ type Screen struct {
 type Renderer struct {
 	// Width と Height は、画面の列数と行数である。
 	Width, Height int
-	// TabStop はタブ幅である。0 以下なら DefaultTabStop を使う。
-	TabStop int
 	// Theme は、色の種類の名前から属性への対応である。nil なら DefaultTheme を使う。
 	Theme Theme
 	// GutterWidth は、バッファの表示領域の左に、印の列の場所として必ず空ける列数である。行番号の列とテキストはその右から描く。
@@ -67,6 +65,10 @@ type Renderer struct {
 	TabLineParts *StatusLine
 	// TabLine は、タブの行（Frame.Tabs）を出す場合である（設定の tabline.show）。ゼロ値はタブが 1 つでも出す（TabLineAlways）。
 	TabLine TabLineMode
+
+	// tabStop は、Render（render）が描いている Frame の TabStop（タブ文字の表示幅。FR-161）である。0 以下なら DefaultTabStop を使う。
+	// Render の始めに入れ、描画の中でタブ幅を使う箇所（本文、ステータス行、ポップアップの幅など）が読む。
+	tabStop int
 
 	top int // 表示領域の最初の行の番号（0 から数える）
 	// topFill は、見比べている間（Frame.Diff）に、最初の行の上に見せる詰め物の行の数である（diff.go。Vim の w_topfill）。
@@ -173,11 +175,6 @@ func (r *Renderer) EnterBuffer(lineCount, line int) {
 	r.center = r.wrap
 }
 
-// Columns は、このレンダラーのタブ幅で数える Columns を返す。internal/command の State.Columns に差し込む。
-func (r *Renderer) Columns() Columns {
-	return Columns{TabStop: r.TabStop}
-}
-
 // textRows は、バッファの表示領域の行数を返す。
 // 出力の欄を開いていれば、欄の中身と欄の名前の行の分だけ減る。
 func (r *Renderer) textRows() int {
@@ -224,6 +221,7 @@ type cursorPlace struct {
 // カーソルが表示領域に収まるように、縦と横のスクロールの位置を更新する。
 // タブの行を出すとき（f.Tabs と TabLine。tabLineShown）は、一番上の行をタブの行にし、残りをその下に描く。
 func (r *Renderer) Render(f *Frame) Screen {
+	r.tabStop = f.TabStop
 	if r.tabLineShown(f) {
 		return r.renderWithTabLine(f)
 	}
@@ -237,6 +235,7 @@ func (r *Renderer) render(f *Frame) Screen {
 	if theme == nil {
 		theme = DefaultTheme()
 	}
+	r.tabStop = f.TabStop
 	text := f.Text
 	if text == nil {
 		text = emptyText{}
@@ -396,7 +395,7 @@ func (r *Renderer) placeColumn(text Text, f *Frame) cursorPlace {
 	line := min(max(f.Cursor.Line, 0), text.LineCount()-1)
 	s := text.Line(line)
 	b := min(max(f.Cursor.Byte, 0), len(s))
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(r.tabStop)
 	col := 0
 	for off := 0; off < len(s); {
 		gl := nextGlyph(s, off, col, tabStop)
@@ -737,7 +736,7 @@ func (d *drawer) drawLine(row, line, k, n int) {
 	}
 	s := d.text.Line(line)
 	left, w, x0 := d.r.left, d.r.textWidth(), d.r.textLeft()
-	tabStop := tabStopOr(d.r.TabStop)
+	tabStop := tabStopOr(d.r.tabStop)
 	idx := line - d.r.top
 	d.prepare(idx, line, s, func() (int, int) { return d.visibleBytes(s) })
 	put := func(x int, c Cell) {
@@ -909,7 +908,7 @@ func (d *drawer) drawMarks(rows int) {
 // drawText は、row 行目の col 列から、列 limit の手前まで s を描き、描き終えた次の列を返す。
 // 収まらない文字の手前で止める。
 func (r *Renderer) drawText(g *Grid, row, col, limit int, s string, a Attr) int {
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(r.tabStop)
 	for off := 0; off < len(s); {
 		gl := nextGlyph(s, off, col, tabStop)
 		if gl.col+gl.width > limit {
@@ -970,7 +969,7 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool
 			prefix = f.CommandLineType
 		}
 		s := string(prefix) + f.CommandLine
-		tabStop := tabStopOr(r.TabStop)
+		tabStop := tabStopOr(r.tabStop)
 		// 末尾の後ろのカーソルの 1 列を残して収まるまで、先頭の文字を落とす。
 		for s != "" && StringWidth(s, tabStop)+1 > r.Width {
 			s = s[nextGlyph(s, 0, 0, tabStop).size:]
@@ -1019,7 +1018,8 @@ const messageRightMargin = 2
 //
 // req: FR-167
 func (r *Renderer) drawMessageRight(g *Grid, row, col, width int, text, right string, a Attr) {
-	tabStop := tabStopOr(r.TabStop)
+	// 幅は、text と right を描く drawText と同じく、描いている Frame のタブ文字の幅（Frame.TabStop）で数える。
+	tabStop := tabStopOr(r.tabStop)
 	end := col + width
 	start := end - messageRightMargin - StringWidth(right, tabStop)
 	if start < col {

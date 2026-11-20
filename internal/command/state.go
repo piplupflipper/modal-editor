@@ -141,6 +141,9 @@ type State struct {
 	// gj と gk は j と k と同じに動く。ページ単位のスクロール（<PageUp>、<PageDown>）も、行の高さをこれで数える。
 	// 画面の幅と設定（lineWrap.enabled）で決まるので、呼び出し側（internal/editor）が差し込む。
 	ScreenLines target.ScreenLines
+	// TextWidth は、文字列 s を列 0 から並べたときの表示幅を、タブ文字の幅 tabStop で数える関数である（字下げの幅の数え方。FR-160）。
+	// nil なら、タブ文字は次のタブ位置まで、ほかの文字は 1 列として数える。全角文字の幅を数える実装（ui.StringWidth）は、呼び出し側が差し込む。
+	TextWidth func(s string, tabStop int) int
 	// Extensions は、拡張機能が提供する操作の問い合わせ先である。nil なら、拡張機能の操作は失敗する。
 	Extensions Extensions
 	// Ex は、Ex コマンドの呼び出しをまたいで保つ状態である。Mark は New が '< と '> を返す関数にする。

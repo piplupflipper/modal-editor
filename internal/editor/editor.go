@@ -18,6 +18,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/command/target"
 	"github.com/piplupflipper/vi-imitation/internal/config"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/editorconfig"
 	"github.com/piplupflipper/vi-imitation/internal/exthost"
 	"github.com/piplupflipper/vi-imitation/internal/input"
 	"github.com/piplupflipper/vi-imitation/internal/option"
@@ -131,9 +132,13 @@ type Config struct {
 	// FileTypes は、ファイルの種類の対応表に足す項目である（基本設計 6.7 のファイルの種類の判定）。
 	// キーは拡張子（".md"）かファイル名（"Makefile"）、値はファイルの種類の名前である。既定の表より優先する。
 	FileTypes map[string]string
-	// Options は、範囲がエディタ全体の設定の項目（option の表。基本設計 7.3）の初めの値である（設定ファイルから読んだもの。config.Config.Options）。
-	// 正規の名前から値への対応で、無い項目は表の既定値を使う。範囲がバッファごとの項目と、表に無い名前は使わない。
+	// Options は、設定の項目（option の表。基本設計 7.3）の初めの値である（設定ファイルの最上位から読んだもの。config.Config.Options）。
+	// 正規の名前から値への対応で、無い項目は表の既定値を使う。範囲がエディタ全体の項目はエディタの初めの値に、範囲がバッファごとの項目は
+	// バッファを開くときの初めの値（options.go の optionLayers の 1 の段。FR-163）に使う。表に無い名前は使わない。
 	Options map[string]option.Value
+	// FileTypeOptions は、ファイルの種類の名前から、そのファイルの種類のバッファを開くときに当てる値への対応である
+	// （設定ファイルの fileTypeOptions。config.Config.FileTypeOptions。options.go の optionLayers の 3 の段。FR-163）。
+	FileTypeOptions map[string]map[string]option.Value
 	// CommandAliases は、Ex コマンドの別名の表である（本体の別名に設定ファイルの commandAliases を足したもの。FR-150）。
 	// 作るのは呼び出し側で、CommandAliases（この関数に Extensions と同じ定義を渡す）で作り、設定の別名を足してから入れる。
 	// nil なら本体の別名だけを使う。
@@ -274,6 +279,9 @@ type Editor struct {
 	icons ui.Icons
 	// options は、範囲がエディタ全体の設定の項目の値である（options.go。初めの値は Config.Options）。
 	options option.Values
+	// layers は、バッファごとの設定の項目の初めの値の段を当てる順に並べたものである（options.go の optionLayers の写し）。
+	// テストは、後で足す段（拡張機能から設定を変える口）を、この末尾に足して確かめる。
+	layers []optionLayer
 	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
 	fixEOL bool
 	// popupKeys は、拡張機能の ID から、その拡張機能の contributes.popupKeys のキーへの表である（FR-69。popup.go）。
@@ -451,8 +459,21 @@ type bufferState struct {
 	buf       *buffer.Buffer
 	state     *command.State
 	path      string
-	// options は、範囲がバッファごとの設定の項目の値である（options.go。ファイルの種類は fileType で読む）。
+	// options は、範囲がバッファごとの設定の項目のうち、利用者が :set で変えた値と、ファイルから判定して決める項目（filetype）の値である
+	// （options.go。読むときは option、ファイルの種類は fileType で読む）。
 	options option.Values
+	// layered は、範囲がバッファごとの設定の項目の、初めの値の段（optionLayers）を順に当てた値である（refreshOptionLayers）。
+	// options に値の無い項目は、この値を使う。
+	layered option.Values
+	// masked は、ファイルの種類が変わったときに、新しい種類の段が値を持つので、options の値を隠して layered の値を使う項目の名前である
+	// （changeFileTypeOptions）。項目を :set で変えると外す。
+	masked map[string]bool
+	// layeredType は、layered を作ったときのファイルの種類である。
+	// ファイルの種類が変わったら（:set filetype=）、段を当て直す（FR-163）。
+	layeredType string
+	// editorConfig は、バッファを開いたとき（と、:e で開き直したとき、名前を付けたとき）に読んだ .editorconfig の項目である（FR-164）。
+	// 段を当て直すときは、読み直さずにこれを使う（Neovim も .editorconfig を読むのはバッファを読んだときと名前を変えたときだけである）。
+	editorConfig editorconfig.Properties
 	// title は、ファイルでないバッファ（:help のヘルプ、キーの一覧。help.go）の名前である。タブの行、ステータス行、:ls に
 	// path の代わりに出す。ファイルのバッファと、名前の無いバッファ（[No Name]）では空である。
 	title string
@@ -571,6 +592,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	e.icons = ui.DefaultIcons().With(cfg.Icons)
 	e.fixEOL = cfg.FixEndOfLine == nil || *cfg.FixEndOfLine
 	e.options = editorOptions(cfg.Options)
+	e.layers = optionLayers()
 	warnings := slices.Clone(cfg.Problems)
 	leader, err := leaderKeys(cfg.Leader)
 	if err != nil {
@@ -942,6 +964,8 @@ func (e *Editor) newBuffer(b *buffer.Buffer, path, fileType string) *bufferState
 		signs:       map[string][]ext.Sign{},
 	}
 	bs.setFileType(fileType)
+	bs.editorConfig = e.readEditorConfig(path)
+	e.applyOptionLayers(bs)
 	e.nextID++
 	e.initState(bs)
 	e.bufs = append(e.bufs, bs)
@@ -963,8 +987,9 @@ func (e *Editor) initState(bs *bufferState) {
 	// レジスターはバッファを切り替えるたびに TakeOver で引き継ぐので、ここでの設定は最初のバッファのものが全体に残る。
 	bs.state.Registers().SetConfig(e.cfg.Registers)
 	bs.state.Viewport = viewport{r: e.renderer}
-	bs.state.ScreenLines = screenLines{e: e, st: bs.state}
-	bs.state.Columns = wrapColumns{sl: screenLines{e: e, st: bs.state}, plain: e.renderer.Columns()}
+	bs.state.ScreenLines = screenLines{e: e, bs: bs, st: bs.state}
+	bs.state.Columns = wrapColumns{sl: screenLines{e: e, bs: bs, st: bs.state}}
+	bs.state.TextWidth = ui.StringWidth
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
 	bs.state.Ex.ExtCommand = e.extCommand

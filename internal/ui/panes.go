@@ -208,7 +208,7 @@ func wrapLine(line int, s string, width, tabStop int) []outputRow {
 // OutputLineRows は、出力の欄の 1 行 s を、直前の Render の画面の幅で折り返したときの画面の行数を返す（1 以上）。
 // 欄のスクロールの位置を画面の行で数えるために、internal/editor が使う。
 func (r *Renderer) OutputLineRows(s string) int {
-	return len(wrapLine(0, s, max(r.Width, 1), tabStopOr(r.TabStop)))
+	return len(wrapLine(0, s, max(r.Width, 1), tabStopOr(r.tabStop)))
 }
 
 // outputRows は、出力の欄に出す行を、上から順に返す。
@@ -224,7 +224,7 @@ func (r *Renderer) outputRows(o *Output, n int) []outputRow {
 	if o.Bottom >= 0 && o.Bottom < bottom {
 		bottom = o.Bottom
 	}
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(r.tabStop)
 	skip := 0
 	if o.Bottom >= 0 {
 		skip = max(o.Skip, 0)
@@ -253,7 +253,7 @@ func (r *Renderer) outputRows(o *Output, n int) []outputRow {
 // drawOutput は、出力の欄を、row0 行目から outRows 行と、その下の欄の名前の行に描く。
 func (r *Renderer) drawOutput(g *Grid, theme Theme, o *Output, row0 int) {
 	rows := r.outputRows(o, r.outRows)
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(r.tabStop)
 	special := theme.attr(StyleSpecialKey)
 	for i, or := range rows {
 		r.drawSegment(g, row0+i, o.Lines[or.line], or, special)
@@ -287,7 +287,7 @@ func (r *Renderer) drawSegment(g *Grid, row int, s string, or outputRow, special
 // drawSegmentAt は、折り返した 1 行を、画面の row 行目の x0 列から、x0+width 列の手前までに属性 base で描く。
 // special は、^[ の形で出す文字の属性で、base の上に重ねる。
 func (r *Renderer) drawSegmentAt(g *Grid, row, x0, width int, s string, or outputRow, base, special Attr) {
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(r.tabStop)
 	col := or.col
 	put := func(x int, c Cell) {
 		if x >= 0 && x < width {

@@ -118,6 +118,20 @@
   // マクロの再生と . の繰り返しの中のヤンクには付けない。色の名前は yank
   "yank": { "highlightMs": 300 },
 
+  // 字下げを 4 列のスペースで作り、タブ文字を 4 列で描き、自動インデントを行う
+  // （nvim の expandtab、shiftwidth=4、softtabstop=4、tabstop=4、autoindent に当たる。本体の既定は Vim と同じくタブ文字、8 列、自動インデントなし）。
+  // ここに書いた値は、どのバッファにも開いたときに当てる。Go と Makefile は、本体のファイルの種類ごとの既定でタブ文字で字下げする
+  // （ここの useSpaces より後に当てる。nvim の ftplugin と同じ）。開いたファイルに当たる .editorconfig があれば、その値が勝つ。
+  // 説明は docs/usage.md の「字下げとタブの幅」にある
+  "indent": { "useSpaces": true, "width": 4, "auto": true },
+  "tab": { "width": 4 },
+
+  // ファイルの種類ごとの値。キーは filetype の値で、中は最上位と同じ形で書く（範囲がバッファごとの項目だけを書ける）。
+  // 例えば YAML を 2 列で字下げするなら、次の行のコメントを外す
+  "fileTypeOptions": {
+    // "yaml": { "indent": { "width": 2 } },
+  },
+
   // Ex コマンドの別名。名前から、付け替える先のコマンド（command）と、省略できる最短の長さ（min。省くと省略できない）への対応である。
   // 説明は docs/usage.md の「Ex コマンドの別名を足す」にある。省略の長さは Vim 9.1 と同じにした（:tab は Vim の修飾子、:tabn は :tabnext）
   "commandAliases": {

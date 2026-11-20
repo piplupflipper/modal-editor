@@ -19,7 +19,8 @@ var testOptionDefs = []option.Def{
 	{Name: "lineNumber.minWidth", Type: option.Int, Scope: option.ScopeEditor, Default: option.IntValue(4)},
 	{Name: "a.b.c", Type: option.String, Scope: option.ScopeEditor, Default: option.StringValue("")},
 	{Name: "top", Type: option.String, Scope: option.ScopeEditor, Default: option.StringValue("")},
-	{Name: "buf.kind", Type: option.String, Scope: option.ScopeBuffer, Default: option.StringValue("")},
+	{Name: "buf.kind", Type: option.String, Scope: option.ScopeBuffer, Default: option.StringValue(""), Detected: true},
+	{Name: "buf.width", Type: option.Int, Scope: option.ScopeBuffer, Default: option.IntValue(8)},
 }
 
 // parseOptions は、data の最上位の項目を、設定の表 defs の項目として読む（Parse の default の枝と同じ）。
@@ -82,7 +83,7 @@ func TestParseOptionsErrors(t *testing.T) {
 		{2, 27, "lineNumber.show は true か false にする"},
 		{2, 42, "lineNumber.minWidth は整数にする"},
 		{2, 47, "未知の項目 lineNumber.other を無視する"},
-		{3, 12, "buf.kind はバッファごとの設定なので、設定ファイルには書けない"},
+		{3, 12, "buf.kind はバッファを開くときに決まる設定なので、設定ファイルには書けない"},
 		{4, 15, "a.b はオブジェクトにする"},
 		{6, 3, "未知の項目 nosuch を無視する"},
 	})
@@ -108,15 +109,60 @@ func TestOptionDefsReadByParse(t *testing.T) {
 			src = fmt.Sprintf("{%q: %s}", parts[i], src)
 		}
 		cfg, errs := Parse("config.jsonc", []byte(src))
-		if d.Scope == option.ScopeEditor {
+		if !d.Detected {
 			if len(errs) != 0 || cfg.Options[d.Name] != d.Default {
 				t.Errorf("%s: Options = %+v, errs = %v（既存の項目と最上位の段が重なっていないか）", d.Name, cfg.Options, errs)
 			}
-			continue
-		}
-		if len(errs) != 1 || !strings.Contains(errs[0].Error(), d.Name+" はバッファごとの設定") {
+		} else if len(errs) != 1 || !strings.Contains(errs[0].Error(), d.Name+" はバッファを開くときに決まる設定") {
 			t.Errorf("%s: errs = %v（既存の項目と最上位の段が重なっていないか）", d.Name, errs)
 		}
+		if d.Scope != option.ScopeBuffer || d.Detected {
+			continue
+		}
+		// 範囲がバッファごとの項目は、fileTypeOptions の下にも同じ形で書ける（FR-163）。
+		cfg, errs = Parse("config.jsonc", []byte(`{"fileTypeOptions": {"go": `+src+`}}`))
+		if len(errs) != 0 || cfg.FileTypeOptions["go"][d.Name] != d.Default {
+			t.Errorf("%s: FileTypeOptions = %+v, errs = %v", d.Name, cfg.FileTypeOptions, errs)
+		}
+	}
+}
+
+// 範囲がバッファごとの項目は、最上位に書けばバッファを開くときの初めの値になり、fileTypeOptions の下にファイルの種類ごとにも書ける。
+// fileTypeOptions には、範囲がエディタ全体の項目と、ファイルから判定して決める項目（filetype）は書けない。値の検査は最上位と同じである。
+//
+// req: FR-163
+func TestParseFileTypeOptions(t *testing.T) {
+	cfg, errs := Parse("config.jsonc", []byte(`{
+  "indent": { "useSpaces": true, "width": 4 },
+  "fileTypeOptions": {
+    "go": { "indent": { "useSpaces": false }, "tab": { "width": 4 } },
+    "make": { "lineNumber": { "show": true }, "filetype": "x", "indent": { "width": -1, "auto": true } },
+    "": { "indent": { "auto": true } },
+    "python": 1,
+    "md": { "nosuch": 1 }
+  }
+}`))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{
+		{5, 31, "lineNumber.show はエディタ全体の設定なので、ファイルの種類ごとには書けない"},
+		{5, 47, "filetype はバッファを開くときに決まる設定なので、設定ファイルには書けない"},
+		{5, 85, "indent.width は 0 から 9999 の整数にする: -1"},
+		{6, 5, "fileTypeOptions のファイルの種類の名前が空"},
+		{7, 15, "fileTypeOptions.python はオブジェクトにする"},
+		{8, 13, "未知の項目 fileTypeOptions.md.nosuch を無視する"},
+	})
+	wantTop := map[string]option.Value{option.IndentUseSpaces: option.BoolValue(true), option.IndentWidth: option.IntValue(4)}
+	if !reflect.DeepEqual(cfg.Options, wantTop) {
+		t.Errorf("Options = %+v, want %+v", cfg.Options, wantTop)
+	}
+	wantFT := map[string]map[string]option.Value{
+		"go":   {option.IndentUseSpaces: option.BoolValue(false), option.TabWidth: option.IntValue(4)},
+		"make": {option.IndentAuto: option.BoolValue(true)},
+	}
+	if !reflect.DeepEqual(cfg.FileTypeOptions, wantFT) {
+		t.Errorf("FileTypeOptions = %+v, want %+v", cfg.FileTypeOptions, wantFT)
 	}
 }
 
@@ -211,7 +257,7 @@ func TestParseFileTypeOption(t *testing.T) {
 		line, col int
 		msg       string
 	}{
-		{1, 3, "filetype はバッファごとの設定なので、設定ファイルには書けない"},
+		{1, 3, "filetype はバッファを開くときに決まる設定なので、設定ファイルには書けない"},
 	})
 	if cfg.Options != nil {
 		t.Errorf("Options = %+v", cfg.Options)

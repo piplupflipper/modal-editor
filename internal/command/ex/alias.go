@@ -206,13 +206,22 @@ func (x *aliasCtx) call(line string, pos int) error {
 }
 
 // vimOptionNames は、:set で受け付ける Vim の名前から、設定の正規の名前への対応である（FR-133）。
-// 短い名前（Vim の ft など）は受け付けない。
+// 短い名前（Vim の ft など）は受け付けない。ただし字下げの 4 項目は、:set et sw=4 ts=4 の形で書くことが多いので、
+// #318 の決めで短い名前（et、sw、ts、ai）も受け付ける。Vim の 'softtabstop'（sts）と 'smarttab'（sta）は、別の設定にしないので受け付けない。
 var vimOptionNames = map[string]string{
 	"filetype":    option.FileType,
 	"number":      option.LineNumberShow,
 	"numberwidth": option.LineNumberMinWidth,
 	"hlsearch":    option.SearchHighlight,
 	"wrap":        option.LineWrapEnabled,
+	"expandtab":   option.IndentUseSpaces,
+	"et":          option.IndentUseSpaces,
+	"shiftwidth":  option.IndentWidth,
+	"sw":          option.IndentWidth,
+	"tabstop":     option.TabWidth,
+	"ts":          option.TabWidth,
+	"autoindent":  option.IndentAuto,
+	"ai":          option.IndentAuto,
 }
 
 // vimOption は、:set の Vim の名前 name の項目を返す。無ければ ok は false である。

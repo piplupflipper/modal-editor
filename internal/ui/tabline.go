@@ -131,14 +131,14 @@ func (r *Renderer) drawTabLine(g *Grid, theme Theme, f *Frame) {
 	right := keepFirstTabs(r.tabLineSegs(layout.Right, theme, fill, text, f, cur))
 	fixed := 0
 	for _, s := range slices.Concat(left, right) {
-		fixed += StringWidth(s.text, r.TabStop)
+		fixed += StringWidth(s.text, r.tabStop)
 	}
 	// ステータス行と同じく、本体の部品より先に拡張機能の部品を切る。タブの見出しを並べたら、いまのタブの見出しの幅を残す。
 	reserve := 0
 	if slices.ContainsFunc(slices.Concat(left, right), func(s statusSeg) bool { return s.id == TabLinePartTabs }) {
 		for _, t := range f.Tabs {
 			if t.Current {
-				reserve = StringWidth(r.tabLabel(t), r.TabStop)
+				reserve = StringWidth(r.tabLabel(t), r.tabStop)
 			}
 		}
 	}
@@ -147,7 +147,7 @@ func (r *Renderer) drawTabLine(g *Grid, theme Theme, f *Frame) {
 		left, right = trimmed[0], trimmed[1]
 		fixed = 0
 		for _, s := range slices.Concat(left, right) {
-			fixed += StringWidth(s.text, r.TabStop)
+			fixed += StringWidth(s.text, r.tabStop)
 		}
 	}
 	tabsWidth := max(r.Width-fixed, 0)
@@ -155,7 +155,7 @@ func (r *Renderer) drawTabLine(g *Grid, theme Theme, f *Frame) {
 		if s.id == TabLinePartTabs {
 			return tabsWidth
 		}
-		return StringWidth(s.text, r.TabStop)
+		return StringWidth(s.text, r.tabStop)
 	}
 	draw := func(col, limit int, segs []statusSeg) {
 		for _, s := range segs {
@@ -195,7 +195,7 @@ func (r *Renderer) drawTabs(g *Grid, theme Theme, tabs []Tab, col0, limit int) {
 	cur := 0
 	for i, t := range tabs {
 		labels[i] = r.tabLabel(t)
-		widths[i] = StringWidth(labels[i], r.TabStop)
+		widths[i] = StringWidth(labels[i], r.tabStop)
 		if t.Current {
 			cur = i
 		}

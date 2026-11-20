@@ -27,7 +27,7 @@ func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 	if bordered {
 		b = 1
 	}
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(fl.View.TabStop)
 	boxW := min(r.Width, popupMaxWidth) - 2*b
 	if fl.Fill {
 		boxW = r.Width
@@ -68,7 +68,7 @@ func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 	in.Width, in.Height = boxW-2-promptW, 1+2
 	list.Width, list.Height = boxW-2, listRows+2
 	for _, s := range []*Renderer{in, list} {
-		s.TabStop, s.Theme, s.Symbols = r.TabStop, theme, r.Symbols
+		s.Theme, s.Symbols = theme, r.Symbols
 	}
 	view := *fl.View
 	view.Tabs, view.Output, view.List, view.Choice, view.Float, view.Diff = nil, nil, nil, nil, nil, nil

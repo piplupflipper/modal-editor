@@ -51,6 +51,9 @@ func TestShift(t *testing.T) {
 	runVimCases(t, shiftCases)
 }
 
+// tabStop は、tabColumns のタブ文字の幅（tab.width の既定値）である。
+const tabStop = 8
+
 // tabColumns は、internal/ui の Columns と同じ数え方を、ASCII とタブだけの行について写したものである
 // （internal/ui は同じ層なので import しない）。タブは次の 8 の倍数の列まで進め、タブの上ではタブが占める最後の列を返す。
 type tabColumns struct{}

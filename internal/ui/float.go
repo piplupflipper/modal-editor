@@ -110,7 +110,8 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	if bordered {
 		b = 1
 	}
-	tabStop := tabStopOr(r.TabStop)
+	// 窓の幅は、中身のバッファのタブ文字の幅（View.TabStop）で数える。
+	tabStop := tabStopOr(fl.View.TabStop)
 	maxW := min(r.Width, popupMaxWidth) - 2*b
 	if fl.Fill {
 		maxW = r.Width
@@ -191,7 +192,7 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	}
 	sub := r.float
 	sub.Width, sub.Height = max(boxW-2, 1), h+2
-	sub.TabStop, sub.Theme, sub.Symbols = r.TabStop, theme, r.Symbols
+	sub.Theme, sub.Symbols = theme, r.Symbols
 	view := *fl.View
 	view.Tabs, view.Output, view.List, view.Choice, view.Float, view.Diff = nil, nil, nil, nil, nil, nil
 	view.Message, view.HitEnter, view.LineNumbers, view.Search, view.Highlights = Message{}, false, LineNumbers{}, nil, nil
@@ -317,7 +318,7 @@ func (r *Renderer) drawList(g *Grid, theme Theme, l *List) (Cursor, bool) {
 	if rows < 2 || maxW < 3 {
 		return Cursor{}, false
 	}
-	tabStop := tabStopOr(r.TabStop)
+	tabStop := tabStopOr(r.tabStop)
 	width := StringWidth(l.Title, tabStop)
 	for _, it := range l.Items {
 		width = max(width, StringWidth(it, tabStop))
@@ -451,7 +452,7 @@ func ChoicePrompt(n int) string {
 
 // wrapText は、s を幅 width の行に折り返した文字列を返す（wrapLine の範囲を文字列にしたもの）。
 func (r *Renderer) wrapText(s string, width int) []string {
-	rows := wrapLine(0, s, max(width, 1), tabStopOr(r.TabStop))
+	rows := wrapLine(0, s, max(width, 1), tabStopOr(r.tabStop))
 	out := make([]string, len(rows))
 	for i, row := range rows {
 		out[i] = s[row.start:row.end]

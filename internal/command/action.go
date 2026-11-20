@@ -422,21 +422,31 @@ func textEnd(start buffer.Position, text string) buffer.Position {
 func emptyRange(p buffer.Position) buffer.Range { return buffer.Range{Start: p, End: p} }
 
 // actOpen は、o（below が true）と O である。下か上に空の行を開いてインサートモードへ移る。
+// 設定 indent.auto が true なら、開いた行にカーソルの行の字下げを入れる。何も入力せずに抜けると、字下げを消す（FR-162）。
+//
+// req: FR-162
 func actOpen(below bool) actionFunc {
 	return func(s *State, cmd editcmd.Command) error {
 		l := s.cursor.Line
-		if below {
-			if err := s.apply(buffer.Edit{Range: emptyRange(s.lineEnd(l)), Text: "\n"}); err != nil {
-				return err
-			}
-			s.cursor = pos(l+1, 0)
-		} else {
-			if err := s.apply(buffer.Edit{Range: emptyRange(pos(l, 0)), Text: "\n"}); err != nil {
-				return err
-			}
-			s.cursor = pos(l, 0)
+		// 設定 indent.auto が true なら、開いた行に、カーソルの行（O では下へずれる行）の字下げを写す（FR-162。Vim の open_line）。
+		indent := ""
+		c := s.indentConfig()
+		if c.auto {
+			indent = c.makeIndent(s.lineIndent(l))
 		}
-		s.startInsert(cmd, max(cmd.Count, 1))
+		if below {
+			if err := s.apply(buffer.Edit{Range: emptyRange(s.lineEnd(l)), Text: "\n" + indent}); err != nil {
+				return err
+			}
+			s.cursor = pos(l+1, len(indent))
+		} else {
+			if err := s.apply(buffer.Edit{Range: emptyRange(pos(l, 0)), Text: indent + "\n"}); err != nil {
+				return err
+			}
+			s.cursor = pos(l, len(indent))
+		}
+		s.updateWant()
+		s.beginInsert(cmd, max(cmd.Count, 1), []buffer.Position{s.cursor}, c.auto)
 		return nil
 	}
 }
