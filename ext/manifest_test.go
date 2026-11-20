@@ -194,13 +194,6 @@ func TestManifestValidate(t *testing.T) {
 			want: []string{`contributes.textObjects[1].id "surround.inner" が contributes.textObjects[0] と重複`},
 		},
 		{
-			name: "overrideKeys の項目が空",
-			modify: func(m *Manifest) {
-				m.Contributes.Operators[0].OverrideKeys = []string{"<C-p>", ""}
-			},
-			want: []string{"contributes.operators[0].overrideKeys[1] が空"},
-		},
-		{
 			name: "複数の誤りをすべて返す",
 			modify: func(m *Manifest) {
 				m.ID = ""

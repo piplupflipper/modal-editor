@@ -75,9 +75,6 @@ var defaultModes = map[BindingKind]MapMode{
 	BindAction:     MapNormal,
 }
 
-// DefaultModes は、Binding.Modes を省いたときの、操作の種類 kind の有効なモード（defaultModes）を返す。
-func DefaultModes(kind BindingKind) MapMode { return defaultModes[kind] }
-
 // Binding は、キーの列と操作の対応の 1 件である。
 type Binding struct {
 	Kind BindingKind

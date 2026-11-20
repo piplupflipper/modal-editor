@@ -17,7 +17,7 @@
   ],
   "contributes": {
     "commands": [
-      { "id": "finder.files", "keys": "<Leader>ff", "overrideKeys": ["<C-p>"], "description": "ファイルを探して開く" },
+      { "id": "finder.files", "keys": "<Leader>ff", "description": "ファイルを探して開く" },
       { "id": "finder.grep", "keys": "<Leader>fg", "description": "作業ディレクトリの下を rg で検索する" },
       { "id": "finder.grepDir", "keys": "<Leader>f.", "description": "いまのファイルのディレクトリの下を rg で検索する" },
       { "id": "finder.grepWord", "keys": "<Leader>fw", "description": "カーソルの下の語を rg で検索する" },

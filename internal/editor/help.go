@@ -447,7 +447,7 @@ func (h *helpIndex) find(word string) (int, bool) {
 // 語は、次の順に集め、:help でその語の説明の行が見つかる（helpLine）ものだけを残す。同じ語は最初の 1 つだけにする。
 //
 //   - キー: :help の「本体のキー」の節のキー（helpKeyLines。LSP と DAP の操作の既定のキーと、回数などの Parser が先に読むキーを含む）と、
-//     読み込んだ拡張機能の宣言ファイルの操作の既定のキー（keys と overrideKeys。<Leader> は設定の leader にする）
+//     読み込んだ拡張機能の宣言ファイルの操作の既定のキー（keys。<Leader> は設定の leader にする）
 //   - Ex コマンド: コマンドの一覧（listCommands。本体の Ex コマンド、別名、拡張機能のコマンド）の名前に : を付けたもの
 //   - 設定の名前: 実行中に変えられる設定の表（internal/option）の名前
 //   - 操作の ID: 設定の keymap に書ける操作の ID（input.Actions）
@@ -478,10 +478,8 @@ func (e *Editor) listHelpWords() []ext.ListHelpWord {
 		c := s.Manifest.Contributes
 		for _, cs := range [][]ext.Contribution{c.Operators, c.Motions, c.TextObjects, c.Commands} {
 			for _, x := range cs {
-				for _, k := range append([]string{x.Keys}, x.OverrideKeys...) {
-					if ks, err := editcmd.ParseKeysLeader(k, e.leader); err == nil && len(ks) > 0 {
-						add(editcmd.KeysString(ks), ext.HelpKindKey)
-					}
+				if ks, err := editcmd.ParseKeysLeader(x.Keys, e.leader); err == nil && len(ks) > 0 {
+					add(editcmd.KeysString(ks), ext.HelpKindKey)
 				}
 			}
 		}

@@ -662,57 +662,7 @@ func buildKeymap(specs []exthost.Spec, leader []editcmd.Key) (*input.Keymap, []e
 			}
 		}
 	}
-	// overrideKeys（本体の既定のキーより優先するキー）は、すべての拡張機能の keys の後に登録する。
-	// 拡張機能どうしの重なりは、宣言の順に依らず keys と同じく断るためである。
-	for _, s := range specs {
-		m := s.Manifest
-		for _, cs := range []struct {
-			kind input.BindingKind
-			cs   []ext.Contribution
-		}{
-			{input.BindOperator, m.Contributes.Operators},
-			{input.BindMotion, m.Contributes.Motions},
-			{input.BindTextObject, m.Contributes.TextObjects},
-			{input.BindAction, m.Contributes.Commands},
-		} {
-			for _, c := range cs.cs {
-				for _, k := range c.OverrideKeys {
-					b := input.Binding{Kind: cs.kind, Ref: editcmd.Ref{ID: c.ID, Extension: m.ID}, Description: c.Description}
-					keys, err := editcmd.ParseKeysLeader(k, leader)
-					if err == nil {
-						b.Keys = keys
-						err = overrideBuiltinKey(km, b)
-					}
-					if err != nil {
-						errs = append(errs, fmt.Errorf("拡張機能 %s の %s（%s）を登録できない: %w", m.ID, c.ID, k, err))
-					}
-				}
-			}
-		}
-	}
 	return km, errs
-}
-
-// overrideBuiltinKey は、拡張機能の操作 b を、宣言ファイルの overrideKeys のキーとして登録する（ext.Contribution.OverrideKeys）。
-// b のモードのどれかで、同じキーの列を本体の既定のキー（本体の操作の表と、LSP と DAP などの提供者へ振り分ける操作）が使っていれば、
-// そのモードの登録を取り除いてから登録する。拡張機能の操作が使っていれば、何も取り除かずに誤りを返す（keys と同じ）。
-// 取り除いた本体の登録は、設定の keymap が取り除いたもの（input.Keymap.Overridden）と違い、キーの一覧に残さない。
-// 効かないキーを「設定の keymap が優先」と出さないためで、本体のキーはヘルプ（docs/usage.md）に書く。
-func overrideBuiltinKey(km *input.Keymap, b input.Binding) error {
-	modes := b.Modes
-	if modes == 0 {
-		modes = input.DefaultModes(b.Kind)
-	}
-	for _, old := range km.Bindings() {
-		if old.Modes&modes == 0 || !slices.Equal(old.Keys, b.Keys) {
-			continue
-		}
-		if !old.Ref.Builtin() && !old.Ref.Provider() {
-			return fmt.Errorf("%w: %q は拡張機能 %s の %s", input.ErrConflict, editcmd.KeysString(b.Keys), old.Ref.Extension, old.Ref.ID)
-		}
-	}
-	km.Unbind(modes, b.Keys)
-	return km.Bind(b)
 }
 
 // buildExCommands は、拡張機能が宣言したコマンド（contributes.commands）を、コマンドラインから ID で呼ぶための表にする

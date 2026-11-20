@@ -10,8 +10,8 @@
 //
 // コマンドと既定のキーは、オーナーの nvim の fzf-lua の割り当てに合わせた（どれも仮）。<leader> は本体の設定の leader である。
 //
-//   - finder.files（<leader>ff と <C-p>）: 作業ディレクトリの下のファイル。fd（fdfind）か rg --files があれば使い、無ければ Go で歩く。
-//     <C-p> は本体の既定の <C-p>（貼った直後の貼り直し。FR-55）と重なるので、宣言ファイルの overrideKeys で本体より優先して割り当てる（#308）
+//   - finder.files（<leader>ff）: 作業ディレクトリの下のファイル。fd（fdfind）か rg --files があれば使い、無ければ Go で歩く。
+//     fzf-lua の <C-p> は割り当てない（本体の <C-p> は貼り直し。FR-55。#308 のオーナーの決めで、<leader> のキーを前提にする）
 //   - finder.grep（<leader>fg）: 作業ディレクトリの下を rg で検索する。入力が変わるたびに rg を起動し直す（live grep）
 //   - finder.grepDir（<leader>f.）: カーソルのあるバッファのファイルのディレクトリの下を rg で検索する
 //   - finder.grepWord（<leader>fw）: カーソルの下の語を入力に入れて finder.grep を開く

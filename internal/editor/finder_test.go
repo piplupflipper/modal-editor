@@ -187,7 +187,6 @@ func TestStandardFinder(t *testing.T) {
 	h.keys(":readonly<CR>")
 }
 
-// 標準のファジーファインダーの <C-p> は、本体の貼り直し（FR-55）に代えて :finder.files を開く（宣言ファイルの overrideKeys）。
 // <Space>fh はヘルプの語の一覧を開き、選んだ語の :help を開く（FR-148）。一覧はキー、Ex コマンド、設定の名前、操作の ID を含む。
 //
 // req: FR-148
@@ -195,14 +194,6 @@ func TestStandardFinderHelp(t *testing.T) {
 	spec := buildFinder(t)
 	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n"})
 	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, "a.txt")
-	h.keys("<C-p>")
-	h.eventually("<C-p> のファイルの一覧", func() bool {
-		f := h.e.float
-		return f != nil && f.kind == floatFinder && strings.HasPrefix(f.title, "ファイル") && strings.HasSuffix(finderText(h.e), "a.txt")
-	})
-	h.keys("<Esc>")
-	h.eventually("閉じたファインダー", func() bool { return h.e.float == nil })
-
 	h.keys("<Space>fh")
 	h.eventually("ヘルプの語の一覧", func() bool { f := h.e.float; return f != nil && strings.HasPrefix(f.title, "ヘルプ") })
 	// ファインダーが送るのは上位 300 件なので、語の一覧は本体の一覧（editor/list の help）で確かめる。
