@@ -519,7 +519,7 @@ func (e *Editor) previewScrollAction(bs *bufferState, ref editcmd.Ref, n int) bo
 		return false
 	}
 	f := e.float
-	if f == nil || !f.focused || (f.bs != bs && !(f.preview.focus && f.preview.bs == bs)) {
+	if f == nil || !f.focused || (f.bs != bs && (!f.preview.focus || f.preview.bs != bs)) {
 		return true
 	}
 	e.scrollPreview(f, how, max(n, 1))
