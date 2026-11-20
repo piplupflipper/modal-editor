@@ -606,12 +606,16 @@ func (b *Buffer) mustApplyAll(edits []Edit) {
 
 // apply は、1 つの編集を適用し、それを取り消す逆の編集を返す。
 // 位置が正しくなければ、何も変えずにエラーを返す。
+//
+// 逆の編集のテキスト（消したテキスト）は、行の部分文字列のままにせず写す。逆の編集はアンドゥの記録に残るので、
+// 部分文字列のままだと、編集の前の行の全体を記録が保持する。空の範囲への挿入でも、長さ 0 の部分文字列が前の行を指して保持する。
+// 長い行を 1 文字ずつ変えると、行の長さと編集の数の積のメモリが残り、100000afoo xy <Esc> で server のメモリが 13GB を超えた（#279）。
 func (b *Buffer) apply(e Edit) (Edit, error) {
 	if err := b.checkRange(e.Range); err != nil {
 		return Edit{}, err
 	}
 	start, end := e.Range.Start, e.Range.End
-	removed := b.slice(e.Range)
+	removed := strings.Clone(b.slice(e.Range))
 
 	joined := b.lines[start.Line][:start.Byte] + e.Text + b.lines[end.Line][end.Byte:]
 	b.lines = slices.Replace(b.lines, start.Line, end.Line+1, strings.Split(joined, "\n")...)
