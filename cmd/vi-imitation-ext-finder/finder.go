@@ -241,6 +241,19 @@ type item struct {
 	exec *ext.EditorExecuteParams
 	// preview は、カーソルがあるときにプレビューに出すもの（FR-149）である。無ければ出さない。
 	preview *ext.ViewPreview
+	// file は、候補が指すファイル（FR-152）である。本体がファイルの種類のアイコンを付ける。ファイルを指さない候補では nil。
+	file *ext.ViewFile
+}
+
+// openFile は、選んだときに開く先 op が指すファイル（FR-152 のアイコンを付けるもの）を返す。
+// ファイルでないバッファ（op.Path が空）なら nil を返す。
+//
+// req: FR-152
+func openFile(op *ext.EditorOpenParams) *ext.ViewFile {
+	if op.Path == "" {
+		return nil
+	}
+	return &ext.ViewFile{Path: op.Path}
 }
 
 // openPreview は、選んだときに開く先 op を、プレビューに出すもの（op のファイルかバッファの、op の位置の行）にする。
@@ -422,7 +435,7 @@ func (p *picker) component() (ext.ViewComponent, uint64) {
 	matched := len(items)
 	if p.grep {
 		for _, it := range items[:min(len(items), limit)] {
-			out = append(out, ext.ViewItem{ID: it.id, Label: it.label, Highlights: it.spans, Preview: it.preview})
+			out = append(out, ext.ViewItem{ID: it.id, Label: it.label, Highlights: it.spans, Preview: it.preview, File: it.file})
 			shown[it.id] = it
 		}
 	} else {
@@ -430,7 +443,7 @@ func (p *picker) component() (ext.ViewComponent, uint64) {
 		rs, matched = filter(labels, in.text, limit)
 		for _, r := range rs {
 			it := items[r.index]
-			out = append(out, ext.ViewItem{ID: it.id, Label: it.label, Highlights: r.spans, Preview: it.preview})
+			out = append(out, ext.ViewItem{ID: it.id, Label: it.label, Highlights: r.spans, Preview: it.preview, File: it.file})
 			shown[it.id] = it
 		}
 	}
@@ -531,7 +544,10 @@ func (f *finder) openFiles(dir, query string, done func()) error {
 		last := time.Now()
 		err := lister(p.ctx, dir, hidden, func(rel string) {
 			abs := filepath.Join(dir, rel)
-			batch = append(batch, item{id: rel, label: rel, open: &ext.EditorOpenParams{Path: abs, Focus: true}, preview: &ext.ViewPreview{Path: abs}})
+			batch = append(batch, item{
+				id: rel, label: rel, open: &ext.EditorOpenParams{Path: abs, Focus: true},
+				preview: &ext.ViewPreview{Path: abs}, file: &ext.ViewFile{Path: abs},
+			})
 			if time.Since(last) >= refreshInterval {
 				p.add(batch...)
 				batch, last = nil, time.Now()
@@ -656,7 +672,10 @@ func grepItem(dir string, m grepMatch) item {
 	}
 	pos := ext.Position{Line: m.Line - 1, Byte: m.Col}
 	op := &ext.EditorOpenParams{Path: filepath.Join(dir, m.Path), Position: &pos, Focus: true}
-	return item{id: fmt.Sprintf("%s:%d:%d", m.Path, m.Line, m.Col), label: label, spans: spans, open: op, preview: openPreview(op)}
+	return item{
+		id: fmt.Sprintf("%s:%d:%d", m.Path, m.Line, m.Col), label: label, spans: spans,
+		open: op, preview: openPreview(op), file: openFile(op),
+	}
 }
 
 // grepDir は、カーソルのあるバッファのファイルのディレクトリの下を検索する（finder.grepDir）。ファイルでないバッファなら作業ディレクトリである。
@@ -783,7 +802,12 @@ func listItems(kind ext.EditorListKind, r ext.EditorListResult) (string, []item)
 				label += fmt.Sprintf("  (client %d)", t.Client)
 			}
 			buf := t.Buffer
-			its = append(its, item{id: strconv.FormatUint(uint64(t.Buffer), 10), label: label, open: &ext.EditorOpenParams{Buffer: &buf, Focus: true}})
+			it := item{id: strconv.FormatUint(uint64(t.Buffer), 10), label: label, open: &ext.EditorOpenParams{Buffer: &buf, Focus: true}}
+			if t.Path != "" {
+				// ファイルのタブだけにアイコンを付ける（FR-152）。ファイルでないバッファの見出しは、本体が空白でそろえる。
+				it.file = &ext.ViewFile{Path: t.Path}
+			}
+			its = append(its, it)
 		}
 		return "タブ", its
 	case ext.ListCommands:
@@ -846,7 +870,7 @@ func listItems(kind ext.EditorListKind, r ext.EditorListResult) (string, []item)
 				buf := j.Buffer
 				op.Buffer = &buf
 			}
-			its = append(its, item{id: strconv.Itoa(i), label: label, open: op, preview: openPreview(op)})
+			its = append(its, item{id: strconv.Itoa(i), label: label, open: op, preview: openPreview(op), file: openFile(op)})
 		}
 		return "ジャンプ", its
 	}

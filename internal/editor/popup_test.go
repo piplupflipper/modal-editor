@@ -405,7 +405,7 @@ func TestMarkdownHighlights(t *testing.T) {
 			{Range: rng(0, 0, 2, 4), Style: "comment"}, // 行をまたぐ
 		},
 	}
-	lines, _, decs := floatLines(c, nil)
+	lines, _, decs := floatLines(c, nil, nil)
 	if got := strings.Join(lines, "\n"); got != "intro\nfunc main()\ntail" {
 		t.Errorf("lines = %q", got)
 	}

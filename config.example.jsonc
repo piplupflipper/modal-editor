@@ -80,6 +80,12 @@
     "sign.breakpointUnverified": "○",
   },
 
+  // ファジーファインダーとファイラの項目の前に、ファイルの種類のアイコンを付ける（本体の既定も付ける）。
+  // アイコンは Nerd Font のグリフなので、Nerd Font が入っていない環境（端末のフォントに Nerd Font を使っていない環境）なら
+  // show を false にする。付けたままだと、アイコンの位置に四角や ? が出る。
+  // アイコンの文字と色は、ファイルの種類ごとに "fileTypes": { "go": { "text": "…", "fg": "#00add8" } } のように書き換えられる
+  "icons": { "show": true },
+
   // ステータス行の並び
   "statusline": {
     "left": ["mode", "name", "modified", "readonly"],

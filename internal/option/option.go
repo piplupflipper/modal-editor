@@ -149,6 +149,10 @@ const (
 	// PreviewWindowWidthPercent は、プレビューを出すときの中央のポップアップの窓の幅の、画面の幅に対する百分率である。
 	// 既定の 90 は、オーナーの nvim の fzf-lua の winopts.width と同じである。範囲は 10 から 100 である。
 	PreviewWindowWidthPercent = "preview.windowWidthPercent"
+	// IconsShow は、一覧と木の、ファイルかディレクトリを指す項目の前に、ファイルの種類のアイコンを付けるかである（FR-152）。
+	// 既定は付ける（#295 のオーナーの決め）。アイコンは Nerd Font のグリフなので、Nerd Font の入っていない端末では false にする。
+	// 一覧と木を作り直すとき（開いたときと、拡張機能が中身を送り直したとき）に読む。Vim にこの設定は無い。
+	IconsShow = "icons.show"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -165,6 +169,7 @@ var defs = []Def{
 	{Name: PreviewWidthPercent, Type: Int, Scope: ScopeEditor, Default: IntValue(60), Range: &IntRange{Min: 1, Max: 99}},
 	// 下限は、窓が一覧とプレビューに分けられないほど狭くならないように 10 にした。
 	{Name: PreviewWindowWidthPercent, Type: Int, Scope: ScopeEditor, Default: IntValue(90), Range: &IntRange{Min: 10, Max: 100}},
+	{Name: IconsShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(true)},
 }
 
 // Defs は、設定の表の写しを表の順に返す（設定ファイルの読み込みと、後に作るコマンドラインの補完の一覧）。

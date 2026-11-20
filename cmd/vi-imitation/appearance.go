@@ -12,6 +12,25 @@ var appearanceCheck = config.AppearanceCheck{
 	Symbol:      ui.CheckSymbol,
 	StatusPart:  ui.IsStatusPart,
 	TabLinePart: ui.IsTabLinePart,
+	Icon:        ui.CheckIcon,
+}
+
+// uiIcons は、設定の icons のアイコンの表の項目を、描画のアイコンの対応に写す（FR-152）。
+// アイコンの名前（"directory"、"fileTypes.go"）は、設定と描画で同じものを使う。
+func uiIcons(icons map[string]config.Icon) ui.Icons {
+	if len(icons) == 0 {
+		return nil
+	}
+	styles := make(map[string]config.Style, len(icons))
+	for name, ic := range icons {
+		styles[name] = ic.Style
+	}
+	attrs := uiColors(styles)
+	out := make(ui.Icons, len(icons))
+	for name, ic := range icons {
+		out[name] = ui.Icon{Text: ic.Text, Attr: attrs[name]}
+	}
+	return out
 }
 
 // uiColors は、設定の colors を描画の属性の対応に写す（FR-91）。

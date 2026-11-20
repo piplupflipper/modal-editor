@@ -175,6 +175,10 @@ type Config struct {
 	Colors map[string]ui.Attr
 	// Symbols は、記号の名前から描く文字列への対応（設定の symbols。FR-93）である。値は ui.CheckSymbol を通したものにする。
 	Symbols ui.Symbols
+	// Icons は、ファイルの種類のアイコンの表（設定の icons のうち表の項目。FR-152）である。ui.DefaultIcons を名前ごとに置き換える
+	// （ui.Icons.With）。文字列は ui.CheckIcon を通したものにする。nil なら既定の表だけを使う。
+	// アイコンを付けるかどうかは、設定の表の icons.show（option.IconsShow）で決める。
+	Icons ui.Icons
 	// StatusLine は、ステータス行に並べる部品の列（設定の statusline。FR-92）である。nil なら ui.DefaultStatusLine を使う。
 	StatusLine *ui.StatusLine
 	// TabLine は、タブの行を出す場合（設定の tabline.show。FR-62）である。ゼロ値は、タブが 1 つでも出す（ui.TabLineAlways。#215 のオーナーの裁定）。
@@ -259,6 +263,8 @@ type Editor struct {
 	// leader は、<Leader> を置き換えたキーの列（Config.Leader を読んだもの。FR-97）である。キーの一覧（FR-90）で使う。
 	leader   []editcmd.Key
 	fileType map[string]string
+	// icons は、ファイルの種類のアイコンの表（既定の表に Config.Icons を重ねたもの。FR-152）である。
+	icons ui.Icons
 	// options は、範囲がエディタ全体の設定の項目の値である（options.go。初めの値は Config.Options）。
 	options option.Values
 	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
@@ -546,6 +552,7 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 	for k, v := range cfg.FileTypes {
 		e.fileType[k] = v
 	}
+	e.icons = ui.DefaultIcons().With(cfg.Icons)
 	e.fixEOL = cfg.FixEndOfLine == nil || *cfg.FixEndOfLine
 	e.options = editorOptions(cfg.Options)
 	warnings := slices.Clone(cfg.Problems)
@@ -600,11 +607,12 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 
 // newRenderer は、設定の見た目（色、記号、ステータス行の並び、タブの行）を持った描画の部品を作る。client ごとに 1 つ持つ。
 // 色は、本体の既定の対応、選んだ配色（Config.ColorScheme）、設定の colors（Config.Colors）の順に、名前ごとに置き換えて重ねる。
+// アイコンの色（FR-152）は、アイコンの表から ui.IconStyle の名前で足す（その名前は colors に書けないので、上の段と重ならない）。
 //
 // req: FR-125
 func (e *Editor) newRenderer() *ui.Renderer {
 	return &ui.Renderer{
-		Theme:        ui.DefaultTheme().WithColors(e.cfg.ColorScheme).WithColors(e.cfg.Colors),
+		Theme:        ui.DefaultTheme().WithColors(e.cfg.ColorScheme).WithColors(e.cfg.Colors).WithIcons(e.icons),
 		Symbols:      e.cfg.Symbols,
 		StatusLine:   e.cfg.StatusLine,
 		TabLine:      e.cfg.TabLine,

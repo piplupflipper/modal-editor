@@ -306,9 +306,10 @@ func TestReadDir(t *testing.T) {
 // filer.pane は、作業ディレクトリの木を、今のファイルまで開いてカーソルを置いた形で pane/open に渡す（分割したペイン。closeOnSelect は
 // 本体が代わりに出す中央のポップアップのため）。filer.popup は placement を center にする。
 // 大きなディレクトリを開いて読む間と、git の応答を待つ間も、ping にすぐ答える（dev-cycle 2.2）。
-// 項目には、プレビューに出すものとして絶対パスを付ける（FR-149）。
+// 項目には、プレビューに出すものとして絶対パスを付ける（FR-149）。アイコンのためのファイル（FR-152）として、絶対パスと
+// ディレクトリかどうかを付ける。
 //
-// req: FR-105, FR-147, FR-149
+// req: FR-105, FR-147, FR-149, FR-152
 func TestOpenAndLargeDirectory(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.txt": "", "sub/b.txt": ""})
@@ -352,6 +353,13 @@ func TestOpenAndLargeDirectory(t *testing.T) {
 	}
 	if b := find(c.Items, big); b.Preview == nil || b.Preview.Path != big {
 		t.Errorf("directory preview = %+v", b.Preview)
+	}
+	// どの項目にも、本体がアイコンを付けるファイルかディレクトリ（その絶対パスと、ディレクトリかどうか）を付ける（FR-152）。
+	if b := find(c.Items, filepath.Join(dir, "sub", "b.txt")); b.File == nil || *b.File != (ext.ViewFile{Path: filepath.Join(dir, "sub", "b.txt")}) {
+		t.Errorf("file of b.txt = %+v", b.File)
+	}
+	if b := find(c.Items, big); b.File == nil || *b.File != (ext.ViewFile{Path: big, Dir: true}) {
+		t.Errorf("file of big = %+v", b.File)
 	}
 
 	h.notify(ext.MethodViewExpand, ext.ViewExpandParams{View: testView, Item: big, Expanded: true})

@@ -134,6 +134,21 @@ type ViewPreview struct {
 	Line *int `json:"line,omitempty"`
 }
 
+// ViewFile は、一覧、木、ファインダーの項目 1 つが指すファイルかディレクトリである（FR-152。API 0.12.0 で足した）。
+// 本体は、これを持つ項目の表示の文字列の前に、ファイルの種類ごとのアイコンを付けて描く（基本設計 1.4 の「#295 のアイコン」）。
+// アイコンの文字と色は本体が決めるので、拡張機能はファイルの種類もアイコンも知らなくてよい。
+// 項目の Highlights は、これまでどおり Label の中のバイトの位置で書く（本体がアイコンの分をずらす）。
+//
+// ViewItem.Preview（カーソルがあるときに何を見せるか）とは別に持つ。プレビューの無い項目（ファイラの木を狭い窓で出すとき）と、
+// ファイルを指さないプレビュー（ファイルでないバッファのジャンプ）があるためである（PR #298 のレビューの推奨 4）。
+type ViewFile struct {
+	// Path は、ファイルかディレクトリのパスである。本体は、名前と拡張子からファイルの種類を決める（設定の fileTypes を含む）。
+	// 本体はパスの先を調べないので、相対パスでも、無いファイルでもよい。
+	Path string `json:"path"`
+	// Dir は、ディレクトリなら true である。木では、開いたディレクトリと閉じたディレクトリでアイコンを分ける。
+	Dir bool `json:"dir,omitempty"`
+}
+
 // ViewItem は、一覧か木の項目 1 つである。
 type ViewItem struct {
 	// ID は、選んだときに view/select で返す値である。部品の中で一意にする。
@@ -155,6 +170,10 @@ type ViewItem struct {
 	// Preview は、この項目にカーソルがあるときにプレビューに出すものである（FR-149。API 0.11.0 で足した）。
 	// 無ければ、プレビューの欄を空にする。古い本体は読まずに捨てる。
 	Preview *ViewPreview `json:"preview,omitempty"`
+	// File は、この項目が指すファイルかディレクトリである（FR-152。API 0.12.0 で足した）。
+	// あれば、本体は Label の前にファイルの種類のアイコンを付けて描く。キー、コマンド、レジスターのような、
+	// ファイルを指さない項目では省く。古い本体は読まずに捨て、アイコンを付けない。
+	File *ViewFile `json:"file,omitempty"`
 }
 
 // HasPreview は、c がプレビューの欄を持つか（Preview が true か、項目のどれかが Preview を持つか）を返す。
@@ -207,7 +226,8 @@ type ViewSpan struct {
 }
 
 // Validate は、部品の種類が既知であることと、項目の ID が空でなく部品の中で重複しないこと、
-// 表示の文字列と入力の行の中身が改行を含まないこと、範囲が表示の文字列の中にあることを検査する。
+// 表示の文字列と入力の行の中身が改行を含まないこと、範囲が表示の文字列の中にあること、
+// プレビュー（Preview）と項目の指すファイル（File）の形を検査する。
 // 本体は、誤りのある popup/open に JSON-RPC のエラーで応答し、誤りのある view/update は捨てる。
 func (c *ViewComponent) Validate() error {
 	if !c.Kind.Known() {
@@ -239,6 +259,9 @@ func (c *ViewComponent) Validate() error {
 				case pv.Line != nil && *pv.Line < 0:
 					return fmt.Errorf("%s.preview.line %d が負である", p, *pv.Line)
 				}
+			}
+			if it.File != nil && it.File.Path == "" {
+				return fmt.Errorf("%s.file.path が空である", p)
 			}
 			for j, s := range it.Highlights {
 				if s.Start < 0 || s.End < s.Start || s.End > len(it.Label) {

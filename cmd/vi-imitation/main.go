@@ -560,6 +560,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		ColorScheme:      uiColors(cfg.SchemeColors),
 		Colors:           uiColors(cfg.Colors),
 		Symbols:          cfg.Symbols,
+		Icons:            uiIcons(cfg.Icons),
 		StatusLine:       uiStatusLine(cfg.StatusLine),
 		TabLine:          uiTabLine(cfg.TabLineShow),
 		TabLineParts:     uiStatusLine(cfg.TabLineParts),

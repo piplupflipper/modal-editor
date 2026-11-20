@@ -64,6 +64,7 @@ import (
 //	  "colorscheme": "iceberg",
 //	  "colors": { "diagnostic.error": { "sp": "#e27878", "undercurl": true }, "statusline": { "fg": 7, "bg": 0 } },
 //	  "symbols": { "sign.breakpoint": "●", "popup.border": "┌─┐│┘─└│" },
+//	  "icons": { "show": true, "fileTypes": { "go": { "text": "G", "fg": "#00add8" } } },
 //	  "statusline": { "left": ["mode", "name", "modified", "readonly"], "right": ["filetype", "ruler", "position"] },
 //	  "tabline": { "show": "always", "left": ["tabs"], "right": ["mrreview.status"] },
 //	  "elevateCommand": ["sudo"],
@@ -158,6 +159,10 @@ type Config struct {
 	// Symbols は symbols の値で、記号の名前から描く文字列への対応である（基本設計 7.1。FR-93）。
 	// 名前と文字列が使えるかは CheckAppearance で確かめる。
 	Symbols map[string]string
+	// Icons は icons の値のうちアイコンの表の項目で、アイコンの名前（icons の下の位置。"directory"、"fileTypes.go"）から
+	// アイコンへの対応である（基本設計 7.1。FR-152）。本体の既定の表を名前ごとに置き換える。項目が無ければ nil である。
+	// 誤りのあるアイコンは除いてある。文字列の表示幅は CheckAppearance で確かめる。icons.show は Options に入る。
+	Icons map[string]Icon
 	// StatusLine は statusline の値で、ステータス行に並べる部品の ID の列である（基本設計 7.1。FR-92）。
 	// 項目が無いか誤りなら nil で、本体の既定の並びを使う。部品の ID は CheckAppearance で確かめる。
 	StatusLine *StatusLine
@@ -281,6 +286,8 @@ func Parse(path string, data []byte) (Config, []error) {
 			cfg.ColorScheme = s.colorScheme(m.value, &cfg)
 		case "symbols":
 			cfg.Symbols = s.symbols(m.value, &cfg)
+		case "icons":
+			s.icons(m, &cfg)
 		case "statusline":
 			cfg.StatusLine = s.statusLine(m.value, &cfg)
 		case "tabline":
@@ -290,7 +297,8 @@ func Parse(path string, data []byte) (Config, []error) {
 		case "commandAliases":
 			cfg.CommandAliases = s.commandAliases(m.value, &cfg)
 		default:
-			// 上の項目でなければ、設定の表（option）の項目として読む。表の項目の名前の最上位の段は、上の項目と重ねない。
+			// 上の項目でなければ、設定の表（option）の項目として読む。表の項目の名前の最上位の段は、上の項目と重ねない
+			// （icons だけは、表の項目 icons.show を icons が読む）。
 			if !s.option(m, "", option.Defs(), &cfg) {
 				s.report(m.nameOff, "未知の項目 %s を無視する", join("", m.name))
 			}
