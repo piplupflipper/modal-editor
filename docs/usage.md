@@ -575,7 +575,7 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 
 ```jsonc
 "icons": {
-  "directory": { "text": "▸", "fg": "#73cef4" },
+  "directory": { "text": "D", "fg": "#73cef4" },
   "fileTypes": {
     "go": { "text": "G", "fg": "#00add8", "bold": true },
     "lua": { "text": "L", "fg": 74 },

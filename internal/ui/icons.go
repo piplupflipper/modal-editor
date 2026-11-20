@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 )
 
 // ファイルの種類のアイコン（FR-152。基本設計 1.4 の「#295 のアイコン」と 7.1）。
@@ -130,11 +131,24 @@ func CheckIcon(text string) error {
 	switch {
 	case gl.kind != glyphText:
 		return errors.New("タブと制御文字は使えない")
-	case gl.size != len(text):
+	case gl.size != len(text) && looksLikeShortEscape(text[:gl.size], text[gl.size:]):
 		return fmt.Errorf("アイコンは 1 つの文字にする（%q の後に %q がある。U+FFFF より大きい文字は、サロゲートの組か文字そのもので書く）",
 			text[:gl.size], text[gl.size:])
+	case gl.size != len(text):
+		return fmt.Errorf("アイコンは 1 つの文字にする（%q の後に %q がある）", text[:gl.size], text[gl.size:])
 	case gl.width < 1 || gl.width > 2:
 		return fmt.Errorf("アイコンの表示幅は 1 か 2 にする（%d ある）", gl.width)
 	}
 	return nil
+}
+
+// looksLikeShortEscape は、文字 first と残り rest が、U+FFFF より大きい文字を JSON の \u の 4 桁で書き損じたもの
+// （基本多言語面の私用領域の文字の後に、16 進の数字が 1 つか 2 つ続く）に見えるかを返す。
+// そう見えるときだけ、CheckIcon の誤りにサロゲートの組の案内を付ける（PR #305 の再レビューの推奨 1）。
+func looksLikeShortEscape(first, rest string) bool {
+	r := []rune(first)
+	if len(r) != 1 || r[0] < 0xe000 || r[0] > 0xf8ff || len(rest) < 1 || len(rest) > 2 {
+		return false
+	}
+	return strings.Trim(rest, "0123456789abcdefABCDEF") == ""
 }

@@ -125,6 +125,17 @@ func TestCheckIcon(t *testing.T) {
 			t.Errorf("CheckIcon(%q) = %v, want %q", tt.text, err, tt.want)
 		}
 	}
+	// サロゲートの組の案内は、\u の 4 桁で書いた私用領域の文字（の後に 16 進の数字が 1 つか 2 つ）に見えるときだけ付ける
+	// （PR #305 の再レビューの推奨 1）。ASCII を並べただけのときと、私用領域の文字の後が 16 進の数字でないときは付けない。
+	for text, hint := range map[string]bool{
+		"\U0000f086" + "8": true, "\U0000f086" + "8a": true, "ab": false, "\U0000f086" + "x": false,
+		"\U0000f086" + "123": false, "a8": false,
+	} {
+		err := CheckIcon(text)
+		if err == nil || strings.Contains(err.Error(), "サロゲート") != hint {
+			t.Errorf("CheckIcon(%q) = %v, want the surrogate hint %v", text, err, hint)
+		}
+	}
 	for _, s := range []string{"\U0000e5ff", "\U0000e5fe", "\U0000f0f6", "\U000f031b", "\U000f0868"} {
 		if w := StringWidth(s, DefaultTabStop); w != 1 {
 			t.Errorf("StringWidth(%q) = %d, want 1", s, w)
