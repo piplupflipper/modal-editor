@@ -179,7 +179,7 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	sub.TabStop, sub.Theme, sub.Symbols = r.TabStop, theme, r.Symbols
 	view := *fl.View
 	view.Tabs, view.Output, view.List, view.Choice, view.Float, view.Diff = nil, nil, nil, nil, nil, nil
-	view.Message, view.HitEnter = Message{}, false
+	view.Message, view.HitEnter, view.LineNumbers = Message{}, false, LineNumbers{}
 	if view.Mode == ModeCommandLine {
 		// コマンドラインは画面の最後の行に描く（Render）。窓の中は、コマンドラインに入る前のノーマルモードとして描く。
 		view.Mode = ModeNormal

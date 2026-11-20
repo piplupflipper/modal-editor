@@ -39,7 +39,8 @@ type Screen struct {
 //
 // 画面は上から、バッファの表示領域、ステータス行（1 行）、コマンドラインの行（1 行）に分ける。
 // 出力の欄（Frame.Output）を開いていれば、ステータス行とコマンドラインの行の間に、欄の中身と欄の名前の行を置く（Vim の :copen の窓と同じ並び）。
-// バッファの表示領域の左には、印の列（印か診断があるときだけ 2 列）を置く（layout）。GutterWidth で列を空けておくこともできる。
+// バッファの表示領域の左には、印の列（印か診断があるときだけ 2 列）を置き、その右に行番号の列（Frame.LineNumbers）を置く（layout）。
+// GutterWidth で印の列の場所を空けておくこともできる。
 // バッファの行は折り返さず、長い行は横にスクロールして表示する（Vim の 'nowrap'）。出力の欄の行は折り返す。
 //
 // Renderer は、縦と横のスクロールの位置を、描画をまたいで持つ。
@@ -53,7 +54,7 @@ type Renderer struct {
 	TabStop int
 	// Theme は、色の種類の名前から属性への対応である。nil なら DefaultTheme を使う。
 	Theme Theme
-	// GutterWidth は、バッファの表示領域の左に必ず空ける欄（印、行番号）の列数である。テキストはその右から描く。
+	// GutterWidth は、バッファの表示領域の左に、印の列の場所として必ず空ける列数である。行番号の列とテキストはその右から描く。
 	// 印か診断があれば、少なくとも印の列の 2 列を空ける。
 	GutterWidth int
 	// Symbols は、記号の名前から描く文字列への対応（設定の symbols。FR-93）である。表に無い名前は DefaultSymbols の値を使う。
@@ -75,8 +76,9 @@ type Renderer struct {
 	tabRows int
 	left    int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
 
-	// gutter と outRows は、直前の Render（layout）で決めた、左の欄の列数と出力の欄の中身の行数である。
-	gutter, outRows int
+	// gutter、numWidth、outRows は、直前の Render（layout）で決めた、印の列の列数、行番号の列の列数（出さなければ 0）、
+	// 出力の欄の中身の行数である。
+	gutter, numWidth, outRows int
 
 	// 以下は、表示領域の行数が変わったときに最初の行を決める（fitHeight）ための、直前の Render の状態である。
 	rendered bool // Render を 1 回以上行ったか
@@ -140,9 +142,15 @@ func (r *Renderer) textRows() int {
 	return max(r.Height-r.tabRows-2, 0)
 }
 
-// textLeft は、バッファのテキストを描く最初の画面の列を返す。
+// signWidth は、印の列の列数（行番号の列を描く最初の画面の列）を返す。
+func (r *Renderer) signWidth() int {
+	return max(r.gutter, r.GutterWidth, 0)
+}
+
+// textLeft は、バッファのテキストを描く最初の画面の列を返す。印の列と行番号の列の右である。
+// カーソルの画面の列と、カーソルの近くに浮かべる窓の位置も、この列から数える。
 func (r *Renderer) textLeft() int {
-	return min(max(r.gutter, r.GutterWidth, 0), max(r.Width, 0))
+	return min(r.signWidth()+r.numWidth, max(r.Width, 0))
 }
 
 // textWidth は、バッファのテキストを描く列数を返す。
@@ -223,6 +231,9 @@ func (r *Renderer) render(f *Frame) Screen {
 		}
 		if signs != nil {
 			d.drawSign(row, signs[n-r.top])
+		}
+		if r.numWidth > 0 {
+			d.drawNumber(row, n)
 		}
 		d.drawLine(row, n)
 		row++

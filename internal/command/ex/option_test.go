@@ -129,7 +129,7 @@ func TestOptionCommands(t *testing.T) {
 		{name: ":set 整数でない値", cmdline: "set count=x", wantCode: "E521", wantPos: 4},
 		{name: ":set 整数の名前=（空）", cmdline: "set count=", wantCode: "E521", wantPos: 4},
 		// :set で受け付けない書き方
-		{name: ":set 知らない名前", cmdline: "set number", wantCode: "E518", wantPos: 4},
+		{name: ":set 知らない名前", cmdline: "set nosuch", wantCode: "E518", wantPos: 4},
 		{name: ":set 正規の名前", cmdline: "set test.flag", wantCode: "E518", wantPos: 4},
 		{name: ":set inv", cmdline: "set invflag", wantCode: "E518", wantPos: 4},
 		{name: ":set +=", cmdline: "set count+=1", wantCode: "E518", wantPos: 4},
@@ -161,6 +161,67 @@ func TestOptionCommands(t *testing.T) {
 				if !slices.Equal(opts.sets, tt.wantSets) {
 					t.Errorf("sets = %q, want %q", opts.sets, tt.wantSets)
 				}
+			}
+			if tt.wantCode == "" && res.Notice.Text != tt.wantNotice {
+				t.Errorf("notice = %q, want %q", res.Notice.Text, tt.wantNotice)
+			}
+		})
+	}
+}
+
+// 行番号の 2 つの項目は、:set の Vim の名前 number と numberwidth で読み書きでき、範囲の外の値は Vim 9.1 と同じ番号の誤りにする
+// （2026-11-20 に vim -Nu NONE で、:set numberwidth=0 と =-1 が E487、=21 が E474、=abc が E521 になることを確かめた）。
+//
+// req: FR-135, FR-136
+func TestLineNumberOptions(t *testing.T) {
+	tests := []struct {
+		name       string
+		cmdline    string
+		init       map[string]option.Value
+		wantSets   []string
+		wantNotice string
+		wantCode   string
+		wantPos    int
+	}{
+		{name: ":set number", cmdline: "set number", wantSets: []string{"lineNumber.show=true"}},
+		{name: ":set nonumber", cmdline: "set nonumber", init: map[string]option.Value{"lineNumber.show": option.BoolValue(true)}, wantSets: []string{"lineNumber.show=false"}},
+		{name: ":set number! で出す", cmdline: "set number!", wantSets: []string{"lineNumber.show=true"}},
+		{name: ":set number! で消す", cmdline: "set number!", init: map[string]option.Value{"lineNumber.show": option.BoolValue(true)}, wantSets: []string{"lineNumber.show=false"}},
+		{name: ":set number?", cmdline: "set number?", wantNotice: "lineNumber.show=false"},
+		{name: ":set numberwidth=5", cmdline: "set numberwidth=5", wantSets: []string{"lineNumber.minWidth=5"}},
+		{name: ":set numberwidth は値を出す", cmdline: "set numberwidth", wantNotice: "lineNumber.minWidth=4"},
+		{name: ":set numberwidth=1（下限）", cmdline: "set numberwidth=1", wantSets: []string{"lineNumber.minWidth=1"}},
+		{name: ":set numberwidth=20（上限）", cmdline: "set numberwidth=20", wantSets: []string{"lineNumber.minWidth=20"}},
+		{name: ":set numberwidth=0", cmdline: "set numberwidth=0", wantCode: "E487", wantPos: 4},
+		{name: ":set numberwidth=-1", cmdline: "set numberwidth=-1", wantCode: "E487", wantPos: 4},
+		{name: ":set numberwidth=21", cmdline: "set numberwidth=21", wantCode: "E474", wantPos: 4},
+		{name: ":set numberwidth=abc", cmdline: "set numberwidth=abc", wantCode: "E521", wantPos: 4},
+		// int に収まらない値は、Vim 9.1 と同じく正なら E474、負なら E487（PR #272 のレビューの推奨 2）。
+		{name: ":set numberwidth の桁あふれ", cmdline: "set numberwidth=99999999999999999999", wantCode: "E474", wantPos: 4},
+		{name: ":set numberwidth の負の桁あふれ", cmdline: "set numberwidth=-99999999999999999999", wantCode: "E487", wantPos: 4},
+		{name: ":set numberwidth=2147483648", cmdline: "set numberwidth=2147483648", wantCode: "E474", wantPos: 4},
+		{name: ":set number=1", cmdline: "set number=1", wantCode: "E474", wantPos: 4},
+		{name: ":set nonumberwidth", cmdline: "set nonumberwidth", wantCode: "E474", wantPos: 4},
+		{name: ":set numberwidth!", cmdline: "set numberwidth!", wantCode: "E488", wantPos: 4},
+		{name: ":set nu（短い名前）", cmdline: "set nu", wantCode: "E518", wantPos: 4},
+		{name: ":option.set の範囲の下", cmdline: "option.set lineNumber.minWidth 0", wantCode: "E487", wantPos: 31},
+		{name: ":option.set の範囲の上", cmdline: "option.set lineNumber.minWidth 21", wantCode: "E474", wantPos: 31},
+		{name: ":option.set の範囲の中", cmdline: "option.set lineNumber.minWidth 5", wantSets: []string{"lineNumber.minWidth=5"}},
+		{name: ":option.set lineNumber.show", cmdline: "option.set lineNumber.show true", wantSets: []string{"lineNumber.show=true"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := &fakeOptions{vals: maps.Clone(tt.init)}
+			st := &State{Options: opts}
+			res, err := Execute(buffer.New("a\nb\n"), st, 0, tt.cmdline)
+			if code := errCode(t, err); code != tt.wantCode {
+				t.Fatalf("code = %q, want %q (err = %v)", code, tt.wantCode, err)
+			}
+			if e := (*Error)(nil); tt.wantCode != "" && errors.As(err, &e) && e.Pos != tt.wantPos {
+				t.Errorf("pos = %d, want %d (err = %v)", e.Pos, tt.wantPos, err)
+			}
+			if !slices.Equal(opts.sets, tt.wantSets) {
+				t.Errorf("sets = %q, want %q", opts.sets, tt.wantSets)
 			}
 			if tt.wantCode == "" && res.Notice.Text != tt.wantNotice {
 				t.Errorf("notice = %q, want %q", res.Notice.Text, tt.wantNotice)

@@ -60,7 +60,7 @@ func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 	}
 	view := *fl.View
 	view.Tabs, view.Output, view.List, view.Choice, view.Float, view.Diff = nil, nil, nil, nil, nil, nil
-	view.Message, view.HitEnter = Message{}, false
+	view.Message, view.HitEnter, view.LineNumbers = Message{}, false, LineNumbers{}
 	if view.Mode == ModeCommandLine {
 		view.Mode = ModeNormal
 	}

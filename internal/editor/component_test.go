@@ -13,6 +13,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
@@ -186,6 +187,48 @@ func TestComponentPopup(t *testing.T) {
 	if len(calls.popups) != n {
 		t.Errorf("OpenPopup was called for a client outside the terminal multiplexer")
 	}
+}
+
+// 行番号の列（lineNumber.show）は、client の画面のバッファの表示領域にだけ出し、ポップアップの部品の client の画面には出さない
+// （基本設計 6.7）。部品の client の画面は client の画面の Frame から作るので、行番号を詰めるのは client の画面を描く 1 か所にした。
+// 部品の client の画面に一覧（選択肢の問い）を出すときは、窓で表示領域を覆わないので、行番号が載っていると 0 行目に 1 が見えた
+// （PR #272 のレビューの必須 1）。
+//
+// req: FR-135
+func TestComponentPopupWithoutLineNumbers(t *testing.T) {
+	var calls muxCalls
+	cfg := Config{Extensions: fakeSpecs(t), Options: map[string]option.Value{option.LineNumberShow: option.BoolValue(true)}}
+	calls.config(&cfg)
+	h := start(t, cfg)
+	peer := h.attach(ClientInfo{ID: 2, Pane: "%9"})
+	peer.keys(":fake.popup list<CR>")
+	h.eventually("OpenPopup", func() bool { _, ok := calls.last(false); return ok })
+	call, _ := calls.last(false)
+	comp := h.attachComponent(call.view, false)
+	comp.waitScreen("close me")
+	// 元の client の画面には行番号が出る（0 行目はタブの行）。
+	h.eventually("元の client の画面の行番号", func() bool {
+		return strings.HasPrefix(strings.Split(peer.term.screen(), "\n")[1], "  1 ")
+	})
+	h.e.do(func() {
+		c := h.clientOf(peer.term)
+		h.e.withView(c, func() {
+			fr := h.e.popupComponentFrame(h.e.float)
+			if fr.LineNumbers != (ui.LineNumbers{}) {
+				t.Errorf("部品の client の画面の LineNumbers = %+v, want ゼロ値", fr.LineNumbers)
+			}
+			// 一覧を出す（窓で覆わない）ときも、0 行目に番号が出ない。
+			fr.Float = nil
+			fr.List = &ui.List{Title: "q", Items: []string{"[1] a"}}
+			s := (&ui.Renderer{Width: 40, Height: 10}).Render(fr)
+			if row := s.Grid.RowText(0); strings.TrimSpace(row) != "q" {
+				t.Errorf("部品の client の画面の 0 行目 = %q, want 一覧の見出しだけ", row)
+			}
+			if fb := h.e.bufferFrame(); !fb.LineNumbers.Show {
+				t.Errorf("client の画面の LineNumbers = %+v, want 出す", fb.LineNumbers)
+			}
+		})
+	})
 }
 
 // 拡張機能の pane/open は、元の client のペインを Config.OpenPane で分割させ、ペインの部品の client が描く。

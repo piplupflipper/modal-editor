@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -46,9 +47,10 @@ var (
 	}
 )
 
-// layout は、f に合わせて、印の列の幅と出力の欄の行数を決める。Render の最初に呼ぶ。
+// layout は、f に合わせて、印の列と行番号の列の幅と、出力の欄の行数を決める。Render の最初に呼ぶ。
 //
 // 印の列は、Vim の 'signcolumn' の既定（auto）と同じく、印か診断が 1 つでもあれば出し、無ければ出さない。
+// 行番号の列（f.LineNumbers）は、印の列の右に置き、幅は描くたびに f.Text の行数から決める（LineNumbers.width）。
 // 出力の欄は、画面の下（ステータス行とコマンドラインの行の間）に、欄の中身と欄の名前の行を置く。
 // 中身の行数は outputMaxRows 行と、画面の行数からステータス行、欄の名前の行、コマンドラインの行の 3 行を除いた行数の半分
 // （切り捨て）の小さい方にする。
@@ -58,6 +60,11 @@ func (r *Renderer) layout(f *Frame) {
 	if len(f.Signs) > 0 || len(f.Diagnostics) > 0 {
 		r.gutter = max(r.gutter, signColumnWidth)
 	}
+	lineCount := 1
+	if f.Text != nil {
+		lineCount = f.Text.LineCount()
+	}
+	r.numWidth = f.LineNumbers.width(lineCount)
 	r.outRows = 0
 	if f.Output != nil {
 		r.outRows = min(outputMaxRows, (r.Height-3)/2)
@@ -121,6 +128,27 @@ func (d *drawer) drawSign(row int, m signMark) {
 	limit := min(signColumnWidth, w)
 	for c := d.r.drawText(d.g, row, 0, limit, d.r.symbol(m.style), a); c < limit; c++ {
 		d.g.set(row, c, blank(a))
+	}
+}
+
+// drawNumber は、表示領域の row 行目に、バッファの line 行目（0 から数える）の行番号を描く（FR-135）。
+// 列は印の列の右の r.numWidth 列で、番号を最後の 1 列の手前で右に寄せ、最後の 1 列は空ける。
+// 列の全体（右寄せの前の空白と最後の 1 列を含む）に StyleLineNr を付ける（Vim の LineNr と同じ）。画面の右の端で切る。
+//
+// req: FR-135
+func (d *drawer) drawNumber(row, line int) {
+	x0, w := d.r.signWidth(), d.r.numWidth
+	a := d.theme.attr(StyleLineNr)
+	s := strconv.Itoa(line + 1)
+	pad := w - 1 - len(s)
+	for i := range w {
+		c := blank(a)
+		if k := i - pad; k >= 0 && k < len(s) {
+			c = Cell{Text: s[k : k+1], Width: 1, Attr: a}
+		}
+		if x := x0 + i; x < d.r.Width {
+			d.g.set(row, x, c)
+		}
 	}
 }
 

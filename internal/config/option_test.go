@@ -12,7 +12,8 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/option"
 )
 
-// testOptionDefs は、設定の表の代わりに使う項目である（本体の表にはまだエディタ全体の項目が無いため）。
+// testOptionDefs は、設定の表の代わりに使う項目である（3 段の入れ子、最上位の項目、バッファごとの文字列の項目を試すため）。
+// 行番号の 2 つは、本体の表と同じ名前で範囲を外した項目にしてある（範囲の検査は TestParseLineNumberOptions で本体の表で試す）。
 var testOptionDefs = []option.Def{
 	{Name: "lineNumber.show", Type: option.Bool, Scope: option.ScopeEditor, Default: option.BoolValue(false)},
 	{Name: "lineNumber.minWidth", Type: option.Int, Scope: option.ScopeEditor, Default: option.IntValue(4)},
@@ -130,6 +131,49 @@ func optionJSON(v option.Value) any {
 		return v.String()
 	}
 	return nil
+}
+
+// 本体の表の行番号の 2 つの項目は、"lineNumber": { "show": …, "minWidth": … } で書ける。
+// minWidth の範囲（1 から 20）の外の値は、:option.set と同じ検査（option.Def.Check）で断り、位置付きの誤りとして知らせて既定値を使う。
+//
+// req: FR-135, FR-136
+func TestParseLineNumberOptions(t *testing.T) {
+	cfg, errs := Parse("config.jsonc", []byte(`{ "lineNumber": { "show": true, "minWidth": 5 } }`))
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	want := map[string]option.Value{"lineNumber.show": option.BoolValue(true), "lineNumber.minWidth": option.IntValue(5)}
+	if !reflect.DeepEqual(cfg.Options, want) {
+		t.Errorf("Options = %+v, want %+v", cfg.Options, want)
+	}
+	for _, tt := range []struct {
+		src string
+		col int
+	}{
+		{`{ "lineNumber": { "minWidth": 0 } }`, 31},
+		{`{ "lineNumber": { "minWidth": -1 } }`, 31},
+		{`{ "lineNumber": { "minWidth": 21 } }`, 31},
+		// int に収まらない数も、範囲の外として知らせる（:set と同じ option.ParseInt で読む）。
+		{`{ "lineNumber": { "minWidth": 99999999999999999999 } }`, 31},
+		{`{ "lineNumber": { "minWidth": -99999999999999999999 } }`, 31},
+	} {
+		cfg, errs := Parse("config.jsonc", []byte(tt.src))
+		val := strings.TrimSuffix(strings.TrimPrefix(tt.src, `{ "lineNumber": { "minWidth": `), ` } }`)
+		wantErrors(t, errs, []struct {
+			line, col int
+			msg       string
+		}{
+			{1, tt.col, "lineNumber.minWidth は 1 から 20 の整数にする: " + val},
+		})
+		if cfg.Options != nil {
+			t.Errorf("%s: Options = %+v", tt.src, cfg.Options)
+		}
+	}
+	for _, src := range []string{`{ "lineNumber": { "minWidth": 1 } }`, `{ "lineNumber": { "minWidth": 20 } }`} {
+		if _, errs := Parse("config.jsonc", []byte(src)); len(errs) != 0 {
+			t.Errorf("%s: errs = %v", src, errs)
+		}
+	}
 }
 
 // 本体の表の filetype はバッファごとの項目なので、設定ファイルに書けば誤りとして知らせる。

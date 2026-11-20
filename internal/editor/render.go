@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/piplupflipper/vi-imitation/internal/command"
+	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
@@ -31,6 +32,10 @@ func uiMode(m command.Mode) ui.Mode {
 //
 // フォーカスのあるポップアップがあれば、バッファの表示領域には開いたときのタブ（tab）を描き、
 // ステータス行、モード、コマンドラインは、キーを受けるポップアップのバッファ（cur）のものを出す。
+//
+// 行番号の列（ui.Frame.LineNumbers）は詰めない。出すのは client の画面のバッファの表示領域だけなので、
+// その画面を描く renderView の 1 か所で詰める（bufferFrame）。frame を元に作る部品の client の画面（popupComponentFrame）には、
+// 消し忘れても行番号が載らない（PR #272 のレビューの必須 1）。
 func (e *Editor) frame() *ui.Frame {
 	bs := e.tab()
 	cur := e.cur
@@ -93,6 +98,28 @@ func (e *Editor) frame() *ui.Frame {
 	return f
 }
 
+// bufferFrame は、client の画面（バッファの表示領域のある画面）の描画の入力を作る。frame に行番号の列の出し方を足したものである。
+// 行番号を出すかは、この 1 か所で決める。部品の client の画面とポップアップの窓の中の Frame は、ここを通らないので行番号が載らない。
+//
+// req: FR-135
+func (e *Editor) bufferFrame() *ui.Frame {
+	f := e.frame()
+	f.LineNumbers = e.uiLineNumbers()
+	return f
+}
+
+// uiLineNumbers は、行番号の列の出し方を、エディタ全体の設定の今の値（lineNumber.show と lineNumber.minWidth）から作る（FR-135、FR-136）。
+// 描くたびに読むので、:set number などで値を変えたときに呼ぶ処理は無い（基本設計 7.3）。
+// 使うのは bufferFrame だけである。
+//
+// req: FR-135
+func (e *Editor) uiLineNumbers() ui.LineNumbers {
+	return ui.LineNumbers{
+		Show:     e.options.Get(option.LineNumberShow).Bool(),
+		MinWidth: e.options.Get(option.LineNumberMinWidth).Int(),
+	}
+}
+
 // hitEnter は、改行を含むメッセージを出していて、Vim の hit-enter の問いと同じくキーを待っているかを返す。
 // 待っている間は、メッセージの下に問いを出してカーソルをその末尾に置き（ui.Frame.HitEnter）、<CR> と <Space> はメッセージを消すだけにする（handleKey）。
 // 確認の問いと選択肢の問いを出している間と、コマンドラインモード（コマンドラインの行にメッセージを出さない）では待たない。
@@ -135,7 +162,7 @@ func (e *Editor) renderView() {
 	if e.cur == nil || e.quit || e.renderer.Width <= 0 || e.renderer.Height <= 0 {
 		return
 	}
-	scr := e.renderer.Render(e.frame())
+	scr := e.renderer.Render(e.bufferFrame())
 	if err := e.term.Draw(scr); err != nil {
 		e.log.Error("描画に失敗", "err", err)
 	}

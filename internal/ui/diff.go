@@ -104,10 +104,16 @@ func (r *Renderer) fitDiff(f *Frame, cur cursorPlace, prevTop int) {
 }
 
 // drawFiller は、表示領域の row 行目に詰め物の行を描く。印の列は空ける。
+// 行番号の列は、番号を書かずに StyleLineNr の空白で埋める（Vim 9.1 と同じ。PR #272 のレビューの推奨 1）。
 func (d *drawer) drawFiller(row int) {
 	a := d.theme.attr(StyleDiffDelete)
+	sign, ln := d.r.signWidth(), d.theme.attr(StyleLineNr)
 	for c := range d.r.textLeft() {
-		d.g.set(row, c, blank(Attr{}))
+		if c < sign {
+			d.g.set(row, c, blank(Attr{}))
+		} else {
+			d.g.set(row, c, blank(ln))
+		}
 	}
 	for c := d.r.textLeft(); c < d.r.Width; c++ {
 		d.g.set(row, c, Cell{Text: fillerText, Width: 1, Attr: a})

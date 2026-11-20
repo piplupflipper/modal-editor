@@ -19,6 +19,7 @@ package option
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 )
 
@@ -112,6 +113,14 @@ type Def struct {
 	Scope Scope
 	// Default は、既定値である。型は Type と同じにする。
 	Default Value
+	// Range は、整数の項目が取れる値の範囲である。nil なら範囲を限らない。整数でない項目では nil にする。
+	// 範囲は Check で確かめるので、値を項目に入れるどの経路（設定ファイル、:option.set、:set）にも効く。
+	Range *IntRange
+}
+
+// IntRange は、整数の項目が取れる値の範囲 [Min, Max] である（両端を含む）。
+type IntRange struct {
+	Min, Max int
 }
 
 // 項目の正規の名前。値を読む側は、名前を文字列で書かずにこの定数を使う。
@@ -119,12 +128,19 @@ const (
 	// FileType は、バッファのファイルの種類である（基本設計 6.7 のファイルの種類の判定。FR-134）。
 	// バッファを開くときに、設定の fileTypes の対応表と自動の判定で初めの値が決まる。ステータス行の部品の名前と同じにした。
 	FileType = "filetype"
+	// LineNumberShow は、バッファの表示領域の左に行番号の列を出すかである（FR-135。Vim の 'number'）。
+	LineNumberShow = "lineNumber.show"
+	// LineNumberMinWidth は、行番号の列の最小の列数である（FR-136。Vim の 'numberwidth'）。
+	// 列の幅は、この値と、バッファの最後の行の番号の桁数に 1 を足した数の大きい方になる。範囲は Vim と同じく 1 から 20 である。
+	LineNumberMinWidth = "lineNumber.minWidth"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
 // 順は、Defs が返す一覧の順である。
 var defs = []Def{
 	{Name: FileType, Type: String, Scope: ScopeBuffer, Default: StringValue("")},
+	{Name: LineNumberShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: LineNumberMinWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}},
 }
 
 // Defs は、設定の表の写しを表の順に返す（設定ファイルの読み込みと、後に作るコマンドラインの補完の一覧）。
@@ -153,21 +169,39 @@ var (
 	ErrNumberRequired = errors.New("option: value must be a decimal integer")
 	// ErrTypeMismatch は、Values.Set に渡した値の型が項目の型と違うことを表す（呼び出し側の誤り）。
 	ErrTypeMismatch = errors.New("option: value type does not match the option type")
+	// ErrOutOfRange は、整数の項目の値が範囲（Def.Range）の外にあることを表す。ErrBelowMin と ErrAboveMax はこれを包む。
+	ErrOutOfRange = errors.New("option: value is out of range")
+	// ErrBelowMin は、整数の項目の値が範囲の下限より小さいことを表す（下限が 1 の項目では、Vim の E487 に当たる）。
+	ErrBelowMin = fmt.Errorf("%w: below the minimum", ErrOutOfRange)
+	// ErrAboveMax は、整数の項目の値が範囲の上限より大きいことを表す（Vim の 'numberwidth' の 21 以上と同じく E474 に当たる）。
+	ErrAboveMax = fmt.Errorf("%w: above the maximum", ErrOutOfRange)
 )
 
 // Check は、値 v が項目 d に入れられる値かを確かめる。型が項目の型と違えば ErrTypeMismatch を返す。
+// 整数の項目に範囲（d.Range）があれば、下限より小さい値に ErrBelowMin を、上限より大きい値に ErrAboveMax を返す（FR-136）。
 // 値を項目に入れる経路（コマンドラインの文字列から読む Parse、設定ファイルの JSON の値から読む internal/config、Values.Set）は、
-// どれも型の変換の後にこれを通る（FR-131）。項目ごとの値の制約（列挙、範囲）を表に足すときは、ここで確かめる。
+// どれも型の変換の後にこれを通る（FR-131）。項目ごとの値の制約を表に足すときは、項目の名前で分けず、表の欄にしてここで確かめる。
+//
+// req: FR-131, FR-136
 func (d Def) Check(v Value) error {
 	if v.Type() != d.Type {
 		return ErrTypeMismatch
+	}
+	if r := d.Range; r != nil && v.Type() == Int {
+		switch {
+		case v.Int() < r.Min:
+			return ErrBelowMin
+		case v.Int() > r.Max:
+			return ErrAboveMax
+		}
 	}
 	return nil
 }
 
 // Parse は、文字列 text を項目の型の値に変換し、Check で確かめて返す。
 // 真偽は true と false だけ、整数は 10 進（先頭の - を許し、+ と 0x は許さない）、文字列は text をそのまま値にする（空も許す）。
-// 変換できなければ ErrInvalidBool か ErrNumberRequired を、確かめて誤りなら Check の誤りを返す。
+// 変換できなければ ErrInvalidBool か ErrNumberRequired を（int に収まらない整数は ParseInt の ErrBelowMin か ErrAboveMax を）、
+// 確かめて誤りなら Check の誤りを返す。
 func (d Def) Parse(text string) (Value, error) {
 	v, err := d.convert(text)
 	if err != nil {
@@ -191,18 +225,38 @@ func (d Def) convert(text string) (Value, error) {
 		}
 		return Value{}, ErrInvalidBool
 	case Int:
-		if text == "" || text[0] == '+' {
-			return Value{}, ErrNumberRequired
-		}
-		n, err := strconv.Atoi(text)
+		n, err := ParseInt(text)
 		if err != nil {
-			return Value{}, ErrNumberRequired
+			return Value{}, err
 		}
 		return IntValue(n), nil
 	case String:
 		return StringValue(text), nil
 	}
 	return Value{}, ErrTypeMismatch
+}
+
+// ParseInt は、整数の項目の値の文字列 text を読む。10 進（先頭の - を許し、+ と 0x は許さない）で、読めなければ ErrNumberRequired を返す。
+// 数字だけの文字列が int に収まらなければ、符号で、正なら ErrAboveMax、負なら ErrBelowMin を返す（どちらも ErrOutOfRange を包む）。
+// 収まらない値はどの範囲の外でもあるとして扱うためで、Vim 9.1 も :set numberwidth=99999999999999999999 を E474、
+// -99999999999999999999 を E487 にする（2026-11-20 に確かめた。PR #272 のレビューの推奨 2）。
+// コマンドラインの文字列（Def.Parse）と設定ファイルの JSON の数（internal/config）は、どちらもこれで読む。項目の名前では分けない。
+//
+// req: FR-136
+func ParseInt(text string) (int, error) {
+	if text == "" || text[0] == '+' {
+		return 0, ErrNumberRequired
+	}
+	n, err := strconv.Atoi(text)
+	switch {
+	case errors.Is(err, strconv.ErrRange) && text[0] == '-':
+		return 0, ErrBelowMin
+	case errors.Is(err, strconv.ErrRange):
+		return 0, ErrAboveMax
+	case err != nil:
+		return 0, ErrNumberRequired
+	}
+	return n, nil
 }
 
 // Values は、1 つの範囲（エディタ全体か、1 つのバッファ）の項目の今の値である。

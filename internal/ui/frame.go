@@ -129,7 +129,7 @@ type Float struct {
 	// ID は、窓を見分ける番号である。替わったら窓の中のスクロールの位置を決め直す。0 も 1 つの窓として扱う。
 	ID uint64
 	// View は、窓の中に描くバッファの Frame である。Text、Cursor、Mode、Selection、Decorations、Diagnostics を読み、
-	// Tabs、Output、List、Choice、Float、Diff、Message は読まない。Text が nil なら窓を出さない。
+	// Tabs、Output、List、Choice、Float、Diff、Message、LineNumbers は読まない（窓の中に行番号は出さない）。Text が nil なら窓を出さない。
 	View *Frame
 	// Title は、窓の見出しである。空なら出さない。
 	Title string
@@ -170,6 +170,38 @@ type Sign struct {
 	Line int
 	// Kind は、印の種類である。知らない種類は描かない。
 	Kind SignKind
+}
+
+// LineNumbers は、行番号の列の出し方である（Frame.LineNumbers。設定の lineNumber.show と lineNumber.minWidth。FR-135、FR-136）。
+//
+// 列は、印の列の右、バッファのテキストの左に置く。数字は右に寄せ、列の最後の 1 列は空ける（Vim の 'number' と同じ）。
+// 列の幅は、MinWidth と、バッファの最後の行の番号の桁数に 1 を足した数の大きい方である（Vim の 'numberwidth' と同じ規則）。
+// 幅は画面に見えている行でなく最後の行で決まるので、スクロールしても変わらず、行数の桁が上がったときに変わる。
+// 番号を出すのはバッファの行だけで、最終行より後の "~" の行と、見比べている間の詰め物の行には出さない。
+type LineNumbers struct {
+	// Show は、列を出すかどうかである。false なら他の欄を見ない。
+	Show bool
+	// MinWidth は、列の最小の列数（右の空けた 1 列を含む）である。設定の検査（1 から 20）を通した値を入れる。
+	MinWidth int
+}
+
+// width は、行数 lineCount のバッファの行番号の列の列数を返す。列を出さないなら 0 である。
+//
+// req: FR-136
+func (ln LineNumbers) width(lineCount int) int {
+	if !ln.Show {
+		return 0
+	}
+	return max(ln.MinWidth, digits(max(lineCount, 1))+1)
+}
+
+// digits は、正の整数 n の 10 進の桁数を返す。
+func digits(n int) int {
+	d := 1
+	for ; n >= 10; n /= 10 {
+		d++
+	}
+	return d
 }
 
 // Output は、画面の下に開いた出力の欄である（output/append。基本設計 6.7）。
@@ -227,6 +259,9 @@ type Frame struct {
 	Diagnostics []Diagnostic
 	// Signs は、行の印の一覧である。1 つの行に複数の印（診断の印を含む）があれば、優先順位の最も高いものだけを出す（基本設計 6.7。順位は signMarks の doc）。
 	Signs []Sign
+	// LineNumbers は、バッファの表示領域の左に出す行番号の列の出し方である（FR-135、FR-136）。ゼロ値は列を出さない。
+	// internal/editor が、描くたびに設定の今の値（lineNumber.show と lineNumber.minWidth）から詰める。
+	LineNumbers LineNumbers
 	// Output は、開いている出力の欄である。nil なら欄を開いていない。
 	Output *Output
 	// Float は、バッファの表示領域の上に浮かべて出すポップアップである（基本設計 1.4。FR-68）。nil なら出さない。
