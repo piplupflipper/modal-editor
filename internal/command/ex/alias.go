@@ -50,6 +50,8 @@ func lookupAlias(name string) *alias {
 // resolve は、名前（省略形を含む）に当たるコマンドを返す。Ex コマンドの表を先に引き、無ければ別名の表を引く。
 // 名前を付け替える別名は、付け替えた先の正規のコマンドを返す。
 // 変換を持つ別名は、範囲と "!" を取らず、変換を実行するコマンドの行を作って返す。どちらにも無ければ nil を返す。
+//
+// req: FR-133
 func resolve(name string) *command {
 	if cmd := lookup(name); cmd != nil {
 		return cmd
