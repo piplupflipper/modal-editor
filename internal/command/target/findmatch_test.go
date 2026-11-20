@@ -28,8 +28,8 @@ var incText = func() string {
 // 動かす向きは / と ? によらず、正がバッファの末尾の方である。
 // 期待値は、nvim 0.12.5 の --clean で、同じ並びのファイルの 1 行目の先頭（? は最後の行の先頭）から打った /foo、?foo、3/foo の後に、
 // <C-g> と <C-t> を 1 回ずつ打って出た一致の位置（2026-11-20 に tmux で確かめた）である。
-// 動かしたときの折り返し（wrapped）は、途中の移動によらず、始めた位置から検索の向きに見て一致が端の向こうにあるかである
-// （nvim 0.12.5 の /foo<C-t><CR> は折り返しの W を出さない）。
+// 動かしたときは、端を越えても折り返したとしない（nvim 0.12.5 の 20 行目からの ?foo<C-g><CR> と /foo<C-g><C-g><CR> は、
+// 端を越えて移っても折り返しの W を出さない。2026-11-20 に tmux で確かめた）。
 //
 // req: FR-153
 func TestFindMatchSteps(t *testing.T) {
@@ -51,7 +51,8 @@ func TestFindMatchSteps(t *testing.T) {
 		{"/foo<C-t>（先頭の一致の前は末尾の一致）", top, false, 1, -1, "45:8", false},
 		{"?foo", last, true, 1, 0, "45:8", false},
 		{"?foo<C-g>", last, true, 1, 1, "1:12", false},
-		{"20 行目からの ?foo<C-g>（始めた位置より後ろは折り返し）", buffer.Position{Line: 20}, true, 1, 1, "34:8", true},
+		{"20 行目からの ?foo<C-g>（端を越えても折り返したとしない）", buffer.Position{Line: 20}, true, 1, 1, "34:8", false},
+		{"20 行目からの /foo<C-g><C-g>（端を越えても折り返したとしない）", buffer.Position{Line: 20}, false, 1, 2, "1:12", false},
 		{"?foo<C-g><C-g><C-t><C-t><C-t>", last, true, 1, -1, "34:8", false},
 		{"3/foo", top, false, 3, 0, "4:23", false},
 		{"3/foo<C-t>", top, false, 3, -1, "45:8", false},

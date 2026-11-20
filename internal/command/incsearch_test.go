@@ -104,7 +104,12 @@ func TestIncSearchSteps(t *testing.T) {
 	lines := strings.Split(text, "\n")
 	lines[1], lines[4], lines[34], lines[45] = "line 2 beta foo", "line 5 epsilon foo bar foo", "line 35 foobar here", "line 46 foo end"
 	text = strings.Join(lines, "\n")
+	// mid は、カーソルを 20 行目（0 から数える）の先頭に置いたテキストである。
+	mid := strings.Join(lines[:20], "\n") + "\n|" + strings.Join(lines[20:], "\n")
 	for _, tc := range []struct{ start, keys, want string }{
+		// 端を越えて移っても、<C-g> と <C-t> の後は折り返しの警告を出さない（nvim 0.12.5 と同じ。PR #306 の再レビューの推奨 1）。
+		{mid, "?foo<C-g><CR>", "34:8"},
+		{mid, "/foo<C-g><C-g><CR>", "1:12"},
 		{"|" + text, "/foo<C-g><C-g><CR>", "4:23"},
 		{"|" + text, "/foo<C-g><C-g><C-g><C-g><C-g><C-t><C-t><CR>", "34:8"},
 		{"|" + text, "/foo<C-t><CR>", "45:8"},
@@ -119,8 +124,8 @@ func TestIncSearchSteps(t *testing.T) {
 			if err := rs[len(rs)-1].Err; err != nil {
 				t.Fatal(err)
 			}
-			// どれも、打ち始めた位置から検索の向きに見て端を越えない一致なので、折り返しの警告を出さない
-			// （nvim 0.12.5 の /foo<C-t><CR> は最後の一致へ移って W を出さない。PR #306 のレビューの推奨 2）。
+			// <C-g> と <C-t> の後は、端を越えたかによらず折り返しの警告を出さない（nvim 0.12.5 の /foo<C-t><CR> と
+			// 20 行目からの ?foo<C-g><CR> は W を出さない。PR #306 のレビューの推奨 2 と再レビューの推奨 1）。
 			if m := rs[len(rs)-1].Message; m.Warning {
 				t.Errorf("message = %+v（折り返していない）", m)
 			}
