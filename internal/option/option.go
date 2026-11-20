@@ -139,6 +139,16 @@ const (
 	// YankHighlightMs は、本体の y でヤンクした範囲に色を付けておくミリ秒である（FR-140。nvim の vim.hl.on_yank の timeout）。
 	// 0 なら付けない。範囲は 0 から 10000 である。Vim にこの設定は無い。
 	YankHighlightMs = "yank.highlightMs"
+	// PreviewMinWindowWidth は、項目のプレビュー（FR-149）を出す窓の幅の境目の列数である。プレビューの欄を持つ中央のポップアップか
+	// ペインの窓の幅（PreviewWindowWidthPercent で広げた幅）がこの列数を超えるときだけ、プレビューを右に出す。
+	// 既定の 100 は、fzf-lua の flip_columns の既定と同じである。範囲は 0 から 10000 である。Vim にこの設定は無い。
+	PreviewMinWindowWidth = "preview.minWindowWidth"
+	// PreviewWidthPercent は、プレビューを出すときに、窓の幅のうちプレビューに使う百分率である。
+	// 既定の 60 は、fzf-lua の winopts.preview.horizontal の既定（right:60%）と同じである。範囲は 1 から 99 である。
+	PreviewWidthPercent = "preview.widthPercent"
+	// PreviewWindowWidthPercent は、プレビューを出すときの中央のポップアップの窓の幅の、画面の幅に対する百分率である。
+	// 既定の 90 は、オーナーの nvim の fzf-lua の winopts.width と同じである。範囲は 10 から 100 である。
+	PreviewWindowWidthPercent = "preview.windowWidthPercent"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -150,6 +160,11 @@ var defs = []Def{
 	{Name: SearchHighlight, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	// 上限は、色を一瞬だけ付ける設定なので 10 秒にした（ミリ秒を時間の長さにしたときに溢れないためでもある）。
 	{Name: YankHighlightMs, Type: Int, Scope: ScopeEditor, Default: IntValue(0), Range: &IntRange{Min: 0, Max: 10000}},
+	// 境目の上限は、端末の列数として現実に無い大きさにした。0 にすると、プレビューの欄を持つ窓では常に出す。
+	{Name: PreviewMinWindowWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(100), Range: &IntRange{Min: 0, Max: 10000}},
+	{Name: PreviewWidthPercent, Type: Int, Scope: ScopeEditor, Default: IntValue(60), Range: &IntRange{Min: 1, Max: 99}},
+	// 下限は、窓が一覧とプレビューに分けられないほど狭くならないように 10 にした。
+	{Name: PreviewWindowWidthPercent, Type: Int, Scope: ScopeEditor, Default: IntValue(90), Range: &IntRange{Min: 10, Max: 100}},
 }
 
 // Defs は、設定の表の写しを表の順に返す（設定ファイルの読み込みと、後に作るコマンドラインの補完の一覧）。

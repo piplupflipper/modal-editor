@@ -159,6 +159,47 @@ func TestRunGrep(t *testing.T) {
 	}
 }
 
+// ファイル、検索、行、ジャンプリストの候補には、プレビューに出すもの（ファイルは先頭から、ほかはその行）を付け、
+// キー、コマンド、レジスター、タブの候補には付けない。プレビューを付ける種類の部品は、候補が届く前から欄を持つ（FR-149）。
+//
+// req: FR-149
+func TestItemPreviews(t *testing.T) {
+	m := grepMatch{Path: "a.go", Line: 3, Col: 1, Text: "x"}
+	if pv := grepItem("/w", m).preview; pv == nil || pv.Path != "/w/a.go" || pv.Buffer != nil || pv.Line == nil || *pv.Line != 2 {
+		t.Errorf("grep preview = %+v", pv)
+	}
+	buf := ext.BufferID(4)
+	r := ext.EditorListResult{
+		Jumps: []ext.ListJump{{Buffer: 1, Path: "/w/b.go", Position: ext.Position{Line: 5}}, {Buffer: buf, Position: ext.Position{Line: 1}}},
+		Tabs:  []ext.ListTab{{Buffer: 1, Path: "/w/b.go", Name: "b.go"}},
+		Keys:  []ext.ListKey{{Keys: "gq"}},
+	}
+	_, jumps := listItems(ext.ListJumps, r)
+	if pv := jumps[1].preview; pv == nil || pv.Path != "/w/b.go" || pv.Buffer != nil || *pv.Line != 5 {
+		t.Errorf("file jump preview = %+v", pv)
+	}
+	if pv := jumps[0].preview; pv == nil || pv.Path != "" || pv.Buffer == nil || *pv.Buffer != buf || *pv.Line != 1 {
+		t.Errorf("buffer jump preview = %+v", pv)
+	}
+	for _, kind := range []ext.EditorListKind{ext.ListTabs, ext.ListKeys} {
+		_, its := listItems(kind, r)
+		for _, it := range its {
+			if it.preview != nil {
+				t.Errorf("%s item %q has a preview", kind, it.label)
+			}
+		}
+	}
+	f := newFinder(context.Background())
+	for kind, want := range map[string]bool{"files": true, "grep": true, "lines": true, "jumps": true, "keys": false, "tabs": false} {
+		p := f.newPicker(kind, "t", "", "")
+		p.add(item{id: "a", label: "a", preview: &ext.ViewPreview{Path: "/a"}})
+		c, _ := p.component()
+		if c.Preview != want || c.Items[0].Preview == nil {
+			t.Errorf("%s: component preview = %v, item preview = %+v", kind, c.Preview, c.Items[0].Preview)
+		}
+	}
+}
+
 // rg が無ければ、検索のコマンドは開かずに理由を返す。
 func TestGrepWithoutRG(t *testing.T) {
 	old := lookPath

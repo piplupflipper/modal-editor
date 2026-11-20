@@ -71,6 +71,13 @@ type PaneOptions struct {
 	Focus bool
 }
 
+// PopupOptions は、Config.OpenPopup に渡す、端末多重化ソフトのポップアップの開き方である。
+type PopupOptions struct {
+	// Width は、ポップアップの幅の、端末の幅に対する百分率である。0 なら server の既定（80%）である。
+	// プレビュー（FR-149）を出す部品では、設定 preview.windowWidthPercent の値にする（requestPopup）。
+	Width int
+}
+
 // component は、部品を描く部品の client の端末と、その画面を描く描画の部品である。
 type component struct {
 	// f は、この client が描く部品である。イベントループだけが読む。
@@ -346,22 +353,49 @@ func (e *Editor) focusAfterPane(extID string, move bool) {
 
 // requestPopup は、読み込んでいる client に開いた中央のポップアップ f を、端末多重化ソフトのポップアップに出すよう頼む（FR-67）。
 // 別の goroutine で Config.OpenPopup を呼ぶ。開けなければ、誤りをその client のメッセージの行に出す（ポップアップは画面の中央に描いたまま）。
+// プレビューの欄を持つ部品（previewCapable）なら、先にポップアップを出す端末の列数を問い合わせ（Config.PopupScreenWidth）、
+// その列数の preview.windowWidthPercent % が境目を超えるなら、その百分率の幅でポップアップを開かせる（FR-149）。
+// 出すかの判定（previewShown）も、同じ列数（floatState.screen）から同じ規則で行う。
+// ポップアップの百分率は端末の幅に対するものなので、開いた client のペインの幅で判定すると、分割した狭いペインから開いたときに、
+// 判定と実際の窓の幅が食い違う（PR #298 のレビューの必須 1）。問い合わせられなければ、元の client の画面の幅で代える。
 //
-// req: FR-67
+// req: FR-67, FR-149
 func (e *Editor) requestPopup(f *floatState) {
 	pane := e.view.info.Pane
 	if e.cfg.OpenPopup == nil || pane == "" {
 		return
 	}
+	capable := e.previewCapable(f)
+	if capable {
+		f.screenPending = true
+	}
+	rule, fallback, screenWidth := e.previewRule(), e.renderer.Width, e.cfg.PopupScreenWidth
 	open, id, dir, c := e.cfg.OpenPopup, f.id, e.workDir(), e.view
 	go func() {
 		defer e.recoverPanic()
-		err := open(pane, id, dir)
+		var opts PopupOptions
+		if capable {
+			width := fallback
+			if screenWidth != nil {
+				if w, werr := screenWidth(pane); werr == nil && w > 0 {
+					width = w
+				} else {
+					e.log.Info("ポップアップを出す端末の幅を得られないので、ペインの幅で代える", "view", id, "err", werr)
+				}
+			}
+			if _, _, ok := rule.Layout(width, false); ok {
+				opts.Width = rule.WindowWidthPercent
+			}
+			e.later(func() { f.screen, f.screenPending = width, false })
+		}
+		err := open(pane, id, dir, opts)
 		if err == nil {
 			return
 		}
 		e.log.Warn("端末多重化ソフトのポップアップを開けない", "view", id, "err", err)
 		e.later(func() {
+			// 編集の client の画面の中に描くので、その画面の幅で判定する。
+			f.screen = 0
 			if c.attached() && c.replay != nil {
 				// マクロの再生の途中で開けなかった（端末多重化ソフトが消えたなど）。再生を続けると、開けないポップアップを開き直し続けるので、
 				// <C-c> と同じく再生を止める（PR #249 の 4 回目の確認の必須）。
@@ -529,18 +563,27 @@ func (e *Editor) popupComponentFrame(f *floatState) *ui.Frame {
 // paneComponentFrame は、ペインの部品 p を描くペインの部品の client の画面を作る。
 // 部品を表示領域の全体に広げ、ステータス行とコマンドラインには、ペインのバッファの名前、モード、打ちかけのコマンドラインを出す。
 // メッセージは元の client の画面に出す（ペインの横に見えている）。
+//
+// プレビューにフォーカスを移している（previewState.focus）なら、ステータス行とコマンドラインは、キーを受けるプレビューのバッファのもの
+// にする（FR-149、FR-71。中央のポップアップで、ui がステータス行をプレビューのバッファのものにするのと同じ。PR #298 のレビューの必須 2）。
+//
+// req: FR-149
 func (e *Editor) paneComponentFrame(p *floatState) *ui.Frame {
-	st := p.bs.state
+	bs := p.bs
+	if pv := p.preview.bs; p.preview.focus && pv != nil && slices.Contains(e.bufs, pv) {
+		bs = pv
+	}
+	st := bs.state
 	focused := p.focused
 	p.focused = true // モードと選択範囲を窓に描く
 	fl := e.floatFrame(p)
 	p.focused = focused
 	fl.Fill = true
 	return &ui.Frame{
-		Name:            bufferTitle(p.bs),
-		Modified:        p.bs.buf.Modified(),
-		ReadOnly:        p.bs.buf.ReadOnly(),
-		FileType:        p.bs.fileType(),
+		Name:            bufferTitle(bs),
+		Modified:        bs.buf.Modified(),
+		ReadOnly:        bs.buf.ReadOnly(),
+		FileType:        bs.fileType(),
 		Mode:            uiMode(st.Mode()),
 		CommandLine:     st.CommandLine(),
 		CommandLineType: st.CommandLineType(),

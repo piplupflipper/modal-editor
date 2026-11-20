@@ -73,6 +73,8 @@ type floatRow struct {
 	id string
 	// parent は、木で子を持つ項目（開閉できる項目）であることを表す。
 	parent bool
+	// preview は、その項目のプレビューに出すもの（ext.ViewItem.Preview。FR-149）である。無ければ nil である。
+	preview *ext.ViewPreview
 }
 
 // floatState は、client が出しているポップアップである。
@@ -132,6 +134,15 @@ type floatState struct {
 	// タブとそのパスである（view/tabChange。notifyPaneTabs）。
 	shownTab  *bufferState
 	shownPath string
+	// hasPreview は、部品がプレビューの欄を持つこと（ext.ViewComponent.HasPreview。FR-149）を表す。
+	// 開いたときと view/update のたびに決め直す。preview は、カーソルの項目のプレビューの状態である（preview.go）。
+	hasPreview bool
+	preview    previewState
+	// screen は、中央のポップアップを端末多重化ソフトのポップアップに出すときに、その幅の百分率を数えた端末の列数である
+	// （Config.PopupScreenWidth。requestPopup）。0 なら、編集の client の画面に描く窓として、その画面の幅で数える。
+	// screenPending は、端末の列数を問い合わせている間であることを表す。その間はプレビューを出さない（previewShown）。
+	screen        int
+	screenPending bool
 }
 
 // popupDecorationOwner は、ポップアップの部品の色を付ける範囲を、バッファの構文の色に入れるときの持ち主の名前である。
@@ -265,6 +276,10 @@ func (e *Editor) focusFloat() {
 	f.focused = true
 	f.transient = false
 	e.switchFocus(f.bs)
+	if pv := f.preview.bs; f.preview.focus && pv != nil && f.preview.owned && slices.Contains(e.bufs, pv) {
+		// プレビューにフォーカスを入れていたペインの部品（paneInput はキーのたびにフォーカスを入れ直す）。FR-149。
+		e.switchFocus(pv)
+	}
 }
 
 // unfocusFloat は、ポップアップのフォーカスを外し、開いたときのタブへ戻す。ポップアップは閉じずに残す。
@@ -326,6 +341,7 @@ func (e *Editor) closeFloat(notify bool) {
 	if f.list != nil && slices.Contains(e.bufs, f.list) {
 		e.closeBufferState(f.list)
 	}
+	e.closePreview(f)
 	if notify && f.ext != "" {
 		e.noteViewClient(f, false)
 		if err := e.host.Notify(f.ext, ext.MethodViewClosed, ext.ViewClosedParams{View: ext.ViewID(f.id)}); err != nil {
@@ -368,6 +384,13 @@ func (e *Editor) closeFloatsOf(bs *bufferState) {
 			if p.bs == bs {
 				e.withView(c, func() { e.closePane(p, true) })
 			}
+		}
+		// プレビューに出している開いたバッファを閉じたら、プレビューを空にする（次の描画で開き直す。FR-149）。
+		if f := e.viewOf(c).float; f != nil {
+			f.preview.forget(bs)
+		}
+		for _, p := range e.viewOf(c).panes {
+			p.preview.forget(bs)
 		}
 	}
 }
@@ -422,6 +445,14 @@ var ctrlW = editcmd.MustParseKeys("<C-w>")[0]
 // ポップアップを閉じてキーを受けるバッファが替わったら command.ErrBufferSwitched を返し、再生の残りを移った先で続けさせる。
 func (e *Editor) popupStateKey(bs *bufferState, k editcmd.Key, insert bool) (bool, []editcmd.Key, error) {
 	f := e.float
+	if f != nil && f.focused && f.preview.bs == bs && f.preview.focus {
+		// プレビューのバッファでは、ノーマルモードの <Esc> でフォーカスを一覧へ戻す。ほかのキーは通常のキーである（FR-149、FR-71）。
+		if insert || k != editcmd.Esc {
+			return false, nil, nil
+		}
+		e.leavePreview(f)
+		return true, nil, command.ErrBufferSwitched
+	}
 	if f == nil || !f.focused || f.bs != bs {
 		return false, nil, nil
 	}
@@ -749,7 +780,7 @@ func floatLines(c ext.ViewComponent, expanded map[string]bool) (lines []string, 
 			}
 			line := len(lines)
 			lines = append(lines, prefix+it.Label)
-			rows = append(rows, floatRow{id: it.ID, parent: len(it.Children) > 0 || it.HasChildren})
+			rows = append(rows, floatRow{id: it.ID, parent: len(it.Children) > 0 || it.HasChildren, preview: it.Preview})
 			for _, s := range it.Highlights {
 				decs = append(decs, ext.Decoration{
 					Range: ext.Range{
@@ -823,6 +854,7 @@ func initExpanded(items []ext.ViewItem, prev, m map[string]bool) {
 // テキストでは、カーソルが最後の行にあれば新しい中身の最後の行へ置く（末尾を追う）。
 // 中身を替えるのは、編集の禁止の判定を通らない読み直しの入り口で行う（基本設計 4.6 の「ファイルでないバッファの中身の更新」）。
 func (e *Editor) setFloatContent(f *floatState, c ext.ViewComponent) {
+	f.hasPreview = c.HasPreview()
 	if c.Kind == ext.ViewTree {
 		f.tree = c.Items
 		m := map[string]bool{}
@@ -874,7 +906,7 @@ func (e *Editor) setPopupDecorations(bs *bufferState, decs []ext.Decoration) {
 // newComponentFloat は、部品 c を中身にしたポップアップを作る。ext は持ち主の拡張機能の ID（本体の部品なら空）である。
 // 開くのは呼び出し側が openFloat で行う。
 func (e *Editor) newComponentFloat(c ext.ViewComponent, extID string) *floatState {
-	f := &floatState{ext: extID, title: c.Title, scratch: true}
+	f := &floatState{ext: extID, title: c.Title, scratch: true, hasPreview: c.HasPreview()}
 	switch c.Kind {
 	case ext.ViewList:
 		f.kind = floatList
@@ -925,7 +957,7 @@ const finderBufferName = "[ファインダー]"
 // 入力の行のバッファ（bs。編集できる）と一覧のバッファ（list。編集を禁止したファイルでないバッファ）の 2 つを作る。
 // キーを受けるのは入力の行で、一覧のカーソルは finderKey が動かす。置き場所は常に中央で、開いた時点でフォーカスを入れる（popupOpenRequest）。
 func (e *Editor) newFinderFloat(c ext.ViewComponent, extID string) *floatState {
-	f := &floatState{kind: floatFinder, ext: extID, title: c.Title, scratch: true, input: c.Text}
+	f := &floatState{kind: floatFinder, ext: extID, title: c.Title, scratch: true, input: c.Text, hasPreview: c.HasPreview()}
 	// バッファの名前（ステータス行に出る）は、件数を含みうる見出しにせず、決まった名前にする（見出しは view/update で変わるため。
 	// PR #249 のレビューの推奨 7）。
 	f.bs = e.newPopupBuffer(finderBufferName, c.Text, "", false)
@@ -970,6 +1002,7 @@ func (e *Editor) finderUpdate(f *floatState, p ext.ViewUpdateParams) {
 	if p.Component.Title != "" {
 		f.title = p.Component.Title
 	}
+	f.hasPreview = p.Component.HasPreview()
 	e.setFinderList(f, p.Component.Items, top)
 	// 空の一覧では選ばずに待ち続ける。拡張機能が候補を読みながら同じ番号の一覧を送り直す（ファイルの読み込み中）ので、
 	// 読み終える前の空の一覧で選ぶと、記録したときと違って何も選ばないためである。
@@ -1209,6 +1242,9 @@ func (e *Editor) floatAction(bs *bufferState, a ex.Action) error {
 		switch {
 		case f == nil:
 			return errors.New("ポップアップがありません")
+		case f.focused && e.previewShown(f):
+			// プレビューを出している窓では、一覧（入力の行）とプレビューの間でフォーカスを移す（FR-149）。
+			return e.togglePreviewFocus(f)
 		case f.focused && f.center:
 			// 中央のポップアップは、開いている間はそれだけを操作する（FR-68）。
 			return errors.New("中央のポップアップからは移れません（<Esc> で閉じます）")
@@ -1325,6 +1361,11 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 	if f.kind == floatFinder {
 		fl.List = &ui.Frame{Text: f.list.buf, Cursor: f.list.state.Cursor(), Decorations: f.list.decoView}
 		fl.ListCount = len(f.rows)
+	}
+	if e.previewShown(f) {
+		// 出すかは previewShown で決め、ui は決めた窓の中を幅の規則で分ける。端末多重化ソフトのポップアップ（Fill）は、
+		// 出すときに preview.windowWidthPercent % の幅で開いたので、その全体の幅も境目を超える。
+		fl.Preview, fl.PreviewRule = e.uiPreview(f), e.previewRule()
 	}
 	return fl
 }

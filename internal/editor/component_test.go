@@ -28,16 +28,17 @@ type muxCalls struct {
 }
 
 type muxCall struct {
-	from string
-	view uint64
-	opts PaneOptions
+	from  string
+	view  uint64
+	opts  PaneOptions
+	popup PopupOptions
 }
 
 func (m *muxCalls) config(cfg *Config) {
-	cfg.OpenPopup = func(from string, view uint64, _ string) error {
+	cfg.OpenPopup = func(from string, view uint64, _ string, opts PopupOptions) error {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		m.popups = append(m.popups, muxCall{from: from, view: view})
+		m.popups = append(m.popups, muxCall{from: from, view: view, popup: opts})
 		return m.fail
 	}
 	cfg.OpenPane = func(from string, view uint64, _ string, opts PaneOptions) error {

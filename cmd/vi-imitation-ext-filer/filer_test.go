@@ -306,8 +306,9 @@ func TestReadDir(t *testing.T) {
 // filer.pane は、作業ディレクトリの木を、今のファイルまで開いてカーソルを置いた形で pane/open に渡す（分割したペイン。closeOnSelect は
 // 本体が代わりに出す中央のポップアップのため）。filer.popup は placement を center にする。
 // 大きなディレクトリを開いて読む間と、git の応答を待つ間も、ping にすぐ答える（dev-cycle 2.2）。
+// 項目には、プレビューに出すものとして絶対パスを付ける（FR-149）。
 //
-// req: FR-105, FR-147
+// req: FR-105, FR-147, FR-149
 func TestOpenAndLargeDirectory(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.txt": "", "sub/b.txt": ""})
@@ -344,6 +345,13 @@ func TestOpenAndLargeDirectory(t *testing.T) {
 	}
 	if b := find(c.Items, big); b == nil || !b.HasChildren || b.Expanded != nil || len(b.Children) != 0 {
 		t.Errorf("big = %+v, want an unread directory", b)
+	}
+	// どの項目にも、プレビューに出すもの（その絶対パス）を付け、部品はプレビューの欄を持つ（FR-149）。
+	if b := find(c.Items, filepath.Join(dir, "sub", "b.txt")); !c.Preview || b == nil || b.Preview == nil || b.Preview.Path != filepath.Join(dir, "sub", "b.txt") || b.Preview.Line != nil {
+		t.Errorf("preview: component %v, b.txt %+v", c.Preview, b)
+	}
+	if b := find(c.Items, big); b.Preview == nil || b.Preview.Path != big {
+		t.Errorf("directory preview = %+v", b.Preview)
 	}
 
 	h.notify(ext.MethodViewExpand, ext.ViewExpandParams{View: testView, Item: big, Expanded: true})

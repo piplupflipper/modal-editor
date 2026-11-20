@@ -11,6 +11,19 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/protocol"
 )
 
+// 端末多重化ソフトのポップアップの幅は、本体が渡した百分率（プレビューを出す部品の preview.windowWidthPercent）で、
+// 渡さなければ既定の 80% である。高さは 80% のままである。
+//
+// req: FR-149
+func TestPopupOptions(t *testing.T) {
+	for _, tt := range []struct{ in, want int }{{0, popupWidth}, {90, 90}, {100, 100}, {120, 100}} {
+		got := popupOptions("%1", editor.PopupOptions{Width: tt.in})
+		if got.Target != "%1" || got.Width != tt.want || got.Height != popupHeight {
+			t.Errorf("popupOptions(%d) = %+v, want width %d", tt.in, got, tt.want)
+		}
+	}
+}
+
 // 中央のポップアップを開いた編集の client がペインを知っていれば、server は Config.OpenPopup で部品の client を起動させる。
 // ソケットで繋いだポップアップの部品の client（Hello の View）は、部品を開いた元の client に繋がり、部品の画面を受け取る。
 // 部品の client で打ったキーは元の client の操作になり、<Esc> で部品を閉じると、部品の client は理由の無い終わりの知らせを受ける。
@@ -18,7 +31,7 @@ import (
 // req: FR-67
 func TestServeComponentClient(t *testing.T) {
 	views := make(chan uint64, 4)
-	srv, err := New(editor.Config{OpenPopup: func(_ string, view uint64, _ string) error {
+	srv, err := New(editor.Config{OpenPopup: func(_ string, view uint64, _ string, _ editor.PopupOptions) error {
 		views <- view
 		return nil
 	}})

@@ -115,6 +115,13 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	if fl.Fill {
 		maxW = r.Width
 	}
+	// プレビューを出すなら、窓を幅の規則の幅まで広げ、右の pw 列と区切りの 1 列を除いた列を、中身の幅にする（FR-149。preview.go）。
+	window, pw, preview := r.previewLayout(fl)
+	if preview {
+		maxW = window - 2*b - pw - 1
+	} else {
+		r.floatPreview = nil
+	}
 	if maxW < 3 {
 		return Cursor{}, false
 	}
@@ -124,7 +131,7 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	for i := range min(n, floatScanLines) {
 		width = max(width, StringWidth(text.Line(i), tabStop))
 	}
-	if fl.Wide || fl.Fill {
+	if fl.Wide || fl.Fill || preview {
 		width = maxW
 	}
 	head := 0
@@ -143,8 +150,8 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 		space = above
 	}
 	h := min(n, space)
-	if fl.Fill {
-		// 中身が短くても、表示領域の全体を窓にする。
+	if fl.Fill || preview {
+		// 中身が短くても、表示領域の全体を窓にする。プレビューを出す窓も、一覧の行数に依らずプレビューの行を取る。
 		h = space
 	} else if !fl.Center {
 		h = min(h, popupMaxRows-2*b-head)
@@ -167,8 +174,16 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	case fl.Center:
 		top = (textRows-boxH-2*b)/2 + b
 		x0 = max((r.Width-boxW-2*b)/2, 0) + b
+		if preview {
+			x0 = max((r.Width-window)/2, 0) + b
+		}
 	case useAbove:
 		top = curRow - boxH - b
+	}
+	// outerW は、枠線の内側の窓の幅（プレビューを出すなら、区切りの列とプレビューを含む）である。
+	outerW := boxW
+	if preview {
+		outerW = boxW + 1 + pw
 	}
 	if r.float == nil || r.floatID != fl.ID {
 		r.float = &Renderer{}
@@ -188,7 +203,7 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 	a := theme.attr(StylePopup)
 	sel := theme.attr(StylePopupSelected)
 	if bordered {
-		r.drawBorder(g, theme, chars, top, x0, boxH, boxW)
+		r.drawBorder(g, theme, chars, top, x0, boxH, outerW)
 		if fl.Title != "" {
 			ba, ok := theme[StylePopupBorder]
 			if !ok {
@@ -212,12 +227,21 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 			r.drawText(g, row, x0+1, x0+boxW-1, fl.Title, a.Over(Attr{Bold: true}))
 		case i == boxH-1 && note != "":
 			r.drawText(g, row, x0+1, x0+boxW-1, note, a)
+		case preview && sub.Top()+i-head >= n:
+			// プレビューを出す窓は一覧の行数に依らず高いので、一覧の最後の項目より下の行は空けておく（子の Renderer の "~" を出さない）。
 		default:
 			for c := range sub.Width {
 				cell := inner.Grid.At(i-head, c)
 				cell.Attr = base.Over(cell.Attr)
 				g.set(row, x0+1+c, cell)
 			}
+		}
+	}
+	if preview {
+		r.drawPreviewSeparator(g, theme, top, x0+boxW, boxH)
+		pcur, pok := r.drawPreview(g, theme, fl.Preview, top, x0+boxW+1, pw, boxH)
+		if fl.Preview.Focused {
+			return pcur, pok
 		}
 	}
 	if !fl.Focused || !inner.Cursor.Visible {

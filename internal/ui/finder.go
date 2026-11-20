@@ -32,6 +32,13 @@ func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 	if fl.Fill {
 		boxW = r.Width
 	}
+	// プレビューを出すなら、窓を幅の規則の幅まで広げ、入力の行と一覧を左に、プレビューを右に置く（FR-149。preview.go）。
+	window, pw, preview := r.previewLayout(fl)
+	if preview {
+		boxW = window - 2*b - pw - 1
+	} else {
+		r.floatPreview = nil
+	}
 	head, sep := 0, 0
 	if fl.Title != "" && !bordered {
 		head = 1
@@ -48,6 +55,11 @@ func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 	}
 	top := (textRows-boxH-2*b)/2 + b
 	x0 := max((r.Width-boxW-2*b)/2, 0) + b
+	outerW := boxW
+	if preview {
+		x0 = max((r.Width-window)/2, 0) + b
+		outerW = boxW + 1 + pw
+	}
 	if r.float == nil || r.floatID != fl.ID {
 		r.float, r.floatList = &Renderer{}, &Renderer{}
 		r.floatID = fl.ID
@@ -71,7 +83,7 @@ func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 	a := theme.attr(StylePopup)
 	sel := theme.attr(StylePopupSelected)
 	if bordered {
-		r.drawBorder(g, theme, chars, top, x0, boxH, boxW)
+		r.drawBorder(g, theme, chars, top, x0, boxH, outerW)
 		if fl.Title != "" {
 			ba, ok := theme[StylePopupBorder]
 			if !ok {
@@ -132,6 +144,13 @@ func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 			cell := listed.Grid.At(i, c)
 			cell.Attr = base.Over(cell.Attr)
 			g.set(row+i, x0+1+c, cell)
+		}
+	}
+	if preview {
+		r.drawPreviewSeparator(g, theme, top, x0+boxW, boxH)
+		pcur, pok := r.drawPreview(g, theme, fl.Preview, top, x0+boxW+1, pw, boxH)
+		if fl.Preview.Focused {
+			return pcur, pok
 		}
 	}
 	if !fl.Focused || !inner.Cursor.Visible {

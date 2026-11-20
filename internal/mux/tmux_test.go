@@ -608,6 +608,31 @@ func TestTmuxPopup(t *testing.T) {
 	}
 }
 
+// ScreenWidth は、ポップアップを出す tmux の client の端末の列数（client_width）を返す。ペインの幅ではない（FR-149）。
+//
+// req: FR-149
+func TestTmuxScreenWidth(t *testing.T) {
+	tt := newTestTmux(t)
+	ctx := testCtx(t)
+	if _, err := tt.ScreenWidth(ctx, ""); !errors.Is(err, ErrNoTarget) {
+		t.Errorf("ScreenWidth(\"\") = %v, want ErrNoTarget", err)
+	}
+	if _, err := tt.ScreenWidth(ctx, tt.Pane); err == nil {
+		t.Error("ScreenWidth without a client succeeded")
+	}
+	name := tt.attachClient(t, tt.session)
+	out, err := tt.run(ctx, "display-message", "-p", "-c", name, "#{client_width}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := strconv.Atoi(strings.TrimSpace(out))
+	got, err := tt.ScreenWidth(ctx, tt.Pane)
+	if err != nil || got != want || got <= 0 {
+		t.Errorf("ScreenWidth = %d, %v, want %d", got, err, want)
+	}
+	var _ ScreenWidther = tt.Tmux
+}
+
 func mustEval(t *testing.T, p string) string {
 	t.Helper()
 	r, err := filepath.EvalSymlinks(p)

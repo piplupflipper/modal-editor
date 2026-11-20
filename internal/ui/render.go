@@ -92,6 +92,10 @@ type Renderer struct {
 	floatID uint64
 	// floatList は、ファインダーのポップアップ（Float.List）の一覧を描く子の Renderer である（drawFinder）。float と同じく窓ごとに作り直す。
 	floatList *Renderer
+	// floatPreview は、ポップアップのプレビュー（Float.Preview。FR-149）の中身を描く子の Renderer で、previewID はその中身の Preview.ID である
+	// （drawPreview）。中身が替わるか、プレビューを描かなくなったら作り直す。
+	floatPreview *Renderer
+	previewID    uint64
 	// posFrom は、ステータス行の範囲の位置（StatusPartPosition）を、この Renderer の代わりに数える Renderer である。
 	// フォーカスのあるポップアップのステータス行を描く間だけ、窓の子の Renderer を入れる。
 	posFrom *Renderer
@@ -250,7 +254,7 @@ func (r *Renderer) render(f *Frame) Screen {
 			listCursor = &c
 		}
 	default:
-		r.float, r.floatList = nil, nil
+		r.float, r.floatList, r.floatPreview = nil, nil, nil
 	}
 	screen := Screen{Grid: g, Cursor: Cursor{
 		Row: curRow, Col: r.textLeft() + cur.col - r.left, Shape: CursorBlock,
@@ -266,12 +270,20 @@ func (r *Renderer) render(f *Frame) Screen {
 		screen.Cursor = *listCursor
 	}
 	if r.Height >= 2 {
-		if fl := f.Float; listCursor != nil && fl != nil && fl.Focused && r.float != nil {
+		fl := f.Float
+		switch {
+		case listCursor != nil && fl != nil && fl.Preview != nil && fl.Preview.Focused && fl.Preview.View != nil && r.floatPreview != nil:
+			// フォーカスがプレビューにあれば、ルーラーと範囲の位置をプレビューのバッファのものにする（FR-149）。
+			pv := fl.Preview.View
+			r.posFrom = r.floatPreview
+			r.drawStatus(g, theme, pv.Text, f, r.floatPreview.placeCursor(pv.Text, pv), rows)
+			r.posFrom = nil
+		case listCursor != nil && fl != nil && fl.Focused && r.float != nil:
 			// フォーカスのあるポップアップでは、ルーラーと範囲の位置をキーを受けるポップアップのバッファのものにする（PR #242 のレビュー）。
 			r.posFrom = r.float
 			r.drawStatus(g, theme, fl.View.Text, f, r.float.placeCursor(fl.View.Text, fl.View), rows)
 			r.posFrom = nil
-		} else {
+		default:
 			r.drawStatus(g, theme, text, f, cur, rows)
 		}
 	}

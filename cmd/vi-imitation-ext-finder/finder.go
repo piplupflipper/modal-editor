@@ -239,7 +239,27 @@ type item struct {
 	reg *ext.ListRegister
 	// exec は、キーとコマンドの候補で、選んだときに editor/execute で本体に実行させるものである。
 	exec *ext.EditorExecuteParams
+	// preview は、カーソルがあるときにプレビューに出すもの（FR-149）である。無ければ出さない。
+	preview *ext.ViewPreview
 }
+
+// openPreview は、選んだときに開く先 op を、プレビューに出すもの（op のファイルかバッファの、op の位置の行）にする。
+//
+// req: FR-149
+func openPreview(op *ext.EditorOpenParams) *ext.ViewPreview {
+	pv := &ext.ViewPreview{Path: op.Path, Buffer: op.Buffer}
+	if op.Buffer != nil {
+		pv.Path = ""
+	}
+	if op.Position != nil {
+		line := op.Position.Line
+		pv.Line = &line
+	}
+	return pv
+}
+
+// previewKinds は、候補にプレビューを付けるファインダーの種類である（#288 のオーナーの決めの表）。
+var previewKinds = map[string]bool{"files": true, "grep": true, "lines": true, string(ext.ListJumps): true}
 
 // picker は、開いたファインダー 1 つである。
 type picker struct {
@@ -402,7 +422,7 @@ func (p *picker) component() (ext.ViewComponent, uint64) {
 	matched := len(items)
 	if p.grep {
 		for _, it := range items[:min(len(items), limit)] {
-			out = append(out, ext.ViewItem{ID: it.id, Label: it.label, Highlights: it.spans})
+			out = append(out, ext.ViewItem{ID: it.id, Label: it.label, Highlights: it.spans, Preview: it.preview})
 			shown[it.id] = it
 		}
 	} else {
@@ -410,7 +430,7 @@ func (p *picker) component() (ext.ViewComponent, uint64) {
 		rs, matched = filter(labels, in.text, limit)
 		for _, r := range rs {
 			it := items[r.index]
-			out = append(out, ext.ViewItem{ID: it.id, Label: it.label, Highlights: r.spans})
+			out = append(out, ext.ViewItem{ID: it.id, Label: it.label, Highlights: r.spans, Preview: it.preview})
 			shown[it.id] = it
 		}
 	}
@@ -424,7 +444,9 @@ func (p *picker) component() (ext.ViewComponent, uint64) {
 	case loading:
 		title += "（読み込み中）"
 	}
-	return ext.ViewComponent{Kind: ext.ViewFinder, Title: title, Text: in.text, Items: out}, in.seq
+	// プレビューを付ける種類では、候補が届く前（検索の入力が空のとき）から欄を持たせ、最初の候補で窓の幅が変わらないようにする。
+	c := ext.ViewComponent{Kind: ext.ViewFinder, Title: title, Text: in.text, Items: out, Preview: previewKinds[p.kind]}
+	return c, in.seq
 }
 
 // add は、候補を足す。
@@ -509,7 +531,7 @@ func (f *finder) openFiles(dir, query string, done func()) error {
 		last := time.Now()
 		err := lister(p.ctx, dir, hidden, func(rel string) {
 			abs := filepath.Join(dir, rel)
-			batch = append(batch, item{id: rel, label: rel, open: &ext.EditorOpenParams{Path: abs, Focus: true}})
+			batch = append(batch, item{id: rel, label: rel, open: &ext.EditorOpenParams{Path: abs, Focus: true}, preview: &ext.ViewPreview{Path: abs}})
 			if time.Since(last) >= refreshInterval {
 				p.add(batch...)
 				batch, last = nil, time.Now()
@@ -633,10 +655,8 @@ func grepItem(dir string, m grepMatch) item {
 		label, spans = cl, nil
 	}
 	pos := ext.Position{Line: m.Line - 1, Byte: m.Col}
-	return item{
-		id: fmt.Sprintf("%s:%d:%d", m.Path, m.Line, m.Col), label: label, spans: spans,
-		open: &ext.EditorOpenParams{Path: filepath.Join(dir, m.Path), Position: &pos, Focus: true},
-	}
+	op := &ext.EditorOpenParams{Path: filepath.Join(dir, m.Path), Position: &pos, Focus: true}
+	return item{id: fmt.Sprintf("%s:%d:%d", m.Path, m.Line, m.Col), label: label, spans: spans, open: op, preview: openPreview(op)}
 }
 
 // grepDir は、カーソルのあるバッファのファイルのディレクトリの下を検索する（finder.grepDir）。ファイルでないバッファなら作業ディレクトリである。
@@ -699,10 +719,8 @@ func (f *finder) lines(b *server.Buffer, p *ext.CommandExecuteParams, done func(
 	its := make([]item, 0, b.LineCount())
 	for i := range b.LineCount() {
 		pos := ext.Position{Line: i}
-		its = append(its, item{
-			id: strconv.Itoa(i), label: fmt.Sprintf("%d: %s", i+1, b.Line(i)),
-			open: &ext.EditorOpenParams{Buffer: &id, Position: &pos, Focus: true},
-		})
+		op := &ext.EditorOpenParams{Buffer: &id, Position: &pos, Focus: true}
+		its = append(its, item{id: strconv.Itoa(i), label: fmt.Sprintf("%d: %s", i+1, b.Line(i)), open: op, preview: openPreview(op)})
 	}
 	return f.openStatic("lines", "行", its, "", done)
 }
@@ -828,7 +846,7 @@ func listItems(kind ext.EditorListKind, r ext.EditorListResult) (string, []item)
 				buf := j.Buffer
 				op.Buffer = &buf
 			}
-			its = append(its, item{id: strconv.Itoa(i), label: label, open: op})
+			its = append(its, item{id: strconv.Itoa(i), label: label, open: op, preview: openPreview(op)})
 		}
 		return "ジャンプ", its
 	}

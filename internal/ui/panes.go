@@ -84,6 +84,10 @@ func (r *Renderer) TextRows() int { return r.textRows() }
 // 窓の中のバッファのページ単位のスクロール（command.State.Viewport）を、窓の表示領域につなぐのに使う（internal/editor）。
 func (r *Renderer) FloatRenderer() *Renderer { return r.float }
 
+// PreviewRenderer は、直前の Render でポップアップのプレビュー（Float.Preview）の中身を描いた子の Renderer を返す。描いていなければ nil である。
+// プレビューにフォーカスを入れたときのページ単位のスクロールを、プレビューの表示領域につなぐのに使う（internal/editor）。
+func (r *Renderer) PreviewRenderer() *Renderer { return r.floatPreview }
+
 // signsByLine は、表示領域の行ごとに、優先順位の最も高い印を返す。印の無い行はゼロ値である。
 // DAP のブレークポイントと止まった位置（基本設計 6.4）は、この印で見る。
 //

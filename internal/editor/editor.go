@@ -191,10 +191,15 @@ type Config struct {
 	PaneFocused func(pane string) (bool, error)
 	// OpenPopup は、中央のポップアップ（基本設計 1.4。FR-67）を、端末多重化ソフトのポップアップとして開き、その中で部品 view を描く
 	// ポップアップの部品の client を、このエディタの server に繋ぐ形で起動する関数である（internal/mux の Mux.OpenPopup を包んだもの。component.go）。
-	// from は元の client のペイン、dir は起動するディレクトリである。部品の client が繋いだら、server が AttachComponent を呼ぶ。
+	// from は元の client のペイン、dir は起動するディレクトリ、opts はポップアップの大きさである。部品の client が繋いだら、server が AttachComponent を呼ぶ。
 	// イベントループを止めないよう、別の goroutine で呼ぶ。nil か、元の client のペインを知らないときは、編集の client の画面の中央に描く。
 	// 誤りを返したら、誤りを元の client のメッセージの行に出し、編集の client の画面の中央に描く。
-	OpenPopup func(from string, view uint64, dir string) error
+	OpenPopup func(from string, view uint64, dir string, opts PopupOptions) error
+	// PopupScreenWidth は、元の client のペイン from の上に端末多重化ソフトのポップアップを出す端末の列数を返す関数である
+	// （internal/mux の ScreenWidther を包んだもの。tmux の client_width）。OpenPopup の PopupOptions.Width の百分率はこの列数に対するもので、
+	// プレビュー（FR-149）を出すかと、ポップアップの幅を、同じ列数から決めるのに使う（requestPopup）。
+	// 別の goroutine で呼ぶ。nil か誤りなら、元の client の画面（ペイン）の幅で代える（herdr は端末の幅を返す口を持たない）。
+	PopupScreenWidth func(from string) (int, error)
 	// OpenPane は、拡張機能の pane/open（FR-115）で、from のペインを分割し、新しいペインで部品 view を描くペインの部品の client を
 	// 起動する関数である（internal/mux の Mux.SplitPane を包んだもの。component.go）。使い方は OpenPopup と同じである。
 	// nil か、元の client のペインを知らないときは、ペインに代えて中央のポップアップに出す（FR-123）。
@@ -253,6 +258,8 @@ type Editor struct {
 	popupKeys map[string][]popupKeyBinding
 	// floatSeq は、最後に開いたポップアップの番号である（floatState.id）。
 	floatSeq uint64
+	// previewSeq は、最後に付けたプレビューの中身の番号である（previewState.id。preview.go）。
+	previewSeq uint64
 	// paneActive と paneSaved は、ペインの部品の client のキーを処理している間（paneInput）の、そのペインの部品と、
 	// 退避した元の client のポップアップである（component.go）。処理していなければ nil である。
 	paneActive, paneSaved *floatState

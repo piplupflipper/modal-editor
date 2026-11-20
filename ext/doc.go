@@ -82,4 +82,7 @@ package ext
 // （#286。FR-105、FR-147）。
 // 古い本体は placement と closeOnSelect と cursor を黙って捨て、分割したペインに出してカーソルを先頭に置く。
 // popupKeys の action も捨てて view/key を送る。view/tabChange は送らない。
-const APIVersion = "0.10.0"
+// 0.11.0 で、一覧と木とファインダーの項目のプレビューに出すもの（ViewItem.Preview、ViewPreview）と、
+// 部品がプレビューの欄を持つ印（ViewComponent.Preview）を足した（#288。FR-149）。
+// 古い本体はどちらも黙って捨て、プレビューを出さずに今までの窓の幅で一覧だけを出す。
+const APIVersion = "0.11.0"

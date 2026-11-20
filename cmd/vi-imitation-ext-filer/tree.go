@@ -182,11 +182,14 @@ func (t *tree) reveal(path string) (cursor string, opened []string) {
 
 // component は、今の木を部品にする。cursor はカーソルを置く項目（空なら本体が保つ）、force は開閉を書く項目である（tree の doc）。
 func (t *tree) component(cursor string, force map[string]bool) ext.ViewComponent {
-	return ext.ViewComponent{Kind: ext.ViewTree, Title: t.title(), Items: t.items(t.root, force), Cursor: cursor}
+	return ext.ViewComponent{Kind: ext.ViewTree, Title: t.title(), Items: t.items(t.root, force), Cursor: cursor, Preview: true}
 }
 
 // items は、ディレクトリ dir の子の項目を返す。開いたディレクトリ（expanded）で読んだものだけ、子の項目を入れる。
 // ディレクトリはどれも子を持つ印（HasChildren）を付け、開いたら view/expand で知らせさせる。
+// どの項目にも、プレビューに出すもの（その絶対パス）を付ける。
+//
+// req: FR-149
 func (t *tree) items(dir string, force map[string]bool) []ext.ViewItem {
 	var out []ext.ViewItem
 	for _, e := range t.dirs[dir] {
@@ -194,7 +197,9 @@ func (t *tree) items(dir string, force map[string]bool) []ext.ViewItem {
 			continue
 		}
 		id := filepath.Join(dir, e.name)
-		it := ext.ViewItem{ID: id, Label: cleanLabel(e.name)}
+		// プレビュー（FR-149）は場所だけを渡し、中身（ファイルの中身とディレクトリの一覧）は本体が読む。
+		// 大きなディレクトリでも、項目ごとにファイルを読まないためである（PR #290 のレビューの推奨 5）。
+		it := ext.ViewItem{ID: id, Label: cleanLabel(e.name), Preview: &ext.ViewPreview{Path: id}}
 		if e.dir {
 			it.HasChildren = true
 			if _, loaded := t.dirs[id]; loaded && t.expanded[id] {
