@@ -12,23 +12,29 @@ import (
 //
 // req: FR-141
 func TestVisualInsertExternalEdit(t *testing.T) {
-	const text = "abc\ndef\nghi\n"
+	const text, indented = "abc\ndef\nghi\n", "  a\n  b\n  c\n"
+	at := func(l, b int) buffer.Position { return buffer.Position{Line: l, Byte: b} }
 	tests := []struct {
-		name     string
-		edit     buffer.Edit
-		wantText string
+		name, text, keys string
+		edit             buffer.Edit
+		wantText         string
 	}{
-		{"先頭に行を足す", buffer.Edit{Text: "Z\n"}, "Z\nabcXY\ndefXY\nghiXY"},
-		{"途中の行を消す", buffer.Edit{Range: buffer.Range{Start: buffer.Position{Line: 1}, End: buffer.Position{Line: 2}}}, "abcXY\nghiXY"},
-		{"末尾の行を消す", buffer.Edit{Range: buffer.Range{Start: buffer.Position{Byte: 4}, End: buffer.Position{Line: 2, Byte: 4}}}, "abcXY"},
-		{"位置の前に文字を足す", buffer.Edit{Range: buffer.Range{Start: buffer.Position{Line: 1}, End: buffer.Position{Line: 1}}, Text: "Q"}, "abcXY\nQdefXY\nghiXY"},
-		{"途中に行を足す", buffer.Edit{Range: buffer.Range{Start: buffer.Position{Line: 1}, End: buffer.Position{Line: 1}}, Text: "M\n"}, "abcXY\nM\ndefXY\nghiXY"},
+		{"先頭に行を足す", text, "VjjAX", buffer.Edit{Text: "Z\n"}, "Z\nabcXY\ndefXY\nghiXY"},
+		{"途中の行を消す", text, "VjjAX", buffer.Edit{Range: buffer.Range{Start: at(1, 0), End: at(2, 0)}}, "abcXY\nghiXY"},
+		{"末尾の行を消す", text, "VjjAX", buffer.Edit{Range: buffer.Range{Start: at(0, 4), End: at(2, 4)}}, "abcXY"},
+		{"位置の前に文字を足す", text, "VjjAX", buffer.Edit{Range: buffer.Range{Start: at(1, 0), End: at(1, 0)}, Text: "Q"}, "abcXY\nQdefXY\nghiXY"},
+		{"途中に行を足す", text, "VjjAX", buffer.Edit{Range: buffer.Range{Start: at(1, 0), End: at(1, 0)}, Text: "M\n"}, "abcXY\nM\ndefXY\nghiXY"},
+		// I の位置（字下げの後）で、最後の行を前の行の行末から消す（MCP の edit_buffer で最後の行を消す形。PR #274 のレビューの必須 1）。
+		// 消した行の位置は前の行の行末へ寄るが、範囲の内側にあったので落とし、前の行の字下げの後の位置を残す。
+		{"I で最後の行を消す", indented, "VjjIX", buffer.Edit{Range: buffer.Range{Start: at(1, 4), End: at(2, 4)}}, "  XYa\n  XYb"},
+		// 行を丸ごと書き換えると、その行の位置は範囲の内側なので落とす（行の先頭には入れない。レビューの推奨 3）。
+		{"I で行を書き換える", indented, "VjjIX", buffer.Edit{Range: buffer.Range{Start: at(1, 0), End: at(1, 4)}, Text: "  Xbb"}, "  XYa\n  Xbb\n  XYc"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := writeFiles(t, map[string]string{"a.txt": text})
+			dir := writeFiles(t, map[string]string{"a.txt": tt.text})
 			h := start(t, Config{WorkDir: dir}, "a.txt")
-			h.keys("VjjAX")
+			h.keys(tt.keys)
 			h.settle()
 			h.e.do(func() {
 				bs := h.e.cur

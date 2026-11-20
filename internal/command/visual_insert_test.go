@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
@@ -77,6 +78,13 @@ func TestVisualInsert(t *testing.T) {
 		// カーソルを動かすと、同時の入力を終える。それまでに入れたテキストはすべての位置に残り、その後はカーソルの位置だけに入る。
 		{"abc\ndef", "VjAX<Left>Y<Esc>", "abcYX\ndefX", "0:3", ModeNormal},
 		{"abc\ndef", "VjAX<Home>Y<Esc>", "YabcX\ndefX", "0:0", ModeNormal},
+		// カーソルが動かない移動（行末の <End>）は、同時の入力を終えない（終えるかは、キーではなくカーソルが動いたかで決める）。
+		// 入力も区切らないので、1 回の u ですべて戻り、. もすべての行に入れ直す。
+		{"abc\ndef", "VjA,<End>;<Esc>", "abc,;\ndef,;", "0:4", ModeNormal},
+		{"abc\ndef", "VjA,<End>;<Esc>u", "abc\ndef", "0:2", ModeNormal},
+		{"abc\ndef\nghi\njkl", "VjA,<End>;<Esc>jj.", "abc,;\ndef,;\nghi,;\njkl,;", "2:4", ModeNormal},
+		// 1 か所の入力では、Vim 9.1 と同じく動かない <End> でも入力を区切る（u は ; だけを戻す）。
+		{"a|bc", "A,<End>;<Esc>u", "abc,", "0:3", ModeNormal},
 		// 改行は位置の行の中に収まらないので、同時の入力を終え、カーソルの位置だけに入る。
 		{"  abc\n  def", "VjIX<CR>Y<Esc>", "  X\nYabc\n  Xdef", "1:0", ModeNormal},
 		// 行の先頭の <BS>（前の行とつなぐ）も行の中に収まらない。最初の行の <BS> はバッファの先頭で何もしない。
@@ -95,6 +103,10 @@ func TestVisualInsert(t *testing.T) {
 		{"abc\ndef\nghi", "VjAX<Esc>j.u", "abcX\ndefX\nghi", "1:3", ModeNormal},
 		// 回数を付けた . は、記録した値の回数を置き換える（. の汎用の規則。Vim の矩形選択の I の後の 3. は回数を使わない）。
 		{"abc\ndef", "VjAX<Esc>2.", "abcXXX\ndefXXX", "0:5", ModeNormal},
+		// バッファの最後の行で行が足りなくなった . の後も、次の . は記録した 3 行に置く
+		// （Vim 9.1 の <C-v>2j$AX<Esc>4j.gg. と <C-v>2jIX<Esc>4j.gg. と同じテキスト。PR #274 のレビューの必須 2）。
+		{"a\nb\nc\nd\ne\nf", "VjjAX<Esc>4j.gg.", "aXX\nbXX\ncXX\nd\neX\nfX", "0:2", ModeNormal},
+		{"a\nb\nc\nd\ne\nf", "VjjIX<Esc>4j.gg.", "XXa\nXXb\nXXc\nd\nXe\nXf", "0:0", ModeNormal},
 		// ノーマルモードの A を挟むと、. はその 1 行の A を繰り返す。
 		{"abc\ndef\nghi", "VjAX<Esc>AY<Esc>j.", "abcXY\ndefXY\nghi", "1:4", ModeNormal},
 		// カーソルを動かした後の入力は 1 か所の i として記録するので、. はそれを繰り返す。
@@ -163,90 +175,89 @@ func TestVisualInsertPaste(t *testing.T) {
 	}
 }
 
+// shiftByEdit は、internal/editor の shiftKept と同じ規則で、位置を 1 つの編集 ed の後の位置へずらす関数を返す
+// （範囲より前は動かさない。範囲の内側は範囲の始まりへ寄せて inside を true にする。範囲の終わり以降は増減した行とバイトだけ動かす）。
+// 実物の経路（applyExternal）は internal/editor のテストが見る。
+func shiftByEdit(ed buffer.Edit) func(buffer.Position) (buffer.Position, bool) {
+	return func(p buffer.Position) (buffer.Position, bool) {
+		st, end := ed.Range.Start, ed.Range.End
+		switch {
+		case p.Less(st):
+			return p, false
+		case p.Less(end):
+			return st, st != p
+		}
+		nl := strings.Count(ed.Text, "\n")
+		newEnd := pos(st.Line+nl, st.Byte+len(ed.Text))
+		if nl > 0 {
+			newEnd.Byte = len(ed.Text) - strings.LastIndex(ed.Text, "\n") - 1
+		}
+		if p.Line == end.Line {
+			return pos(newEnd.Line, newEnd.Byte+p.Byte-end.Byte), false
+		}
+		return pos(p.Line+newEnd.Line-end.Line, p.Byte), false
+	}
+}
+
 // 入力の途中の外からの編集（ShiftPositions）は、同時の入力の位置もそれぞれずらす。
-// バッファの外へ出た位置と、ほかの位置と同じ行へ寄った位置は落とす。
-// shift は、internal/editor の shiftAll と同じ規則でずらす関数を、ケースごとに書いた（実物の経路は internal/editor のテストが見る）。
+// 編集が置き換えた範囲の内側にあった位置、バッファの外へ出た位置、ほかの位置と同じ行へ寄った位置は落とす。
+// I の位置（字下げの後）でも、残った位置は行の中の位置を保つ（PR #274 のレビューの必須 1 と推奨 3）。
 //
 // req: FR-141
 func TestVisualInsertShift(t *testing.T) {
 	tests := []struct {
-		name  string
-		edit  buffer.Edit
-		shift func(buffer.Position) buffer.Position
-		want  string
+		name, text, keys string
+		edit             buffer.Edit
+		want             string
 	}{
-		{
-			// 先頭に行を足す。すべての位置が 1 行下へずれる。
-			"先頭に行を足す",
-			buffer.Edit{Text: "Z\n"},
-			func(p buffer.Position) buffer.Position { return pos(p.Line+1, p.Byte) },
-			"Z\nabcXY\ndefXY\nghiXY",
-		},
-		{
-			// 2 行目を消す。消した行の位置は落とし、下の行の位置を残す。
-			"途中の行を消す",
-			buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(2, 0)}},
-			func(p buffer.Position) buffer.Position {
-				switch {
-				case p.Line == 1:
-					return pos(1, 0)
-				case p.Line > 1:
-					return pos(p.Line-1, p.Byte)
-				}
-				return p
-			},
-			"abcXY\nghiXY",
-		},
-		{
-			// 2 行目と 3 行目を消す。消した行の位置はカーソルの行へ寄るので落とす。
-			"末尾の行を消す",
-			buffer.Edit{Range: buffer.Range{Start: pos(0, 4), End: pos(2, 4)}},
-			func(p buffer.Position) buffer.Position {
-				if p.Line > 0 {
-					return pos(0, 4)
-				}
-				return p
-			},
-			"abcXY",
-		},
-		{
-			// 2 行目の位置より前に文字を足す。その位置はバイトの分だけずれる。
-			"位置の前に文字を足す",
-			buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(1, 0)}, Text: "Q"},
-			func(p buffer.Position) buffer.Position {
-				if p.Line == 1 {
-					return pos(1, p.Byte+1)
-				}
-				return p
-			},
-			"abcXY\nQdefXY\nghiXY",
-		},
-		{
-			// バッファの外へ出た位置は落とす（読み直しのように、ずらす関数がバッファの外を返したとき）。
-			"バッファの外",
-			buffer.Edit{Range: buffer.Range{Start: pos(0, 4), End: pos(2, 4)}},
-			func(p buffer.Position) buffer.Position {
-				if p.Line > 0 {
-					return pos(p.Line+5, 0)
-				}
-				return p
-			},
-			"abcXY",
-		},
+		// 先頭に行を足す。すべての位置が 1 行下へずれる。
+		{"先頭に行を足す", "|abc\ndef\nghi", "VjjAX", buffer.Edit{Text: "Z\n"}, "Z\nabcXY\ndefXY\nghiXY"},
+		// 2 行目を消す。消した行の位置は範囲の内側なので落とし、3 行目の位置を残す。
+		{"途中の行を消す", "|abc\ndef\nghi", "VjjAX", buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(2, 0)}}, "abcXY\nghiXY"},
+		{"I で途中の行を消す", "|  a\n  b\n  c", "VjjIX", buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(2, 0)}}, "  XYa\n  XYc"},
+		// 2 行目と 3 行目を消す。消した行の位置はカーソルの行の行末へ寄るので落とす。
+		{"末尾の行を消す", "|abc\ndef\nghi", "VjjAX", buffer.Edit{Range: buffer.Range{Start: pos(0, 4), End: pos(2, 4)}}, "abcXY"},
+		// 最後の行を、前の行の行末から消す（最後の行には後ろに改行が無いので、外からはこの形でしか消せない）。
+		// 消した行の位置は前の行の行末へ寄るが、範囲の内側なので落とし、前の行の I の位置（字下げの後）を残す。
+		{"I で最後の行を消す", "|  a\n  b\n  c", "VjjIX", buffer.Edit{Range: buffer.Range{Start: pos(1, 4), End: pos(2, 4)}}, "  XYa\n  XYb"},
+		// 2 行目を丸ごと書き換える。2 行目の位置は範囲の内側なので落とし、行の先頭には入れない。ほかの位置は続ける。
+		{"I で行を書き換える", "|  a\n  b\n  c", "VjjIX", buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(1, 4)}, Text: "  Xbb"}, "  XYa\n  Xbb\n  XYc"},
+		// 2 行目の位置より前に文字を足す。その位置はバイトの分だけずれる。
+		{"位置の前に文字を足す", "|abc\ndef\nghi", "VjjAX", buffer.Edit{Range: buffer.Range{Start: pos(1, 0), End: pos(1, 0)}, Text: "Q"}, "abcXY\nQdefXY\nghiXY"},
+		// 位置から後ろを消す。位置は範囲の始まりなので内側ではなく、そのまま残る。
+		{"位置の後ろを消す", "|  ab\n  cd", "VjIX", buffer.Edit{Range: buffer.Range{Start: pos(1, 3), End: pos(1, 5)}}, "  XYab\n  XY"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := setup(t, "|abc\ndef\nghi")
-			feedKeys(s, "VjjAX")
+			s := setup(t, tt.text)
+			feedKeys(s, tt.keys)
 			if _, err := s.buf.Apply(buffer.Transaction{BaseVersion: s.buf.Version(), Edits: []buffer.Edit{tt.edit}}); err != nil {
 				t.Fatal(err)
 			}
-			s.ShiftPositions(tt.shift)
+			s.ShiftPositions(shiftByEdit(tt.edit))
 			feedKeys(s, "Y<Esc>")
 			if got := s.buf.Text(); got != tt.want {
 				t.Errorf("text = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// ずらす関数がバッファの外を返した位置は落とす（読み直しのように、編集と合わない関数が渡ったとき）。
+//
+// req: FR-141
+func TestVisualInsertShiftOutside(t *testing.T) {
+	s := setup(t, "|abc\ndef\nghi")
+	feedKeys(s, "VjjAX")
+	s.ShiftPositions(func(p buffer.Position) (buffer.Position, bool) {
+		if p.Line > 0 {
+			return pos(p.Line+5, 0), false
+		}
+		return p, false
+	})
+	feedKeys(s, "Y<Esc>")
+	if got := s.buf.Text(); got != "abcXY\ndefX\nghiX" {
+		t.Errorf("text = %q", got)
 	}
 }
 

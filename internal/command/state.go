@@ -250,19 +250,26 @@ func (s *State) SetCursor(pos buffer.Position) {
 // ShiftPositions は、利用者の操作でない編集（拡張機能の buffer/edit など）をバッファへ適用した後に、
 // カーソルと、ビジュアルモードの選択の両端（anchor と head）と、インサートモードの同時の入力の位置（FR-141）を、
 // それぞれ shift でずらしてバッファの中に丸める。
-// shift は、編集の前の位置を編集の後の位置へ写す関数である（editor の shiftAll）。
+// shift は、編集の前の位置を編集の後の位置へ写す関数である（editor の shiftKept）。
+// inside は、位置が編集で置き換えた範囲の内側（範囲の始まりより後ろで、終わりより前）にあったかである。
+// 内側の位置は、写した先が範囲の始まりに寄せた位置で、もとの文字との対応が無い。
 // 選択の両端は、カーソルのずれではなく自分の位置のずれで動く（SetCursor のように head をカーソルへ合わせない）。
 // 普段の状態（head がカーソルにある）では、両方が同じ位置へずれるので、head はカーソルにあるままである。
-// 同時の入力の位置も自分の位置のずれで動き、バッファの外へ出た位置と、ほかの位置と同じ行へ寄った位置は落とす（shiftSites）。
+// カーソルと選択の両端は、内側にあっても寄せた位置に置く。
+// 同時の入力の位置も自分の位置のずれで動き、内側にあった位置、バッファの外へ出た位置、ほかの位置と同じ行へ寄った位置は落とす（shiftSites）。
 // 望みの列は、ずらした後のカーソルの列にする（SetCursor と同じ）。
 //
 // req: FR-141
-func (s *State) ShiftPositions(shift func(buffer.Position) buffer.Position) {
-	if s.mode.visual() {
-		s.visual.anchor = s.clampPos(shift(s.visual.anchor))
-		s.visual.head = s.clampPos(shift(s.visual.head))
+func (s *State) ShiftPositions(shift func(buffer.Position) (p buffer.Position, inside bool)) {
+	to := func(p buffer.Position) buffer.Position {
+		q, _ := shift(p)
+		return q
 	}
-	s.placeCursor(shift(s.cursor))
+	if s.mode.visual() {
+		s.visual.anchor = s.clampPos(to(s.visual.anchor))
+		s.visual.head = s.clampPos(to(s.visual.head))
+	}
+	s.placeCursor(to(s.cursor))
 	s.shiftSites(shift)
 	s.updateWant()
 }

@@ -57,7 +57,10 @@ func (s *State) startInsert(cmd editcmd.Command, repeat int) {
 func (s *State) startInsertAt(cmd editcmd.Command, repeat int, sites []buffer.Position) {
 	s.mode = ModeInsert
 	s.cursor = sites[0]
-	s.insert = insertState{cmd: cmd, repeat: repeat, others: slices.Clone(sites[1:]), lines: len(sites)}
+	// . の中では、バッファの最後の行で位置が足りなくても、記録した行の数を保つ（Vim 9.1 の矩形選択の I の後の . と同じく、
+	// 次の . は記録した数の行に置く）。
+	lines := max(len(sites), s.repeatLines)
+	s.insert = insertState{cmd: cmd, repeat: repeat, others: slices.Clone(sites[1:]), lines: lines}
 	if s.replaying {
 		for _, in := range cmd.Inserted {
 			s.insertInput(in)
@@ -149,7 +152,8 @@ func InsertActionIDs() []string {
 //   - <Home> は行の先頭へ、<End> は行末の位置へ移る。<End> の後の <Up> と <Down> も行末の位置へ移る
 //   - <PageUp> と <PageDown> は、ノーマルモードと同じく 1 ページスクロールする（scrollPage）
 //
-// 動けたときは、入力をそこで区切る（breakInsert）。動けなかったときは何もしない。
+// 動けたときは、入力をそこで区切る（breakInsert。<Home> と <End> とページ単位のスクロールは afterInsertMove の規則による）。
+// 動けなかったときは何もしない。
 // Vim はビープを鳴らすが、ノーマルモードのモーションの失敗と違って先行入力を捨てないので、失敗として扱わない（マクロの再生は止まらない）。
 //
 // req: FR-01, FR-07
@@ -187,17 +191,32 @@ func (s *State) insertMove(c editcmd.Code) {
 		if err := s.scrollPage(c == editcmd.CodePageDown, 1); err != nil {
 			return
 		}
-		s.breakInsert()
+		s.afterInsertMove(p) // p は動く前のカーソルのまま
 		return
 	case editcmd.CodeRune, editcmd.CodeEsc, editcmd.CodeEnter, editcmd.CodeTab, editcmd.CodeBackspace, editcmd.CodeDelete,
 		editcmd.CodeInsert, editcmd.CodeF1:
 		return
 	}
+	old := s.cursor
 	s.cursor = p
 	if want >= 0 {
 		s.want = want
 	} else {
 		s.updateWant()
+	}
+	s.afterInsertMove(old)
+}
+
+// afterInsertMove は、インサートモードのカーソルキーで、移動の前のカーソルが old だったときの後始末をする。
+// カーソルが動いたなら、入力を区切る（breakInsert。同時の入力も終える）。
+// 動かなかったときは、同時の入力（FR-141）の間なら何もせず、同時の入力を続ける。終えるかはキーではなく、カーソルが動いたかで決める。
+// 区切ると、続く入力を i の 1 か所の入力として記録し直すので、. でほかの行に入れ直せなくなるためである。
+// 同時の入力でなければ、Vim 9.1 と同じく動かなくても区切る（行末の <End> も start_arrow() を呼ぶ）。
+//
+// req: FR-141
+func (s *State) afterInsertMove(old buffer.Position) {
+	if s.cursor == old && len(s.insert.others) > 0 {
+		return
 	}
 	s.breakInsert()
 }
@@ -351,26 +370,28 @@ func (s *State) lineSites(first, last int, place func(line string) int) []buffer
 }
 
 // shiftSites は、外からの編集の後に、同時の入力の位置（insert.others）をそれぞれ shift でずらす（FR-141。ShiftPositions）。
-// カーソルは先にずらしておく。バッファの外へ出た位置と、カーソルかほかの位置と同じ行へ寄った位置は落とし、1 行に 1 つの位置を保つ
-// （typeAtSites の前提）。同じ行へ寄ったときは、下の行にあった位置を残す。行を消す編集は、消した行の位置を消した範囲の始まりへ寄せ、
-// 範囲の後ろの行の位置をその行へずらすので、下の行にあった位置が編集の後も残る行の位置だからである。
+// カーソルは先にずらしておく。次の位置は落とす。
+//
+//   - 編集が置き換えた範囲の内側にあった位置（inside）。行を消す編集や行を丸ごと書き換える編集は、範囲の中の位置を範囲の始まりへ寄せる。
+//     寄せた位置はもとの文字との対応が無く、カーソルと違って画面に出ないので、残すと利用者の気づかない場所（行の先頭や前の行の行末）に入る
+//   - バッファの外へ出た位置
+//   - カーソルか、上の行にあった位置と同じ行へ寄った位置。1 行に 1 つの位置を保つ（typeAtSites の前提）
 //
 // req: FR-141
-func (s *State) shiftSites(shift func(buffer.Position) buffer.Position) {
+func (s *State) shiftSites(shift func(buffer.Position) (buffer.Position, bool)) {
 	if len(s.insert.others) == 0 {
 		return
 	}
 	used := map[int]bool{s.cursor.Line: true}
 	kept := make([]buffer.Position, 0, len(s.insert.others))
-	for _, p := range slices.Backward(s.insert.others) {
-		q := shift(p)
-		if q != s.clampPos(q) || used[q.Line] {
+	for _, p := range s.insert.others {
+		q, inside := shift(p)
+		if inside || q != s.clampPos(q) || used[q.Line] {
 			continue
 		}
 		used[q.Line] = true
 		kept = append(kept, q)
 	}
-	slices.Reverse(kept)
 	s.insert.others = kept
 }
 
