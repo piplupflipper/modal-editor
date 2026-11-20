@@ -72,6 +72,21 @@ func BenchmarkRenderWrapHugeLine(b *testing.B) {
 	}
 }
 
+// gj の 1 回（target の displayVertical）が WrapLines に問い合わせる数え方を、BenchmarkRenderWrapHugeLine と同じ 1 行で測る。
+func BenchmarkWrapLinesHugeLine(b *testing.B) {
+	line := strings.Repeat("abc\tあいうえお日本語 ", 20000)
+	r := &Renderer{Width: 200, Height: 60}
+	r.Render(&Frame{Text: sameLines{line, 1}, Wrap: true})
+	l := r.WrapLines()
+	b.ResetTimer()
+	for i := range b.N {
+		row, x := l.Locate(line, (i*997)%100000)
+		row = min(row+1, l.Rows(line)-1)
+		_ = l.ByteAt(line, row, x)
+		_ = l.Column(line, row, x)
+	}
+}
+
 func BenchmarkRenderManyDecorations(b *testing.B) {
 	line := strings.Repeat("abcd ", 40)
 	benchRender(b, Frame{Text: sameLines{line, 10000}, Decorations: perLine(10000, 60, 3)})
