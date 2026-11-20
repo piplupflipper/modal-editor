@@ -34,6 +34,11 @@ type ShellRequest struct {
 	Input []byte
 	// Terminal は、端末を子プロセスへ渡して実行すること（範囲の無い :!{cmd}。FR-80）を表す。
 	Terminal bool
+	// Popup は、:terminal.popup {cmd}（FR-168）の求めであることを表す。Terminal も true である。
+	// 呼び出し側は、端末多重化ソフトの中なら、端末を渡さずに Cmd を端末多重化ソフトのポップアップで動かし、
+	// 起動を頼んだら（コマンドの終わりを待たずに）出力を渡さずに Finish を呼ぶ。
+	// 端末多重化ソフトの外なら、Popup の無い :!{cmd} と同じく端末を子プロセスへ渡して動かす（同じ見た目にするため、外で動かしたことを知らせない）。
+	Popup bool
 
 	read         bool
 	line1, line2 int  // 0 始まり。:r では line2 がアドレスの行
@@ -95,6 +100,25 @@ func runFilter(c *execCtx, inv *invocation) error {
 		}
 	}
 	c.shell = &ShellRequest{Cmd: cmd, Input: []byte(in.String()), line1: inv.line1, line2: inv.line2, version: c.b.Version()}
+	return nil
+}
+
+// terminalPopupName は、任意のコマンドを端末多重化ソフトのポップアップで動かす正規の Ex コマンドの名前である（FR-168）。
+const terminalPopupName = "terminal.popup"
+
+// runTerminalPopup は :terminal.popup {cmd} を解析し、Result.Shell で実行を求める（FR-168）。
+// cmd は :!{cmd} と同じく、"|" を含めて行末までを、先頭の空白を除いて読み、"!"、"%"、"#" を展開しない（shellArg）。
+// 求めは :!{cmd} と同じ ShellRequest（Terminal）に Popup を足したもので、端末多重化ソフトの外では :!{cmd} と同じに動く。
+// :!{cmd} と同じくバッファを変えないので、編集を禁止したバッファでも使える。
+// cmd が空なら E471 にする（:! は空なら何もしないが、キーに割り当てて args を書き忘れたことに気づけるように誤りにする）。
+//
+// req: FR-168
+func runTerminalPopup(c *execCtx, inv *invocation) error {
+	cmd := shellArg(inv.arg)
+	if strings.TrimSpace(cmd) == "" {
+		return errAt(inv.argPos, codeArgRequired, "引数が必要です")
+	}
+	c.shell = &ShellRequest{Cmd: cmd, Terminal: true, Popup: true}
 	return nil
 }
 

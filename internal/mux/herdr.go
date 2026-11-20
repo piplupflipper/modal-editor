@@ -127,7 +127,15 @@ func (h *Herdr) SplitPane(ctx context.Context, opts SplitOptions) (string, error
 	return res.PluginPane.Pane.PaneID, nil
 }
 
+// herdrKeepScript は、PopupOptions.KeepOnFailure のときに herdr のポップアップのコマンドを包む sh のスクリプトである（FR-168）。
+// 引数のコマンドを動かし、0 で終わればそのまま終わる（ポップアップが閉じる）。
+// 0 でなければ、終了コードと閉じ方を出して Enter を待ってから、同じ終了コードで終わる。
+// herdr 0.9.0 のプラグインのポップアップは中のコマンドが終わると閉じ、tmux の display-popup -EE に当たる指定を持たないためである。
+// 文言は、:! の後に client が出すもの（internal/client の handover.go）に合わせた。
+const herdrKeepScript = `"$@"; s=$?; [ "$s" -eq 0 ] && exit 0; printf '\nシェルが %d を返しました\n閉じるには ENTER を押してください' "$s"; read -r _; exit "$s"`
+
 // OpenPopup は、同梱するプラグインの entrypoint を、placement を popup にして plugin.pane.open で開く。
+// opts.KeepOnFailure なら、コマンドを herdrKeepScript で包み、0 でない終了コードで終わったときに Enter を待ってから閉じる。
 // herdr 0.9.0 は、ポップアップの target_pane_id を受け付けず（invalid_params）、アクティブなペインの上に開く。
 // このため opts.Target は使わない。元の client のペインでキーを受けて開くときは、ふつうそのペインがアクティブだが、
 // キーを受けてからこの呼び出しが herdr に届くまでの間に利用者が別のタブへ移ると、移った先に開く。
@@ -142,7 +150,11 @@ func (h *Herdr) OpenPopup(ctx context.Context, opts PopupOptions) error {
 	if err := checkPercent("height", opts.Height); err != nil {
 		return err
 	}
-	params := h.openParams("popup", opts.Command)
+	c := opts.Command
+	if opts.KeepOnFailure {
+		c.Args = append([]string{"sh", "-c", herdrKeepScript, "sh"}, c.Args...)
+	}
+	params := h.openParams("popup", c)
 	if opts.Width > 0 {
 		params["width"] = strconv.Itoa(opts.Width) + "%"
 	}

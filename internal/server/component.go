@@ -74,16 +74,40 @@ func (s *Server) openPopup(from string, view uint64, dir string, opts editor.Pop
 	}
 	po := popupOptions(from, opts)
 	po.Command = cmd
+	return openPopupRetry(m, po)
+}
+
+// openPopupRetry は、m で中央のポップアップ po を開く。ポップアップが既に開いていれば（mux.ErrPopupBusy）、popupBusyTimeout まで
+// popupBusyRetry ごとに開き直す。部品の client（openPopup）と :terminal.popup（runPopup）が同じ扱いにするためにまとめた。
+func openPopupRetry(m mux.Mux, po mux.PopupOptions) error {
 	deadline := time.Now().Add(popupBusyTimeout)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), splitTimeout)
-		err = m.OpenPopup(ctx, po)
+		err := m.OpenPopup(ctx, po)
 		cancel()
 		if !errors.Is(err, mux.ErrPopupBusy) || time.Now().After(deadline) {
 			return herdrHint(err)
 		}
 		time.Sleep(popupBusyRetry)
 	}
+}
+
+// runPopup は、editor.Config.RunPopup である（FR-168。:terminal.popup）。from のペインの上に、端末多重化ソフトの中央のポップアップを開き、
+// その中で argv を作業ディレクトリ dir で起動する。大きさは部品のポップアップと同じ規則（popupOptions）で、opts.Width が幅である。
+// コマンドが 0 でない終了コードで終わったら、ポップアップを閉じずに残す（mux.PopupOptions.KeepOnFailure）。
+// ポップアップが既に開いていれば（mux.ErrPopupBusy）、部品の client と同じく popupBusyTimeout まで開き直す。
+// 端末多重化ソフトの外なら mux.ErrUnsupported を返す（editor は、client のペインを知らないときは呼ばない）。
+//
+// req: FR-168
+func (s *Server) runPopup(from string, argv []string, dir string, opts editor.PopupOptions) error {
+	m := mux.Detect(os.Getenv)
+	if m.Kind() == mux.KindNone {
+		return mux.ErrUnsupported
+	}
+	po := popupOptions(from, opts)
+	po.Command = mux.Command{Args: argv, Dir: dir}
+	po.KeepOnFailure = true
+	return openPopupRetry(m, po)
 }
 
 // popupScreenWidth は、editor.Config.PopupScreenWidth である（FR-149）。元のペイン from の上にポップアップを出す端末の列数を返す。

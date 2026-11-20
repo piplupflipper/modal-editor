@@ -101,7 +101,7 @@ const popupReadyScript = `: > "$0" && exec "$@"`
 // popupPoll は、ポップアップの中のコマンドが起動したかを確かめる間隔である。
 const popupPoll = 5 * time.Millisecond
 
-// OpenPopup は、display-popup -E でポップアップを開く。
+// OpenPopup は、display-popup -E（opts.KeepOnFailure なら -EE）でポップアップを開く。
 //
 // display-popup は、ポップアップを出す tmux の client（-c）が要る。server は tmux の client ではないので、
 // 元のペインの window を表示している tmux の client を探して -c に渡す（client）。
@@ -144,7 +144,12 @@ func (t *Tmux) OpenPopup(ctx context.Context, opts PopupOptions) error {
 	}()
 	ready := filepath.Join(dir, "ready")
 
-	args := []string{"display-popup", "-E", "-c", client, "-t", opts.Target}
+	// -E はコマンドが終わると閉じ、-EE は 0 で終わったときだけ閉じる（PopupOptions.KeepOnFailure）。
+	closeFlag := "-E"
+	if opts.KeepOnFailure {
+		closeFlag = "-EE"
+	}
+	args := []string{"display-popup", closeFlag, "-c", client, "-t", opts.Target}
 	if opts.Width > 0 {
 		args = append(args, "-w", strconv.Itoa(opts.Width)+"%")
 	}

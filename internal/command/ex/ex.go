@@ -44,6 +44,8 @@
 //	:bd[elete][!] [N|名前]  バッファを閉じる ActionBufferDelete を返す。未保存の変更の確認は呼び出し側が行う
 //	:{range}!{cmd}       範囲の行を cmd の標準入力へ渡し、出力で範囲を置き換える（FR-81。Result.Shell を返す）
 //	:!{cmd}              端末を子プロセスへ渡して cmd を実行する（FR-80。Result.Shell の Terminal を true にして返す）
+//	:terminal.popup {cmd}  cmd を端末多重化ソフトのポップアップで動かす（FR-168。Result.Shell の Terminal と Popup を true にして返す）。
+//	                     cmd の読み方は :!{cmd} と同じで、外では :!{cmd} と同じに動く。cmd が無ければ E471。名前は省略できない
 //	:[N]r[ead] !{cmd}    cmd の出力を N 行目（省くとカーソルの行）の後に入れる。:0r は 1 行目の前に入れる（FR-81。:r! も同じ）
 //	:reado[nly]          バッファの編集の禁止を切り替え、切り替えた後の状態を Notice で知らせる（FR-86。Vim に無い本体のコマンド。名前は仮）
 //	:option.set <名前> <値>  設定の項目の値を変える（State.Options。FR-132）。名前は省略できない

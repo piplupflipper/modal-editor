@@ -113,6 +113,12 @@ type PopupOptions struct {
 	Width, Height int
 	// Command は、ポップアップの中で起動するコマンドである。コマンドが終わるとポップアップは閉じる。
 	Command Command
+	// KeepOnFailure は、コマンドが 0 でない終了コードで終わったときに、ポップアップを閉じずに残すことを表す（FR-168）。
+	// 残したポップアップには、コマンドの最後の出力が見えたままになる。
+	// tmux では display-popup -EE で開き、利用者が Escape か C-c で閉じる（2026-11-21 に tmux 3.6 で確かめた）。
+	// herdr では、コマンドの後に終了コードを出して Enter を待つ sh のスクリプトで包む（herdrKeepScript）。
+	// false なら、終了コードに依らずコマンドが終わると閉じる（tmux の display-popup -E。部品の client）。
+	KeepOnFailure bool
 }
 
 // Mux は、端末多重化ソフトを操作する口である（基本設計 1.3）。
@@ -137,8 +143,9 @@ type Mux interface {
 	// コマンドが終わるとペインは閉じる。
 	SplitPane(ctx context.Context, opts SplitOptions) (string, error)
 
-	// OpenPopup は、画面の中央のポップアップを開き、中でコマンドを起動する（FR-67）。
-	// コマンドが終わるとポップアップは閉じる。中のコマンドが起動したら、終わりを待たずに戻る。
+	// OpenPopup は、画面の中央のポップアップを開き、中でコマンドを起動する（FR-67、FR-168）。
+	// コマンドが終わるとポップアップは閉じる（PopupOptions.KeepOnFailure なら、0 で終わったときだけ閉じる）。
+	// 中のコマンドが起動したら、終わりを待たずに戻る。
 	// ポップアップが既に開いていて開けないときは ErrPopupBusy を返す。開いているのが誰のポップアップでも同じである。
 	OpenPopup(ctx context.Context, opts PopupOptions) error
 

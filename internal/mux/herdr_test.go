@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -278,6 +279,58 @@ func TestHerdrOpenPopup(t *testing.T) {
 	// herdr 0.9.0 はポップアップの target_pane_id を invalid_params で断るので、送らない。
 	if req := f.only(t); req.Method != "plugin.pane.open" || !reflect.DeepEqual(req.Params, want) {
 		t.Errorf("リクエスト = %s %v\nwant plugin.pane.open %v", req.Method, req.Params, want)
+	}
+}
+
+// TestHerdrOpenPopupKeepOnFailure は、KeepOnFailure のポップアップのコマンドを herdrKeepScript で包むことと、
+// 包んだコマンドを宣言ファイルの command で動かすと、0 で終わればすぐ終わり、0 でなければ終了コードを出して Enter を待ってから
+// 同じ終了コードで終わることを確かめる（FR-168）。
+//
+// req: FR-168
+func TestHerdrOpenPopupKeepOnFailure(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh が無い")
+	}
+	f := newFakeHerdr(t, func(herdrRequest) map[string]any { return ok(map[string]any{"type": "ok"}) })
+	h := &Herdr{Socket: f.socket, Pane: "wW:p7"}
+	for _, status := range []int{0, 3} {
+		args := []string{"sh", "-c", `echo ran; exit "$1"`, "sh", strconv.Itoa(status)}
+		if err := h.OpenPopup(testCtx(t), PopupOptions{Target: "wW:p7", KeepOnFailure: true, Command: Command{Args: args}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reqs := f.requests()
+	if len(reqs) != 2 {
+		t.Fatalf("リクエストの数 = %d, want 2", len(reqs))
+	}
+	manifest := manifestCommand(t)
+	for i, status := range []int{0, 3} {
+		env, _ := reqs[i].Params["env"].(map[string]any)
+		command, _ := env[HerdrCommandEnv].(string)
+		if !strings.HasPrefix(command, shellJoin([]string{"sh", "-c", herdrKeepScript, "sh"})) {
+			t.Fatalf("コマンドを包んでいない: %q", command)
+		}
+		c := exec.CommandContext(testCtx(t), manifest[0], manifest[1:]...) //nolint:gosec // 同梱する宣言ファイルの command を試す
+		c.Env = append(os.Environ(), HerdrCommandEnv+"="+command)
+		// 0 でないときは Enter を待つ。標準入力が閉じていれば read は待たずに戻るので、待ったかは出力で確かめる。
+		c.Stdin = strings.NewReader("\n")
+		out, err := c.Output()
+		got := 0
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			got = ee.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if got != status {
+			t.Errorf("終了コード = %d, want %d", got, status)
+		}
+		prompted := strings.Contains(string(out), "閉じるには ENTER を押してください")
+		if !strings.HasPrefix(string(out), "ran\n") || prompted != (status != 0) {
+			t.Errorf("終了コード %d の出力 = %q", status, out)
+		}
+		if status != 0 && !strings.Contains(string(out), "シェルが 3 を返しました") {
+			t.Errorf("終了コードを出していない: %q", out)
+		}
 	}
 }
 

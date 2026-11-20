@@ -82,9 +82,16 @@ type shellOutcome struct {
 // 他の client のキーは処理する（仮。基本設計 4.9。clients.go の doc）。
 // 作業ディレクトリと、足す環境変数は、コマンドを打った client のもの（ClientInfo）である。
 // 終わったら、結果を shellDone でイベントループへ送り、shellFinished がバッファを変える。
+// :!{cmd}（req.Terminal）は startTerminalShell が、:terminal.popup（req.Popup）は端末多重化ソフトの中なら startPopupShell が動かし、
+// 外なら :!{cmd} と同じく startTerminalShell が動かす（FR-168）。
 //
-// req: FR-81
+// req: FR-81, FR-168
 func (e *Editor) startShell(bs *bufferState, req *ex.ShellRequest, replay []command.ReplaySegment) {
+	// :terminal.popup（FR-168）は、端末多重化ソフトの中ならポップアップで動かし、外部のコマンドの実行（e.shell）として持たない。
+	// 外なら、下の :! と同じ経路で動かす。
+	if req.Popup && e.startPopupShell(bs, req, replay) {
+		return
+	}
 	if e.shell != nil {
 		e.showError(errShellBusy)
 		return
@@ -203,6 +210,15 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
+// shellPath は、server が外部のコマンドを渡すシェル（環境変数 SHELL、無ければ /bin/sh）を返す（:{range}!、:r !、:terminal.popup）。
+// :! は client が自分の環境の SHELL で動かす（internal/client の runCommands）。server の環境は server を起動した編集の client のものである。
+func shellPath() string {
+	if sh := os.Getenv("SHELL"); sh != "" {
+		return sh
+	}
+	return "/bin/sh"
+}
+
 // runShell は、シェル（環境変数 SHELL、無ければ /bin/sh）に -c で cmdline を渡し、端末を渡さずに実行して、終わるまで待つ。
 // イベントループの goroutine では呼ばない（startShell）。
 //
@@ -215,11 +231,7 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 //
 // req: FR-81
 func runShell(ctx context.Context, cancel context.CancelFunc, cmdline string, input []byte, dir string, env []string) ([]byte, int, error) {
-	sh := os.Getenv("SHELL")
-	if sh == "" {
-		sh = "/bin/sh"
-	}
-	cmd := exec.CommandContext(ctx, sh, "-c", cmdline) //nolint:gosec // 利用者が :! に書いたコマンドをシェルで実行するのが、この関数の役目である。
+	cmd := exec.CommandContext(ctx, shellPath(), "-c", cmdline) //nolint:gosec // 利用者が :! に書いたコマンドをシェルで実行するのが、この関数の役目である。
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	if input != nil {
