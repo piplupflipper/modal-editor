@@ -114,9 +114,8 @@ type PopupOptions struct {
 	// Command は、ポップアップの中で起動するコマンドである。コマンドが終わるとポップアップは閉じる。
 	Command Command
 	// KeepOnFailure は、コマンドが 0 でない終了コードで終わったときに、ポップアップを閉じずに残すことを表す（FR-168）。
-	// 残したポップアップには、コマンドの最後の出力が見えたままになる。
-	// tmux では display-popup -EE で開き、利用者が Escape か C-c で閉じる（2026-11-21 に tmux 3.6 で確かめた）。
-	// herdr では、コマンドの後に終了コードを出して Enter を待つ sh のスクリプトで包む（herdrKeepScript）。
+	// 残したポップアップには、コマンドの最後の出力と、終了コードと閉じ方の案内が見えたままになり、利用者が何かキーを打つと閉じる。
+	// tmux も herdr も、コマンドを同じ sh のスクリプトで包む（keepOnFailure）。
 	// false なら、終了コードに依らずコマンドが終わると閉じる（tmux の display-popup -E。部品の client）。
 	KeepOnFailure bool
 }
@@ -231,6 +230,25 @@ func (None) ClosePane(context.Context, string) error { return ErrUnsupported }
 
 // PaneFocused は ErrUnsupported を返す。
 func (None) PaneFocused(context.Context, string) (bool, error) { return false, ErrUnsupported }
+
+// keepScript は、PopupOptions.KeepOnFailure のときにポップアップのコマンドを包む sh のスクリプトである（FR-168）。
+// 引数のコマンドを動かし、0 で終わればそのまま終わる（ポップアップが閉じる）。
+// 0 でなければ、終了コードと閉じ方を出し、端末を 1 文字ずつ読む形にして、何かキーを 1 つ読んでから同じ終了コードで終わる。
+// :! の後の問い（internal/client の handover.go）と同じく終了コードを出し、q で閉じる癖のある TUI の利用者が q でも閉じられるように、
+// Enter に限らずどのキーでも閉じる。端末でなければ（テスト）stty は失敗し、標準入力の 1 バイトを読む。
+//
+// tmux の display-popup -EE（0 で終わったときだけ閉じる）は、残したポップアップに閉じ方を出さず、Escape と C-c でしか閉じない
+// （2026-11-21 に tmux 3.6 で確かめた。q、Enter、Space では閉じなかった。PR #323 のレビュー）。herdr 0.9.0 のプラグインのポップアップには
+// 同じ指定が無い。このため、どちらもこのスクリプトで包み、tmux は display-popup -E で開く。
+const keepScript = `"$@"; s=$?; [ "$s" -eq 0 ] && exit 0; ` +
+	`printf '\nシェルが %d を返しました\n閉じるには何かキーを押してください' "$s"; ` +
+	`stty -icanon -echo 2>/dev/null; dd bs=1 count=1 >/dev/null 2>&1; exit "$s"`
+
+// keepOnFailure は、c のコマンドを keepScript で包んだコマンドを返す。
+func keepOnFailure(c Command) Command {
+	c.Args = append([]string{"sh", "-c", keepScript, "sh"}, c.Args...)
+	return c
+}
 
 // shellJoin は、args の各要素を POSIX のシェルの単一引用で囲み、空白でつないだ 1 つのコマンドの文字列にする。
 // 引用の要らない文字だけの要素は囲まない。

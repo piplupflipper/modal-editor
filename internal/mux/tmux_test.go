@@ -614,8 +614,8 @@ func TestTmuxClosePopupOnlyOwn(t *testing.T) {
 	}
 }
 
-// TestTmuxPopupKeepOnFailure は、KeepOnFailure のポップアップ（display-popup -EE）が、コマンドが 0 でない終了コードで終わったときだけ
-// 開いたまま残り、0 で終わったときと、KeepOnFailure でないポップアップ（-E）は閉じることを確かめる（FR-168）。
+// TestTmuxPopupKeepOnFailure は、KeepOnFailure のポップアップ（keepScript で包む）が、コマンドが 0 でない終了コードで終わったときだけ
+// キーを待って開いたまま残り、0 で終わったときと、KeepOnFailure でないポップアップは閉じることを確かめる（FR-168）。
 // 開いているかは、層が開いた display-popup のプロセスが動いているか（tmuxPopup.exited）で見る（display-popup はポップアップが閉じるまで戻らない）。
 //
 // req: FR-168

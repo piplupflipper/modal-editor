@@ -282,9 +282,9 @@ func TestHerdrOpenPopup(t *testing.T) {
 	}
 }
 
-// TestHerdrOpenPopupKeepOnFailure は、KeepOnFailure のポップアップのコマンドを herdrKeepScript で包むことと、
-// 包んだコマンドを宣言ファイルの command で動かすと、0 で終わればすぐ終わり、0 でなければ終了コードを出して Enter を待ってから
-// 同じ終了コードで終わることを確かめる（FR-168）。
+// TestHerdrOpenPopupKeepOnFailure は、KeepOnFailure のポップアップのコマンドを keepScript で包むことと、
+// 包んだコマンドを宣言ファイルの command で動かすと、0 で終わればすぐ終わり、0 でなければ終了コードを出し、
+// キーを 1 つ（Enter でなく q でもよい）読むまで待ってから、同じ終了コードで終わることを確かめる（FR-168）。
 //
 // req: FR-168
 func TestHerdrOpenPopupKeepOnFailure(t *testing.T) {
@@ -307,14 +307,35 @@ func TestHerdrOpenPopupKeepOnFailure(t *testing.T) {
 	for i, status := range []int{0, 3} {
 		env, _ := reqs[i].Params["env"].(map[string]any)
 		command, _ := env[HerdrCommandEnv].(string)
-		if !strings.HasPrefix(command, shellJoin([]string{"sh", "-c", herdrKeepScript, "sh"})) {
+		if !strings.HasPrefix(command, shellJoin([]string{"sh", "-c", keepScript, "sh"})) {
 			t.Fatalf("コマンドを包んでいない: %q", command)
 		}
 		c := exec.CommandContext(testCtx(t), manifest[0], manifest[1:]...) //nolint:gosec // 同梱する宣言ファイルの command を試す
 		c.Env = append(os.Environ(), HerdrCommandEnv+"="+command)
-		// 0 でないときは Enter を待つ。標準入力が閉じていれば read は待たずに戻るので、待ったかは出力で確かめる。
-		c.Stdin = strings.NewReader("\n")
-		out, err := c.Output()
+		in, err := c.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		c.Stdout = &out
+		if err = c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- c.Wait() }()
+		if status != 0 {
+			// 0 でないときは、キーを打つまで終わらない。
+			select {
+			case werr := <-done:
+				t.Fatalf("キーを待たずに終わった: %v, %q", werr, out.String())
+			case <-time.After(300 * time.Millisecond):
+			}
+			if _, err = in.Write([]byte("q")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err = <-done
+		_ = in.Close()
 		got := 0
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			got = ee.ExitCode()
@@ -324,12 +345,12 @@ func TestHerdrOpenPopupKeepOnFailure(t *testing.T) {
 		if got != status {
 			t.Errorf("終了コード = %d, want %d", got, status)
 		}
-		prompted := strings.Contains(string(out), "閉じるには ENTER を押してください")
-		if !strings.HasPrefix(string(out), "ran\n") || prompted != (status != 0) {
-			t.Errorf("終了コード %d の出力 = %q", status, out)
+		prompted := strings.Contains(out.String(), "閉じるには何かキーを押してください")
+		if !strings.HasPrefix(out.String(), "ran\n") || prompted != (status != 0) {
+			t.Errorf("終了コード %d の出力 = %q", status, out.String())
 		}
-		if status != 0 && !strings.Contains(string(out), "シェルが 3 を返しました") {
-			t.Errorf("終了コードを出していない: %q", out)
+		if status != 0 && !strings.Contains(out.String(), "シェルが 3 を返しました") {
+			t.Errorf("終了コードを出していない: %q", out.String())
 		}
 	}
 }

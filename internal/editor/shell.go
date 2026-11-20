@@ -174,22 +174,29 @@ func (e *Editor) shellFinished(o shellOutcome) {
 		err = fmt.Errorf("外部のコマンドを実行できません: %w", err)
 	}
 	e.message = noMessage
-	if e.handleResult(bs, bs.state.FinishShell(o.job.req, o.out, o.status, err)) != nil {
-		// 失敗は handleResult が知らせた。再生と展開の残りは捨てる。
-		e.remap.reset()
+	if !e.finishShellRequest(bs, o.job.req, o.out, o.status, err, o.job.replay) {
 		return
 	}
-	e.continueAfterShell(o.job)
+	// 続きの中でまた外部のコマンドを始めたか、再生中の拡張機能の結果を待ち始めたら、まだ続けていないものをその待ちに引き継ぐ（resumeInput）。
+	e.resumeInput(o.job.heldInput)
 }
 
-// continueAfterShell は、外部のコマンドの出力を入れた後に、止めていた再生の残り、キーマップの展開の残り、貼り付けを続ける。
-// 続きの中でまた外部のコマンドを始めたか、再生中の拡張機能の結果を待ち始めたら、まだ続けていないものをその待ちに引き継ぐ（resumeInput）。
-func (e *Editor) continueAfterShell(job *shellJob) {
-	if len(job.replay) > 0 {
-		next := e.cur
-		_ = e.handleResult(next, next.state.ContinueReplay(job.replay)) // 失敗は handleResult が知らせる
+// finishShellRequest は、外部のコマンドの求め req の結果（出力 out、終了コード status、実行の誤り err）を、
+// コマンドを打ったバッファ bs の command.State.FinishShell へ渡し、止めていたマクロの再生の残り replay を続ける。
+// :! と :{range}! の終わり（shellFinished）と、:terminal.popup の起動を頼んだ後（startPopupShell）が、同じ手順で終えるための関数である。
+// FinishShell が失敗したら（中断、実行できない、バッファが変わった）、失敗は handleResult が知らせ、再生とキーマップの展開の残りを捨てて false を返す。
+// キーマップの展開の残りと貼り付け（heldInput）は続けない。外部のコマンドの実行の間に止めていたもの（shellJob.heldInput）は
+// 呼び出し側が resumeInput で続ける。:terminal.popup は外部のコマンドの実行として持たず、止めていないので、続けるものが無い。
+func (e *Editor) finishShellRequest(bs *bufferState, req *ex.ShellRequest, out []byte, status int, err error, replay []command.ReplaySegment) bool {
+	if e.handleResult(bs, bs.state.FinishShell(req, out, status, err)) != nil {
+		e.remap.reset()
+		return false
 	}
-	e.resumeInput(job.heldInput)
+	if len(replay) > 0 {
+		next := e.cur
+		_ = e.handleResult(next, next.state.ContinueReplay(replay)) // 失敗は handleResult が知らせる
+	}
+	return true
 }
 
 // limitedBuffer は、shellOutputLimit までを溜める io.Writer である。超えたら over を立て、cancel で子を止め、誤りを返す。

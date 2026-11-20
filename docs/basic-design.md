@@ -341,9 +341,10 @@ tmux と herdr の中ではペインを、外では中央のポップアップ�
 | 操作 | tmux | herdr |
 |---|---|---|
 | ペインを分割して開く | `split-window -t <元の client のペイン>`。フォーカスを移さないときは `-d` | 同梱するプラグインの entrypoint を、`placement` を `split` にして `plugin.pane.open` で開く（`target_pane_id` に元の client のペイン） |
-| 中央のポップアップを開く | `display-popup -E -c <tmux の client> -t <元の client のペイン>`。`:terminal.popup`（下の「任意のコマンドのポップアップ（#321）」）は `-EE` | 同梱するプラグインの entrypoint を、`placement` を `popup` にして `plugin.pane.open` で開く |
+| 中央のポップアップを開く | `display-popup -E -c <tmux の client> -t <元の client のペイン>` | 同梱するプラグインの entrypoint を、`placement` を `popup` にして `plugin.pane.open` で開く |
 | ポップアップが既に開いているとき | 何も開かずに終了コード 0 で戻る。層はこれを見分けて `ErrPopupBusy` を返す | `ui_busy` が返る。層は `ErrPopupBusy` を返す |
 | ポップアップを閉じる | 中の client が終わると閉じる（`-E`）。外から閉じるときは、層が開いたものがまだ開いているときだけ `display-popup -C -c <tmux の client>` | 中の client が終わると閉じる。外から閉じるときは `popup.close`（誰が開いたものかを問わず閉じる） |
+| `:terminal.popup` のポップアップを閉じる | コマンドが 0 で終わると閉じる。0 でなければ、包んだスクリプト（`mux.PopupOptions.KeepOnFailure`）が終了コードと案内を出してキーを 1 つ待ち、キーで閉じる（下の「任意のコマンドのポップアップ（#321）」） | tmux と同じ |
 | フォーカスを移す | 元の client のペインの window を表示している tmux の client が、移る先のペインの window を表示していれば `select-pane`、そうでなければ `switch-client -c <tmux の client> -t <ペイン>` | `pane.focus`。ペインが別のタブにあれば、そのタブへ移る |
 | ペインを閉じる | `kill-pane` | `pane.close` |
 | ペインがアクティブか（#244） | `list-panes -a` の `pane_active` と、その window を表示している tmux の client があること | `pane.get` の `focused` |
@@ -419,7 +420,8 @@ server が自動で登録する形は採らなかった。利用者の herdr の
 | 作業ディレクトリ | `:!` と同じく、打った client の作業ディレクトリ（`ClientInfo.WorkDir`。client のプロセスの作業ディレクトリ）。tmux には `display-popup -d`、herdr には `plugin.pane.open` の `cwd` で渡す |
 | 環境変数 | 端末多重化ソフトがポップアップに与えるもの（tmux では、tmux の環境と、下のペインの `TMUX_PANE`）だけで、FR-82 の `VI_IMITATION_SOCKET`、`EDITOR`、`GIT_EDITOR` は足さない。ポップアップの中で起動した `vi-imitation` が待つだけの client（FR-83）になると、タブがポップアップの下の画面に開き、ポップアップを閉じるまで編集できないためである。ポップアップのコマンドは、本体の子プロセスでなく端末多重化ソフトが起動するので、FR-82 の「本体が起動する子プロセス」に当たらないとした。外で動かすときは `:!` と同じく足す |
 | 大きさ | 幅はファインダーの窓と同じく、設定 `preview.windowWidthPercent`（既定 90）の百分率である。高さは部品のポップアップと同じ server の既定（80%）である。専用の設定は足していない |
-| 0 でない終了コード | ポップアップを閉じずに残す（`mux.PopupOptions.KeepOnFailure`）。tmux は `display-popup -EE` で、利用者が Escape か `C-c` で閉じる。herdr 0.9.0 のプラグインのポップアップには同じ指定が無いので、コマンドを sh のスクリプトで包み、0 でなければ `:!` と同じ文言で終了コードを出して Enter を待つ。0 で終わればどちらもすぐ閉じる。2026-11-21 に tmux 3.6 で、`-E` は終了コードに依らず閉じ、`-EE` は 0 で閉じて 3 では開いたまま残り Escape で閉じること、`display-popup` がコマンドの終了コードで終わることを確かめた。`-E` にしなかったのは、コマンドの誤り（`git` のリポジトリの外で動かした、コマンドの名前の書き違い）が一瞬で消えて読めないためである。`:!` が終わった後に必ずキーを待つのと比べると、0 で終わったときだけ待たない |
+| 0 でない終了コード | ポップアップを閉じずに残す（`mux.PopupOptions.KeepOnFailure`）。tmux も herdr も、コマンドを同じ sh のスクリプト（`internal/mux` の `keepScript`）で包み、0 でなければ `:!` と同じ文言で終了コード（`シェルが N を返しました`）を出し、`閉じるには何かキーを押してください` を出して、端末を 1 文字ずつ読む形にしてキーを 1 つ待つ。0 で終わればすぐ閉じる。閉じずに残すのは、コマンドの誤り（`git` のリポジトリの外で動かした、コマンドの名前の書き違い）が一瞬で消えて読めないためである。`:!` が終わった後に必ずキーを待つのと比べると、0 でない終了コードのときだけ待つ。2026-11-21 に tmux 3.6 で、`display-popup -E` は終了コードに依らず閉じ、`-EE` は 0 で閉じて 3 では開いたまま残ることを確かめた。最初は `-EE` を使ったが、残したポップアップに閉じ方が出ず、Escape と `C-c` でしか閉じなかった（`q`、Enter、Space では閉じない。PR #323 のレビューの推奨 2）。herdr 0.9.0 のプラグインのポップアップには `-EE` に当たる指定が無い。このため、閉じ方と案内を 2 つの端末多重化ソフトでそろえる形にし、tmux は `-E` で開く。どのキーでも閉じるのは、`q` で閉じる TUI（`keifu-wt` など）の利用者が `q` を打っても閉じるようにするためである |
+| 下の画面 | ポップアップが開いている間も、エディタは描き続ける。2026-11-21 に tmux 3.6 で、ポップアップを開いたまま、下のペインのポップアップの外に見えている行が描き直されることを確かめた（毎秒時刻を出すペインで、ポップアップを開いた 1.5 秒後と 4.5 秒後の時刻が進んでいた。`autoread` で読み直したバッファも描き直された。PR #323 のレビュー）。1.4 が引く tmux 3.4 の `tmux(1)` の「Panes are not updated while a popup is present」は、3.6 の `tmux(1)` にも同じ文があるが、見た目はこのとおりである |
 | エディタを止めない | 外部のコマンドの実行（`shellJob`）として持たず、`Config.RunPopup` を別の goroutine で呼んで、すぐ `:!` が終わったときと同じく `command.State.FinishShell` を通して続きへ進む。マクロの再生の残りはポップアップの終わりを待たずに続き、他の client の外部のコマンドの実行中でも開ける。コマンドが変えたファイルは、外での変更の確認（`autoread` と `checkIntervalMs`。6.7）で読み直す。この Ex コマンドのための読み直しの契機は足していない |
 | 開けないとき | ポップアップが既に開いている（`mux.ErrPopupBusy`）ときは、部品の client と同じく 1.5 秒まで 50 ms ごとに開き直す（`internal/server` の `openPopupRetry`）。それでも開けないか、herdr のプラグインを登録していないときは、誤りを打った client のメッセージの行に出す。`:!` には切り替えない |
 | キーへの割り当て | `keymap` の `{ "command": "terminal.popup", "args": "<コマンド>" }`（FR-154。7 章の「`keymap` の Ex コマンド」）。`args` はコマンドラインで打つ引数と同じで、`|` を含めてそのままコマンドになる（`:option.set` と同じく `|` を引数として読むので、設定の誤りにならない） |

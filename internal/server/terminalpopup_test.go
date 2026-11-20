@@ -59,8 +59,8 @@ func tmuxCalls(t *testing.T, log string) [][]string {
 }
 
 // tmux の中の :terminal.popup（Config.RunPopup）は、元の client のペインの window を表示している tmux の client の上に、
-// display-popup -EE（0 でない終了コードなら開いたまま残す）で、渡した幅と既定の高さのポップアップを、渡した作業ディレクトリで開き、
-// 渡したコマンドを動かす。ポップアップが既に開いていれば（mux.ErrPopupBusy）、部品の client と同じく開き直す。
+// display-popup で、渡した幅と既定の高さのポップアップを、渡した作業ディレクトリで開き、渡したコマンドを、
+// 0 でない終了コードならキーを待つスクリプトで包んで動かす。ポップアップが既に開いていれば（mux.ErrPopupBusy）、部品の client と同じく開き直す。
 //
 // req: FR-168
 func TestRunPopupTmux(t *testing.T) {
@@ -105,14 +105,15 @@ func TestRunPopupTmux(t *testing.T) {
 	if len(popups) != 3 {
 		t.Fatalf("display-popup の回数 = %d, want 3（開けない 2 回と開いた 1 回）", len(popups))
 	}
-	want := []string{"display-popup", "-EE", "-c", "/dev/pts/9", "-t", "%5", "-w", "90%", "-h", "80%", "-d", dir, "--"}
-	if got := popups[2]; !slices.Equal(got[:len(want)], want) || !strings.HasSuffix(got[len(got)-1], " "+out+` 'git log | cat'`) {
+	want := []string{"display-popup", "-E", "-c", "/dev/pts/9", "-t", "%5", "-w", "90%", "-h", "80%", "-d", dir, "--"}
+	if got := popups[2]; !slices.Equal(got[:len(want)], want) || !strings.HasSuffix(got[len(got)-1], " "+out+` 'git log | cat'`) ||
+		!strings.Contains(got[len(got)-1], "dd bs=1 count=1") {
 		t.Errorf("display-popup の引数 = %q\nwant %q と、コマンドの文字列", got, want)
 	}
 }
 
 // herdr の中の :terminal.popup（Config.RunPopup）は、同梱のプラグインのポップアップ（plugin.pane.open の popup）を、渡した幅と既定の高さで、
-// 渡した作業ディレクトリ（cwd）で開き、コマンドを、0 でない終了コードのときに Enter を待つスクリプトで包んで渡す。
+// 渡した作業ディレクトリ（cwd）で開き、コマンドを、0 でない終了コードのときにキーを待つスクリプトで包んで渡す。
 // ポップアップが既に開いているとき（ui_busy）は、部品の client と同じく popupBusyTimeout まで開き直し、続けば誤りを返す。
 //
 // req: FR-168
@@ -174,8 +175,8 @@ func TestRunPopupHerdr(t *testing.T) {
 	if params["placement"] != "popup" || params["width"] != "90%" || params["height"] != "80%" || params["cwd"] != dir {
 		t.Errorf("params = %v", params)
 	}
-	if !strings.HasPrefix(cmd, "sh -c ") || !strings.HasSuffix(cmd, " sh /bin/sh -c keifu-wt") || !strings.Contains(cmd, "read -r _") {
-		t.Errorf("コマンド = %q, want 0 でないときに Enter を待つスクリプトで包んだもの", cmd)
+	if !strings.HasPrefix(cmd, "sh -c ") || !strings.HasSuffix(cmd, " sh /bin/sh -c keifu-wt") || !strings.Contains(cmd, "dd bs=1 count=1") {
+		t.Errorf("コマンド = %q, want 0 でないときにキーを待つスクリプトで包んだもの", cmd)
 	}
 
 	// 開き直しても開けなければ、mux.ErrPopupBusy を返す。

@@ -57,15 +57,9 @@ func (e *Editor) startPopupShell(bs *bufferState, req *ex.ShellRequest, replay [
 			}
 		})
 	}()
-	// :! が終わったとき（shellFinished と continueAfterShell）と同じく、求めを終えてから再生の残りを続ける。
-	// 外部のコマンドの実行（e.shell）として持たないので、他の client の :{range}! の実行中でも動かせ、キーマップの展開の残りも止めていない。
-	if e.handleResult(bs, bs.state.FinishShell(req, nil, 0, nil)) != nil {
-		e.remap.reset()
-		return true
-	}
-	if len(replay) > 0 {
-		next := e.cur
-		_ = e.handleResult(next, next.state.ContinueReplay(replay)) // 失敗は handleResult が知らせる
-	}
+	// :! が終わったとき（shellFinished）と同じ手順で、求めを終えてから再生の残りを続ける。
+	// 外部のコマンドの実行（e.shell）として持たないので、他の client の :{range}! の実行中でも動かせ、キーマップの展開の残りも止めていない
+	// （resumeInput で続けるものが無い）。
+	e.finishShellRequest(bs, req, nil, 0, nil, replay)
 	return true
 }
