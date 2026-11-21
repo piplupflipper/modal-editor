@@ -77,6 +77,13 @@ const (
 	// StylePreviewLine は、項目のプレビュー（Float.Preview。FR-149）の、項目の指す行（grep の一致した行など）である。
 	// 行の全体に付け、構文の色はその上に重ねる（fzf-lua のプレビューの FzfLuaCursorLine に当たる）。
 	StylePreviewLine = "preview.line"
+	// StyleProgress は、画面の右下に重ねる進み具合（Frame.Progress。FR-178）の本文と百分率である。
+	// fidget.nvim は本文にハイライトのグループを付けない（Normal で出る）ので、既定の対応には無い（端末の文字の色で出る）。
+	StyleProgress = "progress"
+	// StyleProgressTitle は、続いている進み具合の表題と記号（progress.running）である（fidget.nvim の progress_style の既定の WarningMsg）。
+	StyleProgressTitle = "progress.title"
+	// StyleProgressDone は、終わった進み具合の表題と記号（progress.done）である（fidget.nvim の done_style の既定の Constant）。
+	StyleProgressDone = "progress.done"
 	// StyleStatusLineMode などは、ステータス行の部品ごとの色である。名前は "statusline." と部品の ID（StatusPart...）をつないだもの。
 	// 部品は StyleStatusLine の上に重ねて描く（Attr.Over）ので、文字の色だけを変えることもできる。既定の対応には無い。
 	StyleStatusLineMode      = "statusline.mode"
@@ -111,6 +118,7 @@ var styleNames = []string{
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
 	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch, StylePreviewLine,
+	StyleProgress, StyleProgressTitle, StyleProgressDone,
 	StyleSignBreakpoint, StyleSignBreakpointUnverified, StyleSignExecutionPoint,
 	StyleSignDiagnosticError, StyleSignDiagnosticWarning, StyleSignDiagnosticInfo, StyleSignDiagnosticHint,
 	StyleStatusLineMode, StyleStatusLineName, StyleStatusLineModified, StyleStatusLineReadOnly, StyleStatusLineFileType,
@@ -191,7 +199,11 @@ func DefaultTheme() Theme {
 		StyleFinderMatch:   {Bold: true, Underline: true},
 		// プレビューの項目の指す行は、窓の色（StylePopup の背景の 8 番）の上で見分けられ、構文の色（文字の色）を消さないよう、
 		// 背景の色だけを持つ。
-		StylePreviewLine:              {Bg: Indexed(0)},
+		StylePreviewLine: {Bg: Indexed(0)},
+		// 進み具合の表題は、fidget.nvim の既定（続いている間は WarningMsg、終わったら Constant）に合わせ、本体の既定の
+		// message.warning と constant と同じ番号にした。
+		StyleProgressTitle:            {Fg: Indexed(11)},
+		StyleProgressDone:             {Fg: Indexed(13)},
 		StyleSignBreakpoint:           {Fg: Indexed(9), Bold: true},
 		StyleSignBreakpointUnverified: {Fg: Indexed(8)},
 		StyleSignExecutionPoint:       {Fg: Indexed(11), Bold: true},

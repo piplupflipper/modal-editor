@@ -311,6 +311,7 @@ func (r *Renderer) render(f *Frame) Screen {
 		}
 	}
 	d.drawMarks(rows)
+	r.drawProgress(g, theme, f.Progress, rows)
 	curRow, curCol := r.cursorScreen(text, f, cur)
 	var listCursor *Cursor
 	switch {

@@ -39,6 +39,10 @@ type proc struct {
 	sync       textDocumentSyncOptions
 	save       bool
 	saveText   bool
+	// gen は、言語サーバーのプロセスを起動するたびに振る番号である。進み具合の識別子に含め、再起動の前後で重ならないようにする。
+	gen uint64
+	// progress は、$/progress で始まり、まだ終わっていない進み具合の、本体へ送った識別子の集合である（progress.go）。
+	progress map[string]bool
 }
 
 // client は、1 つのファイルの種類について、言語サーバーのプロセスを起動し、文書を同期し、診断を本体へ送る。
@@ -392,7 +396,7 @@ func (c *client) spawn(root string, l command) (*proc, error) {
 		_ = outR.Close()
 		return nil, err
 	}
-	p := &proc{cmd: cmd, exited: make(chan struct{})}
+	p := &proc{cmd: cmd, exited: make(chan struct{}), gen: procGen.Add(1), progress: map[string]bool{}}
 	p.conn = rpc.NewConn(outR, inW, rpc.HandlerFuncs{
 		Request: func(_ context.Context, req *rpc.Request, reply rpc.Replier) {
 			c.serverRequest(req, reply)
@@ -416,6 +420,7 @@ func (c *client) watch(p *proc) {
 	close(p.exited)
 
 	c.mu.Lock()
+	c.endProgress(p)
 	if c.proc != p {
 		c.mu.Unlock()
 		return
@@ -514,8 +519,11 @@ func (c *client) serverRequest(req *rpc.Request, reply rpc.Replier) {
 			}
 		}
 		result = items
-	case lspRegisterCapability, lspUnregisterCapability, lspWorkDoneProgress:
-		// 動的な登録と進捗の表示には対応しないが、受け付けたことにする。
+	case lspRegisterCapability, lspUnregisterCapability:
+		// 動的な登録には対応しないが、受け付けたことにする。
+	case lspWorkDoneProgress:
+		// 進み具合の識別子を受け付ける。識別子は、続く $/progress の begin で覚える（progress.go）ので、ここでは覚えない。
+		// LSP 3.17 では、作ることを断ったら（誤りで答えたら）サーバーはその識別子で送らないので、断らずに null で答える。
 	case lspShowMessageRequest:
 		// 選択肢は示さず、メッセージだけを表示する。結果の null は、何も選ばなかったことを表す。
 		var p showMessageParams
@@ -557,6 +565,13 @@ func (c *client) serverNotification(p *proc, n *rpc.Notification) {
 		if json.Unmarshal(n.Params, &params) == nil {
 			c.x.logf("%s: %s", c.name(), params.Message)
 		}
+	case lspProgress:
+		var params progressParams
+		if err := json.Unmarshal(n.Params, &params); err != nil {
+			c.x.logf("%s: %s: %v", c.name(), n.Method, err)
+			return
+		}
+		c.progress(p, params)
 	}
 }
 

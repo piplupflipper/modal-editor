@@ -450,6 +450,16 @@ func (h *Host) handler(e *extension, r *run) rpc.Handler {
 					return
 				}
 				ev = &StatusLineSet{Extension: id, Params: p}
+			case ext.MethodProgressReport:
+				var p ext.ProgressReportParams
+				if !h.decode(id, n, &p) {
+					return
+				}
+				if err := p.Validate(); err != nil {
+					h.log.Warn("invalid progress/report from extension", "extension", id, "error", err)
+					return
+				}
+				ev = &ProgressReport{Extension: id, Params: p}
 			case ext.MethodViewUpdate:
 				var p ext.ViewUpdateParams
 				if !h.decode(id, n, &p) {

@@ -37,6 +37,7 @@ const (
 	lspLogMessage           = "window/logMessage"
 	lspShowMessageRequest   = "window/showMessageRequest"
 	lspWorkDoneProgress     = "window/workDoneProgress/create"
+	lspProgress             = "$/progress"
 	lspConfiguration        = "workspace/configuration"
 	lspRegisterCapability   = "client/registerCapability"
 	lspUnregisterCapability = "client/unregisterCapability"
@@ -86,9 +87,10 @@ type workspaceFolder struct {
 
 // clientCapabilities は、initialize で申し出るクライアントの能力である。
 // 位置の数え方は utf-8 を先に申し出る（基本設計 6.3）。サーバーが選ばなければ utf-16 で数える。
-// window.workDoneProgress は申し出ないので、サーバーは window/workDoneProgress/create を送らない前提である（送られても null を返す）。
+// window.workDoneProgress を申し出て、サーバーの $/progress を本体の progress/report に写す（client.progress。FR-179）。
 const clientCapabilities = `{
   "general": {"positionEncodings": ["utf-8", "utf-16"]},
+  "window": {"workDoneProgress": true},
   "workspace": {"configuration": true, "workspaceFolders": true, "symbol": {}, "workspaceEdit": {"documentChanges": true}},
   "textDocument": {
     "synchronization": {"dynamicRegistration": false, "willSave": false, "willSaveWaitUntil": false, "didSave": true},
@@ -257,6 +259,22 @@ func codeString(raw json.RawMessage) string {
 type showMessageParams struct {
 	Type    int    `json:"type"`
 	Message string `json:"message"`
+}
+
+// progressParams は、$/progress の params である。Token は integer か string で、そのままの JSON で持つ。
+type progressParams struct {
+	Token json.RawMessage `json:"token"`
+	Value json.RawMessage `json:"value"`
+}
+
+// workDoneProgress は、$/progress の value のうち、WorkDoneProgressBegin、WorkDoneProgressReport、WorkDoneProgressEnd の項目である。
+// 部分の結果（partialResultToken）の $/progress は、value に kind が無いので見分けられる。
+type workDoneProgress struct {
+	Kind    string `json:"kind"`
+	Title   string `json:"title"`
+	Message string `json:"message"`
+	// Percentage は uinteger だが、小数を送る言語サーバーがあっても読めるように数で受ける。
+	Percentage *float64 `json:"percentage"`
 }
 
 type configurationParams struct {

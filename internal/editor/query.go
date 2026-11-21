@@ -207,12 +207,21 @@ func (e *Editor) wait(q *exthost.Query, tag queryTag) *exthost.QueryResult {
 // 部品の中身（StatusLineSet）は、同じ拡張機能の同じ部品の前のものを後のもので置き換えて 1 つにまとめ、上限を超えても捨てない。
 // 本体は部品ごとに最後の中身だけを使い、拡張機能は変わったときだけ送るので、最後の更新を捨てると古い中身が出続けるためである
 // （PR #239 のレビューの推奨 5）。まとめるので、取っておく数は宣言ファイルの部品の数を超えない。
+//
+// 進み具合の report（ProgressReport の ext.ProgressReport）は、取っておいた同じ拡張機能の同じ識別子の report を、
+// 本文と百分率を引き継いで後のもので置き換え、上限を超えたら他の通知と同じく捨ててよい。begin と end は捨てない。
+// 捨てると、続いているように見える進み具合が消えずに残るか、表題の無い進み具合が出るためである（FR-178）。
 func (e *Editor) hold(ev exthost.Event) {
-	if s, ok := ev.(*exthost.StatusLineSet); ok {
+	switch s := ev.(type) {
+	case *exthost.StatusLineSet:
 		e.held = slices.DeleteFunc(e.held, func(h exthost.Event) bool {
 			p, ok := h.(*exthost.StatusLineSet)
 			return ok && p.Extension == s.Extension && p.Params.Part == s.Params.Part
 		})
+	case *exthost.ProgressReport:
+		if s.Params.Kind == ext.ProgressReport {
+			ev = e.mergeHeldProgress(s)
+		}
 	}
 	e.held = append(e.held, ev)
 	limit := e.cfg.Host.MaxQueuedEvents
@@ -224,10 +233,14 @@ func (e *Editor) hold(ev exthost.Event) {
 	}
 	drop := -1
 	for i, h := range e.held {
-		switch h.(type) {
+		switch h := h.(type) {
 		case *exthost.DecorationSet, *exthost.MessageShow, *exthost.DiagnosticSet, *exthost.SignSet,
 			*exthost.PopupShow, *exthost.OutputAppend, *exthost.ViewUpdate:
 			drop = i
+		case *exthost.ProgressReport:
+			if h.Params.Kind == ext.ProgressReport {
+				drop = i
+			}
 		}
 		if drop >= 0 {
 			break
@@ -247,6 +260,33 @@ func (e *Editor) hold(ev exthost.Event) {
 	}
 	e.log.Warn("取っておくイベントが上限を超えたので捨てる", "type", fmt.Sprintf("%T", e.held[drop]))
 	e.held = append(e.held[:drop], e.held[drop+1:]...)
+}
+
+// mergeHeldProgress は、進み具合の report s を、取っておいた同じ拡張機能の同じ識別子の最後の知らせが report なら、それと 1 つにまとめる。
+// まとめたものは、s の本文と百分率を、s が省いたものだけ前の report から引き継ぐ（hold の doc）。前の report は取っておく列から外す。
+// 最後の知らせが begin か end なら、まとめずに s を返す（始め直しをまたいでまとめない）。
+//
+// req: FR-178
+func (e *Editor) mergeHeldProgress(s *exthost.ProgressReport) *exthost.ProgressReport {
+	for i := len(e.held) - 1; i >= 0; i-- {
+		p, ok := e.held[i].(*exthost.ProgressReport)
+		if !ok || p.Extension != s.Extension || p.Params.Token != s.Params.Token {
+			continue
+		}
+		if p.Params.Kind != ext.ProgressReport {
+			return s
+		}
+		merged := *s
+		if merged.Params.Message == "" {
+			merged.Params.Message = p.Params.Message
+		}
+		if merged.Params.Percentage == nil {
+			merged.Params.Percentage = p.Params.Percentage
+		}
+		e.held = slices.Delete(e.held, i, i+1)
+		return &merged
+	}
+	return s
 }
 
 // trackDeferred は、Feed などが保留した操作 d を、送った問い合わせと結びつける。

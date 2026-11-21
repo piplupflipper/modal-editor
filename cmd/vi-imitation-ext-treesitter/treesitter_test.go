@@ -449,6 +449,15 @@ func connectLimited(t *testing.T, maxBytes int) (*rpc.Conn, <-chan ext.Decoratio
 // connectWith は、setup で変えた highlighter の Server を動かし、settings を initialize の設定として渡して、connectWithMessages と同じものを返す。
 func connectWith(t *testing.T, setup func(*highlighter), settings json.RawMessage) (*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams) {
 	t.Helper()
+	conn, got, msgs, _ := connectWithProgress(t, setup, settings)
+	return conn, got, msgs
+}
+
+// connectWithProgress は、connectWith に加えて、受け取った progress/report の通り道を返す。
+func connectWithProgress(t *testing.T, setup func(*highlighter), settings json.RawMessage) (
+	*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams, <-chan ext.ProgressReportParams,
+) {
+	t.Helper()
 	h, err := newHighlighter()
 	if err != nil {
 		t.Fatalf("newHighlighter: %v", err)
@@ -461,8 +470,17 @@ func connectWith(t *testing.T, setup func(*highlighter), settings json.RawMessag
 	go func() { served <- s.Serve(context.Background(), extR, extW) }()
 	got := make(chan ext.DecorationSetParams, 1024)
 	msgs := make(chan ext.MessageShowParams, 1024)
+	progress := make(chan ext.ProgressReportParams, 1024)
 	conn := rpc.NewConn(hostR, hostW, rpc.HandlerFuncs{
 		Notification: func(_ context.Context, n *rpc.Notification) {
+			if n.Method == ext.MethodProgressReport {
+				var p ext.ProgressReportParams
+				if err := json.Unmarshal(n.Params, &p); err != nil {
+					t.Errorf("progress/report: %v", err)
+				}
+				progress <- p
+				return
+			}
 			if n.Method == ext.MethodMessageShow {
 				var m ext.MessageShowParams
 				if err := json.Unmarshal(n.Params, &m); err != nil {
@@ -500,7 +518,7 @@ func connectWith(t *testing.T, setup func(*highlighter), settings json.RawMessag
 	if err := conn.Call(ctx, ext.MethodInitialize, ext.InitializeParams{APIVersion: ext.APIVersion, Settings: settings}, &init); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	return conn, got, msgs
+	return conn, got, msgs, progress
 }
 
 func receive(t *testing.T, ch <-chan ext.DecorationSetParams) ext.DecorationSetParams {

@@ -79,6 +79,8 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.appendOutput(ev.Extension, ev.Params)
 	case *exthost.StatusLineSet:
 		e.setStatusPart(ev.Extension, ev.Params)
+	case *exthost.ProgressReport:
+		e.reportProgress(ev.Extension, ev.Params)
 	case *exthost.PopupOpenRequest:
 		e.withView(e.extView(ev.Extension), func() { e.popupOpenRequest(ev) })
 	case *exthost.BufferCreateRequest:

@@ -51,7 +51,7 @@ func (h *highlighter) configure(raw json.RawMessage) {
 		env:      h.env,
 		compiler: s.compiler,
 		listed:   s.listed,
-		notify:   func(text string) { h.message(ext.MessageInfo, text) },
+		progress: h.progress,
 	}
 	clear(h.user)
 	for _, spec := range s.parsers {

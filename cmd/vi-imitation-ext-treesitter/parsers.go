@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/piplupflipper/vi-imitation/ext"
 	"github.com/piplupflipper/vi-imitation/internal/config"
 	"github.com/piplupflipper/vi-imitation/internal/extmgr"
 )
@@ -163,9 +164,12 @@ type preparer struct {
 	compiler string
 	// listed は、設定に並べたパーサの名前の集合である（treesitterSettings.listed）。
 	listed map[string]bool
-	// notify は、利用者へ進み具合を知らせる。
-	notify func(string)
+	// progress は、利用者へ進み具合を知らせる（progress/report。FR-178）。
+	progress func(ext.ProgressReportParams)
 }
+
+// progressTitle は、パーサの用意の進み具合（progress/report）の表題である。
+const progressTitle = "tree-sitter"
 
 // prepare は、パーサ spec を用意し、読み込んだ言語を返す（FR-142）。
 //
@@ -202,7 +206,14 @@ func (p *preparer) prepare(ctx context.Context, spec parserSpec) (*language, err
 		}
 	}
 
-	p.notify(fmt.Sprintf("tree-sitter: パーサ %s を取得している（%s %s）", spec.name, spec.repo, spec.version))
+	// 取得からは時間がかかるので、進み具合を知らせる。識別子はパーサの名前ごとにし、失敗しても終える（ext.MethodProgressReport）。
+	token := "parser/" + spec.name
+	p.progress(ext.ProgressReportParams{
+		Token: token, Kind: ext.ProgressBegin, Title: progressTitle,
+		Message: fmt.Sprintf("パーサ %s を取得している（%s %s）", spec.name, spec.repo, spec.version),
+	})
+	endMessage := fmt.Sprintf("パーサ %s を用意できない", spec.name)
+	defer func() { p.progress(ext.ProgressReportParams{Token: token, Kind: ext.ProgressEnd, Message: endMessage}) }()
 	src := filepath.Join(p.env.dataDir, "src", spec.name)
 	fctx, cancel := context.WithTimeout(ctx, p.env.fetchTimeout)
 	commit, err := extmgr.Checkout(fctx, src, spec.repo, spec.version, pinned, extmgr.CheckoutOptions{Git: p.env.git, Env: p.env.env})
@@ -212,7 +223,9 @@ func (p *preparer) prepare(ctx context.Context, spec parserSpec) (*language, err
 	}
 	dir := p.buildDir(spec, commit)
 	if !exists(filepath.Join(dir, libraryFileName)) {
-		p.notify(fmt.Sprintf("tree-sitter: パーサ %s をビルドしている（%s）", spec.name, p.compiler))
+		p.progress(ext.ProgressReportParams{
+			Token: token, Kind: ext.ProgressReport, Message: fmt.Sprintf("パーサ %s をビルドしている（%s）", spec.name, p.compiler),
+		})
 		if err = p.build(ctx, spec, src, commit, dir); err != nil {
 			return nil, err
 		}
@@ -230,7 +243,7 @@ func (p *preparer) prepare(ctx context.Context, spec parserSpec) (*language, err
 	if err != nil {
 		return nil, err
 	}
-	p.notify(fmt.Sprintf("tree-sitter: パーサ %s を用意した（%s）", spec.name, commit[:12]))
+	endMessage = fmt.Sprintf("パーサ %s を用意した（%s）", spec.name, commit[:12])
 	return lang, nil
 }
 

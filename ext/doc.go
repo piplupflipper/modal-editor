@@ -89,4 +89,6 @@ package ext
 // 本体はこれを持つ項目の前にファイルの種類のアイコンを付ける。古い本体は黙って捨て、アイコンを付けずに出す。
 // 0.13.0 で、editor/list の一覧の種類 help（:help で引ける語。ListHelp）と、その語の :help を開かせる editor/execute の help を
 // 足した（#308。FR-148）。古い本体は help の editor/list を知らない一覧として誤りで断り、help だけの editor/execute も誤りで断る。
-const APIVersion = "0.13.0"
+// 0.14.0 で、時間のかかる処理の進み具合を知らせる progress/report（ProgressReportParams。progress.go）を足した（#340。FR-178）。
+// 古い本体は知らない通知として捨てる（ログに残すだけ）ので、進み具合は出ない。
+const APIVersion = "0.14.0"

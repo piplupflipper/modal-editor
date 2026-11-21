@@ -62,7 +62,7 @@ const (
 	methodGrandchild = "test/grandchild" // 標準出力を継承した孫プロセス（sleep）を起動し、その pid を返す
 	methodForget     = "test/forget"     // バッファのバージョン番号を食い違わせる（次の buffer/change で buffer/resync を送る）
 	methodEdit       = "test/edit"       // params の BufferEditParams で本体へ buffer/edit を送り、その結果を返す
-	methodNotify     = "test/notify"     // decoration/set と message/show を送る
+	methodNotify     = "test/notify"     // decoration/set、message/show、progress/report を送る
 	methodGarbage    = "test/garbage"    // JSON-RPC として解釈できないメッセージを標準出力へ書く
 	methodFlood      = "test/flood"      // message/show を params の数だけ送る
 	methodEnv        = "test/env"        // 環境変数 ext.EnvExtensionDir と ext.EnvMCPSocket の値と作業ディレクトリを返す
@@ -270,6 +270,9 @@ func (f *fakeExt) request(ctx context.Context, req *rpc.Request, reply rpc.Repli
 			Buffer: 1, Version: 7, Decorations: []ext.Decoration{{Style: "keyword"}},
 		})
 		_ = f.conn.Notify(ext.MethodMessageShow, ext.MessageShowParams{Level: ext.MessageInfo, Text: "hello"})
+		// 識別子の無い progress/report は本体が捨てるので、後の正しいものだけがイベントになる。
+		_ = f.conn.Notify(ext.MethodProgressReport, ext.ProgressReportParams{Kind: ext.ProgressBegin, Title: "bad"})
+		_ = f.conn.Notify(ext.MethodProgressReport, ext.ProgressReportParams{Token: "t", Kind: ext.ProgressBegin, Title: "load", Percentage: ext.Percent(5)})
 		_ = reply(nil, nil)
 	case methodGarbage:
 		_, _ = os.Stdout.WriteString("Content-Length: 5\r\n\r\nhello")

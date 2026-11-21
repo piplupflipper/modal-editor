@@ -47,6 +47,7 @@ var (
 	hangShutdown = flag.Bool("hang-on-shutdown", false, "shutdown に応答せず、exit でも終わらない（止まった言語サーバーの代役）")
 	publishClose = flag.Bool("publish-on-close", false, "didClose を受け取ったときに、閉じる前の文書の診断を送る")
 	linger       = flag.Bool("linger", false, "接続が閉じても終わらない（標準入力の終わりで終わらない言語サーバーの代役）")
+	progressFlag = flag.Bool("progress", false, "クライアントが window.workDoneProgress を申し出たら、initialized の後に進み具合（$/progress）を送る")
 )
 
 type pos struct {
@@ -65,7 +66,29 @@ var (
 	vers    = map[string]int64{}
 	logFile *os.File
 	conn    *rpc.Conn
+	// workDone は、クライアントが initialize で window.workDoneProgress を申し出たかである。
+	workDone bool
 )
+
+// sendProgress は、window/workDoneProgress/create で識別子 "load" を作り、$/progress で begin、report、end を送る。
+// 間に、作っていない識別子の report と、部分の結果（value が配列）の $/progress を挟み、最後に識別子 7 の begin だけを送って終えない。
+func sendProgress() {
+	var res json.RawMessage
+	if err := conn.Call(context.Background(), "window/workDoneProgress/create", map[string]any{"token": "load"}, &res); err != nil {
+		logEntry("progress create error", err.Error())
+		return
+	}
+	for _, p := range []map[string]any{
+		{"token": "bogus", "value": map[string]any{"kind": "report", "message": "x"}},
+		{"token": "load", "value": map[string]any{"kind": "begin", "title": "Loading", "percentage": 0}},
+		{"token": "load", "value": map[string]any{"kind": "report", "message": "1/2", "percentage": 50.4}},
+		{"token": "part", "value": []int{1, 2}},
+		{"token": "load", "value": map[string]any{"kind": "end", "message": "done"}},
+		{"token": 7, "value": map[string]any{"kind": "begin", "title": "Indexing"}},
+	} {
+		_ = conn.Notify("$/progress", p)
+	}
+}
 
 func logEntry(kind string, v any) {
 	mu.Lock()
@@ -180,6 +203,17 @@ func request(ctx context.Context, req *rpc.Request, reply rpc.Replier) {
 	logEntry(req.Method, req.Params)
 	switch req.Method {
 	case "initialize":
+		var ip struct {
+			Capabilities struct {
+				Window struct {
+					WorkDoneProgress bool `json:"workDoneProgress"`
+				} `json:"window"`
+			} `json:"capabilities"`
+		}
+		_ = json.Unmarshal(req.Params, &ip)
+		mu.Lock()
+		workDone = ip.Capabilities.Window.WorkDoneProgress
+		mu.Unlock()
 		caps := map[string]any{
 			"textDocumentSync":           map[string]any{"openClose": true, "change": *syncFlag, "save": map[string]any{"includeText": true}},
 			"definitionProvider":         true,
@@ -341,6 +375,12 @@ func notification(_ context.Context, n *rpc.Notification) {
 			}
 			logEntry("configuration result", res)
 		}()
+		mu.Lock()
+		wd := workDone
+		mu.Unlock()
+		if *progressFlag && wd {
+			go sendProgress()
+		}
 	case "exit":
 		if *hangShutdown {
 			return

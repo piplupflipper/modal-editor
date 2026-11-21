@@ -590,6 +590,10 @@ func TestRequestsFromExtension(t *testing.T) {
 	if ms.Params.Text != "hello" {
 		t.Fatalf("MessageShow = %+v", ms)
 	}
+	pr := hs.waitEvent("progress", func(ev Event) bool { _, ok := ev.(*ProgressReport); return ok }).(*ProgressReport)
+	if pr.Extension != "x" || pr.Params.Token != "t" || pr.Params.Title != "load" || pr.Params.Percentage == nil || *pr.Params.Percentage != 5 {
+		t.Fatalf("ProgressReport = %+v（識別子の無いものを捨てていない）", pr)
+	}
 }
 
 // 拡張機能の標準エラー出力を記録する。
