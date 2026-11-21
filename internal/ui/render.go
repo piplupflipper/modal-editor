@@ -458,7 +458,7 @@ func (r *Renderer) fitHeight(text Text, cur cursorPlace) bool {
 	r.valid = topKey{}
 	if prev > 0 {
 		v := r.scrollView(text, prev)
-		v.Follow(cur.line, cur.row)
+		v.Follow(cur.line, cur.row, cur.x)
 		r.setView(v)
 		if wrow := r.cursorRow(text, cur); prev > 1 && wrow+1 != r.fracRow {
 			// 最初の行と最後の行のカーソルは、その行の真ん中にあるとして数える（Vim の set_fraction）。

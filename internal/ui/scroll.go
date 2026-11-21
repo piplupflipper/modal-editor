@@ -19,8 +19,18 @@ func (l renderLines) Rows(n int) int { return l.r.height(l.text, n) }
 func (r *Renderer) scrollView(text Text, h int) scroll.View {
 	return scroll.View{
 		Lines: renderLines{r: r, text: text}, Height: h, Width: r.textWidth(),
-		Margin: r.margins.Rows, Top: r.top, Skip: r.skip,
+		Margin: r.margins.Rows, Top: r.top, Skip: r.skip, Marker: r.markerOverlap(),
 	}
+}
+
+// markerOverlap は、最初の行の途中から描くときの表示領域の最初の行の "<<<"（画面の左の端から 3 列。wrap.go）が、本文に重なる列の数を返す
+// （Neovim 0.12.5 の sms_marker_overlap）。印の列と行番号の列が 3 列以上あれば重ならない。続きの行の記号（lineWrap.showBreak）を付けるときは、
+// Neovim と同じく 0 にする。行を折り返さないときは 0 である。
+func (r *Renderer) markerOverlap() int {
+	if !r.wrap || r.wrapper().sbw > 0 {
+		return 0
+	}
+	return max(3-r.textLeft(), 0)
 }
 
 // setView は、縦の位置の数え方が決めた最初の行と隠す見た目の行を、Renderer に戻す。
@@ -78,6 +88,13 @@ func (r *Renderer) SetScrollHeld(top, skip, line int) {
 // Skip は、最初の行を折り返した見た目の行のうち、表示領域より上に隠している行の数を返す（Vim の w_skipcol を見た目の行で数えたもの）。
 func (r *Renderer) Skip() int { return r.skip }
 
+// Botline は、直前の描画で、表示領域に最後まで描いた行の次の行の番号（0 から数える。Vim の w_botline）を返す。
+// 行を折り返すときは、見た目の行をすべて描いた行だけを数え、最初の行を最後まで描けなかったときは最初の行の次の行にする
+// （Neovim 0.12.5 のルーラーと同じ）。最後の行まで描いていれば、行の数である。見えている範囲は Top から Botline の前の行までで、
+// 最後に途中まで描いた行があればそれも見えている。表示の範囲を数え直さずに読むための口で、右の端の位置の印（スクロールバー）が使う。
+// まだ描いていなければ 0 を返す。
+func (r *Renderer) Botline() int { return r.bot }
+
 // scroll は、カーソルが余白（Frame.Margins）を残して表示領域に入るように、縦と横のスクロールの位置を更新する。
 //
 // 縦は internal/scroll の View.Follow（Neovim 0.12.5 の update_topline）で決める。行を折り返すときは、行の高さを見た目の行の数で数える。
@@ -94,7 +111,7 @@ func (r *Renderer) scroll(text Text, cur cursorPlace) {
 	if k := r.topKeyOf(text, cur.line); r.valid == k {
 		v.KeepTop(cur.line, cur.row)
 	} else {
-		v.Follow(cur.line, cur.row)
+		v.Follow(cur.line, cur.row, cur.x)
 		r.valid = k
 	}
 	r.setView(v)

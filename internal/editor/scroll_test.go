@@ -22,6 +22,10 @@ const (
 	scrollFileWrap2
 	// scrollFileLong は、横のスクロールの確かめに使う 20 行のファイルである。行は "{N}:" に "abcdefghij" を 12 回続けた行。
 	scrollFileLong
+	// scrollFileTallEnd は、"line1" から "line14" の 14 行と、1000 文字の 15 行目（最後の行が表示領域より高い）のファイルである。
+	scrollFileTallEnd
+	// scrollFileTall2000 は、40 行のファイルである。3 行目は 2000 文字、20 行目は 600 文字、残りは "line{N}"。
+	scrollFileTall2000
 )
 
 // scrollFileText は、ファイルの種類 f の中身を返す。
@@ -55,6 +59,22 @@ func scrollFileText(f scrollFile) string {
 	case scrollFileLong:
 		for i := 1; i <= 20; i++ {
 			lines = append(lines, fmt.Sprintf("%d:", i)+strings.Repeat("abcdefghij", 12))
+		}
+	case scrollFileTallEnd:
+		for i := 1; i <= 14; i++ {
+			lines = append(lines, fmt.Sprintf("line%d", i))
+		}
+		lines = append(lines, strings.Repeat("abcdefghij", 100))
+	case scrollFileTall2000:
+		for i := 1; i <= 40; i++ {
+			switch i {
+			case 3:
+				lines = append(lines, strings.Repeat("0123456789", 200))
+			case 20:
+				lines = append(lines, strings.Repeat("abcdefghij", 60))
+			default:
+				lines = append(lines, fmt.Sprintf("line%d", i))
+			}
 		}
 	}
 	return strings.Join(lines, "\n") + "\n"
@@ -696,6 +716,121 @@ func TestScrollTallLineNeovim(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// PR #338 のレビューで見つかった境界を、Neovim 0.12.5 と突き合わせる（取り方は scrollCases と同じ。skip は winsaveview() の skipcol を 41 で割った値）。
+//
+//   - バッファの末尾の zz、zt、zb（余白 5）: Neovim は、描いた後の最後まで見える行の次の行が変わったときだけ余白を数え直す（必須 1）
+//   - 表示領域より高い行へ <C-u> などで戻ったとき: カーソルが最初の行の左の端の "<<<" の下に来るなら、最初の行を決め直す（必須 2）
+//
+// req: FR-173, FR-174
+func TestScrollEdgeNeovim(t *testing.T) {
+	type step struct {
+		keys                 string
+		top, line, col, skip int
+	}
+	tests := []struct {
+		name     string
+		file     scrollFile
+		so, rows int
+		wrap     bool
+		steps    []step
+	}{
+		{"end-zz-10", scrollFileMixed, 5, 10, false, []step{{"G", 91, 100, 0, 0}, {"zz", 96, 100, 0, 0}}},
+		{"end-zz-9", scrollFileMixed, 5, 9, false, []step{{"G", 92, 100, 0, 0}, {"zz", 96, 100, 0, 0}}},
+		{"end-zz-7", scrollFileMixed, 5, 7, false, []step{{"G", 94, 100, 0, 0}, {"zz", 97, 100, 0, 0}}},
+		{"end-mix-7", scrollFileMixed, 5, 7, false, []step{
+			{"G", 94, 100, 0, 0},
+			{"zz", 97, 100, 0, 0},
+			{"zb", 94, 100, 0, 0},
+			{"zz", 97, 100, 0, 0},
+			{"zt", 95, 100, 0, 0},
+			{"zz", 97, 100, 0, 0},
+			{"99G", 94, 99, 0, 0},
+			{"zz", 96, 99, 0, 0},
+		}},
+		{"end-999zt-10", scrollFileMixed, 5, 10, false, []step{{"999zt", 95, 100, 0, 0}, {"zz", 96, 100, 0, 0}}},
+		{"tallend-so2", scrollFileTallEnd, 2, 10, true, []step{
+			{"G", 15, 15, 0, 0},
+			{"<C-e>", 15, 15, 0, 0},
+			{"<C-e>", 15, 15, 0, 0},
+			{"<C-y>", 14, 14, 0, 0},
+			{"zt", 12, 14, 0, 0},
+			{"zz", 14, 14, 0, 0},
+		}},
+		{"marker-4G", scrollFileTall2000, 0, 10, true, []step{{"4G", 4, 4, 0, 0}, {"<C-u>", 3, 3, 41, 0}}},
+		{"marker-2j", scrollFileTall2000, 0, 10, true, []step{{"2j", 3, 3, 0, 0}, {"<C-d>", 4, 4, 0, 0}, {"<C-u>", 3, 3, 41, 0}}},
+		{"marker-3G", scrollFileTall2000, 0, 10, true, []step{{"3G", 3, 3, 0, 0}, {"<C-e>", 4, 4, 0, 0}, {"<C-u>", 3, 3, 41, 0}}},
+		{"marker-15G", scrollFileTall2000, 0, 10, true, []step{
+			{"15G", 11, 15, 0, 0}, {"<C-d>", 20, 20, 0, 0}, {"<C-d>", 21, 21, 0, 0}, {"<C-u>", 20, 20, 41, 0},
+		}},
+		// 表示領域より高い行の奥にカーソルがあるときの <C-y> は Neovim と違う（docs/vim-differences.md）。最後の <C-y> は本体の今の動きで、
+		// Neovim 0.12.5 はカーソルを 3 行目の 820 バイト目に残す。
+		{"deep", scrollFileTall2000, 0, 10, true, []step{
+			{"3G", 3, 3, 0, 0}, {"<C-e>", 4, 4, 0, 0}, {"<C-y>", 3, 3, 0, 0}, {"20gj", 3, 3, 820, 11}, {"<C-y>", 2, 2, 4, 0},
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": scrollFileText(tc.file)})
+			term := newFakeTerm()
+			term.w, term.h = 41, tc.rows+3
+			opts := map[string]option.Value{option.ScrollMargin: option.IntValue(tc.so), option.LineWrapEnabled: option.BoolValue(tc.wrap)}
+			h := startTerm(t, term, Config{WorkDir: dir, Options: opts}, "a.txt")
+			h.settle()
+			for i, st := range tc.steps {
+				h.keys(st.keys)
+				h.settle()
+				want := fmt.Sprintf("%d %d:%d skip %d", st.top, st.line, st.col, st.skip)
+				var got string
+				h.e.do(func() {
+					c := h.e.cur.state.Cursor()
+					got = fmt.Sprintf("%d %d:%d skip %d", h.e.renderer.Top()+1, c.Line+1, c.Byte, h.e.renderer.Skip())
+				})
+				if got != want {
+					t.Fatalf("%d 番目の %s の後: 最初の行 カーソル 隠す行 = %s, want %s", i+1, st.keys, got, want)
+				}
+			}
+		})
+	}
+}
+
+// 行を折り返すプレビューで、余白がある（scroll.margin が 1）ときも、<S-Down>（preview.page-down）の最初の行は描画で戻らない。
+// プレビューのために作ったバッファのカーソルを、折り返した行の高さで数えて余白の外に入れるためである（PR #338 のレビューの推奨 3）。
+//
+// req: FR-174
+func TestPreviewPageWrapMargin(t *testing.T) {
+	lines := make([]string, 60)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("%02d ", i+1) + strings.Repeat("abcdefghij", 30)
+	}
+	dir := writeFiles(t, map[string]string{"a.txt": strings.Join(lines, "\n") + "\n", "b.txt": "b\n"})
+	opts := map[string]option.Value{option.ScrollMargin: option.IntValue(1), option.LineWrapEnabled: option.BoolValue(true)}
+	h, ft := startPreview(t, dir, 200, 20, opts, "b.txt")
+	f := openPreviewFloat(h, ext.ViewList, []ext.ViewItem{{ID: "a", Label: "a.txt", Preview: pvOf(filepath.Join(dir, "a.txt"))}})
+	fireLast(h, ft, 0)
+	waitPreview(h, f, "p:"+filepath.Join(dir, "a.txt")+"#-")
+	var rows int
+	h.e.do(func() { _, rows, _ = previewTop(h.e, f) })
+	if rows < 6 {
+		t.Fatalf("プレビューの行数 = %d", rows)
+	}
+	h.keys("<S-Down>")
+	h.settle()
+	h.keys("<S-Down>")
+	h.settle()
+	var top int
+	h.e.do(func() { top, _, _ = previewTop(h.e, f) })
+	if want := 2 * (rows - 2); top != want {
+		t.Errorf("<S-Down> を 2 回: 最初の行 %d, want %d（0 から数える）", top, want)
+	}
+	// 上へ戻すと、カーソルは窓の下の端の近くへ入る。折り返した行の高さで数えないと、カーソルが窓の外に出て、描画が最初の行を下げる。
+	h.keys("<S-Up>")
+	h.settle()
+	h.e.do(func() { top, _, _ = previewTop(h.e, f) })
+	if want := rows - 2; top != want {
+		t.Errorf("<S-Up>: 最初の行 %d, want %d（0 から数える）", top, want)
 	}
 }
 

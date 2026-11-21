@@ -20,14 +20,14 @@ func TestViewNeovim(t *testing.T) {
 		op                func(v *View, line int)
 		want              int
 	}{
-		{"50G", 0, 0, 49, func(v *View, l int) { v.Follow(l, 0) }, 45},
-		{"47G の後", 0, 45, 46, func(v *View, l int) { v.Follow(l, 0) }, 45},
-		{"60G", 0, 45, 59, func(v *View, l int) { v.Follow(l, 0) }, 50},
-		{"47G（余白 5）", 5, 45, 46, func(v *View, l int) { v.Follow(l, 0) }, 42},
-		{"60G（余白 5）", 5, 42, 59, func(v *View, l int) { v.Follow(l, 0) }, 55},
-		{"8j（余白 5）", 5, 0, 10, func(v *View, l int) { v.Follow(l, 0) }, 5},
-		{"zt", 0, 10, 19, func(v *View, l int) { v.CursorTop(l, 0, 0, true) }, 19},
-		{"zt（余白 5）", 5, 10, 19, func(v *View, l int) { v.CursorTop(l, 0, 0, true) }, 15},
+		{"50G", 0, 0, 49, func(v *View, l int) { v.Follow(l, 0, 0) }, 45},
+		{"47G の後", 0, 45, 46, func(v *View, l int) { v.Follow(l, 0, 0) }, 45},
+		{"60G", 0, 45, 59, func(v *View, l int) { v.Follow(l, 0, 0) }, 50},
+		{"47G（余白 5）", 5, 45, 46, func(v *View, l int) { v.Follow(l, 0, 0) }, 42},
+		{"60G（余白 5）", 5, 42, 59, func(v *View, l int) { v.Follow(l, 0, 0) }, 55},
+		{"8j（余白 5）", 5, 0, 10, func(v *View, l int) { v.Follow(l, 0, 0) }, 5},
+		{"zt", 0, 10, 19, func(v *View, l int) { v.CursorTop(l, 0, 1, 0, true) }, 19},
+		{"zt（余白 5）", 5, 10, 19, func(v *View, l int) { v.CursorTop(l, 0, 1, 0, true) }, 15},
 		{"zz", 0, 19, 19, func(v *View, l int) { v.CursorHalfway(l, true, false) }, 15},
 		{"zb", 0, 15, 19, func(v *View, l int) { v.CursorBot(l, 0, true) }, 10},
 		{"zb（余白 5）", 5, 15, 19, func(v *View, l int) { v.CursorBot(l, 0, true) }, 14},

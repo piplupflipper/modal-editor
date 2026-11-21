@@ -45,6 +45,9 @@ type View struct {
 	Top int
 	// Skip は、最初の行を折り返した見た目の行のうち、表示領域より上に隠す行の数（Vim の w_skipcol を見た目の行で数えたもの）である。
 	Skip int
+	// Marker は、最初の行の途中から見せるときに、表示領域の最初の行の左の端に描く印（"<<<"）が本文に重なる列の数である
+	// （Neovim の sms_marker_overlap）。カーソルがその列にあれば隠れるとして、Follow が最初の行を決め直す。
+	Marker int
 	// SmoothCursor は、見た目の行で送る ScrollRedraw（smooth が true）の最後に呼ぶ、カーソルの補正である（Neovim の cursor_correct_sms）。
 	// カーソルの行 cursor を受け取り、補正した行を返す。カーソルの列と望みの列は呼び出し側が持つので、補正は呼び出し側が書く。nil なら呼ばない。
 	SmoothCursor func(v *View, cursor int) int
@@ -123,17 +126,17 @@ func (v *View) checkTopOffset(cursor int) bool {
 	return n < so
 }
 
-// Follow は、カーソル（行 cursor の、折り返した row 番目の見た目の行）が、余白を残して表示領域に入るように最初の行と Skip を決める。
-// 描画が描くたびに呼ぶ。Neovim の update_topline と、curs_columns の w_skipcol を決める部分を写した。
+// Follow は、カーソル（行 cursor の、折り返した row 番目の見た目の行の、左の端から x 列目）が、余白を残して表示領域に入るように
+// 最初の行と Skip を決める。描画が描くたびに呼ぶ。Neovim の update_topline と、curs_columns の w_skipcol を決める部分を写した。
 //
-//   - カーソルが最初の行より上か、上の余白が足りなければ、離れが小さいときはカーソルの行を上の余白の位置に置き（CursorTop）、
+//   - カーソルが最初の行より上か、上の余白が足りないか、最初の行の隠した部分か印（Marker）の下にあれば、離れが小さいときはカーソルの行を上の余白の位置に置き（CursorTop）、
 //     大きいとき（max(Height/2-1, 2) 行以上）は中ほどに置く（CursorHalfway）
 //   - カーソルが表示領域の下へ出たか、下の余白が足りなければ、離れが小さいときは下の余白の位置に置き（CursorBot）、
 //     大きいとき（Height+1 行より多い）は中ほどに置く
 //   - カーソルの行が最初の行で、表示領域より高ければ、カーソルの見た目の行が余白を残して見えるように Skip を決める（fitSkip）
 //
 // req: FR-174
-func (v *View) Follow(cursor, row int) {
+func (v *View) Follow(cursor, row, x int) {
 	n := v.count()
 	cursor = min(max(cursor, 0), n-1)
 	if v.Height <= 0 {
@@ -150,7 +153,7 @@ func (v *View) Follow(cursor, row int) {
 			checkTop = true
 		case v.checkTopOffset(cursor):
 			checkTop = true
-		case v.Skip > 0 && cursor == v.Top && v.Skip > row:
+		case v.Skip > 0 && cursor == v.Top && v.hidden(row, x):
 			checkTop = true
 		}
 	}
@@ -159,7 +162,7 @@ func (v *View) Follow(cursor, row int) {
 		if v.Top+so-cursor >= half {
 			v.CursorHalfway(cursor, false, false)
 		} else {
-			v.CursorTop(cursor, row, 1, false)
+			v.CursorTop(cursor, row, x, 1, false)
 			checkBot = true
 		}
 	} else {
@@ -201,6 +204,12 @@ func (v *View) Follow(cursor, row int) {
 		v.Skip = 0
 	}
 	v.fitSkip(cursor, row)
+}
+
+// hidden は、最初の行の row 番目の見た目の行の x 列目が、隠した見た目の行か、表示領域の最初の行の印（Marker）の下にあるかを返す。
+// Neovim の update_topline の w_skipcol + sms_marker_overlap() > vcol を、表示の列を見た目の行と列に分けて写した。
+func (v *View) hidden(row, x int) bool {
+	return row < v.Skip || row == v.Skip && x < v.Marker
 }
 
 // KeepTop は、最初の行を変えずに、Skip だけを Follow と同じく決める（Neovim の curs_columns が、最初の行が決まっている
@@ -282,8 +291,9 @@ func (v *View) fitSkip(cursor, row int) {
 // CursorTop は、カーソルの行 cursor を、上の余白を残した表示領域の上の端の近くに置く（Neovim の scroll_cursor_top）。
 // minScroll は、スクロールするなら少なくとも動かす見た目の行の数（'scrolljump'）である。always なら必ず最初の行を決め直す（zt）。
 // そうでなければ、最初の行を上へ動かすときだけ変える。余白を残す場所が無ければ、中ほどに置く（CursorHalfway）。
-// row は、カーソルの見た目の行で、最初の行を変えないときに Skip を戻すかの判定に使う。
-func (v *View) CursorTop(cursor, row, minScroll int, always bool) {
+// row と x は、カーソルの見た目の行とその中の列で、最初の行を変えないときに Skip を戻すかの判定に使う
+// （Neovim の w_skipcol >= w_virtcol。カーソルが最初に見せる見た目の行の左の端にあるときも戻す）。
+func (v *View) CursorTop(cursor, row, x, minScroll int, always bool) {
 	n, off := v.count(), v.so()
 	scrolled := 0
 	used := v.plines(cursor, true)
@@ -325,7 +335,7 @@ func (v *View) CursorTop(cursor, row, minScroll int, always bool) {
 	switch {
 	case t != v.Top:
 		v.Top, v.Skip = t, 0
-	case t == cursor && v.Skip > row:
+	case t == cursor && (v.Skip > row || v.Skip == row && x == 0):
 		v.Skip = 0
 	}
 }

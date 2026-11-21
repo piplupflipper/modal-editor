@@ -77,9 +77,19 @@ func (s *State) scrollView() (v scroll.View, ok bool) {
 	}
 	cur := s.cursor.Line
 	if bot, _ := v.Botline(); cur < v.Top || (cur >= bot && cur != v.Top) {
-		v.Follow(cur, s.cursorRow())
+		if w := v.Width; w > 0 && s.ScreenLines.BreakWidth() == 0 {
+			// 印の列と行番号の列の幅は分からないので、"<<<" が本文に重なるとして数える（描画は、その幅を引いて数え直す）。
+			v.Marker = 3
+		}
+		row := s.cursorRow()
+		v.Follow(cur, row, s.cursorColumn()-row*max(v.Width, 1))
 	}
 	return v, true
+}
+
+// cursorColumn は、カーソルの表示の列（行を折り返すときは、見た目の行の番号 × 本文の幅を足した列）を返す。
+func (s *State) cursorColumn() int {
+	return s.columns().Column(s.line(s.cursor.Line), s.cursor.Byte)
 }
 
 // screenWidth は、行を折り返して描くときの本文の幅を返す。折り返さないなら 0 である。
@@ -401,17 +411,28 @@ func actScrollCursor(kind scrollCursorKind, firstNonBlank bool) actionFunc {
 			s.updateWant()
 		}
 		cur := s.cursor.Line
+		// oldBot は、Neovim が描く前に持っている w_botline に当たる行である。zt と zz は w_botline を数え直さないので、
+		// 動かす前の表示領域のものになる。zb は、最初の行を変えたときだけ、カーソルの行の次の行にする（scroll_cursor_bot の set_topbot）。
+		oldBot, _ := v.Botline()
+		oldTop := v.Top
 		switch kind {
 		case scrollCursorTop:
-			v.CursorTop(cur, s.cursorRow(), 0, true)
+			row := s.cursorRow()
+			v.CursorTop(cur, row, s.cursorColumn()-row*max(v.Width, 1), 0, true)
 		case scrollCursorCenter:
 			v.CursorHalfway(cur, true, false)
 		case scrollCursorBottom:
 			v.CursorBot(cur, 0, true)
+			if v.Top != oldTop {
+				oldBot = cur + 1
+			}
 		}
-		// 決めた位置は、描画でもう一度余白を数え直す。Neovim 0.12.5 も、zz と zb の後に余白（'scrolloff'）を数え直す
-		// （100 行のファイルの 95 行目で so=5 の zz は、最初の行を 91 行目にせず 90 行目のままにする。2026-11-21 に確かめた）。
-		s.setView(v, false)
+		// 決めた位置は、描いた後の最後まで見える行の次の行が oldBot と違うときだけ、描画で余白を数え直させる。
+		// Neovim 0.12.5 も、zt、zz、zb は VALID_TOPLINE を立て、描いた後の w_botline が描く前と違うときだけ update_topline で
+		// 数え直す（src/nvim/drawscreen.c の win_update の末尾）。100 行のファイルで so=5 の 95zt の後の zz は、最後まで見える行の次の行が
+		// 変わるので数え直して最初の行を 90 行目に戻し、G の後の zz は変わらないので 96 行目のままにする（2026-11-21 に確かめた。PR #338 のレビューの必須 1）。
+		bot, _ := v.Botline()
+		s.setView(v, bot == oldBot)
 		return nil
 	}
 }
