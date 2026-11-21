@@ -1432,11 +1432,12 @@ LSP と DAP の操作（定義へ移動、ホバー、ブレークポイント�
 ## 拡張機能の進み具合
 
 言語サーバーの読み込み、tree-sitter のパーサの用意、mise での言語サーバーの入れ込みのような、時間のかかる処理の進み具合は、編集の画面の右下に重ねて出る（オーナーの nvim の fidget.nvim の形）。
-次の例は、gopls がワークスペースを読み込んでいる間と、tree-sitter のパーサを用意し終えた後の右下である。
+次の例は、このリポジトリの Go のファイルを開いたときの、画面の最後の行の右の端である（2026-11-21 に gopls v0.21.0 で、tmux の中で取った）。
+読み込んでいる間は 1 行目の形で、読み込み終えると 2 行目の形になり、約 3 秒の後に消えた。
 
 ```text
-                       Loading packages... gopls: Setting up workspace ...
-                         パーサ python を用意した（0123456789ab） tree-sitter done
+        Loading packages... gopls: Setting up workspace ...
+ Finished loading packages. gopls: Setting up workspace done
 ```
 
 - 1 つの処理を 1 行にし、「本文 (百分率%) 表題 印」の形で右に寄せる。いくつも続いていれば、新しいものを下にして積む
