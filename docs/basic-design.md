@@ -867,6 +867,46 @@ N は `indent.width`（0 なら `tab.width`）、`'tabstop'` は `tab.width` で
 期待値は、2026-11-21 に手元の Neovim 0.12.5（`nvim --clean`）で、設定の組を 5 つ（`indent.useSpaces`、`indent.width`、`tab.width` が `false 8 8`、`true 4 4`、`false 4 4`、`true 2 8`、`false 4 8`）にして取った（`internal/command` の `indent_cases_test.go`。338 件）。
 `>` と `<` の後のカーソルは、Neovim の既定の `'nostartofline'` で Vim 9.1 と違うので、今までどおり Vim 9.1 に合わせ（`shift_test.go`）、Neovim とはテキストだけを比べた。
 
+### 3.3 コメントの切り替え
+
+2026-11-21 のオーナーとの相談（#327。索引は #317）で、行のコメントの切り替えを本体に入れることにした（FR-169）。
+Vim 9.1 には既定の `gc` が無いので、Neovim 0.12.5 の組み込みの `gc`（`runtime/lua/vim/_comment.lua`）に合わせた。
+
+| 操作の ID | 種類 | 既定のキー | 内容 |
+|---|---|---|---|
+| `comment` | オペレーター | ノーマルモードとビジュアルモードの `gc`、ビジュアルモードの `<C-_>` と `<C-/>` | 範囲の行のコメントを切り替える |
+| `comment-line` | 操作 | ノーマルモードの `gcc`、`<C-_>`、`<C-/>` | `comment` と行単位の対象の組の省略形（`S` が `cc` に当たるのと同じ `actShorthand`）。回数は行数 |
+| `commented-lines` | テキストオブジェクト | オペレーターの後の `gc`。ビジュアルモードには既定のキーの無い行を置き、`keymap` で割り当てられる | カーソルの行を含む、上下に続くコメントの行の行単位の範囲 |
+
+部品の分け方は次のとおりである。
+
+| 部品 | 置き場所 | 内容 |
+|---|---|---|
+| 行の並びの切り替え | `internal/command/comment`（`internal/command` の下の、標準ライブラリだけを import するパッケージ） | コメントの形を `%s` の前と後ろに分ける（`Parse`）、行がコメントかを確かめる（`Checker`）、行の並びを切り替える（`Toggle`）。Neovim の Lua のパターンを、同じ部分一致を返す Go の正規表現に直した。オペレーターとテキストオブジェクトの両方が使う |
+| コメントの形を決める処理 | `internal/command` の `State.commentString` | 位置を受け取り、今はバッファの設定 `comment.string` の今の値を返す。形が空なら警告を出す。ここだけで決めるので、後に tree-sitter の拡張機能がカーソルの位置の言語の形を渡すとき（Markdown のコードの囲みの中など。Neovim は tree-sitter で決める）は、この関数を変えるだけで済む |
+| オペレーター | `internal/command` の `opComment` | 範囲の始まりの行から終わりの行までを切り替え、変わった行だけを書き換える。排他的な範囲が次の行の先頭で終わるとき（`gc}`）は、その行を含めない |
+| テキストオブジェクト | `internal/command/target` の `commentedLines` | `target.Request.CommentString`（`State.commentString` を入れる）で形を受け取る。テキストオブジェクトの口は設定を読まないので、関数で渡す |
+
+切り替え方は次のとおりである（`comment.Parts.Toggle`）。
+
+| 項目 | 決めたこと |
+|---|---|
+| コメントにするか外すか | 空白だけの行を除いたすべての行がコメントの行（先頭の空白、両端の空白を除いた前、任意の文字、両端の空白を除いた後ろ、末尾の空白）なら外す。そうでなければすべての行をコメントにする |
+| 記号を置く列 | 空白だけでない行のうち、先頭の空白のバイト数が最も少ない行の先頭の空白をそのまま写す。各行の先頭からそのバイト数を除いて、記号の後に続ける。Neovim と同じくバイトで数えるので、タブ文字とスペースが混ざった字下げは、表示の幅でなくバイト数で揃う（`\t` の行と 4 つのスペースの行では `\t` を写し、スペースの行の先頭の 1 バイトを除く）。#327 の本文は「字下げの位置を数えるときは `indent.useSpaces` と `tab.width` を使う」としていたが、Neovim の結果に合わせるためにどちらも使わない |
+| 空白だけの行 | コメントにするときは、字下げと、両端の空白を除いた前と後ろだけの行（`  //`）にする。外すときは、当たらないのでそのまま残す |
+| 外し方 | `%s` の前と後ろがそのままで当たればそれを外し、当たらなければ両端の空白を除いた前と後ろで外す（`// %s` で `//foo` は `foo`）。外した後が空白だけなら、字下げと末尾の空白も除く |
+| 形が空 | Neovim と同じく `comment.string が空です` と警告を出し、前と後ろを空として続ける（空白だけの行だけが空の行になる）。テキストオブジェクトは、空の形と前と後ろが空白だけの形（`%s`）ではどの行にも当たらないとして失敗にする（Neovim はバッファの全体を選ぶ。`docs/vim-differences.md`） |
+| カーソル | 範囲の始まりのバイトの位置に置き、付けた記号の分をずらさない（`gcc` は行の最初の空白でない文字の位置。Neovim の `g@` と同じ）。アンドゥの後も同じ位置へ戻る |
+| アンドゥとドットリピート | 1 回の操作の変更は 1 つのアンドゥの単位にする。ドットリピートは、ほかのオペレーターと同じく値を記録する（`gcc` は省略形のまま記録し、`2.` は 2 行に働く） |
+
+入力の解釈（`internal/input` の `Parser`）は、次の 2 点を足した。
+
+- ノーマルモードの `gc`（オペレーター）と `gcc`（操作）は、完成した候補とより長い候補が両方ある列である。`gc` の後は次のキーを待ち、`c` なら `gcc`、ほかのキーならオペレーターとして続けて読む。時間が切れると `gc` のオペレーターに決め、続く `c` は重ね押しとして行単位の対象になるので、結果は同じである
+- オペレーターのキーの列そのもの（2 キー以上）が、オペレーターの後のテキストオブジェクトのキーの列でもあれば、重ね押しよりテキストオブジェクトを優先する。Neovim 0.12.5 の `gcgc` は、オペレーターの後の `gc` の割り当て（テキストオブジェクト）が先に当たり、続くコメントの行のまとまりを外す（2026-11-21 に確かめた）
+
+期待値は、2026-11-21 に手元の Neovim 0.12.5（`nvim --clean --headless`）で、新しいバッファに行を入れて `'commentstring'` を変え、`nvim_feedkeys(keys, "xt")` で打って取った（`internal/command` の `comment_cases_test.go`。102 件）。
+Neovim と違えたのは、テキストオブジェクトの 2 点（上の表の「形が空」と、カーソルの行がコメントでないときに失敗すること）と、何も変えない `gc` がバッファを変更ありにしないことである（`docs/vim-differences.md`）。
+
 ## 4. バッファと編集
 
 ### 4.1 位置の表し方
@@ -3885,9 +3925,11 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `editorConfig.enabled` | 真偽 | エディタ全体 | `true` | 無し | 開いたファイルに当たる `.editorconfig` を読むか（「バッファごとの項目の初めの値」。FR-164）。既定は Neovim 0.12.5 の `g:editorconfig` と同じく読む（Vim 9.1 は同梱の editorconfig のプラグインを `:packadd` するまで読まない）。バッファを開くときに読むので、変えた後に開いたバッファから効く |
 | `undo.persist` | 真偽 | エディタ全体 | `false` | `undofile`、`udf` | ファイルのアンドゥの履歴を、保存するときに状態の置き場へ残し、開くときに読み戻すか（4.10。FR-165）。既定は Vim と同じく残さない。同梱の `config.example.jsonc` では `true`。保存するときと開くときに読む |
 | `cursor.restore` | 真偽 | エディタ全体 | `false` | 無し | ファイルを閉じたときのカーソルの位置を状態の置き場へ残し、開くときに戻すか（4.10。FR-166）。既定は Vim と同じく戻さない（Vim は `defaults.vim` を読んだときだけ戻す）。同梱の `config.example.jsonc` では `true`。閉じるときと開くときに読む |
+| `comment.string` | 文字列（空か、`%s` を含む） | バッファごと | 空 | `commentstring`、`cms` | 行のコメントの形（3.3。FR-169）。`%s` の前と後ろが記号になる。既定は Neovim 0.12.5 と同じく空（Vim 9.1 の既定は `/* %s */` だが、Vim に既定の `gc` は無い）。本体のファイルの種類ごとの既定（下の「バッファごとの項目の初めの値」の 3）に、判定できる種類と `lua` の値を持つ。空でなく `%s` を含まない値は、表の欄 `option.Def.Contains` で断る（`:set` と `:option.set` は `E537`。Vim 9.1 と Neovim 0.12.5 の `:set cms=//` と同じ番号） |
 
-`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で足した。
+`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で足した。
 #319 の 2 つの名前は、issue の案のとおりにした。`cursor.restore` には Vim の名前が無い（Vim は設定でなく `defaults.vim` の自動コマンドで戻す）ので、`:set` では受け付けない。
+`comment.string` の名前は、#327 の本文の案のとおりにした。
 #318 の 4 つの名前は、issue の案のとおりにした。インデントの文字と幅は `indent.` の下に、タブ文字の表示幅は字下げに限らない（行の途中のタブ文字も描く）ので `tab.` の下に置いた。
 `preview.*` の名前は、何の窓の何の値かが分かるように、窓の幅の境目（`minWindowWidth`）、プレビューの割合（`widthPercent`）、窓の割合（`windowWidthPercent`）にした（fzf-lua の `flip_columns` は、何を反転するのかが名前から分からないため写さなかった）。
 
@@ -3932,6 +3974,10 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 
 Vim 9.1 は、下限が 0 の項目の負の値（`:set textwidth=-1`）も `E487` にする（2026-11-20 に確かめた）ので、下限の側を `E487` にする規則は下限によらない。
 
+#327 で、文字列の項目の空でない値が含まなければならない文字列を表の欄（`option.Def.Contains`。空なら制約を置かない）にし、`Check` が含まない値を `option.ErrMissingContains` で断るようにした（`comment.string` の `%s`）。
+`:option.set` と `:set` では `E537`（Vim 9.1 と Neovim 0.12.5 の `:set commentstring=//` と同じ番号。2026-11-21 に確かめた）にし、設定ファイルでは「の値が正しくない」の位置付きの誤りにする。
+検査は項目の名前で分けない。
+
 整数の値の文字列は、コマンドラインからも設定ファイルの JSON の数からも、同じ `option.ParseInt` で読む。
 数字だけの文字列が Go の `int` に収まらなければ、正なら `option.ErrAboveMax`、負なら `option.ErrBelowMin` を返し、範囲の外の値と同じ誤りにする（PR #272 のレビューの推奨 2）。
 Vim 9.1 も、`:set numberwidth=99999999999999999999` と `=2147483648` を `E474`、`=-99999999999999999999` を `E487` にする（2026-11-20 に確かめた）。
@@ -3962,7 +4008,7 @@ Vim 9.1 も、`autoread` で読み直したときは `'filetype'` を残す（20
 |---|---|---|
 | 1 | 表の既定値 | `option.Def.Default`。Vim の既定に合わせる |
 | 2 | 設定ファイルの最上位に書いた値 | `config.Config.Options`（`"indent": { "width": 4 }`） |
-| 3 | 本体のファイルの種類ごとの既定 | `option.FileTypeDefaults`。`go` と `make` は `indent.useSpaces` を `false`、`indent.width` を 0 にする |
+| 3 | 本体のファイルの種類ごとの既定 | `option.FileTypeDefaults`。`go` と `make` は `indent.useSpaces` を `false`、`indent.width` を 0 にする。#327 で、判定できる種類と `lua` の `comment.string` を足した（Vim 9.1 と Neovim 0.12.5 の ftplugin から写した。値が違う `c` は Neovim の `// %s`。`json` は ftplugin と同じく空） |
 | 4 | 設定ファイルのファイルの種類ごとの値 | `config.Config.FileTypeOptions`（`"fileTypeOptions": { "go": { "tab": { "width": 4 } } }`） |
 | 5 | 開いたファイルに当たる `.editorconfig` の値 | `internal/editorconfig` で読み、`internal/editor` の `editorConfigOptions` で写す |
 
@@ -4066,11 +4112,12 @@ Vim との完全な互換は目指さない（オーナーの方針。設計の�
 | `:set <Vim の名前>?` | `option.get <正規の名前>` |
 | `:set <名前> <名前> …` | 空白で区切った引数ごとに上のどれかへ変換し、左から順に実行する。途中の引数が誤りなら止め、前の引数の設定は残す（Vim 9.1 の `:set ts=4 foo ts=8` と同じ） |
 
-- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を、#275 で `hlsearch` から `search.highlight` を、#300 で `wrap` から `lineWrap.enabled` を、#318 で `expandtab`（`et`）、`shiftwidth`（`sw`）、`tabstop`（`ts`）、`autoindent`（`ai`）を足した
+- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を、#275 で `hlsearch` から `search.highlight` を、#300 で `wrap` から `lineWrap.enabled` を、#318 で `expandtab`（`et`）、`shiftwidth`（`sw`）、`tabstop`（`ts`）、`autoindent`（`ai`）を足した。#327 で `commentstring`（`cms`）から `comment.string` を足した
 - `inv` の接頭辞、`+=`、`-=`、`^=`、`&`（既定値に戻す）、短い名前（`nu`、`ft`）は受け付けず、知らない設定のエラー（`E518`）にする。ただし字下げの 4 項目の短い名前（`et`、`sw`、`ts`、`ai`）は、`:set et sw=4 ts=4` の形で書くことが多いので、#318 の決めで受け付ける。Vim の `'softtabstop'`（`sts`）と `'smarttab'`（`sta`）は、別の設定にしない（3.2）ので `E518` になる
 - 引数の無い `:set` は `E471` にする
 - `:setlocal` は、別名の表に行が無いので、知らないコマンドのエラー（`E492`）になる（#264 の本文は「知らない設定のエラーにする」としたが、`:setlocal` は設定でなくコマンドの名前なので、他の知らないコマンドと同じにした）
 - `:set` の引数は、`:w` と同じく `\` の付かない `|` で終わり、`\|` は `|` になる
+- `:set` の値の中の `\` は、次の 1 文字をそのまま値に入れ、`\` の後の空白は引数を区切らない（`:set cms=//\ %s` は `// %s`、`\\` は `\`、`a\b` は `ab`。#327 で足した。2026-11-21 に Vim 9.1 と Neovim 0.12.5 で同じ結果になることを確かめた）。それまでは、空白を含む値を `:set` で書けなかった。値の末尾の空白は、変換先の `:option.set` が除くので残らない
 - 誤りの位置は、変換した後の文字列の中ではなく、元のコマンドラインの変換の元にした引数の位置にする
 - 本体の Ex コマンドと同じく、別名の名前（省略形を含む）と同じ ID の拡張機能のコマンドより別名を優先する
 
