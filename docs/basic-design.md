@@ -2953,6 +2953,43 @@ MCP の拡張機能は、このバージョン番号を `read_buffer` のバー�
 `error` の診断も、操作の失敗（赤の背景）と見分けるために警告の色で出す。
 本文が改行を含んでも（gopls の型検査の `not enough arguments in call to f` の後の `have ()`、`want (int)` の行など）、空白の並びを空白 1 つに詰めて 1 行で出す。
 カーソルを動かすだけで出る表示なので、下の段落のようにメッセージの行を上へ広げると、行を通るたびにステータス行とカーソルの行を覆うためである。
+設定 `diagnostic.popup` が真なら、この 1 行の表示は出さず、次の「診断のポップアップ」で出す（Neovim の `open_float` もメッセージの行には出さない）。
+
+#### カーソルが止まった契機
+
+#329 で、カーソルが止まったことを知らせる汎用の契機（Vim と Neovim の `CursorHold`）を作った（`internal/editor` の `cursorhold.go`。FR-171）。
+診断のポップアップのためだけのタイマーにせず、契機を待つもの（`holdListener`）の一覧を持ち、表示の変化を拡張機能に知らせる口（#317 の第 3 弾）を後で同じ一覧に足せるようにした。
+
+- 契機は client ごとに持つ（`clientView.holdStop` と `holdGen`）。キーはどの client から届いたかで分かれ、ポップアップも client ごとに 1 つだからである
+- キーを処理するたびに（`afterKey`）、その client のタイマーを止めて、設定 `cursorHold.delayMs` のミリ秒で掛け直す。外部のコマンドと再生中の拡張機能の待ちが終わって入力を続けたとき（`resumeInput`）も掛け直す。拡張機能の診断、編集、読み直しなど、キーでない出来事では掛け直さない
+- 時間の待ちは、一時的な色付け（この節の後の「一時的な色付け」）と同じく、イベントループの外のタイマー（`Editor.afterFunc`）で行い、時間が来たら `inspect` でイベントループへ戻す（2.1）。止める前に送り始めた知らせは、世代が違うので捨てる
+- 時間が来た時点で、その client がノーマルモードで、キーの列の途中でなく、マクロを記録しておらず（Neovim 0.12.5 の `:help CursorHold` の条件）、確認の問い、選択肢の問い、hit-enter の問い、レジスターの一覧、外部のコマンドと再生中の拡張機能の待ち、先打ちのキーが無いときだけ知らせる（`holdReady`）。知らせなかったときも掛け直さない。インサートモードを `<Esc>` で抜けたら、そのキーで掛け直す
+- 1 回知らせたら、次のキーを打つまで知らせ直さない。起動した直後も、キーを打つまでは知らせない。どちらも 2026-11-21 に Neovim 0.12.5 の `CursorHold` で確かめた
+- 契機を待つものがどれも設定で切られていれば（`holdListener.wants`）、タイマーを掛けない。キーを打つたびにタイマーを作らないためである
+
+#### 診断のポップアップ
+
+#329 で、設定 `diagnostic.popup` が真なら、カーソルが止まった契機で、カーソルの行の診断をすべて、ホバーと同じカーソルの近くの浮かべた窓（1.4 のテキストの部品。`openLinesFloat`）に出すようにした（`internal/editor` の `diagpopup.go`。FR-171）。
+診断のためだけの窓は作らない。
+中身と出し方は、オーナーの nvim の設定（`vim.diagnostic.config` の `severity_sort = true`、`float = { source = true, format = … }` と、`CursorHold` の自動コマンドの `open_float(nil, { focusable = false, scope = "line" })`）での Neovim 0.12.5 の `open_float` に、2026-11-21 に tmux の中の `nvim --clean` で `vim.diagnostic.set` の診断を出して比べて合わせた。
+
+| 点 | 決め |
+|---|---|
+| 行に掛かる診断 | 範囲の始まりの行から終わりの行まで。ただし、複数の行にまたがる範囲が行の先頭（バイト 0）で終わるなら、終わりの行には掛からない（Neovim の `scope = "line"` と同じ） |
+| 並び | 重要度の重い順。同じ重要度なら、範囲の始まり、終わりの順。それも同じなら、送った拡張機能の ID の順と送った順（Neovim の `severity_sort`） |
+| 見出し | `診断`（Neovim の `Diagnostics:`）。窓の見出しとして、枠線があれば上の枠線に、無ければ窓の最初の行に太字で描く |
+| 1 つの診断 | `番号. 出どころ: 本文 (コード)`。出どころとコードが無ければ省く。番号は 1 から数え、診断が 1 つでも付ける（Neovim の `scope = "line"` の既定の prefix）。本文が改行を含めば行に分け、続きの行は番号の幅だけ空白を置き、タブ文字は残す |
+| 色 | 番号を除いた本文に、重要度の印の色の名前（`sign.diagnostic.<重要度>`）で色を付ける。Neovim の `DiagnosticFloating<重要度>` は、印の `DiagnosticSign<重要度>` と同じ `Diagnostic<重要度>` の色である。新しい色の名前は足していない |
+| 窓の位置、枠線、幅、折り返し | ホバーと同じ部品の規則（「表示のデータ」の `popup/show` の段落）。長い行は窓の幅で空白の位置で折り返す |
+| 出さないとき | 行に診断が無いとき。ほかのポップアップ（ホバー、ファインダー、前の診断のポップアップなど。フォーカスのあるものを含む）が出ているとき（#329 の決め。オーナーの自動コマンドも浮かべた窓の中では開かない） |
+| 閉じる契機 | ホバーと同じく、フォーカスを入れていなければ、次のキー（`<C-w>` を除く）、カーソルの移動、タブの移動で閉じる（`dismissFloat`、`expireFloat`）。診断が変わっただけでは閉じない |
+
+Neovim 0.12.5 と違う点は次のとおりである。
+
+- Neovim の `open_float` の既定の suffix は、コードを持つ診断の行末に ` [コード]` を付ける。オーナーの `format` が本文にもコードを付けるので、Neovim では `本文 (コード) [コード]` と 2 回出る（2026-11-21 に確かめた）。#329 の決め（本文の形は「本文 (コード)」）に合わせて 1 回にした
+- Neovim の窓は画面の幅まで広がる。ここではホバーと同じく 80 列（枠線と余白を含む）を上限にする。折り返した続きの行は字下げしない（Neovim は `breakindent` で字下げする）
+- Neovim の窓は、`v` でビジュアルモードに入っても、`i` でインサートモードに入っても、文字を打つかカーソルを動かすまで閉じない（`close_events` の既定は `CursorMoved`、`CursorMovedI`、`InsertCharPre`）。ここでは次のキーで閉じる。ホバーと同じ部品を使うためである
+- Neovim の `focusable = false` の窓には入れない。ここではホバーと同じく `<C-w>w` でフォーカスを入れられる
 
 `message/show` を含むメッセージの本文が改行を含むときは、Vim のメッセージの行が広がるのと同じく、コマンドラインの行から上へ行を広げて出し、次のキー入力で消す。
 広げるのは画面の半分までで、収まらなければ最後の行に残りの行数を書く。
@@ -3934,10 +3971,14 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `undo.persist` | 真偽 | エディタ全体 | `false` | `undofile`、`udf` | ファイルのアンドゥの履歴を、保存するときに状態の置き場へ残し、開くときに読み戻すか（4.10。FR-165）。既定は Vim と同じく残さない。同梱の `config.example.jsonc` では `true`。保存するときと開くときに読む |
 | `cursor.restore` | 真偽 | エディタ全体 | `false` | 無し | ファイルを閉じたときのカーソルの位置を状態の置き場へ残し、開くときに戻すか（4.10。FR-166）。既定は Vim と同じく戻さない（Vim は `defaults.vim` を読んだときだけ戻す）。同梱の `config.example.jsonc` では `true`。閉じるときと開くときに読む |
 | `comment.string` | 文字列（空か、`%s` を含む） | バッファごと | 空 | `commentstring`、`cms` | 行のコメントの形（3.3。FR-169）。`%s` の前と後ろが記号になる。既定は Neovim 0.12.5 と同じく空（Vim 9.1 の既定は `/* %s */` だが、Vim に既定の `gc` は無い）。本体のファイルの種類ごとの既定（下の「バッファごとの項目の初めの値」の 3）に、判定できる種類と `lua` の値を持つ。空でなく `%s` を含まない値は、表の欄 `option.Def.Contains` で断る（`:set` と `:option.set` は `E537`。Vim 9.1 と Neovim 0.12.5 の `:set cms=//` と同じ番号） |
+| `cursorHold.delayMs` | 整数（0 から 60000） | エディタ全体 | `4000` | 無し（`'updatetime'` の別名は、`:set` の別名の表が `internal/command/ex` にあり、#329 では足していない） | 利用者がキーを打たずにこのミリ秒が経ったら、カーソルが止まったとする時間（6.7 の「カーソルが止まった契機」。FR-171）。既定と下限は Vim と Neovim の `'updatetime'` と同じ（2026-11-21 に Neovim 0.12.5 の `:set ut=0` が通り、`:set ut=-1` が `E487` になることを確かめた）。上限は 1 分にした。キーを打つたびに読む。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `100` |
+| `diagnostic.popup` | 真偽 | エディタ全体 | `false` | 無し | カーソルが止まったときに、カーソルの行の診断をカーソルの近くの浮かべた窓に出すか（6.7 の「診断のポップアップ」。FR-171）。既定は Vim と Neovim と同じく出さない。真なら、メッセージの行に診断の本文を出さない。同梱の `config.example.jsonc` では `true` |
 
-`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で足した。
+`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で足した。
 #319 の 2 つの名前は、issue の案のとおりにした。`cursor.restore` には Vim の名前が無い（Vim は設定でなく `defaults.vim` の自動コマンドで戻す）ので、`:set` では受け付けない。
 `comment.string` の名前は、#327 の本文の案のとおりにした。
+#329 の issue の案は、時間を `diagnostic.popupDelayMs` としていた。時間を待つ仕組みを汎用の契機にしたので、時間は「止まってから時間が経った」契機（Vim の `CursorHold` と `CursorHoldI`。どちらも `'updatetime'` で動く）の設定として、`cursorHold.` の下に 1 つだけ置いた。
+表示の変化を拡張機能に知らせる口（#317 の第 3 弾）は、この契機に載せず、この時間も使わない（PR #333 のレビューの裁定要へのオーケストレータの決定。6.7 の「カーソルが止まった契機」）。
 #318 の 4 つの名前は、issue の案のとおりにした。インデントの文字と幅は `indent.` の下に、タブ文字の表示幅は字下げに限らない（行の途中のタブ文字も描く）ので `tab.` の下に置いた。
 `preview.*` の名前は、何の窓の何の値かが分かるように、窓の幅の境目（`minWindowWidth`）、プレビューの割合（`widthPercent`）、窓の割合（`windowWidthPercent`）にした（fzf-lua の `flip_columns` は、何を反転するのかが名前から分からないため写さなかった）。
 
