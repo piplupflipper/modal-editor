@@ -57,6 +57,7 @@ func (e *Editor) frame() *ui.Frame {
 		Cursor:          bs.state.Cursor(),
 		CommandLine:     st.CommandLine(),
 		CommandLineType: st.CommandLineType(),
+		Completion:      e.wildMenuFrame(cur),
 		Recording:       st.Recording(),
 		Message:         e.message,
 		Decorations:     bs.decoView,

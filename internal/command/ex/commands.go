@@ -39,7 +39,9 @@ type command struct {
 	// 編集を禁止したバッファでは、範囲と引数を確かめる前に E21 で断る（FR-85。Vim 9.1 と同じく :5d も :2,1d も E21）。
 	modify bool
 	bar    barKind
-	run    func(c *execCtx, inv *invocation) error
+	// complete は、コマンドラインの補完（Complete。FR-195）で、引数の位置に何を補うかである。
+	complete argKind
+	run      func(c *execCtx, inv *invocation) error
 }
 
 // invocation は、解析したコマンドの呼び出しである。
@@ -67,11 +69,11 @@ var commands []command
 
 func init() {
 	commands = []command{
-		{name: "write", min: 1, bang: true, rng: rangeWhole, run: runWrite},
-		{name: "wq", min: 2, bang: true, rng: rangeWhole, run: runWriteQuit},
-		{name: "xit", min: 1, bang: true, rng: rangeWhole, run: runXit},
+		{name: "write", min: 1, bang: true, rng: rangeWhole, complete: argFile, run: runWrite},
+		{name: "wq", min: 2, bang: true, rng: rangeWhole, complete: argFile, run: runWriteQuit},
+		{name: "xit", min: 1, bang: true, rng: rangeWhole, complete: argFile, run: runXit},
 		{name: "quit", min: 1, bang: true, rng: rangeWindow, run: runQuit},
-		{name: "edit", min: 1, bang: true, rng: rangeNone, run: runEdit},
+		{name: "edit", min: 1, bang: true, rng: rangeNone, complete: argFile, run: runEdit},
 		{name: "substitute", min: 1, rng: rangeCurrent, inGlobal: true, modify: true, bar: barSelf, run: runSubstitute},
 		{name: "global", min: 1, bang: true, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal(false)},
 		{name: "vglobal", min: 1, rng: rangeWhole, inGlobal: true, bar: barNone, run: runGlobal(true)},
@@ -80,7 +82,7 @@ func init() {
 		{name: "outclose", min: 4, rng: rangeNone, run: runOutClose},
 		{name: "checktime", min: 6, rng: rangeNone, run: runCheckTime},
 		// バッファの一覧と切り替え。"buffer" を "buffers" より前に置き、:bu などの省略形を :buffer にする（Vim と同じ）。
-		{name: "buffer", min: 1, bang: true, rng: rangeNone, run: runBuffer},
+		{name: "buffer", min: 1, bang: true, rng: rangeNone, complete: argBuffer, run: runBuffer},
 		{name: "bnext", min: 2, bang: true, rng: rangeNone, run: runBufferStep(BufferNext)},
 		{name: "bNext", min: 2, bang: true, rng: rangeNone, run: runBufferStep(BufferPrev)},
 		{name: "bprevious", min: 2, bang: true, rng: rangeNone, run: runBufferStep(BufferPrev)},
@@ -95,24 +97,24 @@ func init() {
 		{name: "qall", min: 2, bang: true, rng: rangeNone, run: runAll(false, true)},
 		{name: "wqall", min: 3, bang: true, rng: rangeNone, run: runAll(true, true)},
 		{name: "xall", min: 2, bang: true, rng: rangeNone, run: runAll(true, true)},
-		{name: "bdelete", min: 2, bang: true, rng: rangeNone, run: runBufferDelete},
+		{name: "bdelete", min: 2, bang: true, rng: rangeNone, complete: argBuffer, run: runBufferDelete},
 		{name: "tabmove", min: 4, rng: rangeNone, run: runTabMove},
 		// 空のタブを開く（FR-151）。点を含む正規の名前で、省略できない。Vim の :tabnew に当たる名前は、設定ファイルの別名で付ける（FR-150）。
-		{name: tabNewName, min: len(tabNewName), bang: true, rng: rangeNone, run: runTabNew},
+		{name: tabNewName, min: len(tabNewName), bang: true, rng: rangeNone, complete: argFile, run: runTabNew},
 		// ポップアップとタブの間でバッファを移す（基本設計 1.4。FR-70。名前は仮）。
 		{name: "popup", min: 4, rng: rangeNone, run: runPopup(PopupShrink)},
 		{name: "tabopen", min: 5, rng: rangeNone, run: runPopup(PopupExpand)},
 		// 見比べ（基本設計 6.8）。省略形は Vim 9.1 と同じ。
-		{name: "diffsplit", min: 5, rng: rangeNone, run: runDiffSplit},
+		{name: "diffsplit", min: 5, rng: rangeNone, complete: argFile, run: runDiffSplit},
 		{name: "diffthis", min: 5, rng: rangeNone, run: runDiff(DiffThis)},
 		{name: "diffoff", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffOff)},
 		{name: "diffupdate", min: 5, bang: true, rng: rangeNone, run: runDiff(DiffUpdate)},
 		// 設定の読み書き（基本設計 7.3。FR-132）。点を含む正規の名前で、省略できない。
 		// :option.set の値は "|" を含めて行末までなので barNone にする。
-		{name: optionSetName, min: len(optionSetName), rng: rangeNone, bar: barNone, run: runOptionSet},
-		{name: optionGetName, min: len(optionGetName), rng: rangeNone, run: runOptionGet},
+		{name: optionSetName, min: len(optionSetName), rng: rangeNone, bar: barNone, complete: argOptionSet, run: runOptionSet},
+		{name: optionGetName, min: len(optionGetName), rng: rangeNone, complete: argOptionName, run: runOptionGet},
 		// 真偽の項目を反転する（FR-155）。:set 名前! の別名もこれを呼ぶ。
-		{name: optionToggleName, min: len(optionToggleName), rng: rangeNone, run: runOptionToggle},
+		{name: optionToggleName, min: len(optionToggleName), rng: rangeNone, complete: argOptionBool, run: runOptionToggle},
 		// 検索の一致の色を消す（FR-138）。点を含む正規の名前で、省略できない。Vim の :noh[lsearch] は別名の表にある。
 		{name: clearHighlightName, min: len(clearHighlightName), rng: rangeNone, run: runClearHighlight},
 		// 任意のコマンドを端末多重化ソフトのポップアップで動かす（FR-168）。点を含む正規の名前で、省略できない。

@@ -113,6 +113,8 @@ type viewFields struct {
 	outView *outputView
 	// inc は、/ か ? でパターンを打っている間の、打つたびの検索の状態である（incsearch.go。FR-153）。打っていなければ nil。
 	inc *incSearch
+	// wild は、コマンドラインの補完の状態である（cmdcomplete.go。FR-195）。補っていなければ nil。
+	wild *wildMenu
 	// quit は、client の最後のタブを閉じたので、この client を終えることを表す（reapClients が外す）。
 	quit bool
 }

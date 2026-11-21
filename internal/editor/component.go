@@ -606,6 +606,7 @@ func (e *Editor) paneComponentFrame(p *floatState) *ui.Frame {
 		Mode:            uiMode(st.Mode()),
 		CommandLine:     st.CommandLine(),
 		CommandLineType: st.CommandLineType(),
+		Completion:      e.wildMenuFrame(bs),
 		Recording:       st.Recording(),
 		OperatorPending: st.Mode() == command.ModeNormal && st.Pending(),
 		Float:           fl,

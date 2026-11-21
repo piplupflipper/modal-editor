@@ -255,6 +255,9 @@ type Frame struct {
 	CommandLine string
 	// CommandLineType は、コマンドラインの行の先頭に出す文字である（Ex コマンドは ':'、検索は '/' か '?'）。0 なら ':' にする。
 	CommandLineType rune
+	// Completion は、コマンドラインの補完の候補の一覧である（FR-197）。nil なら出さない。コマンドラインモードのときだけ、
+	// コマンドラインの行の真上に描く（drawCompletion）。
+	Completion *CompletionMenu
 	// OperatorPending は、オペレーターの後でモーションを待っているかどうかである。カーソルを下線の形にする。
 	OperatorPending bool
 	// Recording は、記録中のマクロのレジスターの名前である。0 なら記録していない。

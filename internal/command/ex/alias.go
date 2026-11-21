@@ -25,6 +25,9 @@ type alias struct {
 	// 範囲と "!" は取らない（付ければ E481 と E477）。"|" の扱いは bar で決める。
 	expand func(x *aliasCtx, inv *invocation) error
 	bar    barKind
+	// complete は、変換を持つ項目の、コマンドラインの補完で引数の位置に何を補うかである（Complete）。
+	// 名前を付け替えるだけの項目は、付け替えた先のコマンドのものを使う。
+	complete argKind
 }
 
 // builtinAliases は、本体に書いた Ex コマンドの別名の行である。どの別名の表（Aliases）も、この行から始まる。
@@ -35,7 +38,7 @@ func init() {
 	builtinAliases = []alias{
 		// :se[t] は、Vim の :set の書き方の一部を :option.set と :option.get の呼び出しに変換する（expandSet）。
 		// 省略形は Vim と同じく :se までである（:s は :substitute）。
-		{name: "set", min: 2, expand: expandSet, bar: barSplit},
+		{name: "set", min: 2, expand: expandSet, bar: barSplit, complete: argSet},
 		// :noh[lsearch] は :search.clearHighlight に名前を付け替えるだけの別名である（FR-138）。省略形は Vim と同じく :noh までである。
 		{name: "nohlsearch", min: 3, target: clearHighlightName},
 	}
@@ -180,7 +183,7 @@ func (t *Aliases) resolve(name string) *command {
 	case a.target != "":
 		return lookup(a.target)
 	}
-	return &command{name: a.name, min: a.min, rng: rangeNone, bar: a.bar, run: func(c *execCtx, inv *invocation) error {
+	return &command{name: a.name, min: a.min, rng: rangeNone, bar: a.bar, complete: a.complete, run: func(c *execCtx, inv *invocation) error {
 		return a.expand(&aliasCtx{c: c}, inv)
 	}}
 }
@@ -234,6 +237,10 @@ var vimOptionNames = map[string]string{
 	"udf":           option.UndoPersist,
 	"commentstring": option.CommentString,
 	"cms":           option.CommentString,
+	// コマンドラインの補完（#350）は、オーナーの nvim の設定が長い名前で書いているので、長い名前だけを受け付ける。
+	"wildmode":       option.CommandLineCompleteMode,
+	"wildignorecase": option.CommandLineCompleteIgnoreCase,
+	"pumheight":      option.CompletionMenuHeight,
 }
 
 // vimOption は、:set の Vim の名前 name の項目を返す。無ければ ok は false である。

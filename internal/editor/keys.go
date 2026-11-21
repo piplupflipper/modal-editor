@@ -349,7 +349,12 @@ func (e *Editor) flushKeys() {
 
 // feedKey は、キーを 1 個 command.State へ渡し、結果を処理する。操作が失敗したら false を返す。
 // マクロの記録はこの Feed が行うので、コマンドラインのキーも記録される。
+// コマンドラインの補完のキー（<Tab> など。wildKey）は State へ渡さず、補った文字を記録に入れる（cmdcomplete.go の wildSetWord）。
 func (e *Editor) feedKey(k editcmd.Key) bool {
+	if e.wildKey(k) {
+		// コマンドラインの補完のキー（cmdcomplete.go。FR-195）。State へは渡さない。
+		return true
+	}
 	bs := e.cur
 	if e.noRecord {
 		return e.handleResult(bs, bs.state.FeedUnrecorded(k)) == nil

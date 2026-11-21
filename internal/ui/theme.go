@@ -58,8 +58,14 @@ const (
 	StyleDiagnosticHint    = "diagnostic.hint"
 	// StylePopup は、カーソルの近くに浮かべる popup/show の本文である（Vim の Pmenu に当たる）。
 	StylePopup = "popup"
-	// StylePopupSelected は、浮かべる一覧（Frame.List）の選んでいる項目である（Vim の PmenuSel に当たる）。
+	// StylePopupSelected は、浮かべる一覧（Frame.List）と補完の候補の一覧（Frame.Completion）の選んでいる項目である（Vim の PmenuSel に当たる）。
 	StylePopupSelected = "popup.selected"
+	// StylePopupMatch は、補完の候補の一覧の項目の、打った語に当たる先頭の文字である（Neovim 0.12.5 の PmenuMatch に当たる）。
+	// StylePopup か StylePopupSelected の上に重ねる（Attr.Over）ので、飾りだけを変えることもできる。
+	StylePopupMatch = "popup.match"
+	// StylePopupScrollbar と StylePopupThumb は、補完の候補の一覧のスクロールバーの溝とつまみである（Vim の PmenuSbar と PmenuThumb）。
+	StylePopupScrollbar = "popup.scrollbar"
+	StylePopupThumb     = "popup.thumb"
 	// StyleStatusLineNC は、出力の欄の下の行（カーソルの無い窓のステータス行。Vim の StatusLineNC）である。
 	StyleStatusLineNC = "statuslinenc"
 	// StyleSign... は、印の列の印である。名前は "sign." と印の種類をつないだもの。診断の印は "sign.diagnostic." と重要度をつなぐ。
@@ -133,7 +139,7 @@ var styleNames = []string{
 	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleWhitespace, StyleLineNr, StyleSearch, StyleIncSearch, StyleYank,
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
-	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch, StylePreviewLine,
+	StylePopup, StylePopupSelected, StylePopupBorder, StylePopupMatch, StylePopupScrollbar, StylePopupThumb, StyleFinderMatch, StylePreviewLine,
 	StyleProgress, StyleProgressTitle, StyleProgressDone, StyleProgressFailed,
 	StyleScrollbar, StyleScrollbarDiagnosticError, StyleScrollbarDiagnosticWarning, StyleScrollbarDiagnosticInfo, StyleScrollbarDiagnosticHint,
 	StyleScrollbarSearch,
@@ -288,7 +294,13 @@ func DefaultTheme() Theme {
 		StyleStatusLineNC:  {Reverse: true},
 		StylePopup:         {Fg: Indexed(15), Bg: Indexed(8)},
 		StylePopupSelected: {Fg: Indexed(0), Bg: Indexed(14)},
-		StyleFinderMatch:   {Bold: true, Underline: true},
+		// 補完の候補の一覧の、打った語に当たる文字は、Neovim 0.12.5 の既定（PmenuMatch は cterm=bold）と同じく太字にする。
+		// スクロールバーの溝は、Neovim の既定（PmenuSbar は Pmenu へのリンク）と同じく popup と同じ背景の色にし、
+		// つまみは溝と見分けられる明るい灰色（Vim 9.1 の暗い背景の PmenuSbar の ctermbg=248 に近い 7 番）にした。
+		StylePopupMatch:     {Bold: true},
+		StylePopupScrollbar: {Bg: Indexed(8)},
+		StylePopupThumb:     {Bg: Indexed(7)},
+		StyleFinderMatch:    {Bold: true, Underline: true},
 		// プレビューの項目の指す行は、窓の色（StylePopup の背景の 8 番）の上で見分けられ、構文の色（文字の色）を消さないよう、
 		// 背景の色だけを持つ。
 		StylePreviewLine: {Bg: Indexed(0)},

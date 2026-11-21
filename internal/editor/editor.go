@@ -409,6 +409,10 @@ type Editor struct {
 	extRan bool
 	// fromCmdline は、直前に処理した利用者のキーを、コマンドラインモードで打ったかである（handleKey）。
 	fromCmdline bool
+	// wildMenuID は、コマンドラインの補完の候補の一覧を出すたびに進める番号である（cmdcomplete.go の wildShowMenu）。
+	wildMenuID uint64
+	// helpWordCache は、:help の語の補完の候補（cmdcomplete.go の helpWords）である。最初に補うときに作る。
+	helpWordCache []string
 	// statFn は、外での変更の確認で使う stat である。テストが、戻らない stat に差し替える。
 	statFn func(string) (fileStamp, error)
 	// checkStart は、外での変更の確認を別の goroutine で始めた時刻、checkWarned はその確認が長引いていると知らせたかである。

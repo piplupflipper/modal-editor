@@ -139,6 +139,12 @@ func (s *source) reportInvalid(v *hujson.Value, d option.Def, text string, err e
 		s.report(v.StartOffset, "%s は %d から %d の整数にする: %s", d.Name, d.Range.Min, d.Range.Max, text)
 		return
 	}
+	if errors.Is(err, option.ErrInvalidWords) && d.Words != nil {
+		// req: FR-196
+		s.report(v.StartOffset, "%s は %s の語をコロンとコンマで区切って書く（部分は %d 個まで）: %s",
+			d.Name, strings.Join(d.Words.Words, "、"), d.Words.MaxParts, text)
+		return
+	}
 	s.report(v.StartOffset, "%s の値が正しくない: %s", d.Name, text)
 }
 

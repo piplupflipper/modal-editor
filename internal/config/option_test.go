@@ -248,6 +248,35 @@ func TestParseYankHighlightOption(t *testing.T) {
 	}
 }
 
+// コマンドラインの補完の 3 項目は、"commandLine" と "completionMenu" の下に書ける（オーナーの nvim の値）。
+// 補い方の値が語の列として読めなければ、位置付きの誤りとして知らせて既定値を使う。
+//
+// req: FR-196, FR-197
+func TestParseCompletionOptions(t *testing.T) {
+	cfg, errs := Parse("config.jsonc", []byte(`{ "commandLine": { "completeMode": "longest:full,full", "completeIgnoreCase": true }, "completionMenu": { "height": 12 } }`))
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	want := map[string]option.Value{
+		option.CommandLineCompleteMode:       option.StringValue("longest:full,full"),
+		option.CommandLineCompleteIgnoreCase: option.BoolValue(true),
+		option.CompletionMenuHeight:          option.IntValue(12),
+	}
+	if !reflect.DeepEqual(cfg.Options, want) {
+		t.Errorf("Options = %+v, want %+v", cfg.Options, want)
+	}
+	cfg, errs = Parse("config.jsonc", []byte(`{ "commandLine": { "completeMode": "list:full" } }`))
+	wantErrors(t, errs, []struct {
+		line, col int
+		msg       string
+	}{
+		{1, 36, "commandLine.completeMode は full、longest、noselect の語をコロンとコンマで区切って書く（部分は 4 個まで）: list:full"},
+	})
+	if cfg.Options != nil {
+		t.Errorf("Options = %+v", cfg.Options)
+	}
+}
+
 // 本体の表の filetype はバッファごとの項目なので、設定ファイルに書けば誤りとして知らせる。
 //
 // req: FR-131
