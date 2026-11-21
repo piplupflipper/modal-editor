@@ -14,7 +14,8 @@ import (
 //
 //   - 拡張機能からのリクエスト: [EditRequest]、[EditorStateRequest]、[EditorOpenRequest]、[BufferSaveRequest]、
 //     [DiagnosticListRequest]、[ChoiceAskRequest]、[PopupOpenRequest]、[BufferCreateRequest]、[BufferUpdateRequest]、
-//     [BufferDisposeRequest]、[DiffStartRequest]、[PaneOpenRequest]、[EditorListRequest]、[EditorExecuteRequest]
+//     [BufferDisposeRequest]、[DiffStartRequest]、[PaneOpenRequest]、[EditorListRequest]、[EditorExecuteRequest]、
+//     [OptionSetRequest]、[OptionGetRequest]
 //   - 拡張機能からの通知: [DecorationSet]、[MessageShow]、[DiagnosticSet]、[SignSet]、[PopupShow]、[OutputAppend]、
 //     [ViewUpdate]、[ViewClose]
 //   - Host が作るもの: [StateChange]、[QueryResult]
@@ -319,6 +320,31 @@ func (r *EditorExecuteRequest) Reply() error {
 	return r.reply(ext.EditorExecuteResult{}, nil)
 }
 
+// OptionSetRequest は、拡張機能からの option/set のリクエストである（基本設計 7.3。#349。FR-190、FR-191）。
+// Params は ext.OptionSetParams.Validate を通したものである。項目の名前と値は、イベントループが設定の表で確かめる。
+type OptionSetRequest struct {
+	Extension string
+	Params    ext.OptionSetParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ option/set の結果を返す。
+func (r *OptionSetRequest) Reply() error {
+	return r.reply(ext.OptionSetResult{}, nil)
+}
+
+// OptionGetRequest は、拡張機能からの option/get のリクエストである（基本設計 7.3。#349。FR-192）。
+type OptionGetRequest struct {
+	Extension string
+	Params    ext.OptionGetParams
+	replyOnce
+}
+
+// Reply は、拡張機能へ option/get の結果を返す。
+func (r *OptionGetRequest) Reply(result ext.OptionGetResult) error {
+	return r.reply(result, nil)
+}
+
 // ViewUpdate は、拡張機能からの view/update の通知である。読めない部品（ext.ViewComponent.Validate の誤り）は Host が捨てる。
 type ViewUpdate struct {
 	Extension string
@@ -387,6 +413,8 @@ func (*BufferDisposeRequest) isEvent()  {}
 func (*PaneOpenRequest) isEvent()       {}
 func (*EditorListRequest) isEvent()     {}
 func (*EditorExecuteRequest) isEvent()  {}
+func (*OptionSetRequest) isEvent()      {}
+func (*OptionGetRequest) isEvent()      {}
 func (*ViewUpdate) isEvent()            {}
 func (*ViewClose) isEvent()             {}
 func (*StateChange) isEvent()           {}

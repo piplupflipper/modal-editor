@@ -46,6 +46,10 @@ func (sh *stdHost) handle(req *rpc.Request, reply rpc.Replier) bool {
 		res = ext.EditorListResult{Tabs: []ext.ListTab{{Buffer: 1, Name: "a", Client: 1}}}
 	case ext.MethodEditorExecute:
 		res = ext.EditorExecuteResult{}
+	case ext.MethodOptionSet:
+		res = ext.OptionSetResult{}
+	case ext.MethodOptionGet:
+		res = ext.OptionGetResult{Values: map[string]json.RawMessage{"indent.width": json.RawMessage("2")}}
 	default:
 		return false
 	}
@@ -119,6 +123,22 @@ func TestStdExtRequests(t *testing.T) {
 	}
 	if err := s.Execute(ctx, ext.EditorExecuteParams{}); err == nil {
 		t.Error("Execute with no keys and command succeeded")
+	}
+
+	if err := s.SetOptions(ctx, ext.OptionSetParams{Buffer: 1, Options: map[string]json.RawMessage{"indent.width": json.RawMessage("2")}}); err != nil {
+		t.Errorf("SetOptions = %v", err)
+	}
+	if got := sh.next(t); got != `option/set {"buffer":1,"options":{"indent.width":2}}` {
+		t.Errorf("host received %s", got)
+	}
+	if err := s.SetOptions(ctx, ext.OptionSetParams{Buffer: 1}); err == nil {
+		t.Error("SetOptions with no options succeeded")
+	}
+	if og, err := s.GetOptions(ctx, ext.OptionGetParams{Buffer: 1, Names: []string{"indent.width"}}); err != nil || string(og.Values["indent.width"]) != "2" {
+		t.Errorf("GetOptions = %+v, %v", og, err)
+	}
+	if got := sh.next(t); got != `option/get {"buffer":1,"names":["indent.width"]}` {
+		t.Errorf("host received %s", got)
 	}
 
 	// 誤りのある editor/open と editor/list の params は送らない。

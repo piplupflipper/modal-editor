@@ -1,16 +1,26 @@
 package editor
 
 import (
+	"bytes"
+	"cmp"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
+
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/exthost"
 	"github.com/piplupflipper/vi-imitation/internal/option"
 )
 
 // 設定の項目の値（基本設計 7.3。FR-131〜FR-134、FR-163）。
 //
-// 範囲がエディタ全体の項目の値は Editor.options に持つ。
+// 範囲がエディタ全体の項目の値は Editor.options に持つ。拡張機能が option/set で入れた値は Editor.extOptions に分けて持ち、
+// 利用者が :set で変えていない項目（Editor.userOptions に無い項目）だけ、Editor.options に写す（applyEditorOption。FR-191）。
 // 範囲がバッファごとの項目の値は、バッファごとに 2 つに分けて持つ。
 //
 //   - bufferState.layered: 初めの値の段（optionLayers）を順に当てた値。段の値が変わったら（バッファを開き直した、名前を付けた、
-//     後で足す拡張機能の段の値が届いた）、作り直す（refreshOptionLayers）
+//     拡張機能の段の値が option/set で届いた）、作り直す（refreshOptionLayers）
 //   - bufferState.options: 利用者が :option.set と :set で変えた値と、ファイルから判定して決める項目（filetype。option.Def.Detected）の値
 //
 // 読むときは、options に値があればそれを、無ければ layered の値を使う（bufferState.option）。
@@ -53,13 +63,20 @@ func (o optionAccess) Get(d option.Def) option.Value {
 // 設定した結果、bs のファイルの種類が、初めの値の段を当てたときから変わっていれば、段を新しいファイルの種類で当て直す（changeFileTypeOptions。FR-163）。
 // 項目の名前では分けず、ファイルの種類の値が変わったかで決める。
 //
-// 拡張機能へ buffer/open を送り直しても、拡張機能から設定の値を変える経路は無い。後で拡張機能から値を変える口を足すときも、
-// その値は optionLayers の段に入り、ここで入れた値より負ける。
+// 拡張機能へ buffer/open を送り直すと、拡張機能が option/set で値を送り直すことがあるが、その値は optionLayers の最後の段に入り、
+// ここで入れた値より負ける（FR-190）。範囲がエディタ全体の項目は、利用者が変えた項目として覚え（Editor.userOptions）、
+// 拡張機能の値を当てない（FR-191）。
 //
-// req: FR-132, FR-134, FR-163
+// req: FR-132, FR-134, FR-163, FR-191
 func (o optionAccess) Set(d option.Def, v option.Value) error {
 	if err := o.values(d).Set(d, v); err != nil {
 		return err
+	}
+	if d.Scope == option.ScopeEditor {
+		if o.e.userOptions == nil {
+			o.e.userOptions = map[string]bool{}
+		}
+		o.e.userOptions[d.Name] = true
 	}
 	if d.Scope == option.ScopeBuffer {
 		delete(o.bs.masked, d.Name)
@@ -224,13 +241,15 @@ type optionLayer struct {
 
 // optionLayers は、バッファごとの項目の初めの値の段を、当てる順に返す（表の既定値の段は、何も入れないことで表す）。後の段の値が勝つ。
 // 段の並びはここの 1 か所で決め、ほかの箇所は段の数と順を前提にしない（Editor.layers に写して使う）。
-// 拡張機能から設定を変える口（#318 の「この上に何が載るか」）は、.editorconfig の後に段を足し、値が届いたら refreshOptionLayers を呼ぶ。
+// 拡張機能から設定を変える口（option/set。#349）は、.editorconfig の後の段で、値が届いたら refreshOptionLayers を呼ぶ（optionSetRequest）。
 // 利用者が :set で変えた値は段に入らず、どの段よりも勝つ（bufferState.option）。
 //
 //  1. 設定ファイルの最上位の値（Config.Options）
 //  2. 本体のファイルの種類ごとの既定（option.FileTypeDefaults）
 //  3. 設定ファイルのファイルの種類ごとの値（Config.FileTypeOptions）
 //  4. .editorconfig の値（editorConfigOptions）
+//  5. 拡張機能が option/set で入れた値（extLayerValues。FR-190）。ファイルの種類ごとの段ではない（拡張機能は、ファイルの種類が
+//     変わると buffer/open を受けて値を送り直す）ので、ファイルの種類が変わっても :set の値を隠さない
 func optionLayers() []optionLayer {
 	return []optionLayer{
 		{values: func(e *Editor, _ *bufferState) map[string]option.Value { return e.cfg.Options }},
@@ -242,6 +261,9 @@ func optionLayers() []optionLayer {
 		}, perType: true},
 		{values: func(e *Editor, bs *bufferState) map[string]option.Value {
 			return e.editorConfigOptions(bs.editorConfig)
+		}},
+		{values: func(e *Editor, bs *bufferState) map[string]option.Value {
+			return e.extLayerValues(bs.extOptions)
 		}},
 	}
 }
@@ -269,4 +291,208 @@ func editorOptions(vals map[string]option.Value) option.Values {
 		}
 	}
 	return vs
+}
+
+// 拡張機能から設定を変える口（option/set）と読む口（option/get）（ext.MethodOptionSet の doc。基本設計 5.3、7.3。#349）。
+//
+// 拡張機能の値は拡張機能の ID ごとに分けて持ち（バッファごとの項目は bufferState.extOptions、エディタ全体の項目は Editor.extOptions）、
+// 同じ項目に複数の拡張機能が値を入れたら、宣言ファイルを先に読んだ拡張機能（exthost.Host.Rank の小さいもの）の値を使う
+// （本体の操作の提供者の選び方と同じ順。基本設計 5.5）。届いた順にしないのは、拡張機能の起動の速さで値が変わらないようにするためである。
+// どちらの範囲も、利用者が :set で変えた値には勝たない。拡張機能が止まったら、その拡張機能の値をすべて捨てる（clearExtOptions）。
+
+// optionSetRequest は、option/set を処理する。名前と値をすべて確かめてから入れ、1 つでも誤りがあればどの値も入れずに誤りで応答する。
+// 確かめるのは、表にある名前か、ファイルから判定して決める項目（filetype）でないか、範囲が params の Buffer の有無と合うか、
+// 値が項目の型の JSON の値で、:option.set と同じ検査（option.Def.Check）を通るかである。
+// バッファごとの項目は、そのバッファの初めの値の段を作り直す（refreshOptionLayers）。:set で変えた値は変えない。
+// 拡張機能へバッファの属性を知らせ直さない（拡張機能はファイルの種類を変えられず、パスとファイルの種類は変わらないため）。
+//
+// req: FR-190, FR-191
+func (e *Editor) optionSetRequest(ev *exthost.OptionSetRequest) {
+	var bs *bufferState
+	if ev.Params.Buffer != 0 {
+		if bs = e.findBuffer(ev.Params.Buffer); bs == nil {
+			_ = ev.ReplyError(invalidParams("option/set: unknown buffer %d", ev.Params.Buffer))
+			return
+		}
+	}
+	set := map[string]option.Value{}
+	var unset []string
+	for _, name := range slices.Sorted(maps.Keys(ev.Params.Options)) {
+		d, err := extOptionDef(name, bs != nil)
+		if err != nil {
+			_ = ev.ReplyError(invalidParams("option/set: %v", err))
+			return
+		}
+		raw := ev.Params.Options[name]
+		if string(bytes.TrimSpace(raw)) == "null" {
+			unset = append(unset, name)
+			continue
+		}
+		v, err := d.ParseJSON(raw)
+		if err != nil {
+			_ = ev.ReplyError(invalidParams("option/set: %s: %v", name, err))
+			return
+		}
+		set[name] = v
+	}
+	if bs != nil {
+		bs.extOptions = mergeExtValues(bs.extOptions, ev.Extension, set, unset)
+		e.refreshOptionLayers(bs)
+	} else {
+		e.extOptions = mergeExtValues(e.extOptions, ev.Extension, set, unset)
+		for _, name := range slices.Concat(slices.Collect(maps.Keys(set)), unset) {
+			e.applyEditorOption(name)
+		}
+	}
+	_ = ev.Reply()
+}
+
+// extOptionDef は、option/set が名前 name の項目を変えられるかを確かめて、表の行を返す。
+// buffer が true なら範囲がバッファごとの項目だけを、false ならエディタ全体の項目だけを受け付ける。
+// 誤りは拡張機能へ返す（英語の小文字始まり）。
+func extOptionDef(name string, buffer bool) (option.Def, error) {
+	d, ok := option.Lookup(name)
+	switch {
+	case !ok:
+		return option.Def{}, fmt.Errorf("unknown option %q", name)
+	case d.Detected:
+		return option.Def{}, fmt.Errorf("%s is detected from the file and cannot be set by extensions", name)
+	case buffer && d.Scope != option.ScopeBuffer:
+		return option.Def{}, fmt.Errorf("%s is an editor-wide option; omit buffer", name)
+	case !buffer && d.Scope != option.ScopeEditor:
+		return option.Def{}, fmt.Errorf("%s is a buffer option; set buffer", name)
+	}
+	return d, nil
+}
+
+// mergeExtValues は、拡張機能 extID の値 all[extID] に set を入れて unset を取り下げた対応を返す。値の無くなった拡張機能は除く。
+func mergeExtValues(all map[string]map[string]option.Value, extID string, set map[string]option.Value, unset []string) map[string]map[string]option.Value {
+	m := all[extID]
+	if m == nil {
+		m = map[string]option.Value{}
+	}
+	maps.Copy(m, set)
+	for _, name := range unset {
+		delete(m, name)
+	}
+	if len(m) == 0 {
+		delete(all, extID)
+		return all
+	}
+	if all == nil {
+		all = map[string]map[string]option.Value{}
+	}
+	all[extID] = m
+	return all
+}
+
+// extOrder は、拡張機能の値の対応 all の拡張機能の ID を、当てる順（後に当てたものが勝つ）に返す。
+// 宣言ファイルを後に読んだ拡張機能から先に当て、先に読んだ拡張機能の値が勝つようにする。Rank が同じ（知らない ID）なら ID の順にする。
+func (e *Editor) extOrder(all map[string]map[string]option.Value) []string {
+	ids := slices.Collect(maps.Keys(all))
+	slices.SortFunc(ids, func(a, b string) int {
+		if c := cmp.Compare(e.host.Rank(b), e.host.Rank(a)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a, b)
+	})
+	return ids
+}
+
+// extLayerValues は、バッファの拡張機能の値 all を、初めの値の段の 1 つの対応にまとめる（optionLayers の 5。FR-190）。
+func (e *Editor) extLayerValues(all map[string]map[string]option.Value) map[string]option.Value {
+	if len(all) == 0 {
+		return nil
+	}
+	out := map[string]option.Value{}
+	for _, id := range e.extOrder(all) {
+		maps.Copy(out, all[id])
+	}
+	return out
+}
+
+// applyEditorOption は、範囲がエディタ全体の項目 name の値を、拡張機能の値（無ければ設定ファイルの値か表の既定値）にする（FR-191）。
+// 利用者が :set で変えた項目（Editor.userOptions）は変えない。値が今と同じなら入れない（option.Values.Revision を増やさない）。
+//
+// req: FR-191
+func (e *Editor) applyEditorOption(name string) {
+	d, ok := option.Lookup(name)
+	if !ok || d.Scope != option.ScopeEditor || e.userOptions[name] {
+		return
+	}
+	v := d.Default
+	if c, ok := e.cfg.Options[name]; ok && d.Check(c) == nil {
+		v = c
+	}
+	for _, id := range e.extOrder(e.extOptions) {
+		if x, ok := e.extOptions[id][name]; ok {
+			v = x
+		}
+	}
+	if e.options.Get(name) != v {
+		_ = e.options.Set(d, v) // 型と範囲は確かめてある
+	}
+}
+
+// clearExtOptions は、拡張機能 extID が option/set で入れた値をすべて捨てる（拡張機能が異常で終わった、無効になった、
+// :ext sync で止めたとき。stateChange）。バッファごとの項目はそのバッファの段を作り直し、エディタ全体の項目は
+// ほかの拡張機能の値か設定ファイルの値に戻す。:set で変えた値は変えない。
+//
+// req: FR-190, FR-191
+func (e *Editor) clearExtOptions(extID string) {
+	for _, bs := range e.bufs {
+		if _, ok := bs.extOptions[extID]; ok {
+			delete(bs.extOptions, extID)
+			e.refreshOptionLayers(bs)
+		}
+	}
+	if m, ok := e.extOptions[extID]; ok {
+		delete(e.extOptions, extID)
+		for name := range m {
+			e.applyEditorOption(name)
+		}
+	}
+}
+
+// optionGetRequest は、option/get を処理し、項目の今の値（:set の値、拡張機能の値、初めの値の段を重ねた、本体が使う値）を返す。
+// params の Names が空なら、Buffer を書いたときはすべての項目を、省いたときはエディタ全体のすべての項目を返す。
+// 表に無い名前と、Buffer を省いたときのバッファごとの項目は、誤りで応答する。
+//
+// req: FR-192
+func (e *Editor) optionGetRequest(ev *exthost.OptionGetRequest) {
+	var bs *bufferState
+	if ev.Params.Buffer != 0 {
+		if bs = e.findBuffer(ev.Params.Buffer); bs == nil {
+			_ = ev.ReplyError(invalidParams("option/get: unknown buffer %d", ev.Params.Buffer))
+			return
+		}
+	}
+	names := ev.Params.Names
+	if len(names) == 0 {
+		for _, d := range option.Defs() {
+			if d.Scope == option.ScopeEditor || bs != nil {
+				names = append(names, d.Name)
+			}
+		}
+	}
+	values := map[string]json.RawMessage{}
+	for _, name := range names {
+		d, ok := option.Lookup(name)
+		var v option.Value
+		switch {
+		case !ok:
+			_ = ev.ReplyError(invalidParams("option/get: unknown option %q", name))
+			return
+		case d.Scope == option.ScopeBuffer && bs == nil:
+			_ = ev.ReplyError(invalidParams("option/get: %s is a buffer option; set buffer", name))
+			return
+		case d.Scope == option.ScopeBuffer:
+			v = bs.option(name)
+		default:
+			v = e.options.Get(name)
+		}
+		raw, _ := v.MarshalJSON() // 誤りにならない
+		values[name] = raw
+	}
+	_ = ev.Reply(ext.OptionGetResult{Values: values})
 }

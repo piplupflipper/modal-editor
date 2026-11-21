@@ -530,6 +530,9 @@ func TestRequestEventInvalidParams(t *testing.T) {
 		{ext.MethodEditorOpen, `{"path":"relative"}`, rpc.CodeInvalidParams},
 		{ext.MethodEditorOpen, `{}`, rpc.CodeInvalidParams},
 		{ext.MethodBufferSave, `{"buffer":"x"}`, rpc.CodeInvalidParams},
+		{ext.MethodOptionSet, `{"buffer":1}`, rpc.CodeInvalidParams},
+		{ext.MethodOptionSet, `{"options":[]}`, rpc.CodeInvalidParams},
+		{ext.MethodOptionGet, `{"names":"x"}`, rpc.CodeInvalidParams},
 		{"editor/unknown", `{}`, rpc.CodeMethodNotFound},
 	}
 	for _, tt := range tests {
@@ -541,6 +544,23 @@ func TestRequestEventInvalidParams(t *testing.T) {
 	// editor/state は params が無くてもよい。
 	if ev, err := requestEvent(ctx, "x", &rpc.Request{Method: ext.MethodEditorState}, nil); err != nil || ev == nil {
 		t.Errorf("editor/state without params = %v, %v", ev, err)
+	}
+	// option/set と option/get は、それぞれのイベントになる。名前と値は、イベントループが設定の表で確かめる。
+	ev, err := requestEvent(ctx, "x", &rpc.Request{Method: ext.MethodOptionSet, Params: json.RawMessage(`{"buffer":2,"options":{"no.such":null}}`)}, nil)
+	if set, ok := ev.(*OptionSetRequest); err != nil || !ok || set.Extension != "x" || set.Params.Buffer != 2 || string(set.Params.Options["no.such"]) != "null" {
+		t.Errorf("option/set = %#v, %v", ev, err)
+	}
+	ev, err = requestEvent(ctx, "x", &rpc.Request{Method: ext.MethodOptionGet}, nil)
+	if _, ok := ev.(*OptionGetRequest); err != nil || !ok {
+		t.Errorf("option/get without params = %#v, %v", ev, err)
+	}
+}
+
+// Rank は、宣言ファイルを読んだ順（New に渡した順）を返す。
+func TestRank(t *testing.T) {
+	hs := newHarness(t, []Spec{serverSpec(t, "b", nil), serverSpec(t, "a", nil)}, nil, false)
+	if got := []int{hs.h.Rank("b"), hs.h.Rank("a"), hs.h.Rank("none")}; !reflect.DeepEqual(got, []int{0, 1, -1}) {
+		t.Errorf("Rank = %v, want [0 1 -1]", got)
 	}
 }
 

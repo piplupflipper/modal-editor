@@ -254,6 +254,8 @@ b が nil になる場合と、結果の Transaction の BaseVersion の扱い�
 - `func (s *Server) Execute(ctx context.Context, p ext.EditorExecuteParams) error`: 本体へ editor/execute を送り、キーの一覧のキーかコマンドを、利用者が打ったのと同じく実行させる。
   本体は実行の前に応答する。p が ext.EditorExecuteParams.Validate を通らなければ、送らずにその誤りを返す。
   Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す。
+- `func (s *Server) GetOptions(ctx context.Context, p ext.OptionGetParams) (ext.OptionGetResult, error)`: 本体へ option/get を送り、設定の項目の今の値を読む。
+  Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す。
 - `func (s *Server) ListDiagnostics(ctx context.Context, p ext.DiagnosticListParams) (ext.DiagnosticListResult, error)`: 本体へ diagnostic/list を送り、本体が受け取り済みの診断を問い合わせる。
   Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す。
 - `func (s *Server) ListEditor(ctx context.Context, list ext.EditorListKind) (ext.EditorListResult, error)`: 本体へ editor/list を送り、本体が持つ一覧（タブ、コマンド、キーの一覧、レジスターの履歴、ジャンプリスト）の 1 つを
@@ -303,6 +305,11 @@ b が nil になる場合と、結果の Transaction の BaseVersion の扱い�
   r と w が io.Closer を実装していれば、終わるときに閉じる。
 - `func (s *Server) SetDecorations(p ext.DecorationSetParams) error`: 本体へ decoration/set を送る。応答は待たない。どこから呼んでもよい。
 - `func (s *Server) SetDiagnostics(p ext.DiagnosticSetParams) error`: 本体へ diagnostic/set を送る。応答は待たない。どこから呼んでもよい。
+- `func (s *Server) SetOptions(ctx context.Context, p ext.OptionSetParams) error`: 本体へ option/set を送り、本体の設定の項目の値を変える。
+  p.Buffer を書けばそのバッファの範囲がバッファごとの項目を、省けば範囲がエディタ全体の項目を変える。
+  値は利用者が :set で変えた値には勝たない。表に無い名前や範囲の外の値があれば、本体はどの値も入れずに誤りで応答する。
+  p が ext.OptionSetParams.Validate を通らなければ、送らずにその誤りを返す。
+  Edit と同じく、ループの上から呼ぶと ErrEditInHandler を返す（buffer/open のフックからは goroutine を起こして呼ぶ）。
 - `func (s *Server) SetSigns(p ext.SignSetParams) error`: 本体へ sign/set を送る。応答は待たない。どこから呼んでもよい。
 - `func (s *Server) SetStatusLine(part, text, style string) error`: 本体へ statusline/set を送り、宣言ファイルの contributes.statusline で足した部品 part の中身を text にする
   。style は部品の色の名前で、空なら利用者の設定の statusline.ext の色で描く。text が空なら部品を出さない。

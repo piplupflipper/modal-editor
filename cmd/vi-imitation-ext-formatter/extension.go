@@ -20,6 +20,8 @@ type extension struct {
 	// ハンドラーの ctx で送ると ErrEditInHandler になる（ext/server の Edit の doc）。
 	ctx context.Context
 	log *log.Logger
+	// indent は、整形ツールの設定ファイルから読んだインデントを本体へ渡す（indentsync.go）。
+	indent *indentSync
 }
 
 // newExtension は、ハンドラーを登録した拡張機能を作る。
@@ -35,6 +37,11 @@ func newExtension() *extension {
 	})
 	x.srv.BufferWillSaveAsync(x.willSave)
 	x.srv.ProviderAsync(ext.OpFormat, x.format)
+	// 整形ツールの設定ファイルからのインデント（indentsync.go。FR-193）。送る goroutine は最初の buffer/open で起こすので、
+	// initialize で入れた x.cfg を読める。
+	x.indent = newIndentSync(func() *config { return x.cfg }, x.srv.SetOptions,
+		func(text string) { x.showMessage(ext.MessageWarning, text) }, x.log.Printf)
+	x.indent.register(x.ctx, x.srv)
 	return x
 }
 

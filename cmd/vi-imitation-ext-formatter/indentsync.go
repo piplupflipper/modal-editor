@@ -1,0 +1,195 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+	"slices"
+	"sync"
+
+	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/ext/server"
+)
+
+// indentSync は、開いているバッファごとに、整形ツールの設定ファイルから読んだインデントを本体へ渡す（indent.go。#349。FR-193）。
+//
+// いつ読むかは次のとおりである。
+//
+//   - buffer/open を受けたとき（開いたとき、別名で保存したとき、:set filetype= でファイルの種類が変わったとき。本体が送り直す）
+//   - buffer/didSave を受けたとき。保存したファイルが整形ツールの設定ファイル（configNames）なら開いているすべてのバッファを、
+//     そうでなければそのバッファだけを読み直す。エディタの外で設定ファイルを変えたときも、そのバッファを保存すれば効く
+//
+// 設定ファイルの変更を見張る仕組みは持たない（本体にも拡張機能 API にも無い）。
+// 本体へのリクエストはハンドラーの上で送れない（ext/server の Edit の doc）ので、1 つの goroutine（loop）がまとめて送る。
+// 1 つの goroutine で送るので、同じバッファの値が届く順は、読んだ順と同じになる。
+// 前に送った値と同じなら送らない。読めない設定ファイルは、本体の設定を変えずに、同じファイルの同じ誤りを 1 回だけ知らせる
+// （直した後に同じ誤りでまた壊しても、もう知らせない。誤りの文言が変われば知らせる）。
+type indentSync struct {
+	cfg func() *config
+	// setOptions は、本体へ option/set を送る（Server.SetOptions）。テストは差し替える。
+	setOptions func(ctx context.Context, p ext.OptionSetParams) error
+	// warn は、利用者へ警告を出す（message/show）。テストは差し替える。
+	warn func(text string)
+	// logf は、ログを書く。
+	logf func(format string, args ...any)
+
+	mu      sync.Mutex
+	bufs    map[ext.BufferID]bufferInfo
+	pending map[ext.BufferID]bool
+	wake    chan struct{}
+	started bool
+
+	// sent は、バッファごとに最後に送った options の JSON である。loop だけが触る。
+	sent map[ext.BufferID]string
+	// reported は、設定ファイルのパスごとに最後に知らせた誤りの文言である。loop だけが触る。
+	reported map[string]string
+}
+
+// bufferInfo は、インデントを読むのに要るバッファの属性である。
+type bufferInfo struct {
+	path, fileType string
+}
+
+// configNames は、保存したときに開いているすべてのバッファのインデントを読み直す、整形ツールの設定ファイルの名前である。
+var configNames = slices.Concat([]string{"biome.json", "biome.jsonc", ".ruff.toml", "ruff.toml", "pyproject.toml"}, prettierFiles)
+
+func newIndentSync(cfg func() *config, setOptions func(context.Context, ext.OptionSetParams) error, warn func(string), logf func(string, ...any)) *indentSync {
+	return &indentSync{
+		cfg: cfg, setOptions: setOptions, warn: warn, logf: logf,
+		bufs: map[ext.BufferID]bufferInfo{}, pending: map[ext.BufferID]bool{}, wake: make(chan struct{}, 1),
+		sent: map[ext.BufferID]string{}, reported: map[string]string{},
+	}
+}
+
+// register は、x のサーバーのフックに、バッファの開閉と保存の知らせを登録する。
+func (s *indentSync) register(ctx context.Context, srv *server.Server) {
+	srv.OnBufferOpen(func(_ context.Context, e *server.BufferOpenEvent) {
+		s.opened(e.Buffer.ID(), bufferInfo{path: e.Buffer.Path(), fileType: e.Buffer.FileType()})
+		s.start(ctx)
+	})
+	srv.OnBufferClose(func(_ context.Context, e *server.BufferCloseEvent) { s.closed(e.Buffer) })
+	srv.OnBufferDidSave(func(_ context.Context, e *server.BufferDidSaveEvent) { s.saved(e.Params.Buffer) })
+}
+
+// start は、送る goroutine を 1 回だけ起こす。
+func (s *indentSync) start(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started {
+		return
+	}
+	s.started = true
+	go s.loop(ctx)
+}
+
+// opened は、バッファ id を開いた（buffer/open を受けた）ことを記録し、読み直しを頼む。
+func (s *indentSync) opened(id ext.BufferID, info bufferInfo) {
+	s.mu.Lock()
+	s.bufs[id] = info
+	s.pending[id] = true
+	s.mu.Unlock()
+	s.signal()
+}
+
+// closed は、バッファ id を閉じたことを記録する。
+func (s *indentSync) closed(id ext.BufferID) {
+	s.mu.Lock()
+	delete(s.bufs, id)
+	delete(s.pending, id)
+	s.mu.Unlock()
+}
+
+// saved は、バッファ id を保存したことを受けて、読み直しを頼む。保存したファイルが整形ツールの設定ファイルなら、すべてのバッファを読み直す。
+func (s *indentSync) saved(id ext.BufferID) {
+	s.mu.Lock()
+	info, ok := s.bufs[id]
+	if ok && slices.Contains(configNames, filepath.Base(info.path)) {
+		for b := range s.bufs {
+			s.pending[b] = true
+		}
+	} else if ok {
+		s.pending[id] = true
+	}
+	s.mu.Unlock()
+	s.signal()
+}
+
+func (s *indentSync) signal() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// loop は、読み直しを頼まれたバッファを順に処理する。ctx が終わるまで戻らない。
+func (s *indentSync) loop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.wake:
+		}
+		for s.step(ctx) {
+		}
+	}
+}
+
+// step は、読み直しを頼まれたバッファを 1 つ処理する。頼まれたバッファが無ければ false を返す。
+func (s *indentSync) step(ctx context.Context) bool {
+	s.mu.Lock()
+	var id ext.BufferID
+	found := false
+	for b := range s.pending {
+		if !found || b < id {
+			id, found = b, true
+		}
+	}
+	if !found {
+		s.mu.Unlock()
+		return false
+	}
+	delete(s.pending, id)
+	info, open := s.bufs[id]
+	s.mu.Unlock()
+	if open {
+		s.apply(ctx, id, info)
+	} else {
+		delete(s.sent, id)
+	}
+	return true
+}
+
+// apply は、バッファ id のインデントを読み、前に送った値と違えば option/set で送る（FR-193）。
+// 読めない設定ファイルがあれば、送らずに（本体の設定を変えずに）知らせる。同じファイルの同じ誤りは 1 回だけ知らせる。
+//
+// req: FR-193
+func (s *indentSync) apply(ctx context.Context, id ext.BufferID, info bufferInfo) {
+	if info.path == "" {
+		return
+	}
+	ic, err := s.cfg().projectIndent(info.path, info.fileType)
+	if err != nil {
+		var ce *configError
+		if errors.As(err, &ce) {
+			if s.reported[ce.path] != ce.Error() {
+				s.reported[ce.path] = ce.Error()
+				s.warn(ce.Error())
+			}
+		} else {
+			s.logf("indent: %v", err)
+		}
+		return
+	}
+	opts := ic.options()
+	b, _ := json.Marshal(opts) // 誤りにならない
+	prev, had := s.sent[id]
+	if string(b) == prev || !had && ic == (indentConfig{}) {
+		return
+	}
+	if err := s.setOptions(ctx, ext.OptionSetParams{Buffer: id, Options: opts}); err != nil {
+		s.logf("option/set: %v", err)
+		return
+	}
+	s.sent[id] = string(b)
+}

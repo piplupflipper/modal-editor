@@ -12,7 +12,7 @@ import (
 func init() {
 	Symbols["github.com/piplupflipper/vi-imitation/ext/ext"] = map[string]reflect.Value{
 		// function, constant and variable definitions
-		"APIVersion":                 reflect.ValueOf(constant.MakeFromLiteral("\"0.14.0\"", token.STRING, 0)),
+		"APIVersion":                 reflect.ValueOf(constant.MakeFromLiteral("\"0.15.0\"", token.STRING, 0)),
 		"ActivationCommand":          reflect.ValueOf(ext.ActivationCommand),
 		"ActivationFileType":         reflect.ValueOf(ext.ActivationFileType),
 		"ActivationMotion":           reflect.ValueOf(ext.ActivationMotion),
@@ -65,6 +65,8 @@ func init() {
 		"MethodMessageShow":          reflect.ValueOf(constant.MakeFromLiteral("\"message/show\"", token.STRING, 0)),
 		"MethodMotionResolve":        reflect.ValueOf(constant.MakeFromLiteral("\"motion/resolve\"", token.STRING, 0)),
 		"MethodOperatorApply":        reflect.ValueOf(constant.MakeFromLiteral("\"operator/apply\"", token.STRING, 0)),
+		"MethodOptionGet":            reflect.ValueOf(constant.MakeFromLiteral("\"option/get\"", token.STRING, 0)),
+		"MethodOptionSet":            reflect.ValueOf(constant.MakeFromLiteral("\"option/set\"", token.STRING, 0)),
 		"MethodOutputAppend":         reflect.ValueOf(constant.MakeFromLiteral("\"output/append\"", token.STRING, 0)),
 		"MethodPaneOpen":             reflect.ValueOf(constant.MakeFromLiteral("\"pane/open\"", token.STRING, 0)),
 		"MethodPing":                 reflect.ValueOf(constant.MakeFromLiteral("\"ping\"", token.STRING, 0)),
@@ -113,6 +115,7 @@ func init() {
 		"OpTypeDefinition":           reflect.ValueOf(ext.OpTypeDefinition),
 		"OpWorkspaceSymbols":         reflect.ValueOf(ext.OpWorkspaceSymbols),
 		"Operations":                 reflect.ValueOf(&ext.Operations).Elem(),
+		"OptionUnset":                reflect.ValueOf(&ext.OptionUnset).Elem(),
 		"PaneCenter":                 reflect.ValueOf(ext.PaneCenter),
 		"PaneDown":                   reflect.ValueOf(ext.PaneDown),
 		"PaneRight":                  reflect.ValueOf(ext.PaneRight),
@@ -210,6 +213,10 @@ func init() {
 		"Operation":               reflect.ValueOf((*ext.Operation)(nil)),
 		"OperatorApplyParams":     reflect.ValueOf((*ext.OperatorApplyParams)(nil)),
 		"OperatorApplyResult":     reflect.ValueOf((*ext.OperatorApplyResult)(nil)),
+		"OptionGetParams":         reflect.ValueOf((*ext.OptionGetParams)(nil)),
+		"OptionGetResult":         reflect.ValueOf((*ext.OptionGetResult)(nil)),
+		"OptionSetParams":         reflect.ValueOf((*ext.OptionSetParams)(nil)),
+		"OptionSetResult":         reflect.ValueOf((*ext.OptionSetResult)(nil)),
 		"OutputAppendParams":      reflect.ValueOf((*ext.OutputAppendParams)(nil)),
 		"PaneDirection":           reflect.ValueOf((*ext.PaneDirection)(nil)),
 		"PaneOpenParams":          reflect.ValueOf((*ext.PaneOpenParams)(nil)),

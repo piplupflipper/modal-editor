@@ -253,7 +253,9 @@
       // 外部の整形ツールで、保存の前（:w）と gq、:format で整形する。説明は docs/usage.md の「整形ツール」にある。
       // 引数の {path} はファイルの絶対パスになる。実行ファイルは、ファイルのディレクトリから上へ node_modules/.bin と .venv/bin を探し、
       // 無ければ PATH から探す。見つからない整形ツールは、そのファイルの種類で保存するたびに知らせ、整形せずに書き出す。
-      // 引数は conform.nvim（016802d）の定義に合わせた
+      // 引数は conform.nvim（016802d）の定義に合わせた。
+      // biome、prettier、ruff を書いたファイルの種類では、その整形ツールの設定ファイル（biome.json、.prettierrc、pyproject.toml など）から
+      // インデントの文字と幅を読み、.editorconfig より優先する（:set で変えた値には勝たない）
       "formatter": {
         "formatters": [
           {

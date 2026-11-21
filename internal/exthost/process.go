@@ -627,6 +627,21 @@ func requestEvent(ctx context.Context, id string, req *rpc.Request, reply rpc.Re
 			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
 		}
 		return &EditorExecuteRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodOptionSet:
+		var p ext.OptionSetParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		if err := p.Validate(); err != nil {
+			return nil, &rpc.Error{Code: rpc.CodeInvalidParams, Message: req.Method + ": " + err.Error()}
+		}
+		return &OptionSetRequest{Extension: id, Params: p, replyOnce: ro}, nil
+	case ext.MethodOptionGet:
+		var p ext.OptionGetParams
+		if err := decodeRequest(req, &p); err != nil {
+			return nil, err
+		}
+		return &OptionGetRequest{Extension: id, Params: p, replyOnce: ro}, nil
 	}
 	return nil, &rpc.Error{Code: rpc.CodeMethodNotFound, Message: "method not found: " + req.Method}
 }
