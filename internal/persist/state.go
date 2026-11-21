@@ -73,8 +73,13 @@ func (s *State) SetItem(name string, version int, v any) error {
 	return nil
 }
 
+// ErrStateCorrupt は、state.json の中身が JSON のオブジェクトとして読めない（壊れている）ことを表す。
+// UpdateState は、この誤りのときだけ、ファイルが無いときと同じく中身を捨てて空から書き直す。
+var ErrStateCorrupt = errors.New("persist: state file is not a JSON object")
+
 // ReadState は、置き場 dir の state.json を読む。ロックは掛けない（書く側が rename で置き換えるので、前か後の全体を読む）。
-// 無ければ os.ErrNotExist を包んだ誤りを、JSON のオブジェクトとして読めなければ誤りを返す。
+// 無ければ os.ErrNotExist を包んだ誤りを、JSON のオブジェクトとして読めなければ ErrStateCorrupt を包んだ誤りを返す。
+// 許可が無い、入出力の誤りなどで読めなければ、その誤りを包んで返す。
 func ReadState(dir string) (*State, error) {
 	path := filepath.Join(dir, StateFileName)
 	data, err := os.ReadFile(path)
@@ -83,10 +88,10 @@ func ReadState(dir string) (*State, error) {
 	}
 	var items map[string]json.RawMessage
 	if err := json.Unmarshal(data, &items); err != nil {
-		return nil, fmt.Errorf("persist: %s: %w", path, err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrStateCorrupt, path, err)
 	}
 	if items == nil {
-		return nil, fmt.Errorf("persist: %s: not an object", path)
+		return nil, fmt.Errorf("%w: %s", ErrStateCorrupt, path)
 	}
 	return &State{items: items}, nil
 }
@@ -96,7 +101,8 @@ func ReadState(dir string) (*State, error) {
 // 同じ state.json を、複数の server（tmux の window ごとに 1 つ。FR-59）が書く。
 // このため、ロックのファイル（state.json.lock）に排他の flock を掛け（lockTimeout まで待つ）、その中で state.json を読み直し、
 // 読み直した中身を fn に渡して合わせさせ、一時ファイルと rename で書き換える。ほかの server が書いた項目と記録は、fn が消さない限り残る。
-// state.json が無いか壊れているときは、空の中身を fn に渡す（壊れた中身は捨てて書き直す）。
+// state.json が無いか、中身が壊れている（ErrStateCorrupt）ときだけ、空の中身を fn に渡す（壊れた中身は捨てて書き直す）。
+// 許可が無い、入出力の誤りなどで読めないときは、前の中身を消さないよう、書かずにその誤りを返す（呼び出し側が警告を出す）。
 // fn が誤りを返したら、書かずにその誤りを返す。置き場のディレクトリが無ければ 0700 で作る。
 func UpdateState(dir string, fn func(*State) error) error {
 	if err := ensureDir(dir); err != nil {
@@ -108,8 +114,12 @@ func UpdateState(dir string, fn func(*State) error) error {
 	}
 	defer unlock()
 	st, err := ReadState(dir)
-	if err != nil {
+	switch {
+	case err == nil:
+	case errors.Is(err, os.ErrNotExist), errors.Is(err, ErrStateCorrupt):
 		st = &State{items: map[string]json.RawMessage{}}
+	default:
+		return err
 	}
 	if ferr := fn(st); ferr != nil {
 		return ferr

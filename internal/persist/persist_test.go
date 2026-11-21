@@ -311,6 +311,38 @@ func TestCursorStateFormat(t *testing.T) {
 	}
 }
 
+// 許可が無くて state.json を読めないときは、前の記録を消さないよう、書かずに誤りを返す（PR #326 の再レビューの推奨 1）。
+//
+// req: FR-166
+func TestUpdateStateUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root は許可の無いファイルも読めるので、確かめられない")
+	}
+	dir := t.TempDir()
+	if err := SaveCursor(dir, "/a", Position{Line: 3}, time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, StateFileName)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) }) // t.TempDir の後始末で消せるように戻す
+	err = SaveCursor(dir, "/b", Position{Line: 1}, time.Unix(2, 0))
+	if !errors.Is(err, os.ErrPermission) {
+		t.Errorf("読めない state.json への SaveCursor = %v, want ErrPermission", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Errorf("読めない state.json を書き換えた\n got %s\nwant %s", after, before)
+	}
+}
+
 // 版の違う本体の server が同じ state.json を交互に書いても、互いの項目を消さない。
 // 古い本体は、新しい版の項目を読まず、書き換えずに残し、ErrNewerItem を返す（呼び出し側は警告にしない）。
 // 新しい本体が足した知らない名前の項目は、古い本体が書いても残る。
