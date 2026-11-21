@@ -104,6 +104,7 @@
 | `commandLine.completeMode` | 文字列 | エディタ全体 | `"full"` |  |
 | `commandLine.completeIgnoreCase` | 真偽 | エディタ全体 | `false` |  |
 | `completionMenu.height` | 整数 | エディタ全体 | `0` | 0 から 9999 |
+| `intro.show` | 真偽 | エディタ全体 | `true` |  |
 <!-- generated:options:end -->
 
 各項目の説明と、`:set` で使える Vim の名前は `vi-imitation --docs usage 設定の名前の一覧` にある。

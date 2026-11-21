@@ -181,7 +181,7 @@ func TestCmdlineCompleteMacro(t *testing.T) {
 }
 
 // コマンドの名前、:set と :option.set の設定の名前と値、バッファ、:help の語、:ext の引数を補う。
-// コマンドの名前には、本体が同じコマンドのために足した短い名前（:h、:mes）を出さない。
+// コマンドの名前には、本体が同じコマンドのために足した短い名前（:h、:mes、:int）を出さない。
 //
 // req: FR-195
 func TestCmdlineCompleteKinds(t *testing.T) {
@@ -191,6 +191,7 @@ func TestCmdlineCompleteKinds(t *testing.T) {
 	for _, tt := range []struct{ keys, line, menu string }{
 		{":he<Tab>", "help", ""},
 		{":mes<Tab>", "messages", ""},
+		{":int<Tab>", "intro", ""},
 		{":ex<Tab>", "ext", ""},
 		{":ext <Tab>", "ext sync", "[sync] update"},
 		{":set nu<Tab>", "set number", "[number] numberwidth"},

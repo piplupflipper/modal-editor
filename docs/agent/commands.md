@@ -62,6 +62,7 @@
 |---|---|
 | `:ext` |  |
 | `:help` | `:h` |
+| `:intro` | `:int`、`:intr` |
 | `:keys` |  |
 | `:messages` | `:mes`、`:mess`、`:messa`、`:messag`、`:message` |
 <!-- generated:host-commands:end -->

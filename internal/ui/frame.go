@@ -136,8 +136,8 @@ type Float struct {
 	// ID は、窓を見分ける番号である。替わったら窓の中のスクロールの位置を決め直す。0 も 1 つの窓として扱う。
 	ID uint64
 	// View は、窓の中に描くバッファの Frame である。Text、Cursor、Mode、Selection、Decorations、Diagnostics、Wrap を読み、
-	// Tabs、Output、List、Choice、Float、Diff、Message、LineNumbers、Search、Highlights、Progress、Scrollbar は読まない
-	// （窓の中に行番号と検索の一致の色とヤンクした範囲の色とスクロールバーは出さない）。
+	// Tabs、Output、List、Choice、Float、Diff、Message、LineNumbers、Search、Highlights、Progress、Scrollbar、Intro は読まない
+	// （窓の中に行番号と検索の一致の色とヤンクした範囲の色とスクロールバーと起動の案内は出さない）。
 	// Text が nil なら窓を出さない。
 	View *Frame
 	// Title は、窓の見出しである。空なら出さない。
@@ -307,6 +307,10 @@ type Frame struct {
 	// internal/editor が、client の画面（bufferFrame）にだけ、描くたびに設定の今の値（scrollbar.show など）から詰める。
 	// 描くのは、表示領域にバッファの全体が収まらないときだけである。描き方は drawScrollbar の doc にある。
 	Scrollbar *Scrollbar
+	// Intro は、バッファの表示領域の中央に重ねて出す起動の案内である（FR-205、FR-207。Vim と Neovim の :intro の画面）。nil なら出さない。
+	// internal/editor が、client の画面（bufferFrame）にだけ、出すときに詰める。いつ出していつ消すかは internal/editor が決める。
+	// 描き方は drawIntro の doc にある。
+	Intro *Intro
 	// Output は、開いている出力の欄である。nil なら欄を開いていない。
 	Output *Output
 	// Float は、バッファの表示領域の上に浮かべて出すポップアップである（基本設計 1.4。FR-68）。nil なら出さない。

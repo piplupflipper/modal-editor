@@ -4307,6 +4307,45 @@ README によれば、F キーは段階 2 では押しても何もしないの�
 | 形式 | Markdown だけにした。`--format json` は足していない。表と箇条書きは AI エージェントがそのまま読め、機械向けの形を別に保つ費用に見合う使い道がまだ無いためである |
 | `:help` | デバッグの案内は `:help` の文書に足さず、`docs/usage.md` の「本体に埋め込んだ文書（`--docs`）」の節から指す。`:help` の語の引き方（説明の行の探し方）に、別の文書の見出しと語が混ざらないようにするためである |
 
+#### 起動の案内（#355）
+
+#355 で、起動の引数にファイルを書かずに起動したときの案内（Vim と Neovim の `:intro` の画面に当たるもの）を足した（`internal/editor` の `intro.go`、`internal/ui` の `intro.go`。FR-205〜FR-207）。
+2026-11-21 のオーナーとの相談（#317）で、中身を名前と版、`:q` で終わる案内、`:help` の案内、設定ファイルの場所の 4 つにし、最初の編集で消すと決めた。
+表に無い点と文面は、どれも仮である。
+
+| 項目 | 決めたこと |
+|---|---|
+| 出す条件 | 描くたびに（`bufferFrame` の `uiIntro`）、設定 `intro.show` が真、繋いでいる編集の client が 1 つ、その client がペインの部品（`pane/open`）と出力の欄を開いていない、カーソルのあるバッファ（フォーカスのあるポップアップならそのバッファ）がエディタの最初に作ったバッファ（ID 1）、そのバッファに名前が無く中身が空（行が 1 つで、その行が空）、のすべてを満たすかを確かめる。Neovim 0.12.5 の `may_show_intro`（`src/nvim/version.c`）の、`'shortmess'` の `I`、`one_window`、`curbuf->handle == 1`、`curwin` が最初の窓、`b_fname == NULL`、`buf_is_empty` を本体の言葉に写した。2 つ目の client のペイン、ペインの部品、出力の欄は、Neovim では窓を分けること（`:diffsplit`、`:copen`、ファイラの窓）に当たる。フォーカスの無いポップアップ（ホバー）は、Neovim の `one_window` が浮かべた窓を数えないのと同じく数えない |
+| 消えたら戻さない | 一度でも満たさなかったら、`introState.off` を立て、その後は満たしても出さない（Neovim の `update_screen` の `still_may_intro`）。打った文字を消しても、`u` で戻しても、開いたタブを閉じても、`intro.show` を真に戻しても出ない |
+| 確かめる時 | 描くたびに確かめるので、マクロの再生の途中のように、描く前に空へ戻ったバッファでは消えない（Neovim も `update_screen` でだけ確かめる） |
+| 文面 | `internal/editor` の `introLines` の 1 か所に置いた。名前と版（`version.String`。`--version` と同じ）、`:q` と `:help` の表（`introTable` が列と表示幅をそろえる）、設定ファイルの見出しとパスを、空の行で区切って並べる。テストは `introLines` の返す行から期待値を作り、文書には行数と幅を書かないので、文面を変えるときに直すのはこの関数だけである（PR #358 のレビューの推奨 3）。パスを見出しと別の行にしたのは、パスを詰めても見出しを読めるようにするためである |
+| 設定ファイルの場所 | 起動のときに読むパス（`config.DefaultPath`。`:ext sync` と同じく `Config.ExtManager.ConfigPath` があればそれ）。ファイルが無ければ見出しを `設定ファイル（まだ無い）` にする。決められなければ（`XDG_CONFIG_HOME` と `HOME` が無い）、決められないと出す。ホームディレクトリ（`HOME`）の下なら `~/` からの形にする（Neovim の `fnamemodify` の `:~` と同じ）。ファイルがあるかは、文面を作るとき（最初に出すときと `:intro` のたび）に確かめ、描くたびには確かめない |
+| 描き方 | 行の並びを表示領域の行の中ほどに、各行を幅の中ほどに寄せて描く（Neovim 0.12.5 の `intro_message` と `do_intro_line` と同じく行ごとに寄せる）。文字は色を付けずに描き、文字の無いセルは下の `~` の行のまま残す。上と下に 1 行、左と右に 1 列の余りを残して全体が収まるときだけ描き、一部の行だけは描かない。上の 1 行はバッファの最初の行（カーソルの行）、左の 1 列は `~` の列で、どちらも覆わないためである。Neovim の境目（上の余りが 2 行以上、画面が 50 列以上）は Neovim の文面の行数と幅のためのものなので、そのままは写さなかった |
+| 長いパス | 設定ファイルのパスの行は、詰めてよい行（`ui.IntroLine.Elide`）にした。収まるかの判定に数えず、幅に収まらなければ左を `…` にして、左と右に 1 列の余りを残して収まるまで詰める（ファイル名の側を残す）。パスは利用者の `XDG_CONFIG_HOME` で長くなるので、その 1 行で案内の全体が出なくならないようにした（PR #358 のレビューの推奨 2）。詰め方の形は、文面と一緒にオーナーが決め直しうる |
+| 重なり | `internal/ui` の `layers.go` の「窓の重なり」の表で、バッファの行と折り返しの印の上、スクロールバー、進み具合、浮かべる窓、ステータス行、出力の欄、コマンドラインの行と補完の候補の一覧、タブの行の下に置いた。表の行の番号は振り直さず、折り返しの印（2）とスクロールバー（3）の間の 2.5 にした。ほかの文書は表の行を番号でなく部品の名前と描く関数で指す（PR #358 のレビューの推奨 6）。Neovim は案内を窓の格子に直に描き、浮かべた窓とメッセージがその上に重なるのと同じである。ポップアップの窓の中、プレビュー、ファインダー、部品の client の画面には出さない（`bufferFrame` を通らず、`ui` も子の Frame の `Intro` を外す） |
+| `:intro` | 本体のコマンドとして `:intro`（`:int`、`:intr`）を足した。`:messages` と同じく、拡張機能のコマンドの口（`commandLineTable`）から呼ぶ。打った client（`introState.forced`）の画面に、上の条件と `intro.show` によらず、表示領域を空白で塗ってから案内を出し、収まらない行と列は切る。その client の次のキー（マウスの出来事を含む）を 1 つ受けて消し、そのキーはコマンドとして使わない（Neovim 0.12.5 の `ex_intro` の `screenclear` と `plain_vgetc`）。貼り付けは、案内を消してから入れる。キーマップの展開の中の `:intro` は、展開の次のキーで消え、そのキーは使わない（`feedMapped`）。マクロとドットリピートの再生の中の `:intro` は、案内を出さず、キーも待たない。再生の残りのキーは `command.State` が自分で読むので本体は 1 つを捨てられず、出すと再生の後に案内が残って利用者の次のキーを捨てるためである（PR #358 のレビューの推奨 4。Neovim は再生の次のキーを捨てる。[Vim との違い](vim-differences.md)）。案内を消したキーはマクロに記録しない（Neovim は記録する）。引数を付けたら `E488` にする（Vim 9.1 と Neovim 0.12.5 の `:intro x` と同じ） |
+
+消える契機は、2026-11-22 に、Neovim 0.12.5 の `nvim --clean` と `make dist` の本体を、それぞれ tmux 3.6 の 80 列 24 行の窓で引数なしで起動し、キーを送るたびに `tmux capture-pane -p` で案内の有無を見て比べた。
+本体は `HOME` を一時ディレクトリにし、`XDG_CONFIG_HOME` などを外して起動した。
+
+| 操作 | Neovim 0.12.5 | 本体 |
+|---|---|---|
+| `i`、`<Esc>`、`a`、`v`、`:` と `/` の後の `<Esc>`、`j`、`l`、`"ap`（空のレジスター）、`:set number`、`:set ft=go`、`:set ts=4`、`:ls`、`<C-l>`、幅を 70 列にする | 消えない | 消えない |
+| `ix`（その後の `<BS>` と `u` でも戻らない）、`yyp` | 消える | 消える |
+| `:e ファイル` | 消える | 消える |
+| `:vsplit`、`:new`、`:copen`、`:help`（Neovim は窓を分ける） | 消え、`:only`、`:q`、`:cclose` でも戻らない | 本体に窓の分割は無い。`:diffsplit`（tmux のペインに 2 つ目の client）、`:output`、`:help`（フォーカスのあるポップアップ）で消え、`:outclose` でも戻らない |
+| `:tabnew`（Neovim）、`:tab.new`（本体） | 消え、閉じても戻らない | 消え、`:bdelete` でも戻らない |
+| フォーカスを入れる浮かべた窓（Neovim は `nvim_open_win` の `enter` を真、本体は `:finder.files`） | 消える | 消える |
+| フォーカスを入れない浮かべた窓（Neovim の `nvim_open_win` の `enter` が偽） | 消えない | 本体はホバーに当たる（カーソルの近くの、フォーカスを入れないテキストの部品）。消えない。tmux では確かめず、`internal/editor` の `TestIntroPopup` で確かめた |
+| `:set shortmess+=I` の後の `:set shortmess-=I`（Neovim）、`:option.set intro.show false` の後の `true`（本体） | 消え、戻らない | 消え、戻らない |
+| `:enew`（Neovim） | 消えない（同じ空のバッファを使い直す） | 本体に `:enew` は無い |
+| 空の標準入力（`printf '' \| nvim -`） | 出す | 本体の `-` も、最初のバッファが名前の無い空のバッファになるので出す（単体のテストは無い） |
+| 幅と高さを狭め、元に戻す | 49 列と 21 行で消え、50 列と 22 行に戻すと出る | 文面の行（パスの行を除く）が余り付きで収まらない幅と高さで消え、戻すと出る。境目の値は文面で決まる |
+| 設定ファイルのパスが長い（`XDG_CONFIG_HOME` が長い） | — | パスの行の左を `…` で詰め、ほかの行は出す（`TestIntroLongConfigPath`） |
+| `qa:intro<CR>xq` の後の `@a` | 記録は `:intro^Mx`。`@a` の中の `x` を案内が捨て、`@a` の後に案内は残らない | 記録は `:intro^M`。`@a` の中の `:intro` は案内を出さず、`@a` の後の利用者のキーは捨てない（`TestIntroInMappingAndMacro`） |
+| `:intro` の後の `i`、`abc` | `i` を捨て、`a` で `bc` を足す | 同じ |
+| 変えたバッファで `:intro` の後の `x` | `x` を捨て、本文は変わらない | 同じ |
+
 ### 7.3 設定の表と実行中の変更
 
 設定の項目を 1 つの表で定義し、設定ファイルの読み込みと、実行中に設定を変えるコマンドと読むコマンドが、どれもその表を通る（FR-131）。
@@ -4359,8 +4398,10 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `commandLine.completeMode` | 文字列（`full`、`longest`、`noselect` の語の列） | エディタ全体 | `full` | `wildmode` | コマンドラインの `<Tab>` の補い方（7.4。FR-196）。書き方は Vim の `'wildmode'` と同じで、語の列として読めない値は表の欄 `option.Def.Words` で断る（`:set` と `:option.set` は `E474`。Neovim 0.12.5 の `:set wildmode=foo` と同じ番号）。既定は Vim と Neovim と同じ。`<Tab>` を打つたびに読む。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `longest:full,full` |
 | `commandLine.completeIgnoreCase` | 真偽 | エディタ全体 | `false` | `wildignorecase` | コマンドラインの補完で、ファイルとディレクトリの名前の大文字と小文字を区別しないか（7.4。FR-196）。既定は Vim と同じく区別する。候補を集めるたびに読む。同梱の `config.example.jsonc` では `true` |
 | `completionMenu.height` | 整数（0 から 9999） | エディタ全体 | `0` | `pumheight` | 補完の候補の一覧の行の数の上限（7.4。FR-197）。0 なら画面に収まるだけ出す（Vim と同じ）。描くたびに読む。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `12` |
+| `intro.show` | 真偽 | エディタ全体 | `true` | 無し（Vim の `'shortmess'` の `I` に当たるが、`search.showCount` と同じく `'shortmess'` の別名は作らない） | 引数なしで起動したときに起動の案内を出すか（7.2 の「起動の案内」。FR-206）。既定は Vim と Neovim と同じく出す。描くたびに読み、偽を読んだら、その後に真へ戻しても出さない。`:intro` はこの値によらず出す。同梱の `config.example.jsonc` では、出さない書き方をコメントで示す |
 
-`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で、`progress.show` と `progress.doneMs` は #340 で、`scrollbar.*` の 4 つは #348 で足した。
+`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で、`progress.show` と `progress.doneMs` は #340 で、`scrollbar.*` の 4 つは #348 で、`intro.show` は #355 で足した。
+#355 の issue は名前を実装者に任せていた。出すかの真偽なので、`progress.show` と `scrollbar.show` にそろえて `intro.` の下の `show` にした。
 #348 の名前は、nvim-scrollview の設定の名前を camelCase にして `scrollbar.` の下に置いた（`signs_on_startup` は、起動の後に変えても効くので `marks` にした）。
 設定の表の型は真偽、整数、文字列だけなので、名前の並びはコンマで区切った文字列にした（Vim の `'listchars'` などと同じ書き方）。
 #319 の 2 つの名前は、issue の案のとおりにした。`cursor.restore` には Vim の名前が無い（Vim は設定でなく `defaults.vim` の自動コマンドで戻す）ので、`:set` では受け付けない。
@@ -4671,7 +4712,7 @@ Vim 9.1 の `:tabe` を引数なしで打つと、`:tabnew` と同じく空の�
 | 候補の選び方と、裏で集める仕事 | `internal/editor` の `completion.go` | コマンドラインに依らない部分。候補の列と選んでいる候補（`completionChoice`。次、前、1 画面ぶん、打った語に戻る）と、イベントループの外で候補を集める仕事（`completionJob`。集めている間、その client の入力を止める） |
 | 候補を集めることと補う状態 | `internal/editor` の `cmdcomplete.go` | コマンドの名前（`ex.Names` と `exCommands`）、バッファ、`:help` の語（`listHelpWords`）、`:ext` の引数を集め、`<Tab>` を打った回数と `commandLine.completeMode` で補う。状態は client ごとに持つ（`viewFields.wild`） |
 | ファイルの候補 | `internal/editor` の `filecomplete.go` | ファイルとディレクトリの候補を集める（`collectFiles`）。`completionJob` の上で動く |
-| 一覧の描画 | `internal/ui` の `completion.go`（`ui.Frame.Completion`） | 項目、選んでいる項目、項目を並べ始めるコマンドラインの中の位置を受け取り、位置と大きさとスクロールの位置を決めて描く。窓の重なりの表（`layers.go`）の 8.1 である |
+| 一覧の描画 | `internal/ui` の `completion.go`（`ui.Frame.Completion`） | 項目、選んでいる項目、項目を並べ始めるコマンドラインの中の位置を受け取り、位置と大きさとスクロールの位置を決めて描く。窓の重なりの表（`layers.go`）の「補完の候補の一覧」の行（`drawCompletion`）である |
 | 設定 | `internal/option` の表（7.3） | `commandLine.completeMode`、`commandLine.completeIgnoreCase`、`completionMenu.height` |
 
 一覧の中身（`wildMenu`）を描く位置から分けて持つのは、コマンドラインと検索の入力を画面の上の中央のポップアップに出す表示（noice.nvim の `command_palette`。別の issue）が、同じ中身を別の場所に描けるようにするためである。

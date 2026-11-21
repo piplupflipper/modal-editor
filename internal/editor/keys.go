@@ -252,6 +252,10 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		e.op.intr.Store(false)
 		k = editcmd.Esc
 	}
+	if e.dismissIntro() {
+		// :intro の案内を出していれば、このキーは案内を消すだけで、コマンドとしては使わない（intro.go。FR-207）。
+		return
+	}
 	if k.IsMouse() && (e.confirm != nil || e.prompt != nil || e.activeChoice() != nil || e.regList != nil) {
 		// 問いと一覧の窓を出している間のマウスの出来事（ホイールなど）は、答えにも一覧の操作にもせずに捨てる（FR-184）。
 		// 答えにすると、問いの間にホイールを回しただけで y でない答え（n）になるためである。
@@ -299,6 +303,10 @@ func (e *Editor) handleKey(k editcmd.Key) {
 // 終わった後に、再び展開せずに続ける（Vim はコマンドが終わってから展開の残りを実行する）。
 func (e *Editor) feedMapped(keys []editcmd.Key) {
 	for i, k := range keys {
+		if e.dismissIntro() {
+			// 展開の途中の :intro の案内は、展開の次のキーで消し、そのキーは使わない（Neovim の plain_vgetc が先行入力から読むのと同じ。intro.go）。
+			continue
+		}
 		ok := e.feedKey(k)
 		if h := e.suspension(); h != nil {
 			h.mapped = append(h.mapped, keys[i+1:]...)
@@ -315,6 +323,8 @@ func (e *Editor) feedMapped(keys []editcmd.Key) {
 // 貼り付けはキーマップを通さない（Vim と同じ）。キーマップの接頭辞を待っていれば、時間切れと同じく先に確定させて実行する。
 // 確認の問いと choice/ask の問いを出している間の貼り付けは、答えにせずに捨てる。choice/ask の問いでは、捨てたことを数えて出す（#151）。
 func (e *Editor) handlePaste(text string) {
+	// :intro の案内は消すが、貼り付けたテキストは捨てずに入れる（intro.go。FR-207）。
+	e.dismissIntro()
 	e.dismissFloat(editcmd.Key{})
 	if e.asking() {
 		return

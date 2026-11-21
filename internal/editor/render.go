@@ -116,9 +116,10 @@ func (e *Editor) frame() *ui.Frame {
 // 行を折り返すか（ui.Frame.Wrap）も、描くたびに設定の今の値（lineWrap.enabled）から詰める（FR-156）。
 // 行の文字の並べ方（ui.Frame.LineLayout。タブ文字の幅と、空白の記号を描くか）は、gj と gk と望みの列と同じ lineLayout で作る（FR-170）。
 // 行番号の列と同じく、空白の記号を描くのは client の画面のバッファの表示領域だけである（ポップアップとプレビューの中には描かない）。
-// 拡張機能の進み具合（uiProgress。FR-178）と、右端のスクロールバーと印（uiScrollbar。FR-186、FR-187）も、この画面にだけ重ねる。
+// 拡張機能の進み具合（uiProgress。FR-178）と、右端のスクロールバーと印（uiScrollbar。FR-186、FR-187）と、
+// 起動の案内（uiIntro。FR-205、FR-207）も、この画面にだけ重ねる。
 //
-// req: FR-135, FR-140, FR-153, FR-156, FR-170, FR-178, FR-186
+// req: FR-135, FR-140, FR-153, FR-156, FR-170, FR-178, FR-186, FR-205
 func (e *Editor) bufferFrame() *ui.Frame {
 	f := e.frame()
 	f.LineNumbers = e.uiLineNumbers()
@@ -129,6 +130,7 @@ func (e *Editor) bufferFrame() *ui.Frame {
 	f.Highlights = e.flashHighlights(e.tab())
 	f.Progress = e.uiProgress()
 	f.Scrollbar = e.uiScrollbar(bs, f.Search)
+	f.Intro = e.uiIntro()
 	e.incSearchFrame(f)
 	return f
 }

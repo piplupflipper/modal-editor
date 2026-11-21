@@ -8,6 +8,7 @@ package ui
 //	順   部品                                                         描く所
 //	1    バッファの行（本文、印の列、行番号の列、見比べの詰め物、"~" の行）  render の行の繰り返し（drawGutter、drawLine、drawFiller）
 //	2    行を折り返すときの表示領域の端の印（"<<<"、"@@@"）               drawer.drawMarks
+//	2.5  起動の案内（Frame.Intro。FR-205、FR-207）                         drawIntro
 //	3    右端のスクロールバーと印（Frame.Scrollbar。FR-186、FR-187）       drawScrollbar
 //	4    拡張機能の進み具合（Frame.Progress。FR-178）                      drawProgress
 //	5    浮かべる窓（Frame.List、Frame.Float とそのプレビュー）             drawList、drawFloat
@@ -17,8 +18,14 @@ package ui
 //	8.1  補完の候補の一覧（Frame.Completion。FR-197。コマンドラインの行の真上）   drawCommandLine の中の drawCompletion
 //	9    タブの行（画面の一番上の 1 行。ほかの部品を 1 行下へずらす）        renderWithTabLine
 //
+// 行を足すときは、今の行の番号を振り直さず、間に小数の番号（2.5、8.1）で入れる。
+// ほかの文書とコメントは、この表の行を番号でなく部品の名前と描く関数（drawCompletion など）で指す（PR #358 のレビューの推奨 6）。
+//
+// 起動の案内をバッファの行のすぐ上に置くのは、Neovim 0.12.5 が案内を窓の格子（"~" の行）に直に描き（update_screen の intro_message）、
+// 浮かべた窓（nvim-scrollview、fidget.nvim、ホバー）とメッセージはその上に重なるのと同じにするためである。
+// 案内は表示領域の中に描くので、ステータス行とコマンドラインの行は覆わない（Neovim も 'laststatus' が 2 ならステータス行を覆わない）。
 // 進み具合を浮かべる窓より下に置くのは、fidget.nvim の窓の zindex の既定（45）が、Neovim の浮かべた窓の既定（50）より下にあるのと
-// 同じ重なりにするためである。複数の行に広がったメッセージ（8）も、進み具合の上に出る。
+// 同じ重なりにするためである。複数の行に広がったメッセージ（コマンドラインの行）も、進み具合の上に出る。
 // スクロールバーを進み具合より下に置くのも、nvim-scrollview の窓の zindex の既定（40）が fidget.nvim の 45 より下にあるのと同じ重なりにするためである。
 // 進み具合は右の端の 1 列を空けて描く（progressPadding）ので、スクロールバーの列とは重ならない。
 // 折り返しの "@@@"（2）は最後の行の右の 3 列に描くので、スクロールバーがその右の 1 列に重なる（nvim-scrollview も、浮かべた窓として本文の上に描く）。
