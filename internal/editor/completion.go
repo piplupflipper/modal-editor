@@ -102,12 +102,11 @@ func longestCommonPrefix(items []string) string {
 // 外部のコマンドと再生中の拡張機能の結果を待つときと同じ形である。集め終えて補った後に、止めた入力を順に続ける。
 // このため、<Tab> と同じ読み込みで届いた <CR> や、キーマップの展開の中の <Tab><CR> も、補った後のコマンドラインで働く（FR-199）。
 // 集めている間も、イベントループは止まらず、ほかの client のキー、拡張機能のイベント、描画は進む。
-// <C-c> で集めるのを取り消せ（interruptCompletion）、取り消したら補う前の語のまま、<C-c> までに打ったキーを捨てる。
+// <C-c> で集めるのを打ち切れ（interruptCompletion）、集める関数が返るのを待たずに、補う前の語のまま、<C-c> までに打ったキーを捨てて
+// その client のキーの処理に戻る。
 type completionJob struct {
 	heldInput
 	cancel context.CancelFunc
-	// interrupted は、<C-c> で取り消したかである。
-	interrupted bool
 	// done は、集めた候補（取り消したか集められなければ err）を受け取って補う。集め終えた client を読み込んでから、
 	// イベントループの goroutine で呼ぶ。
 	done func(items, shown []string, err error)
@@ -136,22 +135,20 @@ func (e *Editor) startCompletionJob(collect func(ctx context.Context) (items, sh
 }
 
 // completionJobDone は、client c の仕事 job が集めた候補を受け取る。イベントループの goroutine で呼ぶ。
-// 列に残していた c のキーを処理できるようにし、<C-c> で取り消していれば、<C-c> までのキーを捨てて、補わずに終える
-// （Neovim 0.12.5 の補完の途中の <C-c> と同じく、コマンドラインは抜けない）。取り消していなければ補い、止めていた入力を続ける。
+// 仕事をもう終えていれば（<C-c> で打ち切った。interruptCompletion）、届いた候補を捨てる。
+// 集めている間に <C-c> を打っていれば（印を見る前に候補が届いた）、打ち切ったときと同じに終える。
+// そうでなければ、列に残していた c のキーを処理できるようにし、補ってから、止めていた入力を続ける。
 //
 // req: FR-199
 func (e *Editor) completionJobDone(c *clientView, job *completionJob, items, shown []string, err error) {
 	if c.completionJob != job {
 		return
 	}
-	c.completionJob = nil
-	interrupted := job.interrupted
 	if e.keys.interrupted(c) {
-		interrupted = true
-		e.interrupt.Store(false)
-		c.intr.Store(false)
-		e.keys.dropThrough(interruptKey, c)
+		e.abortCompletion(c, job)
+		return
 	}
+	c.completionJob = nil
 	if !e.keys.empty() {
 		signal(e.keys.ready)
 	}
@@ -159,21 +156,39 @@ func (e *Editor) completionJobDone(c *clientView, job *completionJob, items, sho
 		return
 	}
 	e.useClient(c)
-	if interrupted {
-		job.done(nil, nil, context.Canceled)
-		e.remap.reset()
-		return
-	}
 	job.done(items, shown, err)
 	e.resumeInput(job.heldInput)
 }
 
-// interruptCompletion は、<C-c> を受けた client の、候補を集めている仕事を取り消す。
+// interruptCompletion は、<C-c> を受けた client の、候補を集めている仕事を打ち切る（abortCompletion）。
+// 集める関数が返るのを待たない。止まったファイルシステム（応答の無い NFS、切れた sshfs）の読み込みは、取り消しても返らないためである。
+// 集める goroutine は、後で返ったら結果を捨てる（completionJobDone）。
+//
+// req: FR-199
 func (e *Editor) interruptCompletion() {
 	for _, c := range e.clients {
-		if j := c.completionJob; j != nil && c.intr.Load() && !j.interrupted {
-			j.interrupted = true
-			j.cancel()
+		if j := c.completionJob; j != nil && e.keys.interrupted(c) {
+			e.abortCompletion(c, j)
 		}
 	}
+}
+
+// abortCompletion は、client c の仕事 job を、補わずに終える。集める関数を取り消し、<C-c> までに打った c のキーを捨て、
+// 止めていたキーマップの展開の残りも捨てて、列に残した c のキーを処理できるようにする
+// （Neovim 0.12.5 の補完の途中の <C-c> と同じく、コマンドラインは抜けず、補う前の語のまま残る）。
+func (e *Editor) abortCompletion(c *clientView, job *completionJob) {
+	job.cancel()
+	c.completionJob = nil
+	e.interrupt.Store(false)
+	c.intr.Store(false)
+	e.keys.dropThrough(interruptKey, c)
+	if !e.keys.empty() {
+		signal(e.keys.ready)
+	}
+	if c.detached {
+		return
+	}
+	e.useClient(c)
+	job.done(nil, nil, context.Canceled)
+	e.remap.reset()
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/piplupflipper/vi-imitation/internal/command"
 	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
@@ -399,6 +400,41 @@ func TestCollectFilesPaths(t *testing.T) {
 	}
 	if _, _, err := collectFiles(context.Background(), fileQuery{word: "nothere/../", workDir: dir, env: env}); err == nil {
 		t.Error("無いディレクトリを通るパスを読めた")
+	}
+}
+
+// 集める関数が取り消しに応じない（止まったファイルシステムの読み込み）ときも、<C-c> を打てば、集める関数が返るのを待たずに
+// 補いを打ち切り、その client のキーの処理に戻る。後で集める関数が返っても、その候補は使わない。
+//
+// req: FR-199
+func TestCmdlineCompleteStuckFiles(t *testing.T) {
+	h := startCompletion(t, completionFiles, nil)
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	h.e.do(func() {
+		h.e.wildCollect = func(_ context.Context, q fileQuery) ([]string, []string, error) {
+			started <- struct{}{}
+			<-release // 取り消しを見ない
+			return collectFiles(context.Background(), q)
+		}
+	})
+	h.keys(":e al<Tab>")
+	<-started
+	h.keys("<C-c>")
+	h.keys("x")
+	h.waitCmdline("<C-c> の後に打った x", "e alx", "")
+	h.keys("<Esc>")
+	h.settle()
+	var mode bool
+	h.e.do(func() { mode = h.e.cur.state.Mode() == command.ModeNormal && h.e.op.completionJob == nil })
+	if !mode {
+		t.Fatal("<C-c> の後の <Esc> でノーマルモードに戻らない")
+	}
+	close(release)
+	h.keys("ia<Esc>")
+	h.settle()
+	if got := h.text(); got != "a" {
+		t.Errorf("集める関数が後で返った後のバッファ = %q", got)
 	}
 }
 
