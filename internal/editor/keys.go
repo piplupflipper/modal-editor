@@ -181,6 +181,7 @@ func (e *Editor) afterKey() {
 		// このキーで始めた外部のコマンドと再生中の拡張機能の待ちは、知らせ（intrCh）を Run が先に取っていても、ここで中断する。
 		e.interruptShell()
 		e.interruptReplay()
+		e.interruptCompletion()
 		// 処理の途中に <C-c> が押された。中断はもう効いたので印を下ろし、<C-c> までの先打ちを捨てる。
 		e.interrupt.Store(false)
 		c.intr.Store(false)

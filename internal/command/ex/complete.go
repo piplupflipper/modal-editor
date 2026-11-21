@@ -26,9 +26,9 @@ const (
 	// CompleteCommand は、コマンドの名前を補うことを表す。範囲の後の名前の途中（:e、:%s、:finder.f、:w|e）である。
 	CompleteCommand
 	// CompleteFile は、ファイルとディレクトリのパスを補うことを表す（:e、:w、:wq、:x、:tab.new、:diffsplit と、
-	// それらへ付け替えた別名）。語は "\ " と "\|" を含めたままの文字列で、UnescapeFileArg で戻してから探す。
+	// それらへ付け替えた別名）。語は打ったままの文字列で、ExpandFileArg で開くパスにしてから探す（filearg.go）。
 	CompleteFile
-	// CompleteBuffer は、バッファの名前を補うことを表す（:b、:bd）。語は引数の全体で、UnescapeFileArg で戻してから探す。
+	// CompleteBuffer は、バッファの名前を補うことを表す（:b、:bd）。語は引数の全体で、UnescapeBufferArg で戻してから探す。
 	CompleteBuffer
 	// CompleteList は、Completion.Candidates に入れた候補で補うことを表す（設定の名前と値）。
 	CompleteList
@@ -214,7 +214,7 @@ func lastWordStart(arg string) int {
 //
 //   - "=" を含めば、"=" の前の名前の項目の値を補う（completeValue）
 //   - "no" で始まれば、"no" の後に真偽の項目の名前を補う（:set no<Tab> は真偽の項目の一覧）
-//   - "?"、"!"、"&" を含めば、補うものが無い
+//   - "?"、"!"、"&" を含めば、候補の無い補う所にする（<Tab> は何も入れない。Neovim 0.12.5 と同じ）
 //   - それ以外は、項目の名前（Vim の名前）を補う
 func (st *State) completeSet(line string, wordStart int) Completion {
 	word := line[wordStart:]
@@ -226,7 +226,8 @@ func (st *State) completeSet(line string, wordStart int) Completion {
 		return st.completeValue(d, line, wordStart+len(name)+1, true)
 	}
 	if strings.ContainsAny(word, "?!&") {
-		return Completion{}
+		// 補う所だが候補は無い（Neovim 0.12.5 の :set ts?<Tab> は何も入れない）。
+		return Completion{Kind: CompleteList, Start: len(line)}
 	}
 	if rest, ok := strings.CutPrefix(word, "no"); ok {
 		return Completion{Kind: CompleteList, Start: wordStart + 2, Candidates: vimOptionCandidates(rest, true)}
@@ -329,25 +330,4 @@ func escapeSetValue(v string) string {
 		sb.WriteRune(r)
 	}
 	return sb.String()
-}
-
-// EscapeFileArg は、ファイルとバッファの名前 name を、コマンドラインの引数に書く形にする（FR-195）。
-// 空白の前と "|" の前に "\" を付ける。fileArg と splitBar が戻す形（"\ " と "\|"）である。
-func EscapeFileArg(name string) string {
-	if !strings.ContainsAny(name, " |") {
-		return name
-	}
-	var sb strings.Builder
-	for _, r := range name {
-		if r == ' ' || r == '|' {
-			sb.WriteByte('\\')
-		}
-		sb.WriteRune(r)
-	}
-	return sb.String()
-}
-
-// UnescapeFileArg は、コマンドラインの引数に書いたファイルとバッファの名前 arg を、EscapeFileArg の前の形に戻す（"\ " と "\|"）。
-func UnescapeFileArg(arg string) string {
-	return strings.NewReplacer(`\ `, " ", `\|`, "|").Replace(arg)
 }

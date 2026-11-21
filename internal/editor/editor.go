@@ -916,6 +916,7 @@ func (e *Editor) Run(ctx context.Context) error {
 			// <C-c> のキーそのものは列から届くので、ここでは外部のコマンドと再生中の拡張機能の待ちの中断だけをする。
 			e.interruptShell()
 			e.interruptReplay()
+			e.interruptCompletion()
 		case o := <-e.shellDone:
 			e.shellFinished(o)
 		case r := <-e.termCh:
@@ -1051,6 +1052,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Ex.Options = optionAccess{e: e, bs: bs}
 	bs.state.Ex.Aliases = e.aliases
+	bs.state.Ex.FileEnv = editorFileEnv{e: e}
 	bs.state.Interrupted = e.interrupt.Load
 	bs.state.KeyHook = func(k editcmd.Key, insert bool) (bool, []editcmd.Key, error) { return e.popupStateKey(bs, k, insert) }
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{

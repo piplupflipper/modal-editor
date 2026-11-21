@@ -211,7 +211,7 @@ func (e *Editor) replayAnswered(c *clientView, r *exthost.QueryResult) {
 	e.resumeInput(w.heldInput)
 }
 
-// suspension は、操作中の client（読み込んでいる client）が、外部のコマンドの実行か再生中の拡張機能の結果を待っていれば、
+// suspension は、操作中の client（読み込んでいる client）が、外部のコマンドの実行か再生中の拡張機能の結果か補完の候補を待っていれば、
 // 待つ間に止めた入力の置き場を返す。待っていなければ nil。
 // feedMapped と handlePaste は、これが nil でなくなったら、残りのキーと貼り付けをここへ移す。
 func (e *Editor) suspension() *heldInput {
@@ -223,6 +223,10 @@ func (e *Editor) suspension() *heldInput {
 	}
 	if c != nil && c.replay != nil {
 		return &c.replay.heldInput
+	}
+	if c != nil && c.completionJob != nil {
+		// 補完の候補を集めている（completion.go。FR-199）。
+		return &c.completionJob.heldInput
 	}
 	return nil
 }

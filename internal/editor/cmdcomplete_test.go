@@ -237,36 +237,6 @@ func TestCmdlineCompleteScreen(t *testing.T) {
 	h.keys("<Esc>")
 }
 
-// Ex コマンドのファイルの引数の、先頭の "~" と環境変数を展開する（Vim と Neovim と同じ）。引けない環境変数はそのまま残す。
-//
-// req: FR-200
-func TestExpandFilePath(t *testing.T) {
-	env := func(name string) (string, bool) {
-		switch name {
-		case "HOME":
-			return "/h", true
-		case "D":
-			return "x y", true
-		}
-		return "", false
-	}
-	for _, tt := range []struct{ in, want string }{
-		{"~", "/h/me"},
-		{"~/a", "/h/me/a"},
-		{"~x/a", "~x/a"},
-		{"a~/b", "a~/b"},
-		{"$HOME/a", "/h/a"},
-		{"${HOME}/a", "/h/a"},
-		{"$D/$NOSUCH/a", "x y/$NOSUCH/a"},
-		{"a$", "a$"},
-		{"${HOME", "${HOME"},
-	} {
-		if got := expandFilePath(tt.in, "/h/me", env); got != tt.want {
-			t.Errorf("expandFilePath(%q) = %q, want %q", tt.in, got, tt.want)
-		}
-	}
-}
-
 // :e ~/a と :w $名前/b は、ホームディレクトリと環境変数を展開したパスを開いて書く。
 //
 // req: FR-200
@@ -294,8 +264,75 @@ func TestEditExpandsHome(t *testing.T) {
 	h.keys("<Esc>")
 }
 
-// ファイルの候補を集めている間は入力を止めない。集めている間に打った補完のキーは、集め終えてから打った順に効き、
-// ほかのキーは集めるのを取り消してから働く（取り消した後に届いた候補は使わない）。
+// 補ったファイルの名前は、:e と :w がもう一度展開しない形（"$" と先頭の "~" の前に "\"）で入れるので、名前に "$" があっても、
+// その名前のファイルを開いて書く（Neovim 0.12.5 と同じ）。"\$" と "\~" も、その文字のままの名前を開く。
+//
+// req: FR-195, FR-200
+func TestCmdlineCompleteEscapedNames(t *testing.T) {
+	t.Setenv("MYVAR", "sub")
+	h := startCompletion(t, map[string]string{"note$MYVAR.txt": "keep\n", "~": "tilde\n", "bad\xff.txt": "", "badx.txt": "x\n"}, nil)
+	h.keys(":e note<Tab>")
+	h.waitCmdline(":e note<Tab>", `e note\$MYVAR.txt`, "")
+	h.keys("<CR>")
+	h.settle()
+	if got := h.text(); got != "keep" {
+		t.Fatalf("補った名前で開いたバッファ = %q", got)
+	}
+	h.keys("ohello<Esc>:w<CR>")
+	h.settle()
+	var dir string
+	h.e.do(func() { dir = h.e.workDir() })
+	if _, err := os.Stat(filepath.Join(dir, "notesub.txt")); err == nil {
+		t.Error(":w が展開した名前のファイルを作った")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "note$MYVAR.txt")); string(data) != "keep\nhello\n" {
+		t.Errorf("note$MYVAR.txt = %q", data)
+	}
+	h.keys(`:e \~<CR>`)
+	h.settle()
+	if got := h.text(); got != "tilde" {
+		t.Errorf(`:e \~ で開いたバッファ = %q`, got)
+	}
+	// UTF-8 として正しくない名前は候補にしない（入れると別の名前になる）。
+	h.keys(":e bad<Tab>")
+	h.waitCmdline(":e bad<Tab>", "e badx.txt", "")
+	h.keys("<Esc>")
+}
+
+// <Tab> と同じ読み込みで届いた <CR>（貼り付け、tmux の send-keys）と、キーマップの展開の中の <Tab><CR> は、補った後の
+// コマンドラインで働く（Neovim 0.12.5 と同じ）。候補を集めている間、その client の残りのキーとキーマップの展開を止めておくためである。
+//
+// req: FR-199
+func TestCmdlineCompleteTypeahead(t *testing.T) {
+	files := map[string]string{"alpine.md": "pine\n", "alpha.txt": "", "empty/x": ""}
+	dir := writeFiles(t, files)
+	h := startTerm(t, newFakeTerm(), Config{WorkDir: dir, Keymap: map[string]map[string]string{
+		"normal": {"<Space>e": ":e alpi<Tab><CR>"},
+	}})
+	h.settle()
+	h.keys(":e alpi<Tab><CR>")
+	h.settle()
+	var name string
+	h.e.do(func() { name = h.e.bufferName(h.e.cur) })
+	if name != "alpine.md" || h.text() != "pine" {
+		t.Fatalf("まとめて送った :e alpi<Tab><CR> のバッファ = %q（%q）", name, h.text())
+	}
+	h.keys(":tab.new<CR>iscratch<Esc>:w empt<Tab><CR>")
+	h.settle()
+	if _, err := os.Stat(filepath.Join(dir, "empt")); err == nil {
+		t.Error(":w empt<Tab><CR> が補う前の名前のファイルを作った")
+	}
+	h.keys(":tab.new<CR><Space>e")
+	h.settle()
+	h.e.do(func() { name = h.e.bufferName(h.e.cur) })
+	if name != "alpine.md" {
+		t.Errorf("キーマップの :e alpi<Tab><CR> のバッファ = %q", name)
+	}
+}
+
+// ファイルの候補を集めている間は、その client のキーを列に残し、集め終えて補ってから順に処理する（<Tab> の後の <CR> は、
+// 補った後のコマンドラインを実行する）。集めている間に <C-c> を打つと、集めるのを取り消し、<C-c> までのキーを捨てて、
+// 補う前の語のままコマンドラインに残る（Neovim 0.12.5 の補完の途中の <C-c> と同じ）。
 //
 // req: FR-199
 func TestCmdlineCompleteSlowFiles(t *testing.T) {
@@ -308,29 +345,61 @@ func TestCmdlineCompleteSlowFiles(t *testing.T) {
 			select {
 			case <-release:
 			case <-ctx.Done():
+				return nil, nil, ctx.Err()
 			}
 			return collectFiles(context.Background(), q)
 		}
 	})
-	h.keys(":e al<Tab><Tab><C-y>")
+	h.keys(":e al<Tab><CR>")
 	<-started
-	h.settle()
-	if got := h.cmdline(); got != "e al" {
-		t.Fatalf("集めている間のコマンドライン = %q", got)
-	}
+	h.eventually("集めている間は <CR> を列に残す", func() bool {
+		return h.e.cur.state.CommandLine() == "e al" && h.e.keys.has(h.e.op)
+	})
 	release <- struct{}{}
-	h.waitCmdline("集め終えた後", "e alpine.md", "")
-	h.keys("<Esc>:e al<Tab>")
-	<-started
-	h.keys("x")
-	h.waitCmdline("集めている間に打った x", "e alx", "")
-	close(release)
 	h.settle()
-	h.e.do(func() {})
-	if got, menu := h.cmdline(), h.menu(); got != "e alx" || menu != "" {
-		t.Errorf("取り消した後 = %q、一覧 = %q", got, menu)
+	var name string
+	h.e.do(func() { name = h.e.bufferName(h.e.cur) })
+	if name != "alpha2.go" {
+		t.Fatalf("集め終えた後に実行した <CR> のバッファ = %q", name)
+	}
+	h.keys(":e al<Tab>x")
+	<-started
+	h.keys("<C-c>")
+	h.settle()
+	if got, menu := h.cmdline(), h.menu(); got != "e al" || menu != "" {
+		t.Errorf("<C-c> で取り消した後 = %q、一覧 = %q", got, menu)
 	}
 	h.keys("<Esc>")
+}
+
+// パスの ".." は字面で畳まずに OS に解かせるので、シンボリックリンクの先の親を読み、無いディレクトリを通るパスは読めない
+// （Neovim 0.12.5 と同じ）。打ったディレクトリの部分はそのまま候補に残し、環境変数を含めば展開したパスにする。
+//
+// req: FR-199
+func TestCollectFilesPaths(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"beta/one.txt": "", "beta/gamma/x": "", "top.txt": ""})
+	if err := os.Symlink(filepath.Join(dir, "beta", "gamma"), filepath.Join(dir, "deep")); err != nil {
+		t.Fatal(err)
+	}
+	env := fileEnvCopy{home: dir, env: []string{"D=beta"}}
+	for _, tt := range []struct {
+		word         string
+		items, shown []string
+	}{
+		{"deep/../", []string{"deep/../gamma/", "deep/../one.txt"}, []string{"gamma/", "one.txt"}},
+		{"$D/o", []string{"beta/one.txt"}, []string{"one.txt"}},
+		{`\$D/o`, nil, nil},
+		{"~/t", []string{"~/top.txt"}, []string{"top.txt"}},
+		{"d", []string{"deep/"}, []string{"deep/"}},
+	} {
+		items, shown, _ := collectFiles(context.Background(), fileQuery{word: tt.word, workDir: dir, env: env})
+		if !slices.Equal(items, tt.items) || !slices.Equal(shown, tt.shown) {
+			t.Errorf("collectFiles(%q) = %q, %q, want %q, %q", tt.word, items, shown, tt.items, tt.shown)
+		}
+	}
+	if _, _, err := collectFiles(context.Background(), fileQuery{word: "nothere/../", workDir: dir, env: env}); err == nil {
+		t.Error("無いディレクトリを通るパスを読めた")
+	}
 }
 
 // ファイルの候補を集める途中で取り消されたら、誤りを返して候補を返さない。読めないディレクトリも誤りにする。
@@ -338,7 +407,7 @@ func TestCmdlineCompleteSlowFiles(t *testing.T) {
 // req: FR-199
 func TestCollectFilesCancel(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a": "", "b": ""})
-	q := fileQuery{word: "", workDir: dir, env: envLookup(nil)}
+	q := fileQuery{word: "", workDir: dir, env: fileEnvCopy{}}
 	items, _, err := collectFiles(context.Background(), q)
 	if err != nil || !slices.Equal(items, []string{"a", "b"}) {
 		t.Fatalf("collectFiles = %q, %v", items, err)

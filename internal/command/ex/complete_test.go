@@ -134,9 +134,15 @@ func TestCompleteOptions(t *testing.T) {
 			t.Errorf("Complete(%q) = %+v, want start %d candidates %q", tt.line, c, tt.start, tt.want)
 		}
 	}
-	for _, line := range []string{"set nu!", "set nu?", "set number=", "set nosuch=", "option.set nosuch ", "option.get a b", "set ts&"} {
+	for _, line := range []string{"set number=", "set nosuch=", "option.set nosuch ", "option.get a b"} {
 		if c := Complete(st, line); c.Kind != CompleteNothing {
 			t.Errorf("Complete(%q) = %+v, want 補うものが無い", line, c)
+		}
+	}
+	// "?"、"!"、"&" の後は、候補の無い補う所である（<Tab> は何も入れない。Neovim 0.12.5 と同じ）。
+	for _, line := range []string{"set nu!", "set ts?", "set ts&"} {
+		if c := Complete(st, line); c.Kind != CompleteList || len(c.Candidates) != 0 || c.Start != len(line) {
+			t.Errorf("Complete(%q) = %+v, want 候補の無い補う所", line, c)
 		}
 	}
 }
@@ -168,26 +174,96 @@ func TestSetCompleteMode(t *testing.T) {
 	}
 }
 
-// ファイルとバッファの名前は、空白と "|" の前に "\" を付けて書き、fileArg と splitBar と同じく戻す。
+// testEnv は、ファイルの引数を展開する口の偽物である。ホームディレクトリは /h、環境変数は MYVAR=sub と D=x y である。
+type testEnv struct{}
+
+func (testEnv) Home() string { return "/h" }
+
+func (testEnv) LookupEnv(name string) (string, bool) {
+	switch name {
+	case "MYVAR":
+		return "sub", true
+	case "D":
+		return "x y", true
+	}
+	return "", false
+}
+
+// 補完の候補に入れる形（EscapeFileArg）は、:e と :w が開く名前（ExpandFileArg）に戻る。"~" と環境変数の展開の文字、空白、
+// "|"、"\" の前に "\" を付けるので、名前に "$" や先頭の "~" があっても、名前そのもののファイルを開く（Neovim 0.12.5 と同じ）。
 //
-// req: FR-195
+// req: FR-195, FR-200
 func TestEscapeFileArg(t *testing.T) {
+	st := &State{FileEnv: testEnv{}}
 	for _, tt := range []struct{ name, arg string }{
 		{"a.txt", "a.txt"},
 		{"sp ace.txt", `sp\ ace.txt`},
 		{"a|b", `a\|b`},
 		{"日本 語/x", `日本\ 語/x`},
+		{"note$MYVAR.txt", `note\$MYVAR.txt`},
+		{"Outer$Inner.class", `Outer\$Inner.class`},
+		{`back\slash.txt`, `back\\slash.txt`},
+		{"~", `\~`},
+		{"~foo/~bar", `\~foo/~bar`},
+		{"a\tb", "a\\\tb"},
 	} {
 		if got := EscapeFileArg(tt.name); got != tt.arg {
 			t.Errorf("EscapeFileArg(%q) = %q, want %q", tt.name, got, tt.arg)
 		}
-		if got := UnescapeFileArg(tt.arg); got != tt.name {
-			t.Errorf("UnescapeFileArg(%q) = %q, want %q", tt.arg, got, tt.name)
+		// :e と :w で開くファイルの名前も同じになる。
+		for _, cmd := range []string{"e ", "w "} {
+			res, err := Execute(buffer.New("x\n"), st, 0, cmd+tt.arg)
+			if err != nil || len(res.Actions) != 1 || res.Actions[0].File != tt.name {
+				t.Errorf(":%s%s = %+v, %v", cmd, tt.arg, res.Actions, err)
+			}
 		}
-		// :e で開くファイルの名前も同じになる。
-		res, err := Execute(buffer.New("x\n"), nil, 0, "e "+tt.arg)
-		if err != nil || len(res.Actions) != 1 || res.Actions[0].File != tt.name {
-			t.Errorf(":e %s = %+v, %v", tt.arg, res.Actions, err)
+	}
+	for _, tt := range []struct{ name, arg string }{
+		{"a b|c", `a\ b\|c`},
+		{"$x", "$x"},
+	} {
+		if got := EscapeBufferArg(tt.name); got != tt.arg {
+			t.Errorf("EscapeBufferArg(%q) = %q, want %q", tt.name, got, tt.arg)
 		}
+		if got := UnescapeBufferArg(tt.arg); got != tt.name {
+			t.Errorf("UnescapeBufferArg(%q) = %q, want %q", tt.arg, got, tt.name)
+		}
+	}
+}
+
+// ファイルの引数の先頭の "~" と、"\" の付かない環境変数を展開する。"\$" と "\~" は、その文字そのものにする。
+// 値の無い環境変数と "~ユーザー名" は、そのまま残す（Vim と違う。docs/vim-differences.md）。展開の口が無ければ展開しない。
+//
+// req: FR-200
+func TestExpandFileArg(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"~", "/h"},
+		{"~/a", "/h/a"},
+		{"~x/a", "~x/a"},
+		{"a~/b", "a~/b"},
+		{`\~`, "~"},
+		{`\~/a`, "~/a"},
+		{"$MYVAR/a", "sub/a"},
+		{"${MYVAR}/a", "sub/a"},
+		{"note$MYVAR.txt", "notesub.txt"},
+		{`note\$MYVAR.txt`, "note$MYVAR.txt"},
+		{"$D/$NOSUCH/a", "x y/$NOSUCH/a"},
+		{"a$", "a$"},
+		{"${MYVAR", "${MYVAR"},
+		{"${}", "${}"},
+		{`back\slash`, `back\slash`},
+		{`back\\slash`, `back\slash`},
+		{`sp\ ace`, "sp ace"},
+		{`end\`, `end\`},
+	} {
+		if got := ExpandFileArg(tt.in, testEnv{}); got != tt.want {
+			t.Errorf("ExpandFileArg(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	if got := ExpandFileArg(`~/$MYVAR\ x`, nil); got != "~/$MYVAR x" {
+		t.Errorf("展開の口の無い ExpandFileArg = %q", got)
+	}
+	if !HasEnvRef("a$b") || HasEnvRef(`a\$b`) || HasEnvRef("ab") {
+		t.Error("HasEnvRef")
 	}
 }

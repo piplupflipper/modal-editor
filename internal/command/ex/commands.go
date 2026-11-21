@@ -156,7 +156,7 @@ const tabNewName = "tab.new"
 //
 // req: FR-151
 func runTabNew(c *execCtx, inv *invocation) error {
-	file, err := fileArg(inv)
+	file, err := c.fileArg(inv)
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func runPopup(op PopupOp) func(c *execCtx, inv *invocation) error {
 // runDiffSplit は :diffs[plit] {file} を実行する。file が無ければ、Vim 9.1 と同じく E471 にする。
 // 見比べを始めるのは、Action を受け取る呼び出し側（internal/editor）である。
 func runDiffSplit(c *execCtx, inv *invocation) error {
-	file, err := fileArg(inv)
+	file, err := c.fileArg(inv)
 	if err != nil {
 		return err
 	}
@@ -392,13 +392,16 @@ func (c *execCtx) wholeRange(inv *invocation) error {
 	return nil
 }
 
-// fileArg は、:w や :e の引数のファイル名を返す。"\ " は空白に戻す。
-func fileArg(inv *invocation) (string, error) {
+// fileArg は、:w や :e の引数のファイル名を返す。"\" を付けた文字を戻し、先頭の "~" と環境変数を State.FileEnv で展開する
+// （ExpandFileArg。FR-200）。
+//
+// req: FR-200
+func (c *execCtx) fileArg(inv *invocation) (string, error) {
 	arg := strings.TrimSpace(inv.arg)
 	if strings.HasPrefix(arg, "!") || strings.HasPrefix(arg, ">>") {
 		return "", errAt(inv.argPos, codeNotAvailable, "%s の !cmd と >> は使えません", inv.name)
 	}
-	return strings.ReplaceAll(arg, `\ `, " "), nil
+	return ExpandFileArg(arg, c.st.FileEnv), nil
 }
 
 // noArg は、引数を取らないコマンドに引数が続いていれば誤りを返す。
@@ -439,7 +442,7 @@ func runWrite(c *execCtx, inv *invocation) error {
 	if err := c.wholeRange(inv); err != nil {
 		return err
 	}
-	file, err := fileArg(inv)
+	file, err := c.fileArg(inv)
 	if err != nil {
 		return err
 	}
@@ -452,7 +455,7 @@ func runWriteQuit(c *execCtx, inv *invocation) error {
 	if err := c.wholeRange(inv); err != nil {
 		return err
 	}
-	file, err := fileArg(inv)
+	file, err := c.fileArg(inv)
 	if err != nil {
 		return err
 	}
@@ -468,7 +471,7 @@ func runXit(c *execCtx, inv *invocation) error {
 	if err := c.wholeRange(inv); err != nil {
 		return err
 	}
-	file, err := fileArg(inv)
+	file, err := c.fileArg(inv)
 	if err != nil {
 		return err
 	}
@@ -493,7 +496,7 @@ func runQuit(c *execCtx, inv *invocation) error {
 
 // req: FR-08
 func runEdit(c *execCtx, inv *invocation) error {
-	file, err := fileArg(inv)
+	file, err := c.fileArg(inv)
 	if err != nil {
 		return err
 	}
