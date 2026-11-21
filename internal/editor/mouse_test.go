@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -230,6 +231,55 @@ func TestMouseDragScroll(t *testing.T) {
 	if h.mode() != command.ModeVisual {
 		t.Errorf("モード = %v", h.mode())
 	}
+	// 画面の外の位置（端末によっては報告する）へのドラッグは、画面の最後の行（コマンドラインの行。2 行のはみ出し）として数える
+	// （Neovim 0.12.5 と同じ。PR #346 のレビューの推奨 2）。
+	h.mouse("<LeftMouse>", 5, 1)
+	h.mouse("<LeftDrag>", 30, 1)
+	if top, cur := h.viewTop(), h.cursor(); top != 4 || cur.Line != 12 {
+		t.Errorf("画面の外へのドラッグ = 最初の行 %d、カーソル %+v", top, cur)
+	}
+	h.mouse("<LeftRelease>", 30, 1)
+}
+
+// 同じ server の 2 つの client で、マクロに記録したクリックは、再生した client が最後に受けたマウスの出来事の位置で働く。
+// 別の client が後から受けた出来事の位置を、再生した client の画面の座標として解かない（PR #346 のレビューの必須 1）。
+//
+// req: FR-185
+func TestMouseTwoClients(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 40; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	h := mouseStart(t, Config{}, map[string]string{"a.txt": mouseText, "long.txt": strings.Join(lines, "\n") + "\n"}, "a.txt")
+	peer := &exitTerm{fakeTerm: newFakeTerm()}
+	peer.w, peer.h = 40, 30
+	h.peers = append(h.peers, peer.fakeTerm)
+	if err := h.e.Attach(peer, ClientInfo{ID: 2, Files: []string{filepath.Join(h.e.cfg.WorkDir, "long.txt")}}); err != nil {
+		t.Fatalf("Attach = %v", err)
+	}
+	// 上の client で、3 行目の 4 列目のクリックと x を記録する。
+	h.keys("qa")
+	h.settle()
+	h.click(3, 3)
+	h.keys("xqgg")
+	h.settle()
+	if got := h.bufferText("a.txt"); !strings.Contains(got, "\nshot\n") {
+		t.Fatalf("記録の後 = %q", got)
+	}
+	// 下の client で、上の client の画面に無い 21 行目を押す。
+	peer.in <- TermEvent{Key: editcmd.Special(editcmd.CodeLeftMouse), MouseRow: 21, MouseCol: 5}
+	peer.in <- TermEvent{Key: editcmd.Special(editcmd.CodeLeftRelease), MouseRow: 21, MouseCol: 5}
+	h.sent += 2
+	h.settle()
+	// 上の client で再生すると、上の client で最後に押した 3 行目の 4 列目の文字を消す。
+	h.keys("@a")
+	h.settle()
+	if got := h.bufferText("a.txt"); !strings.Contains(got, "\nsho\n") || !strings.Contains(got, "\nlast") {
+		t.Errorf("再生の後 = %q", got)
+	}
+	if got := h.cursor(); got != (buffer.Position{Line: 2, Byte: 2}) {
+		t.Errorf("再生の後のカーソル = %+v", got)
+	}
 }
 
 // 2 回目のクリックは単語を、3 回目のクリックは行を選ぶ。4 回目は 1 回目と同じく移るだけである（Neovim の矩形の選択の代わり）。
@@ -314,11 +364,18 @@ func TestMouseWheel(t *testing.T) {
 	h.settle()
 	h.mouse("<ScrollWheelDown>", 3, 3)
 	check("0 行の設定", 6, 8)
-	// ステータス行の上のホイールは送らない。
+	// ステータス行とコマンドラインの行の上のホイールも、表示領域を送る（Neovim 0.12.5 と同じ）。タブの行の上では送らない。
 	h.keys(":option.set mouse.scrollLines 3<CR>")
 	h.settle()
 	h.mouse("<ScrollWheelDown>", 10, 3)
-	check("ステータス行の上", 6, 8)
+	check("ステータス行の上", 9, 11)
+	h.mouse("<ScrollWheelDown>", 11, 3)
+	check("コマンドラインの行の上", 12, 14)
+	h.mouse("<ScrollWheelDown>", 0, 3)
+	check("タブの行の上", 12, 14)
+	// ステータス行のクリックはカーソルを動かさない。
+	h.click(10, 3)
+	check("ステータス行のクリック", 12, 14)
 }
 
 // 行を折り返さないときの横のホイールは、表示領域の左の端を mouse.scrollColumns の列（既定は 6）だけ送る。

@@ -8,8 +8,8 @@ package ui
 type HitArea int
 
 const (
-	// HitNone は、マウスで操作する部品が無い位置である（ステータス行、コマンドラインの行、出力の欄、浮かべた一覧の窓、
-	// ポップアップの枠線と見出し、プレビュー、ファインダーの窓など）。
+	// HitNone は、マウスで操作する部品が無い位置である（出力の欄、浮かべた一覧の窓、ポップアップの枠線と見出し、プレビュー、
+	// ファインダーの窓、画面の外など）。
 	HitNone HitArea = iota
 	// HitText は、バッファの表示領域である。印の列、行番号の列、最後の行より下の "~" の行、見比べの詰め物の行を含む。
 	HitText
@@ -17,6 +17,10 @@ const (
 	HitFloat
 	// HitTabLine は、タブの行である。
 	HitTabLine
+	// HitStatusLine は、ステータス行である（ホイールでその上の表示領域を送る。FR-182）。
+	HitStatusLine
+	// HitCommandLine は、コマンドラインの行（メッセージの行）である（ホイールで今の表示領域を送る。FR-182）。
+	HitCommandLine
 )
 
 // Hit は、画面の位置にあるもの（Renderer.HitTest の結果）である。
@@ -77,16 +81,20 @@ func (h *hitState) cover(row, x, n, w int) {
 // HitTest は、直前の Render が描いた画面の row 行目の col 列目（0 から数える）にあるものを返す（FR-181、FR-185）。
 //
 // clamp が HitText か HitFloat なら、位置をその部品の中へ寄せて解く（ドラッグの間の位置。Over にはみ出した行の数を入れる）。
-// その部品を描いていなければ HitNone を返す。clamp が HitNone なら寄せずに、位置にある部品を返す。
+// 寄せる前に、位置を画面の中へ寄せる。端末が画面の外の位置を報告しても、Neovim 0.12.5 と同じく画面の端の行として数える
+// （PR #346 のレビューの推奨 2）。その部品を描いていなければ HitNone を返す。clamp が HitNone なら寄せずに、位置にある部品を返す。
 // まだ描いていなければ HitNone を返す。
 //
-// req: FR-181, FR-185
+// req: FR-181, FR-182, FR-185
 func (r *Renderer) HitTest(row, col int, clamp HitArea) Hit {
 	none := Hit{Area: HitNone, Tab: -1}
-	if !r.rendered {
+	if !r.rendered || r.Width <= 0 || r.Height <= 0 {
 		return none
 	}
-	if r.tabRows > 0 && row < r.tabRows && clamp == HitNone {
+	if clamp == HitText || clamp == HitFloat {
+		row, col = min(max(row, 0), r.Height-1), min(max(col, 0), r.Width-1)
+	}
+	if r.tabRows > 0 && row >= 0 && row < r.tabRows && clamp == HitNone {
 		return r.hitTab(col)
 	}
 	row -= r.tabRows
@@ -98,7 +106,7 @@ func (r *Renderer) HitTest(row, col int, clamp HitArea) Hit {
 			return h
 		}
 		return none
-	case HitNone, HitTabLine:
+	case HitNone, HitTabLine, HitStatusLine, HitCommandLine:
 	}
 	if h, ok := r.hitFloat(row, col, false); ok {
 		return h
@@ -106,6 +114,16 @@ func (r *Renderer) HitTest(row, col int, clamp HitArea) Hit {
 	for _, b := range r.hits.covers {
 		if b.contains(row, col) {
 			return none
+		}
+	}
+	if col >= 0 && col < r.Width {
+		// ステータス行は表示領域のすぐ下、コマンドラインの行は画面の最後の行である（render）。出力の欄の行はどちらでもない。
+		body := r.Height - r.tabRows
+		switch {
+		case row == body-1:
+			return Hit{Area: HitCommandLine, Tab: -1}
+		case row == r.textRows() && body >= 2:
+			return Hit{Area: HitStatusLine, Tab: -1}
 		}
 	}
 	return r.hitText(row, col, false)

@@ -30,11 +30,16 @@ func TestHitTestText(t *testing.T) {
 		{1, 12, HitNone, Hit{Area: HitText, Line: 0, Col: 8, Tab: -1}},
 		{2, 7, HitNone, Hit{Area: HitText, Line: 1, Col: 3, Tab: -1}},
 		{4, 9, HitNone, Hit{Area: HitText, Line: 2, Col: 5, Below: true, Tab: -1}},
-		{6, 3, HitNone, Hit{Area: HitNone, Tab: -1}},
-		{7, 3, HitNone, Hit{Area: HitNone, Tab: -1}},
+		{6, 3, HitNone, Hit{Area: HitStatusLine, Tab: -1}},
+		{7, 3, HitNone, Hit{Area: HitCommandLine, Tab: -1}},
+		{8, 3, HitNone, Hit{Area: HitNone, Tab: -1}},
+		{3, 20, HitNone, Hit{Area: HitNone, Tab: -1}},
 		// ドラッグの間は、表示領域の中へ寄せる。タブの行は上へ 1 行、コマンドラインの行は下へ 2 行のはみ出しである。
 		{0, 6, HitText, Hit{Area: HitText, Line: 0, Col: 2, Over: -1, Tab: -1}},
 		{7, 30, HitText, Hit{Area: HitText, Line: 2, Col: 15, Below: true, Over: 2, Tab: -1}},
+		// 画面の外の位置は、画面の端の行と列に寄せてから数える（Neovim 0.12.5 と同じ）。
+		{20, 9, HitText, Hit{Area: HitText, Line: 2, Col: 5, Below: true, Over: 2, Tab: -1}},
+		{-5, 3, HitText, Hit{Area: HitText, Line: 0, Col: 0, Over: -1, Tab: -1}},
 	}
 	for _, tt := range tests {
 		if got := r.HitTest(tt.row, tt.col, tt.clamp); got != tt.want {
@@ -102,7 +107,7 @@ func TestHitTestFloat(t *testing.T) {
 		{2, 5, HitNone, Hit{Area: HitFloat, Line: 1, Col: 4, Tab: -1}},
 		{1, 0, HitNone, Hit{Area: HitNone, Tab: -1}},
 		{3, 2, HitNone, Hit{Area: HitFloat, Line: 2, Col: 1, Tab: -1}},
-		{4, 2, HitNone, Hit{Area: HitNone, Tab: -1}},
+		{4, 2, HitNone, Hit{Area: HitStatusLine, Tab: -1}},
 		{0, 3, HitFloat, Hit{Area: HitFloat, Line: 0, Col: 2, Over: -1, Tab: -1}},
 		{5, 0, HitFloat, Hit{Area: HitFloat, Line: 2, Col: 0, Over: 2, Tab: -1}},
 		// 窓の下のバッファの表示領域へ寄せるときは、窓に関わらずその位置の行と列にする。

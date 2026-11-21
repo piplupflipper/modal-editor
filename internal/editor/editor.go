@@ -331,8 +331,6 @@ type Editor struct {
 	// extFromPane は、拡張機能の ID のうち、最後の操作がペインの部品の client のキーだったものから、そのキーを処理した時刻への表である
 	// （noteViewClient、focusAfterPane）。
 	extFromPane map[string]paneMark
-	// mouse は、いま処理しているマウスの出来事の位置である（mouse.go。FR-185）。
-	mouse mouseEvent
 	// paneFocus は、ペインで選んでからフォーカスを戻すまでの上限である（focusAfterPane）。0 なら paneFocusWindow を使う。
 	// テストが長くして、負荷で応答が遅れても上限の内に届いたものとして扱わせる（#313）。
 	paneFocus time.Duration

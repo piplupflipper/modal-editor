@@ -17,7 +17,13 @@ const (
 	// MouseElsewhere は、この State のバッファの外の、呼び出し側が扱う部品の位置である（タブの行のタブの見出し、
 	// フォーカスのあるポップアップの外のバッファなど）。ボタンを押したことは Mouse.Activate で呼び出し側に行わせる。
 	MouseElsewhere
+	// MouseWindow は、この State の表示領域の窓の、テキストでない部分（ステータス行、コマンドラインの行）である。
+	// ボタンを押しても何もせず、ホイールはこの表示領域を送る（Neovim 0.12.5 と同じ。FR-182）。
+	MouseWindow
 )
+
+// scrollable は、t の位置のホイールでこの State の表示領域を送るかを返す。
+func (t MouseTarget) scrollable() bool { return t.Kind == MouseText || t.Kind == MouseWindow }
 
 // MouseTarget は、マウスの出来事の位置を、この State のバッファの位置に解いたものである（Mouse.Target）。
 type MouseTarget struct {
@@ -105,7 +111,7 @@ func (s *State) mouseClick() error {
 	}
 	t := s.Mouse.Target(false)
 	switch t.Kind {
-	case MouseNone:
+	case MouseNone, MouseWindow:
 		return nil
 	case MouseElsewhere:
 		return s.Mouse.Activate()
@@ -256,7 +262,7 @@ func (s *State) mouseSelect(line bool) error {
 	}
 	t := s.Mouse.Target(false)
 	switch t.Kind {
-	case MouseNone:
+	case MouseNone, MouseWindow:
 		return nil
 	case MouseElsewhere:
 		return s.Mouse.Activate()
@@ -287,15 +293,16 @@ func (s *State) mouseSelect(line bool) error {
 }
 
 // mouseScroll は、<ScrollWheelDown>（down が true。mouse.scroll-down）と <ScrollWheelUp>（mouse.scroll-up）である（FR-182）。
-// マウスの位置がこのバッファのテキストなら、表示領域を設定の mouse.scrollLines の行だけ送る。送り方は <C-e> と <C-y> と同じで
+// マウスの位置がこのバッファのテキストか、この表示領域のステータス行かコマンドラインの行（MouseWindow。Neovim 0.12.5 と同じ）なら、
+// 表示領域を設定の mouse.scrollLines の行だけ送る。送り方は <C-e> と <C-y> と同じで
 // （Neovim 0.12.5 の mousescroll=ver:3 の既定と同じく、カーソルが表示領域から出たら、余白を残した端の行へ移す）、
 // ビジュアルモードでは選択の端も動き、インサートモードではインサートモードのまま、カーソルが動いたときだけ入力を区切る。
-// 0 行の設定と、テキストでない位置（ステータス行など）では何もしない。
+// 0 行の設定と、ほかの部品の位置（タブの行、枠線など）では何もしない。
 //
 // req: FR-182
 func (s *State) mouseScroll(down bool) error {
 	n := s.optionInt(option.MouseScrollLines)
-	if s.Mouse == nil || n <= 0 || s.Mouse.Target(false).Kind != MouseText {
+	if s.Mouse == nil || n <= 0 || !s.Mouse.Target(false).scrollable() {
 		return nil
 	}
 	old := s.cursor
@@ -316,13 +323,14 @@ func (s *State) mouseScroll(down bool) error {
 //   - 送った後の左の端がカーソルの行の幅より右なら、カーソルを見える行のうち最も長い行の先頭へ移す
 //   - カーソルが左右の余白（scroll.sideMargin）を残した範囲から出たら、範囲の端の列へ移し、望みの列をその列にする
 //
-// 行を折り返すとき、0 列の設定、テキストでない位置、横の位置を持たない表示領域では何もしない。
+// 縦のホイールと同じく、ステータス行とコマンドラインの行の上でも送る。
+// 行を折り返すとき、0 列の設定、ほかの部品の位置、横の位置を持たない表示領域では何もしない。
 //
 // req: FR-182
 func (s *State) mouseScrollHorizontal(right bool) error {
 	n := s.optionInt(option.MouseScrollColumns)
 	hv, ok := s.Viewport.(HorizontalViewport)
-	if s.Mouse == nil || !ok || n <= 0 || s.screenWidth() > 0 || s.Mouse.Target(false).Kind != MouseText {
+	if s.Mouse == nil || !ok || n <= 0 || s.screenWidth() > 0 || !s.Mouse.Target(false).scrollable() {
 		return nil
 	}
 	w := hv.Columns()

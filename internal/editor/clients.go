@@ -147,6 +147,8 @@ type clientView struct {
 	replay *replayWait
 	// mouseDown は、この client の端末でマウスのボタンを最後に押した位置の部品の種類である。ドラッグの位置をその部品へ寄せる（mouse.go）。
 	mouseDown ui.HitArea
+	// mouse は、この client（とその部品の client）が最後に受けたマウスの出来事の位置である（mouse.go）。
+	mouse mouseEvent
 }
 
 // attached は、c が Editor に繋がっているかを返す。
