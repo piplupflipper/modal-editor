@@ -359,6 +359,11 @@ const (
 	// 0 なら画面に収まるだけ出す（Vim と同じ）。範囲は 0 から 9999 である（scroll.margin と同じ上限）。描くたびに読む。
 	// 名前をコマンドラインの下に置かないのは、後に作るインサートモードの補完の一覧も同じ上限を使うためである（Vim の 'pumheight' と同じ）。
 	CompletionMenuHeight = "completionMenu.height"
+	// IntroShow は、引数なしで起動して名前の無い空のバッファだけを開いているときに、編集の client の画面の中央に起動の案内を出すかである
+	// （FR-206。Vim と Neovim の 'shortmess' に I が無いとき）。範囲はエディタ全体で、既定は Vim と Neovim と同じく出す。
+	// 描くたびに読み、偽を読んだら、その後に真へ戻しても起動の案内は出さない（Neovim 0.12.5 の :set shortmess+=I の後の :set shortmess-=I と同じ）。
+	// :intro（FR-207）は、この値によらず出す。
+	IntroShow = "intro.show"
 )
 
 // CompleteModeWords は、commandLine.completeMode の語の候補である（Def.Words）。
@@ -410,6 +415,7 @@ var defs = []Def{
 	{Name: CommandLineCompleteMode, Type: String, Scope: ScopeEditor, Default: StringValue("full"), Words: CompleteModeWords},
 	{Name: CommandLineCompleteIgnoreCase, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: CompletionMenuHeight, Type: Int, Scope: ScopeEditor, Default: IntValue(0), Range: &IntRange{Min: 0, Max: 9999}},
+	{Name: IntroShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(true)},
 }
 
 // fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。

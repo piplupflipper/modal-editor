@@ -443,7 +443,7 @@ func withPrefix(words []string, prefix string) []string {
 
 // completionCommandNames は、コマンドの名前の補完の候補（FR-195）を、名前の順に返す。本体の Ex コマンドと別名の省略しない名前
 // （ex.Names）と、拡張機能のコマンドの口から呼ぶコマンドの名前（exCommands。拡張機能のコマンド、provides の操作の名前、:help、:keys、
-// :ext、:messages）である。本体が同じコマンドのために足した短い名前（:h、:mes から :message まで）は出さない
+// :ext、:messages、:intro）である。本体が同じコマンドのために足した短い名前（:h、:mes から :message まで、:int と :intr）は出さない
 // （Vim の補完も省略形を出さない）。
 //
 // req: FR-195
@@ -463,6 +463,7 @@ func (e *Editor) completionCommandNames() []string {
 		switch {
 		case id == helpExtension && name != keysCommandName && name != helpCommandNames[0]:
 		case id == messagesExtension && name != messagesCommandNames[len(messagesCommandNames)-1]:
+		case id == introExtension && name != introCommandNames[len(introCommandNames)-1]:
 		default:
 			add(name)
 		}

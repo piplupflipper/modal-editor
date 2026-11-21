@@ -355,6 +355,8 @@ type Editor struct {
 	finished chan struct{}
 	// diff は、見比べ（diff.go。基本設計 6.8）の状態である。
 	diff *diffState
+	// intro は、起動の案内（intro.go。FR-205〜FR-207）の状態である。
+	intro introState
 
 	bufs   []*bufferState
 	nextID ext.BufferID
@@ -756,7 +758,7 @@ func buildExCommands(specs []exthost.Spec) (map[string]string, []error) {
 }
 
 // commandLineTable は、コマンドラインから呼べる拡張機能のコマンドの表（exCommands）を作る。
-// 拡張機能が宣言したコマンドと provides の操作の名前（buildExCommands）に、本体が同じ口から呼ぶ :ext、:help、:keys、:messages を足す。
+// 拡張機能が宣言したコマンドと provides の操作の名前（buildExCommands）に、本体が同じ口から呼ぶ :ext、:help、:keys、:messages、:intro を足す。
 func commandLineTable(specs []exthost.Spec) (map[string]string, []error) {
 	cmds, errs := buildExCommands(specs)
 	if err := addExtManagerCommand(cmds); err != nil {
@@ -764,11 +766,12 @@ func commandLineTable(specs []exthost.Spec) (map[string]string, []error) {
 	}
 	errs = append(errs, addHelpCommands(cmds)...)
 	errs = append(errs, addMessagesCommand(cmds)...)
+	errs = append(errs, addIntroCommand(cmds)...)
 	return cmds, errs
 }
 
 // HostCommandNames は、本体のコマンドのうち、Ex コマンドの表（ex.Names）に無く、拡張機能のコマンドと同じ口から呼ぶもの
-// （:ext、:help と :h、:keys、:messages とその省略形）の名前を、名前の順に返す。
+// （:ext、:help と :h、:keys、:messages と :intro とその省略形）の名前を、名前の順に返す。
 // 拡張機能を読み込まない表（commandLineTable）から取るので、provides の操作の名前（:hover など）は含まない。
 // AI エージェント向けの文書の Ex コマンドの一覧（cmd/docgen。FR-172）が、Ex コマンドの表の後に並べる。
 func HostCommandNames() []string {
