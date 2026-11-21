@@ -156,6 +156,9 @@ type Config struct {
 	// Host.SocketPath が空なら、このパスを入れる。起動の契機 socket の拡張機能があれば、本体はこのパスで起動時から待ち受け、
 	// 待ち受けたソケットのファイルは Close で消す（exthost.Config.SocketPath）。
 	MCPSocket string
+	// StateDir は、状態のファイル（アンドゥの履歴とカーソルの位置。FR-165、FR-166）の置き場のディレクトリ
+	// （$XDG_STATE_HOME/vi-imitation。config.StateDir）である。空なら、設定の undo.persist と cursor.restore によらず、読みも書きもしない。
+	StateDir string
 	// Logger は、ログの記録先である。nil なら slog.Default() を使う。
 	Logger *slog.Logger
 	// OnPanic は、Editor が起こす goroutine（端末の入力の受け取り、色の表の作成）が panic したときに、
@@ -770,6 +773,11 @@ func (e *Editor) extCommand(id string) (string, bool) {
 // 拡張機能を止めた後に、New が決めた MCP のソケットのディレクトリを消す（Config.MCPSocket）。
 // 消せなかったときは記録だけして、拡張機能の終了の結果を返す。
 func (e *Editor) Close(ctx context.Context) error {
+	// タブを閉じずに終わった（端末が無くなった、ctx が終わった）ときも、開いていたファイルのカーソルの位置を残す（FR-166）。
+	// Run が戻った後なので、イベントループと同時には触らない。
+	for _, bs := range e.bufs {
+		e.saveCursor(bs)
+	}
 	err := e.host.CloseContext(ctx)
 	if rerr := e.mcpSocket.Remove(); rerr != nil {
 		e.log.Warn("MCP のソケットのディレクトリを消せない", "err", rerr)
@@ -1082,13 +1090,18 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 	}
 	// 状態は読む前に得る。読む間に書き換えられても、次の確認で変更として見つかる（読んだ後に得ると、その変更を見逃す）。
 	st, _ := statFile(abs)
-	b, err := buffer.ReadFile(abs)
+	// 中身はバイトのまま読み、アンドゥの履歴を読み戻すときに、履歴を書いた時点の中身とハッシュで比べる（FR-165）。
+	data, err := os.ReadFile(abs)
+	var b *buffer.Buffer
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// 新しいファイルは、Vim と同じく行の無いバッファにする。編集せずに書き出すと空のファイルに、編集すれば末尾に改行を付けて書き出す（基本設計 4.1）。
 		b = buffer.New("")
 	case err != nil:
 		return nil, fmt.Errorf("%s を開けない: %w", path, err)
+	default:
+		b = buffer.New(string(data))
+		e.restoreUndo(b, abs, data)
 	}
 	// :e での読み直し（reload）は、元のバッファの設定を引き継ぐので、ここで設定するのは開くときだけである。
 	b.SetFixEndOfLine(e.fixEOL)
@@ -1103,10 +1116,15 @@ func (e *Editor) openFile(path string, focus bool) (*bufferState, error) {
 		e.resetBufferOptions(prev)
 		e.replaceBuffer(prev, b)
 		prev.setDisk(st)
+		if e.restoreCursor(prev) && prev.owner != nil {
+			// 新しいバッファは enter が画面の位置を決め直すが、使い回したバッファは移らないので、ここで戻した位置を中ほどに置く。
+			e.viewOf(prev.owner).renderer.EnterBuffer(b.LineCount(), prev.state.Cursor().Line)
+		}
 		return prev, nil
 	}
 	bs := e.newBuffer(b, abs, e.detectFileType(abs))
 	bs.setDisk(st)
+	e.restoreCursor(bs)
 	if focus {
 		e.enter(bs)
 	}
@@ -1159,6 +1177,10 @@ func defaultFileTypes() map[string]string {
 		".go": "go", "go.mod": "gomod", ".md": "markdown", ".json": "json", ".jsonc": "jsonc",
 		".py": "python", ".c": "c", ".h": "c", ".js": "javascript", ".ts": "typescript", ".rs": "rust",
 		".sh": "sh", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml", "Makefile": "make",
+		// git が編集させるメッセージのファイル。名前と種類は Vim 9.1 の filetype.vim と同じにした。カーソルの位置を戻さない種類
+		// （FR-166）の判定に使う。Vim が gitrebase にする git-rebase-todo は、既定のアイコンの表（ui.DefaultIcons）に種類が無いので、まだ足さない。
+		"COMMIT_EDITMSG": "gitcommit", "MERGE_MSG": "gitcommit", "TAG_EDITMSG": "gitcommit", "NOTES_EDITMSG": "gitcommit",
+		"EDIT_DESCRIPTION": "gitcommit",
 	}
 }
 

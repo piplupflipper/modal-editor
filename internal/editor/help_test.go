@@ -101,6 +101,8 @@ func TestHelp(t *testing.T) {
 		{"definition", "| `definition` |"},
 		{"hover", "`hover` を打って"},
 		{"undo", "| `undo` | 操作 |"},
+		// 操作の ID で始まる設定の名前は、設定の名前の一覧の行に当たる（操作の ID の undo は、前方一致でこの行に当たらない。#319）。
+		{"undo.persist", "| `undo.persist` | 真偽 |"},
 		// 点で区切った ID は、最後の部分の JSON のキー（statusline の "right"）より一覧の行を先に当てる。
 		{"insert.right", "| `insert.right` | 操作 |"},
 		// ID の語は、操作の ID の節の本文（tmux の prefix の注記、書き方の規則）と、"action": "語" の行より一覧の行を先に当てる

@@ -43,6 +43,20 @@ func DefaultPath() (string, error) {
 	return filepath.Join(base, appName, FileName), nil
 }
 
+// StateDir は、状態のファイル（アンドゥの履歴、カーソルの位置。FR-165、FR-166）の置き場所を返す（基本設計 4.10）。
+// $XDG_STATE_HOME/vi-imitation で、XDG_STATE_HOME が空か相対パスなら（XDG Base Directory の決まり）、$HOME/.local/state を使う。
+// どちらも決まらなければ誤りを返す。Neovim が undo と shada を置く stdpath('state') と同じ規則である。
+// ディレクトリは作らない（使う側が、状態を残すときに初めて作る）。
+//
+// この先、ほかの状態（コマンドラインと検索の履歴、レジスターなど）を残す機能も、この下に置く。
+func StateDir() (string, error) {
+	base, err := xdgDir("XDG_STATE_HOME", filepath.Join(".local", "state"))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, appName), nil
+}
+
 // ExtensionDirs は、拡張機能を探すディレクトリ（仮）を、優先する順に返す。
 // executable は本体の実行ファイルのパス（os.Executable の結果）で、空なら 2 つ目を省く。
 //

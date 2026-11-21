@@ -572,11 +572,23 @@ func loadConfig(logger *slog.Logger) editor.Config {
 		},
 		NoClipboard:    cfg.RegisterClipboard == config.ClipboardOff,
 		ElevateCommand: cfg.ElevateCommand,
+		StateDir:       stateDir(logger),
 		Extensions:     specs,
 		Host:           host,
 		Logger:         logger,
 		Problems:       problems,
 	}
+}
+
+// stateDir は、状態のファイル（アンドゥの履歴とカーソルの位置。FR-165、FR-166）の置き場（config.StateDir）を返す。
+// XDG_STATE_HOME と HOME がどちらも無くて決められなければ、ログに記録して空を返す（状態を残さない）。
+func stateDir(logger *slog.Logger) string {
+	dir, err := config.StateDir()
+	if err != nil {
+		logger.Warn("状態のファイルの置き場を決められない", "err", err)
+		return ""
+	}
+	return dir
 }
 
 // shortProblem は、画面の 1 行に出す設定の誤りの、ファイルのパスを短くする。

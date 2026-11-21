@@ -282,7 +282,8 @@ func helpKeyLines(km *input.Keymap) []string {
 //  5. 語が 2 文字以上なら、語を含む見出し
 //  6. 操作の ID の一覧（docs/usage.md の action-ids の印の間）の行のうち、最初の列の `語` が完全に一致する行。
 //     一覧の行は 1〜5 の候補にしない。rename や hover のように説明の節がある語は、その節に当てる（#257 のレビューの推奨 2）。
-//     点で区切った名前（insert.right）は、3 の最後の部分（"right"）で探す前に、この段で探す
+//     点で区切った名前（insert.right）は、3 の最後の部分（"right"）で探す前に、この段で探す。
+//     どの語も、4 と 5 より先にこの段で探す（設定の名前 undo.persist が、操作の ID の undo の前方一致で当たらないように。#319）
 //
 // 語が操作の ID（一覧の行の ID と完全に一致する語）なら、操作の ID の節の本文（actionIDsSection の見出しから一覧の終わりまで。
 // 書き方の規則の箇条書きや tmux の prefix の注記）と、設定の例で ID を値に書いた行（"action": "語"）は、1〜5 の候補にしない。
@@ -433,6 +434,11 @@ func (h *helpIndex) find(word string) (int, bool) {
 			}
 		}
 	}
+	// 操作の ID の語は、前方一致（4）と見出し（5）より先に一覧の行を当てる。設定の名前（undo.persist）が操作の ID（undo）で
+	// 始まるとき、前方一致でその設定の行に当たらないようにする（#319）。
+	if i, ok := idRow(); ok {
+		return i, true
+	}
 	if i, ok := find(defs, strings.HasPrefix); ok {
 		return i, true
 	}
@@ -443,7 +449,7 @@ func (h *helpIndex) find(word string) (int, bool) {
 			}
 		}
 	}
-	return idRow()
+	return 0, false
 }
 
 // listHelpWords は、:help で引ける語の一覧（editor/list の help。FR-148）を返す。
