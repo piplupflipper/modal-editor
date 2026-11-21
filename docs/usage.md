@@ -1917,13 +1917,16 @@ gopls は PATH から探す。
 実行中は `:option.set diagnostic.popup true`（出す）、`:option.toggle diagnostic.popup`（切り替える）、`:option.set cursorHold.delayMs 100` で変える。
 変えた値は、次のキーから効く。
 
+同梱の `config.example.jsonc` の設定で、gopls（v0.21.0）が型の誤りを出した Go のファイルの 6 行目にカーソルを止めると、次のように出る（2026-11-21 に tmux の中で確かめた）。
+
 ```text
-E   x := f()
-   診断
-E  1. compiler: not enough arguments in call to f
-   	have ()
-   	want (int) (WrongArgCount)
-   2. gopls: declared and not used: x
+✘    6     x := f()
+✘    7     ╭─診断──────────────────────────────────────────────╮
+     8 }   │ 1. compiler: declared and not used: x (UnusedVar) │
+~          │ 2. compiler: not enough arguments in call to f    │
+~          │     have ()                                       │
+~          │     want (int) (WrongArgCount)                    │
+~          ╰───────────────────────────────────────────────────╯
 ```
 
 - 1 つの診断は「番号. 出どころ: 本文 (コード)」で、出どころとコードが無ければ省く。重要度の重い順（誤り、警告、情報、ヒント）に並べ、診断が 1 つでも番号を付ける
