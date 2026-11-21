@@ -1106,6 +1106,29 @@ popup/show の params である。
 - `text`（`string`）: 本文である。
 - `format`（`PopupFormat`）
 
+#### `ProgressReportParams`
+
+progress/report の params である。
+
+- `token`（`string`）: 拡張機能が決めた、1 つの処理を表す識別子である。空にできない。
+- `kind`（`ProgressKind`）: 知らせの種類である。
+- `title`（`string`、省ける）: 処理の表題（"gopls" の "Loading packages" に当たる短い語）である。begin でだけ読み、report と end では捨てる。
+- `message`（`string`、省ける）: 本文（"3/10 files" など）である。report と end で空なら、前の本文のままにする（LSP と同じ）。
+- `percentage`（`*int`、省ける）: 0 から 100 の百分率である。省くと（nil）、begin では出さず、report では前の値のままにする。end では読まない。
+  範囲の外の値は、本体が 0 か 100 に寄せる。
+- `failed`（`bool`、省ける）: end で、処理が成り立たずに終わった（失敗した、取り消した、処理していたプロセスが終わった）ことを表す。
+  本体は、終わった印の代わりに失敗の印（symbols の progress.failed）と色（progress.failed）で描く。begin と report では読まない。
+
+#### `ProgressKind`
+
+JSON の文字列である。
+
+progress/report の種類である（LSP の WorkDoneProgressBegin、WorkDoneProgressReport、WorkDoneProgressEnd の kind）。
+
+- `"begin"`（ProgressBegin）: 進み具合を始める。Title を読む。
+- `"report"`（ProgressReport）: 続いている進み具合の本文か百分率を変える。
+- `"end"`（ProgressEnd）: 進み具合を終える。本体は終わった印を付けて、設定 progress.doneMs のミリ秒の後に消す。
+
 #### `SignSetParams`
 
 sign/set の params である。

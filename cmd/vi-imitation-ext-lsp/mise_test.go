@@ -264,9 +264,10 @@ func TestMiseAutoInstall(t *testing.T) {
 		settings: map[string]any{"autoInstall": true},
 	})
 	h.open(1, "a.go", "a ERR")
-	first := receive(t, h.msgs, "message/show")
-	if first.Level != ext.MessageInfo || !strings.Contains(first.Text, "mise で "+testTool+" を入れている") {
-		t.Errorf("first message = %+v", first)
+	// 入れている間の進み具合は、メッセージの行でなく progress/report で知らせる（FR-178）。
+	first := receive(t, h.prog, "progress/report")
+	if first.Kind != ext.ProgressBegin || first.Title != "mise" || !strings.Contains(first.Message, testTool+" を入れている") {
+		t.Errorf("first progress = %+v", first)
 	}
 	m.waitFile("install.pid")
 	// 入れている間（mise install が release を待つ間）も、ping に答え、文書の変更を受け付ける。
@@ -274,18 +275,25 @@ func TestMiseAutoInstall(t *testing.T) {
 		h.ping(time.Second)
 	}
 	h.change(1, edit(0, 0, 0, 0, "x "))
-	progress := receive(t, h.msgs, "message/show")
-	if progress.Level != ext.MessageInfo || progress.Text != "mise: mise "+testTool+" [1/2] download" {
+	progress := receive(t, h.prog, "progress/report")
+	if progress.Kind != ext.ProgressReport || progress.Token != first.Token || progress.Message != "mise "+testTool+" [1/2] download" {
 		t.Errorf("progress = %+v", progress)
 	}
 	m.touch("release", "")
-	seen := h.waitMessage("installed", func(p ext.MessageShowParams) bool { return strings.Contains(p.Text, "を入れた") })
-	for _, p := range seen {
-		if p.Level != ext.MessageInfo {
-			t.Errorf("message while installing = %+v, want info", p)
+	for {
+		p := receive(t, h.prog, "progress/report end")
+		if p.Token != first.Token {
+			t.Errorf("progress of another token = %+v", p)
+		}
+		if p.Kind == ext.ProgressEnd {
+			if !strings.Contains(p.Message, "を入れた") || p.Failed {
+				t.Errorf("end = %+v", p)
+			}
+			break
 		}
 	}
 	checkDiagnostics(t, h.diagnosticsAt(1, 2), "x a ERR")
+	h.noMessage(100 * time.Millisecond)
 	calls := m.calls()
 	wantExec := fmt.Sprintf("exec %s -- %s -log %s", testTool, missingCommand, h.logPath)
 	if len(calls) != 3 || calls[0] != "where "+testTool || calls[1] != "install "+testTool || !strings.HasPrefix(calls[2], wantExec) {
@@ -358,6 +366,15 @@ func TestMiseInstallFails(t *testing.T) {
 	want := "mise で " + testTool + " を入れられない: mise ERROR Config files in ~/p/mise.toml are not trusted. Trust them with `mise trust`."
 	if got != want {
 		t.Errorf("failure = %q, want %q", got, want)
+	}
+	// 失敗しても、始めた進み具合は終える（FR-178）。
+	for {
+		if p := receive(t, h.prog, "progress/report end"); p.Kind == ext.ProgressEnd {
+			if !p.Failed {
+				t.Errorf("end of the failed install = %+v, want failed", p)
+			}
+			break
+		}
 	}
 	h.open(2, "b.go", "b")
 	h.noMessage(300 * time.Millisecond)

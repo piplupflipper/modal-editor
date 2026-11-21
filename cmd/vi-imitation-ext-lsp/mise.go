@@ -31,7 +31,7 @@ import (
 // shim のディレクトリを PATH に置く使い方で、自動で入れた後の起動が shim に当たって失敗し続けないためである。
 //
 // 入れる段（mise where と mise install）と起動する段（mise exec）を分けるのは、入れるのに時間がかかる（数秒から数十秒）ためである。
-// 入れている間は initialize の期限を数えず、別の期限（installTimeout）で待ち、進み具合を message/show で出す。
+// 入れている間は initialize の期限を数えず、別の期限（installTimeout）で待ち、進み具合を progress/report で出す（FR-178）。
 // どちらも起動の goroutine（client.start）の上で行い、ext/server のメッセージを処理する goroutine を止めない。
 //
 // mise に MISE_YES を渡さず、標準入力も渡さない。
@@ -43,7 +43,7 @@ import (
 // errReported は、起動できない理由を利用者へもう知らせたので、改めて知らせないことを表す。
 var errReported = errors.New("already reported to the user")
 
-// miseLineInterval は、mise install の出力の行を message/show で出す間隔の下限である。
+// miseLineInterval は、mise install の出力の行を進み具合の本文に出す間隔の下限である。
 // それより短い間に届いた行はログにだけ書く。値は仮。
 const miseLineInterval = time.Second
 
@@ -210,15 +210,24 @@ func (c *client) runMise(ctx context.Context, cmd *exec.Cmd) error {
 var errStopped = errors.New("the extension is stopping")
 
 // miseInstall は、mise install で Mise の道具を入れる。起動の goroutine から呼ぶ。
-// 始めたとき、mise の出力の行（miseLineInterval ごとに 1 行まで）、終えたときを message/show で知らせる。
-// 失敗したら、mise の出力の原因の行と末尾の行（miseDetail）を含めて知らせ、errReported を返す。
-// 拡張機能が止まるとき（ctx の取り消し）は、mise を終わらせ（runMise）、知らせずに誤りを返す。
+// 入れている間の進み具合を、progress/report で知らせる（FR-143、FR-178）。始めたときに begin、mise の出力の行
+// （miseLineInterval ごとに 1 行まで）を report の本文、終えたときに end を送る。失敗と取り消しの end は failed にする。
+// 失敗したら、mise の出力の原因の行と末尾の行（miseDetail）を含めて message/show で知らせ、errReported を返す。
+// 拡張機能が止まるとき（ctx の取り消し）は、mise を終わらせ（runMise）、message/show で知らせずに誤りを返す。
 //
 // req: FR-143
 func (c *client) miseInstall(ctx context.Context, mise, root string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.installTimeout)
 	defer cancel()
-	c.x.showMessage(ext.MessageInfo, fmt.Sprintf("言語サーバー %s が見つからないので、mise で %s を入れている", c.name(), c.cfg.Mise))
+	token := c.miseToken()
+	c.x.reportProgress(ext.ProgressReportParams{
+		Token: token, Kind: ext.ProgressBegin, Title: "mise",
+		Message: fmt.Sprintf("言語サーバー %s が見つからないので、%s を入れている", c.name(), c.cfg.Mise),
+	})
+	endMessage, failed := "", true
+	defer func() {
+		c.x.reportProgress(ext.ProgressReportParams{Token: token, Kind: ext.ProgressEnd, Message: endMessage, Failed: failed})
+	}()
 	cmd := exec.Command(mise, "install", c.cfg.Mise) //nolint:gosec // 起動するのは mise で、道具の ID は利用者の設定である
 	cmd.Dir = root
 	w := &lineWriter{line: c.miseLine}
@@ -229,11 +238,13 @@ func (c *client) miseInstall(ctx context.Context, mise, root string) error {
 	switch {
 	case err == nil:
 		c.x.logf("%s: mise install %s: done", c.name(), c.cfg.Mise)
-		c.x.showMessage(ext.MessageInfo, fmt.Sprintf("mise で %s を入れた。言語サーバー %s を起動する", c.cfg.Mise, c.name()))
+		endMessage, failed = fmt.Sprintf("%s を入れた。言語サーバー %s を起動する", c.cfg.Mise, c.name()), false
 		return nil
 	case errors.Is(err, errStopped) || errors.Is(ctx.Err(), context.Canceled):
+		endMessage = "取り消した"
 		return fmt.Errorf("mise install %s: %w", c.cfg.Mise, context.Canceled)
 	}
+	endMessage = fmt.Sprintf("%s を入れられない", c.cfg.Mise)
 	c.x.logf("%s: mise install %s: %v", c.name(), c.cfg.Mise, err)
 	detail := strings.Join(miseDetail(w.cause(), w.tail()), " ")
 	if ctx.Err() != nil {
@@ -284,14 +295,21 @@ func isCauseLine(s string) bool {
 	return !strings.HasPrefix(s, "mise ") && strings.Contains(strings.ToLower(s), "error")
 }
 
-// miseLine は、mise install の出力の 1 行をログに書き、前に出してから miseLineInterval が過ぎていれば message/show で出す。
+// miseLine は、mise install の出力の 1 行をログに書き、前に出してから miseLineInterval が過ぎていれば、
+// 進み具合（progress/report の report）の本文にする。
 func (c *client) miseLine(line string, last time.Time) bool {
 	c.x.logf("%s: mise: %s", c.name(), line)
 	if time.Since(last) < miseLineInterval {
 		return false
 	}
-	c.x.showMessage(ext.MessageInfo, "mise: "+line)
+	c.x.reportProgress(ext.ProgressReportParams{Token: c.miseToken(), Kind: ext.ProgressReport, Message: line})
 	return true
+}
+
+// miseToken は、mise に言語サーバーを入れさせる間の進み具合の識別子である。入れるのは client ごとに 1 つずつなので、
+// ファイルの種類で分ける。
+func (c *client) miseToken() string {
+	return "mise/" + c.fileType
 }
 
 // lineWriter は、子プロセスの出力を行に分け、空でない行ごとに line を呼ぶ io.Writer である。

@@ -98,6 +98,11 @@
     "whitespace.trail": "·",
     "whitespace.eol": "↲",
     "whitespace.nbsp": "",
+    // 画面の右下の進み具合の、終わった印（fidget.nvim の done_icon の既定と同じ記号。本体の既定は done）。
+    // 続いている印は本体の既定（...）のまま。fidget.nvim の回る印は、本体が時間ごとに描き直さないので使えない
+    "progress.done": "✔",
+    // 失敗して終わった進み具合の印（本体の既定は failed。印の列の誤りの診断の印と同じ記号にした）
+    "progress.failed": "✘",
   },
 
   // ファジーファインダーとファイラの項目の前に、ファイルの種類のアイコンを付ける（本体の既定も付ける）。
@@ -144,6 +149,11 @@
   // 出すときは、最下行には診断の本文を出さない。説明は docs/usage.md の「診断のポップアップ」にある
   "diagnostic": { "popup": true },
   "cursorHold": { "delayMs": 100 },
+
+  // 言語サーバーの読み込み、tree-sitter のパーサの用意などの進み具合を、画面の右下に重ねて出す（nvim の fidget.nvim に当たる）。
+  // 本体の既定も出す。終わったものは doneMs（既定は 3000）ミリ秒の後に消える。印は上の symbols の progress.* にある。
+  // 説明は docs/usage.md の「拡張機能の進み具合」にある
+  "progress": { "show": true },
 
   // 字下げを 4 列のスペースで作り、タブ文字を 4 列で描き、自動インデントを行う
   // （nvim の expandtab、shiftwidth=4、softtabstop=4、tabstop=4、autoindent に当たる。本体の既定は Vim と同じくタブ文字、8 列、自動インデントなし）。

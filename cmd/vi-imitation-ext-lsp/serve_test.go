@@ -65,6 +65,7 @@ type host struct {
 	diags   chan ext.DiagnosticSetParams
 	popups  chan ext.PopupShowParams
 	msgs    chan ext.MessageShowParams
+	prog    chan ext.ProgressReportParams
 	opens   chan ext.EditorOpenParams
 	edits   chan ext.BufferEditParams
 	choices chan ext.ChoiceAskParams
@@ -136,7 +137,7 @@ func startHost(t *testing.T, o hostOptions) *host {
 	h := &host{
 		t: t, dir: dir, logPath: filepath.Join(dir, "fakels.log"),
 		diags: make(chan ext.DiagnosticSetParams, 100), popups: make(chan ext.PopupShowParams, 100),
-		msgs: make(chan ext.MessageShowParams, 100), opens: make(chan ext.EditorOpenParams, 100),
+		msgs: make(chan ext.MessageShowParams, 100), prog: make(chan ext.ProgressReportParams, 100), opens: make(chan ext.EditorOpenParams, 100),
 		edits: make(chan ext.BufferEditParams, 100), choices: make(chan ext.ChoiceAskParams, 100),
 		saves: make(chan ext.BufferSaveParams, 100), offscreen: map[string]ext.BufferID{},
 		bufs: map[ext.BufferID]*simBuffer{}, sim: o.sim, readOnly: map[string]bool{}, failEdit: map[string]bool{},
@@ -282,6 +283,8 @@ func (h *host) notification(_ context.Context, n *rpc.Notification) {
 		h.popups <- decode[ext.PopupShowParams](h.t, n.Params)
 	case ext.MethodMessageShow:
 		h.msgs <- decode[ext.MessageShowParams](h.t, n.Params)
+	case ext.MethodProgressReport:
+		h.prog <- decode[ext.ProgressReportParams](h.t, n.Params)
 	}
 }
 

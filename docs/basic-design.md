@@ -1854,6 +1854,10 @@ params と result の項目は 6.7 に書く。
 Ex コマンドの確認の問い（逆順の範囲の E493）を出している間も、同じく取っておく。Vim の問いと同じく、答えるまで他の処理をせず、問いを出したバッファと範囲を変えないためである。
 取っておくイベントの数には上限（exthost の `MaxQueuedEvents`。仮に 1024）を設ける。待ちの間は exthost の列から移すので、5.2 の拡張機能ごとの上限が効かないためである。
 上限を超えたら、最も古い通知（表示のデータとメッセージ）から捨て、通知が無ければ最も古いリクエストに誤りで応答して捨てる。問い合わせの結果と状態の変化は捨てない。
+例外として、進み具合の `progress/report`（#340）は取っておかず、待ちの間もその場で進み具合の並びに当てて描き直す（6.7 の「進み具合の表示」。PR #345 のレビューの必須 1）。
+進み具合は画面の表示だけを変え、バッファ、カーソル、ほかの表示のデータを変えないので、実行中の操作の途中で当てても操作に響かない。保存の前の整形（`buffer/willSave` の待ち）のように、待っている間にこそ出したい知らせだからである。
+取っておかないので、取っておく列の上限にも数えない（同じレビューの必須 2）。ほかの通知は、今までどおり取っておく。
+このため、拡張機能が止まったことを表す状態の変化（再起動の待ち、無効、未起動へ戻る）を取っておくときは、その拡張機能の進み具合だけをその場で消し、後で状態の変化を処理するときには消し直さない。後で消すと、待ちの間に起動し直した拡張機能の進み具合まで消えるためである。
 このため、拡張機能が `motion/resolve` などのハンドラーの中で本体へのリクエストの応答を待つと、問い合わせが期限を超えるまで双方が止まる。
 `ext/server` の `Server` は、ハンドラーの中で `Edit` を呼ぶとこの理由で `ErrEditInHandler` を返す。
 足すリクエストを `ext/server` に加えるときも、同じ扱いにする。
@@ -1937,6 +1941,15 @@ Ex コマンドの確認の問い（逆順の範囲の E493）を出している
 | 拡張機能 → 本体 | `editor/execute` の `help` | リクエストの項目 | 利用者が選んだヘルプの語の `:help` を開かせる。`keys`、`command`、`help` のどれか 1 つを書く。受け付ける条件は `keys` と `command` と同じである | FR-148 |
 
 古い本体（0.12.0 まで）は、`help` の `editor/list` を知らない一覧として誤りで断り、`help` だけの `editor/execute` も誤りで断る。
+
+#340 で、次を足した（拡張機能 API の版は 0.14.0。6.7 の「進み具合の表示」）。
+
+| 向き | メソッド（仮） | 種類 | 内容 | 関係する要件 |
+|---|---|---|---|---|
+| 拡張機能 → 本体 | `progress/report` | 通知 | 時間のかかる処理の進み具合を、拡張機能が決めた識別子（`token`）、種類（`kind`。`begin`、`report`、`end`）、表題（`title`。begin だけ）、本文（`message`）、省ける百分率（`percentage`）、end で失敗して終わったか（`failed`）で知らせる（`ext.ProgressReportParams`）。LSP 3.17 の `WorkDoneProgress` の begin、report、end に対応させた。識別子が空のものと、知らない種類は、本体がログに残して捨てる | FR-178 |
+
+古い本体（0.13.0 まで）は、知らない通知として捨てる（ログに残すだけ）ので、進み具合は出ない。
+名前は、LSP の `$/progress` に近づけず、ほかの拡張機能から本体への通知（`statusline/set`、`message/show`）と同じく `<対象>/<動詞>` の形にした。
 
 `popup/open` の params は、部品（`component`。`kind`、`title`、`text`、`format`、`highlights`、`items`）、置き場所（`placement`。`cursor` か `center`）、カーソルの近くの窓に開いた時点でフォーカスを入れるか（`focus`）である。
 部品の検査（種類、項目の ID の空と重複、改行、範囲）に通らない `popup/open` は、JSON-RPC の誤りで断る。通らない `view/update` は捨てる。
@@ -2340,7 +2353,10 @@ goroutine は、受け取った後に変えない一覧のスライスとバッ�
 
 取得とビルドは、メッセージを処理する goroutine とも解析の goroutine とも別の、1 つの用意の goroutine で行う。メッセージを処理する goroutine で待つと、ping の応答が遅れ、本体の生存確認の期限切れで強制終了されるためである（5.2）。
 用意の間も編集を続けられ、ほかの言語の解析も続く。
-進み具合（取得している、ビルドしている、用意した）と失敗の理由は `message/show` でメッセージの行に出す。
+進み具合（取得している、ビルドしている、用意した）は、パーサの名前ごとの識別子の `progress/report`（6.7 の「進み具合の表示」）の begin、report、end で画面の右下に出し、失敗の理由は `message/show` でメッセージの行に出す。
+用意できなかったときも、進み具合は `failed` を付けた end で終える（`parsers.go` の `prepare`）。
+ロックファイルの記録とビルドしたものがそろっていて、取得もビルドもしないときは、進み具合を出さない。
+#340 までは、進み具合もメッセージの行に出していた。
 git の子プロセスは、`internal/extmgr` の `Checkout` が `:ext sync` と同じく、別のプロセスグループにし、拡張機能が終わったら SIGKILL を受け取る形（`Setpgid` と `Pdeathsig`）で起動する。
 C コンパイラは `internal/extmgr` の `StartTerm` で、同じ形のまま、シグナルを SIGTERM にして起動する。
 拡張機能が終わったら（SIGKILL で終わったときも）C コンパイラは SIGTERM を受け取り、取り消し（`:qa` での拡張機能の正常な終了など）ではプロセスグループ全体へ SIGTERM を送り、5 秒を過ぎたら SIGKILL で止める。
@@ -2487,7 +2503,8 @@ LSP の拡張機能は、1 つのプロセスで、ファイルの種類ごと�
 
 mise に入れさせる段と起動する段を分けるのは、入れるのに時間がかかるためである（#278 の調査では、mise 2026.5.2 の `mise exec` で入っていない jq を取ってくるのに 9.4 秒かかった）。
 入れている間は `initialize` の期限を数えず、別の期限（仮に 10 分）で待つ。
-入れ始めたとき、mise の出力の行（1 秒に 1 行まで。値は仮）、入れ終えたときを、`message/show` の情報で出す。
+入れ始めたとき、mise の出力の行（1 秒に 1 行まで。値は仮）、入れ終えたときを、表題 `mise` の `progress/report`（6.7 の「進み具合の表示」）の begin、report、end で出す（#340 までは `message/show` の情報で出していた）。
+識別子はファイルの種類ごとにし（`mise/<ファイルの種類>`）、入れられなかったときと取り消したときも、`failed` を付けた end で終える。入れられなかった理由は、今までどおり `message/show` の誤りで出す。
 shim を確かめるのは、`mise install` が入れた道具の shim を作る一方で、mise の設定ファイルに版を書かないためである。
 shim のディレクトリを PATH に置く使い方（`mise activate --shims` など）では、自動で入れた次の起動から、版の決まっていない shim が見つかり、
 shim は `No version is set for shim` で終わり、再起動の上限で止まっていた（PR #281 のレビューの必須 2）。
@@ -2529,6 +2546,17 @@ DAP の拡張機能（6.4）が dlv に SIGTERM を受け取らせてデバッ�
 | 整形 | 本体の操作 `format`（段階 2 はコマンド `lsp.format`） | `textDocument/formatting`。`gq` の範囲があり、言語サーバーが対応すれば `textDocument/rangeFormatting` | `provider/invoke`、`buffer/edit` |
 | 保存の前の整形 | 保存 | `textDocument/formatting` | `buffer/willSave` |
 | 保存の通知 | 保存の後 | `textDocument/didSave` | `buffer/didSave` |
+| 進み具合の表示（#340。FR-179） | 言語サーバーからの通知 | `window/workDoneProgress/create`、`$/progress` | `progress/report` |
+
+#340 で、`initialize` の能力に `window.workDoneProgress` を足し、言語サーバーの進み具合（LSP 3.17 の `WorkDoneProgress`）を本体の `progress/report`（6.7 の「進み具合の表示」）に写すようにした（`cmd/vi-imitation-ext-lsp` の `progress.go`）。
+
+| 点 | 決めたこと |
+|---|---|
+| 識別子 | `window/workDoneProgress/create` には null で答え、識別子は覚えない。`$/progress` の begin で覚え、end で忘れる。本体へ送る識別子は `lsp/<ファイルの種類>/<言語サーバーのプロセスの番号>/<サーバーの識別子の JSON>` にする。ファイルの種類ごとの言語サーバーと、再起動の前後の言語サーバーの識別子が、1 つの拡張機能の中で重ならないようにするためである |
+| 表題 | `<言語サーバーの名前>: <サーバーの表題>`（`gopls: Setting up workspace` など）。表題が空なら言語サーバーの名前だけ。fidget.nvim は言語サーバーの名前を見出しの行に分けて出すが、本体の表示は 1 つの処理を 1 行にする（6.7）ので、表題に含めた |
+| 百分率 | 小数も受け、四捨五入した整数にする（LSP 3.17 では `uinteger`） |
+| 捨てるもの | 稼働中の言語サーバーでないもの（再起動の前のもの）、`value` に `kind` が無いもの（部分の結果の `$/progress`）、begin の無い識別子の report と end |
+| 言語サーバーが終わったとき | 異常終了と、拡張機能が止めたときのどちらも、終わっていない進み具合を、`failed` を付け本文を「言語サーバー gopls が終了した」にした end で終える（`client.watch`。読み込み中の本文のまま終わった印が付かないように。PR #345 のレビューの推奨 2）。拡張機能が動き続けるので、本体が拡張機能の終わりで消すのを待てないためである |
 
 段階 2 では、コマンドの既定のキーは決めず、利用者の設定で割り当てる。
 Vim の `gd` と `K` は Vim の標準の操作であり、本体の標準の操作の一覧（FR-03）と重なりうるためである。
@@ -3061,6 +3089,37 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 長い行は折り返し、選択肢が見えるように画面の半分を超えても広げ、収まらなければ問いの文の行から減らす。番号のキーで選べない 10 個目以降の選択肢は数だけを出す。
 答えはメッセージの行に 1 行で出し、利用者が問いの他のキーを打つまでに続けて届いた問いには、案内の前に何件目か（`問い 2:`）を、問いの文の上に前の問いへの答えを出す（#151。前の答えを受け取ってから次を送る拡張機能があるので、全体の件数は出さない）。
 番号と `<Esc>` 以外のキーと貼り付けは、Vim 9.1 の `confirm()` と同じく捨てて問いを続けるが、Vim と違って捨てた数を問いの上に出す（`docs/vim-differences.md`）。
+
+#### 進み具合の表示
+
+#340 で、拡張機能が `progress/report`（5.3）で知らせた進み具合を、編集の client の画面の右下に重ねて出すようにした（`internal/editor` の `progress.go`、`internal/ui` の `progress.go`。FR-178）。
+オーナーの nvim の fidget.nvim の出し方（2026-11-21 に、オーナーの手元のコミット 9e0201673e08e997e7cf52afca5565c70bd117f3 の既定を読んだ）に合わせた。
+どれも仮である。
+
+| 点 | 決めたこと |
+|---|---|
+| 持ち方 | 本体の全体で 1 つの並びに、拡張機能と識別子の組ごとに 1 つを、始めた順に持つ。client ごとには持たない。言語サーバーの読み込みのように、client に結びつかない処理が多いためである |
+| 出す client | その拡張機能が後から届けるもの（`editor/open`、`message/show`、`choice/ask`）を出す client（1.2 の「問い合わせを始めた client に出す」。`extView`。その拡張機能へ最後に問い合わせを始めた client で、問い合わせていないか終わっていれば操作中の client）の画面にだけ出す。描くたびに決めるので、操作中の client が替われば、進み具合もその client の画面へ移る。分割したペインのどの client にも出すと同じ進み具合が 2 回出るためである（PR #345 のレビューの推奨 1）。fidget.nvim が Neovim の画面の全体に 1 つだけ出す（既定の `relative = "editor"`）のにも近い |
+| 種類ごとの扱い | begin は始める。続いている同じ組の begin は、並びの位置を変えずに始め直す。report は、書いた本文と百分率だけを変える（LSP と同じ）。end は終わった印を付け（`failed` なら失敗の印）、`progress.doneMs`（7.3。既定は 3000）ミリ秒の後に外す。0 ならすぐに外す。始めていない組と、終えた組の report と end は捨てる |
+| 上限 | 1 つの拡張機能の進み具合は 16 個まで（fidget.nvim の `render_limit` の既定と同じ）で、超えたら古いものから外す。表題と本文は、ステータス行の部品と同じく、改行と制御文字を空白にして 256 文字までにする |
+| 消す契機 | 時間の待ちは、一時的な色付け（`flash.go`）と同じく、イベントループの外のタイマーで行い、時間が来たらイベントループに戻して外す（2.1）。知らせた拡張機能が異常で終わるか止まったら（状態の変化。`clearProgressNow` と `clearProgressLater`）、その拡張機能の進み具合をすべて外し、タイマーも止める |
+| 出す画面 | 編集の client の画面（`bufferFrame`）だけである。端末多重化ソフトのペインとポップアップの中の部品の client の画面（1.2）と、ポップアップとプレビューの窓の中には出さない |
+| 描く層 | バッファの本文、印の列、行番号の列、折り返しの印（`@@@`）の上に描き、ポップアップ（`Frame.Float`、`Frame.List`）、ステータス行、出力の欄、メッセージの行（複数の行に広がったものを含む）はその上に描く。fidget.nvim の窓の `zindex` の既定（45）が、浮かべた窓の既定（50）より下にあるのと同じ重なりにした。ホバーやファインダーを開いている間に進み具合が隠れても、閉じれば見える。重なりの順は `internal/ui` の `layers.go` の「窓の重なり」の表の 1 か所に書き、バッファの表示領域に重ねる部品は表示領域の位置（`textArea`。最初の行、行数、右の端）を引数で受け取る（PR #345 のレビューの推奨 3）。表示領域の上に帯を足しても、進み具合を直さずに済むようにするためである。issue は層を `internal/editor/layers.go` としていたが、そのファイルは無く、窓を描く順を決めるのは `internal/ui` の `render` なので、`internal/ui` の `layers.go`（バッファの文字の色の重ね順の表のあるファイル）に置いた |
+| 1 行の形 | 「本文 (百分率%) 表題 印」（fidget.nvim の既定の `format_message` と、表題を右に置く並び）。本文と百分率は `progress`、表題と印は続いている間は `progress.title`、成り立って終わったら `progress.done`、失敗して終わったら `progress.failed` の色で描く（7.1）。印は `symbols` の `progress.running`、`progress.done`、`progress.failed` である。本文が空なら百分率だけ、それも無ければ表題と印だけにする。fidget.nvim の既定は本文が空のときに `In progress...` と `Completed` を補うが、補わない |
+| 置き場所 | 表示領域の最後の行から上へ、1 つを 1 行にして積み、最も新しいものを最後の行に置く。右の端から 1 列（fidget.nvim の `x_padding` の既定）を空けて右に寄せ、行の左に 1 列の空白を置いて下の本文と分ける |
+| 狭い端末 | 出す行数は表示領域の半分（切り捨て）までで、収まらなければ古いものを出さない。表示領域が 2 行より少なければ出さない。行が幅に収まらなければ本文と百分率を末尾から削り、それでも収まらなければ表題を末尾から削る。印は残し（続いているか終わったかを文字でも分かるようにする。PR #345 のレビューの推奨 4）、印だけでも収まらなければ印を右の端で切る |
+| 出さない設定 | `progress.show`（7.3）が false の間も並びは持ち、描かないだけにする。true に戻すと、続いているものが出る |
+| 待ちの間 | 入れ子の待ちの間と確認の問いの間も、取っておかずにその場で当てて描き直す（5.3 の取っておく規則の例外。`query.go` の `hold`）。保存の前の整形の進み具合が、整形の間に出る。取っておく列に入らないので、begin と end を送り続ける拡張機能があっても列は増えない（PR #345 のレビューの必須 1、必須 2） |
+| 失敗 | end の `failed` が true なら、終わった印の代わりに失敗の印と色で描く。標準の拡張機能は、パーサを用意できなかったとき、mise で入れられなかったときと取り消したとき、言語サーバーのプロセスが終わったときに `failed` を付ける（PR #345 のレビューの推奨 2）。fidget.nvim の end には成否の区別が無い |
+| 消し方 | end の来ない進み具合（begin だけを送る言語サーバーなど）は、拡張機能が止まるまで残る。消す操作は持たず、表示ごと切る（`:option.toggle progress.show`） |
+| `:messages` | 進み具合は履歴に残さない（fidget.nvim の `skip_history` の既定と同じ）。失敗の理由は、拡張機能が `message/show` で知らせる |
+
+`progress.show` の既定を出すにしたのは、#340 で標準の拡張機能の進み具合（6.1 のパーサの用意、6.3 の mise での入れ込み）をメッセージの行からこの表示に移したためである。
+既定で出さないと、既定の設定のままの利用者から、今まで見えていた進み具合が見えなくなる。
+Vim と Neovim には対応する既定が無い（要件定義の FR-178 の後の段落）。
+
+回る印（fidget.nvim の `progress_icon` の既定の `dots`）は持たない。
+印を回すには、知らせの無い間も一定の間隔で描き直し続ける必要があり、本体はその仕組みを持たないためである（一時的な色付けとカーソルが止まった契機は、1 回のタイマーで 1 回描き直すだけである）。
 
 #### 行番号の列
 
@@ -3670,7 +3729,7 @@ ruff の `--range` や clang-format の `--offset` のように範囲を受け�
 #### この上に載るもの
 
 - 整形ツールの設定（`biome.json`、`.prettierrc`、`pyproject.toml` の ruff）からインデントの幅とタブかスペースかを読み、本体のバッファの設定（7.3）に渡す機能（#317 の索引の「インデント」の 5 段目）。拡張機能から設定を変える口（`option/set` など）を本体に足したうえで、この拡張機能に載せる見込みである。ファイルのディレクトリから上へ設定ファイルを探す処理は、`findUp` を使える
-- 進み具合の知らせ（#317 の第 2 弾）。整形に時間がかかったときの表示に使う見込みである
+- 進み具合の知らせ（#317 の第 2 弾。#340 で `progress/report` を足した。6.7 の「進み具合の表示」）。整形に時間がかかったときの表示に使う見込みである
 
 ## 7. 設定
 
@@ -3899,6 +3958,11 @@ Vim 9.1 は空白の記号に `SpecialKey` を使うが、`^A` などの表記�
 #288 で、項目のプレビュー（1.4 の「#288 のプレビュー」）の、項目の指す行（grep の一致した行など）の色の名前 `preview.line` を足した（fzf-lua のプレビューの `FzfLuaCursorLine` に当たる）。
 行の全体に付け、構文の色をその上に重ねる。既定は背景が端末の 16 色の 0 で、窓の色（`popup` の背景の 8）の上で見分けられ、構文の色（文字の色）を消さない色として選んだ。
 同梱の iceberg には、iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の dark の側の `CursorLine` の背景 `#1e2132` を写した（PR #298 のレビューの推奨 1）。iceberg.vim に専用のグループは無く、オーナーの nvim の fzf-lua の `FzfLuaCursorLine` が既定で `CursorLine` にリンクする（fzf-lua の `lua/fzf-lua/init.lua`）ためである。文字の色は持たず、構文の色を残す。
+#340 で、画面の右下の進み具合（6.7 の「進み具合の表示」）の色の名前 `progress`（本文と百分率）、`progress.title`（続いているものの表題と印）、`progress.done`（終わったものの表題と印）を足した。
+fidget.nvim の既定は、表題を続いている間は `WarningMsg`、終わったら `Constant` で描き、本文にはグループを付けない（2026-11-21 に、オーナーの手元のコミット 9e0201673e08e997e7cf52afca5565c70bd117f3 の `lua/fidget/progress/display.lua` で読んだ）。
+既定はそれに合わせ、`progress` は色なし、`progress.title` と `progress.done` は本体の既定の `message.warning` と `constant` と同じ端末の 16 色の 11 と 13 にした。
+同梱の iceberg には、iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の dark の側の `WarningMsg` と `Constant` の文字の色を写した。進み具合は本文の上に重ねるので、`WarningMsg` の背景の色は写していない。
+PR #345 のレビューの推奨 2 で、失敗して終わったものの色の名前 `progress.failed` を足した。fidget.nvim に対応するものは無く、既定は印の列の誤りの診断の印（`sign.diagnostic.error`）と同じ端末の 16 色の 9、同梱の iceberg では `ErrorMsg` の文字の色（`WarningMsg` と同じ `#e27878` なので、印で見分ける）にした。
 
 ```jsonc
 {
@@ -3983,6 +4047,9 @@ Vim 9.1 は空白の記号に `SpecialKey` を使うが、`^A` などの表記�
 値は Vim と同じく幅 1 の文字だけにし、`whitespace.tab` は空か 2 文字か 3 文字、ほかは空か 1 文字にする（2026-11-21 に nvim 0.12.5 で、`tab:>` と `tab:<-->` と `trail:--` が `E1511`、`eol:全` が `E1512` になることを確かめた）。
 `'listchars'` の項目のうち、`multispace`、`leadmultispace`、`extends`、`precedes`、`conceal` は持たない（要件定義の FR-170 の注）。
 `'listchars'` と違い、`symbols` の値は名前ごとの上書きなので、書かない名前は既定の値のままである。Vim の `:set listchars=...` のように書かない項目を無くすには、空の値を書く。
+#340 で、画面の右下の進み具合（6.7 の「進み具合の表示」）の行の右の端に付ける印 `progress.running`（既定は `...`）と `progress.done`（既定は `done`）を足した（fidget.nvim の `progress_icon` と `done_icon`）。
+fidget.nvim の既定（回る点と `✔`）は ASCII でなく、回る印は時間ごとの描き直しが要るので、既定は ASCII の文字列にした。任意の文字列を書け、空なら付けない。同梱の `config.example.jsonc` では `progress.done` を `✔` にしている。
+PR #345 のレビューの推奨 2 で、失敗して終わったものの印 `progress.failed`（既定は `failed`。同梱の `config.example.jsonc` では `✘`）を足した。
 
 #295 で、一覧と木の項目のファイルの種類のアイコン（1.4 の「#295 のアイコン」。FR-152）の表を、設定の `icons` で書き換えられるようにした。
 記号と違い、既定は ASCII にせず、Nerd Font のグリフで出す（#295 のオーナーの決め）。
@@ -4149,8 +4216,10 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `comment.string` | 文字列（空か、`%s` を含む） | バッファごと | 空 | `commentstring`、`cms` | 行のコメントの形（3.3。FR-169）。`%s` の前と後ろが記号になる。既定は Neovim 0.12.5 と同じく空（Vim 9.1 の既定は `/* %s */` だが、Vim に既定の `gc` は無い）。本体のファイルの種類ごとの既定（下の「バッファごとの項目の初めの値」の 3）に、判定できる種類と `lua` の値を持つ。空でなく `%s` を含まない値は、表の欄 `option.Def.Contains` で断る（`:set` と `:option.set` は `E537`。Vim 9.1 と Neovim 0.12.5 の `:set cms=//` と同じ番号） |
 | `cursorHold.delayMs` | 整数（0 から 60000） | エディタ全体 | `4000` | 無し（`'updatetime'` の別名は、`:set` の別名の表が `internal/command/ex` にあり、#329 では足していない） | 利用者がキーを打たずにこのミリ秒が経ったら、カーソルが止まったとする時間（6.7 の「カーソルが止まった契機」。FR-171）。既定と下限は Vim と Neovim の `'updatetime'` と同じ（2026-11-21 に Neovim 0.12.5 の `:set ut=0` が通り、`:set ut=-1` が `E487` になることを確かめた）。上限は 1 分にした。キーを打つたびに読む。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `100` |
 | `diagnostic.popup` | 真偽 | エディタ全体 | `false` | 無し | カーソルが止まったときに、カーソルの行の診断をカーソルの近くの浮かべた窓に出すか（6.7 の「診断のポップアップ」。FR-171）。既定は Vim と Neovim と同じく出さない。真なら、メッセージの行に診断の本文を出さない。同梱の `config.example.jsonc` では `true` |
+| `progress.show` | 真偽 | エディタ全体 | `true` | 無し（Vim と Neovim に対応する設定が無い） | 拡張機能の進み具合を、編集の client の画面の右下に重ねて出すか（6.7 の「進み具合の表示」。FR-178）。既定を出すにした理由は同じ節にある。同梱の `config.example.jsonc` でも `true` |
+| `progress.doneMs` | 整数（0 から 60000） | エディタ全体 | `3000` | 無し | 終わった進み具合を出しておくミリ秒（FR-178）。既定は fidget.nvim の `done_ttl` の既定（3 秒）と同じ。0 なら終わったらすぐに消す。上限は `cursorHold.delayMs` と同じ 1 分にした |
 
-`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で足した。
+`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で、`progress.show` と `progress.doneMs` は #340 で足した。
 #319 の 2 つの名前は、issue の案のとおりにした。`cursor.restore` には Vim の名前が無い（Vim は設定でなく `defaults.vim` の自動コマンドで戻す）ので、`:set` では受け付けない。
 `comment.string` の名前は、#327 の本文の案のとおりにした。
 #329 の issue の案は、時間を `diagnostic.popupDelayMs` としていた。時間を待つ仕組みを汎用の契機にしたので、時間は「止まってから時間が経った」契機（Vim の `CursorHold` と `CursorHoldI`。どちらも `'updatetime'` で動く）の設定として、`cursorHold.` の下に 1 つだけ置いた。
@@ -4535,7 +4604,7 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 
 | 項目 | 関係する節 |
 |---|---|
-| 拡張機能 API のバージョンの付け方（いまは 0.13.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
+| 拡張機能 API のバージョンの付け方（いまは 0.14.0 で、メッセージの形を変えるたびに上げている。上げた理由は `ext.APIVersion` の doc にある） | 5.3 |
 | 不正な UTF-8 を含むファイルのパスを拡張機能へ送るときの扱い（JSON の文字列では U+FFFD に置き換わる） | 4.1、5.3 |
 | 未保存のバッファを本体の panic から守る仕組み | 8 |
 | 補完の候補の表示と、インサートモードの入力ごとに言語サーバーへ問い合わせる契機 | 6.3 |

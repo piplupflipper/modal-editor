@@ -79,6 +79,8 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.appendOutput(ev.Extension, ev.Params)
 	case *exthost.StatusLineSet:
 		e.setStatusPart(ev.Extension, ev.Params)
+	case *exthost.ProgressReport:
+		e.reportProgress(ev.Extension, ev.Params)
 	case *exthost.PopupOpenRequest:
 		e.withView(e.extView(ev.Extension), func() { e.popupOpenRequest(ev) })
 	case *exthost.BufferCreateRequest:
@@ -141,6 +143,7 @@ func messageLevel(l ext.MessageLevel) ui.MessageLevel {
 
 // stateChange は、拡張機能の状態の変化を処理する。異常で終わったら 1 行のメッセージで知らせ、表示のデータを消す（基本設計 8 章、6.7）。
 func (e *Editor) stateChange(ev *exthost.StateChange) {
+	e.clearProgressLater(ev)
 	switch ev.State {
 	case exthost.StateRestartWait, exthost.StateDisabled:
 		e.clearExtension(ev.Extension)

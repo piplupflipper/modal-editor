@@ -258,9 +258,30 @@ func settingsJSON(t *testing.T, compiler string, parsers map[string]map[string]a
 }
 
 // connectParsers は、env の置き場所と settings の設定で Server を動かす。
-func connectParsers(t *testing.T, env parserEnv, settings json.RawMessage) (*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams) {
+func connectParsers(t *testing.T, env parserEnv, settings json.RawMessage) (
+	*rpc.Conn, <-chan ext.DecorationSetParams, <-chan ext.MessageShowParams, <-chan ext.ProgressReportParams,
+) {
 	t.Helper()
-	return connectWith(t, func(h *highlighter) { h.env = env }, settings)
+	return connectWithProgress(t, func(h *highlighter) { h.env = env }, settings)
+}
+
+// waitProgress は、本文が text を含む progress/report が届くまで待ち、それまでに届いたものを返す。
+func waitProgress(t *testing.T, ch <-chan ext.ProgressReportParams, text string) []ext.ProgressReportParams {
+	t.Helper()
+	var seen []ext.ProgressReportParams
+	deadline := time.After(buildWait)
+	for {
+		select {
+		case p := <-ch:
+			seen = append(seen, p)
+			if strings.Contains(p.Message, text) {
+				return seen
+			}
+		case <-deadline:
+			t.Fatalf("progress/report containing %q did not arrive; got %+v", text, seen)
+			return nil
+		}
+	}
 }
 
 // openBuffer は、buffer/open を送る。
@@ -364,16 +385,25 @@ func TestUserParserFetchBuildAndReuse(t *testing.T) {
 	numberAt := ext.Position{Line: 0, Byte: strings.Index(text, "1")}
 	keyAt := ext.Position{Line: 0, Byte: strings.Index(text, `"a"`)}
 
-	conn, got, msgs := connectParsers(t, env, settings)
+	conn, got, msgs, progress := connectParsers(t, env, settings)
 	openBuffer(t, conn, 1, "myjson", text)
 	p := receiveBuffer(t, got, 1, nil)
 	if styleAt(p.Decorations, numberAt) != "number" || styleAt(p.Decorations, keyAt) != "string" {
 		t.Errorf("decorations = %+v, want number at %v and string at %v", p.Decorations, numberAt, keyAt)
 	}
-	seen := waitMessage(t, msgs, "パーサ myjson を用意した")
-	texts := messageTexts(seen)
-	if !strings.Contains(texts, "パーサ myjson を取得している") || !strings.Contains(texts, "パーサ myjson をビルドしている") {
-		t.Errorf("messages = %s", texts)
+	// 取得、ビルド、用意を、1 つの識別子の begin、report、end で知らせる（FR-178）。メッセージの行には出さない。
+	seen := waitProgress(t, progress, "パーサ myjson を用意した")
+	var kinds []string
+	for _, p := range seen {
+		kinds = append(kinds, string(p.Kind)+":"+p.Token+":"+p.Title+":"+p.Message)
+	}
+	if len(seen) != 3 || seen[0].Kind != ext.ProgressBegin || seen[0].Title != progressTitle || !strings.Contains(seen[0].Message, "パーサ myjson を取得している") ||
+		seen[1].Kind != ext.ProgressReport || !strings.Contains(seen[1].Message, "パーサ myjson をビルドしている") ||
+		seen[2].Kind != ext.ProgressEnd || seen[2].Failed || seen[0].Token != seen[1].Token || seen[1].Token != seen[2].Token {
+		t.Errorf("progress = %q", kinds)
+	}
+	if ms := drainMessages(msgs); len(ms) != 0 {
+		t.Errorf("message/show = %+v, want none", ms)
 	}
 	lock := readLockFile(t, env.lockPath)
 	if e := lock.Parsers["myjson"]; e.Commit != v1 || e.Version != "v1" || e.Repo != repo.dir {
@@ -387,7 +417,7 @@ func TestUserParserFetchBuildAndReuse(t *testing.T) {
 	// 次の起動では、ロックファイルの記録とビルドしたものを使う。git と C コンパイラが無くても読み込める。
 	env2 := env
 	env2.git = "no-such-git-for-test"
-	conn2, got2, msgs2 := connectParsers(t, env2, settingsJSON(t, "no-such-cc-for-test", map[string]map[string]any{
+	conn2, got2, msgs2, progress2 := connectParsers(t, env2, settingsJSON(t, "no-such-cc-for-test", map[string]map[string]any{
 		"myjson": {"repo": repo.dir, "version": "v1", "fileTypes": []string{"myjson"}, "path": "grammar"},
 	}))
 	openBuffer(t, conn2, 1, "myjson", text)
@@ -396,6 +426,11 @@ func TestUserParserFetchBuildAndReuse(t *testing.T) {
 	}
 	if ms := drainMessages(msgs2); len(ms) != 0 {
 		t.Errorf("2 回目の message/show = %+v, want none", ms)
+	}
+	select {
+	case p := <-progress2:
+		t.Errorf("2 回目の progress/report = %+v, want none", p)
+	default:
 	}
 
 	// 版を変えたら、取得し直してビルドし、ロックファイルを替え、前のビルドを消す。
@@ -406,12 +441,12 @@ func TestUserParserFetchBuildAndReuse(t *testing.T) {
 	}
 	v2 := repo.commit(map[string]string{"README": "v2\n"})
 	repo.git("tag", "v2")
-	conn3, got3, msgs3 := connectParsers(t, env, settingsJSON(t, "", map[string]map[string]any{
+	conn3, got3, _, progress3 := connectParsers(t, env, settingsJSON(t, "", map[string]map[string]any{
 		"myjson": {"repo": repo.dir, "version": "v2", "fileTypes": []string{"myjson"}, "path": "grammar"},
 	}))
 	openBuffer(t, conn3, 1, "myjson", text)
 	receiveBuffer(t, got3, 1, nil)
-	waitMessage(t, msgs3, "パーサ myjson を用意した")
+	waitProgress(t, progress3, "パーサ myjson を用意した")
 	if e := readLockFile(t, env.lockPath).Parsers["myjson"]; e.Commit != v2 || e.Version != "v2" {
 		t.Errorf("lock after v2 = %+v, want commit %s", e, v2)
 	}
@@ -472,9 +507,13 @@ func TestUserParserFailureIsolated(t *testing.T) {
 		"missing": {"repo": filepath.Join(t.TempDir(), "no-such-repo"), "version": "v1", "fileTypes": []string{"missing"}},
 		"invalid": {"repo": "relative/path", "version": "v1", "fileTypes": []string{"invalid"}},
 	})
-	conn, got, msgs := connectParsers(t, env, settings)
+	conn, got, msgs, progress := connectParsers(t, env, settings)
 
 	openBuffer(t, conn, 1, "broken", `{"a": 1}`)
+	// 用意できなくても、始めた進み具合は終える（FR-178）。
+	if seen := waitProgress(t, progress, "パーサ broken を用意できない"); seen[len(seen)-1].Kind != ext.ProgressEnd || !seen[len(seen)-1].Failed {
+		t.Errorf("progress = %+v", seen)
+	}
 	seen := waitMessage(t, msgs, "パーサ broken を使えない")
 	if texts := messageTexts(seen); !strings.Contains(texts, "warning: tree-sitter: パーサ invalid を使わない") {
 		t.Errorf("設定の誤りを知らせていない: %s", texts)
@@ -515,7 +554,7 @@ func TestUserParserOverridesBuiltin(t *testing.T) {
 		"myjson":  {"repo": repo.dir, "version": "v1", "fileTypes": []string{"json"}},
 		"missing": {"repo": filepath.Join(t.TempDir(), "no-such-repo"), "version": "v1", "fileTypes": []string{"jsonc"}},
 	})
-	conn, got, msgs := connectParsers(t, env, settings)
+	conn, got, msgs, _ := connectParsers(t, env, settings)
 	text := `{"a": "b"}`
 	at := ext.Position{Line: 0, Byte: strings.Index(text, `"b"`)}
 
@@ -546,12 +585,12 @@ func TestUserParserKeepsResponding(t *testing.T) {
 	}
 	repo := newGrammarRepo(t, ".", nil)
 	env := testParserEnv(t)
-	conn, got, msgs := connectParsers(t, env, settingsJSON(t, slow, map[string]map[string]any{
+	conn, got, _, progress := connectParsers(t, env, settingsJSON(t, slow, map[string]map[string]any{
 		"myjson": {"repo": repo.dir, "version": "v1", "fileTypes": []string{"myjson"}},
 	}))
 	text := `{"a": 1}`
 	openBuffer(t, conn, 1, "myjson", text)
-	waitMessage(t, msgs, "パーサ myjson をビルドしている")
+	waitProgress(t, progress, "パーサ myjson をビルドしている")
 	start := time.Now()
 	for time.Since(start) < 2*time.Second {
 		if d := ping(t, conn); d > 500*time.Millisecond {

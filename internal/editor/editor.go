@@ -448,6 +448,11 @@ type Editor struct {
 	extParts map[string]ui.ExtPart
 	// statusExts は、設定の並びに部品を置いたので起動時に起動した拡張機能の ID の集合である（startStatusExtensions）。
 	statusExts map[string]bool
+	// progress は、拡張機能が progress/report で知らせた進み具合を、始めた順に並べたものである（progress.go。FR-178）。
+	progress []*progressItem
+	// progressCleared は、取っておいた状態の変化のうち、取っておいたときにその拡張機能の進み具合を消したものである
+	// （clearProgressNow。後で処理するときに消し直さない）。
+	progressCleared map[*exthost.StateChange]bool
 	// outputOrder は、出力の欄を、最初に書き足された順に並べたものである（<C-w>P で切り替える順）。
 	outputOrder []outputKey
 	// outputLast は、最後に書き足された欄である。

@@ -207,6 +207,13 @@ type StatusLineSet struct {
 	Params    ext.StatusLineSetParams
 }
 
+// ProgressReport は、拡張機能からの progress/report の通知である（基本設計 6.7 の「進み具合の表示」。FR-178）。
+// Params は ext.ProgressReportParams.Validate を通したものである。
+type ProgressReport struct {
+	Extension string
+	Params    ext.ProgressReportParams
+}
+
 // PopupOpenRequest は、拡張機能からの popup/open のリクエストである（基本設計 1.4、5.3。FR-68、FR-72）。
 // Params は ext.PopupOpenParams.Validate を通したものである。
 // イベントループは、ポップアップを開いて ID を [PopupOpenRequest.Reply] で返す。
@@ -371,6 +378,7 @@ func (*SignSet) isEvent()               {}
 func (*PopupShow) isEvent()             {}
 func (*OutputAppend) isEvent()          {}
 func (*StatusLineSet) isEvent()         {}
+func (*ProgressReport) isEvent()        {}
 func (*PopupOpenRequest) isEvent()      {}
 func (*BufferCreateRequest) isEvent()   {}
 func (*DiffStartRequest) isEvent()      {}

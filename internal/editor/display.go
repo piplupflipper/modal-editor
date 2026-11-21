@@ -363,6 +363,7 @@ func (e *Editor) decorationsBuilt(r decoBuilt) {
 }
 
 // clearExtension は、異常で終わった拡張機能の表示のデータを、すべてのバッファから消す（基本設計 6.7）。
+// ステータス行の部品の中身も消す。進み具合は、状態の変化を取っておいたかで消す時が違うので、呼び出し側（stateChange）が消す。
 func (e *Editor) clearExtension(extID string) {
 	e.clearStatusParts(extID)
 	for _, bs := range e.bufs {

@@ -7,7 +7,7 @@
 // （lightline に近いステータス行の色は、config.example.jsonc の colors にある）。
 // 端末の背景を透過させる前提の調整は入れていない。本体には本文の文字と背景の色を指す名前が無いので、Normal の色は写していない。
 // colors/iceberg.vim に対応するハイライトグループが無い名前（message.info、popup.border、statusline. で始まる部品の色、
-// sign.executionPoint、sign.breakpoint、sign.breakpointUnverified）は書いていない。書いていない名前は本体の既定の色になる。
+// sign.executionPoint、sign.breakpoint、sign.breakpointUnverified、progress）は書いていない。書いていない名前は本体の既定の色になる。
 {
   // 構文の色。本体の名前は tree-sitter の捕捉の名前に当たるので、Neovim の tree-sitter のグループ（TS...）から写した
   "comment": { "fg": "#6b7089" }, // TSComment → Comment
@@ -42,6 +42,12 @@
   // 項目のプレビューの、項目の指す行。iceberg.vim に専用のグループは無く、fzf-lua のプレビューの FzfLuaCursorLine が既定で
   // リンクする CursorLine の背景を写した（文字の色は持たず、構文の色を残す）
   "preview.line": { "bg": "#1e2132" }, // CursorLine
+  // 画面の右下の進み具合の表題と印。fidget.nvim の既定（progress_style が WarningMsg、done_style が Constant）のグループの
+  // 文字の色を写した。進み具合はバッファの本文の上に重ねるので、WarningMsg の背景の色は写していない
+  "progress.title": { "fg": "#e27878" }, // WarningMsg
+  "progress.done": { "fg": "#a093c7" }, // Constant
+  // 失敗して終わった進み具合。fidget.nvim に対応するものは無いので、ErrorMsg の文字の色を写した（WarningMsg と同じ色で、印で見分ける）
+  "progress.failed": { "fg": "#e27878" }, // ErrorMsg
 
   // ステータス行。どちらも反転（gui=reverse）なので、文字は guibg の色、背景は guifg の色で出る
   "statusline": { "fg": "#818596", "bg": "#17171b", "reverse": true }, // StatusLine

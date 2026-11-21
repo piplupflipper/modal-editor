@@ -247,6 +247,15 @@ const (
 	// Neovim の CursorHold の自動コマンドで vim.diagnostic.open_float を開く設定に当たる）。範囲はエディタ全体で、既定は出さない
 	// （Vim と Neovim の既定は出さない）。出すときは、メッセージの行に 1 行で出す診断の本文（FR-30）を出さない。カーソルが止まるたびに読む。
 	DiagnosticPopup = "diagnostic.popup"
+	// ProgressShow は、拡張機能が progress/report で知らせた進み具合を、編集の client の画面の右下に重ねて出すかである（FR-178。
+	// Neovim の fidget.nvim の表示に当たる）。範囲はエディタ全体で、描くたびに読む。Vim と Neovim に対応する設定は無い。
+	// 既定は出す（#340 の決め）。0.14.0 より前の標準の拡張機能は、同じ進み具合（パーサの用意、mise での入れ込み）をメッセージの行に
+	// 出していたので、既定で出さないと、既定の設定のままの利用者から進み具合が見えなくなるためである。
+	ProgressShow = "progress.show"
+	// ProgressDoneMs は、終わった進み具合（progress/report の end）を、終わった印を付けて出しておくミリ秒である（FR-178。
+	// fidget.nvim の progress.display.done_ttl に当たる）。0 なら終わったらすぐに消す。範囲は 0 から 60000 で、既定は 3000 である
+	// （fidget.nvim の done_ttl の既定の 3 秒）。進み具合が終わるたびに読む。
+	ProgressDoneMs = "progress.doneMs"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -282,6 +291,9 @@ var defs = []Def{
 	{Name: CommentString, Type: String, Scope: ScopeBuffer, Default: StringValue(""), Contains: "%s"},
 	{Name: CursorHoldDelayMs, Type: Int, Scope: ScopeEditor, Default: IntValue(4000), Range: &IntRange{Min: 0, Max: 60000}},
 	{Name: DiagnosticPopup, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: ProgressShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(true)},
+	// 上限は cursorHold.delayMs と同じ 1 分にした。
+	{Name: ProgressDoneMs, Type: Int, Scope: ScopeEditor, Default: IntValue(3000), Range: &IntRange{Min: 0, Max: 60000}},
 }
 
 // fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。

@@ -92,9 +92,11 @@ type highlighter struct {
 	docs map[ext.BufferID]*document
 	// warned は、一覧が大きすぎることを知らせたバッファの集合である。
 	warned map[ext.BufferID]bool
-	// send は decoration/set を、notify は message/show を送る関数である。server が Server のメソッドを入れる。
+	// send は decoration/set を、notify は message/show を、report は progress/report を送る関数である。
+	// server が Server のメソッドを入れる。
 	send   func(ext.DecorationSetParams) error
 	notify func(ext.MessageLevel, string) error
+	report func(ext.ProgressReportParams) error
 }
 
 // newHighlighter は、languages のすべての言語のパーサーとクエリを 1 つずつ用意し、言語の fileTypes のどの種類からも引けるようにする。
@@ -186,6 +188,7 @@ func (h *highlighter) server() *server.Server {
 	h.objects.register(s)
 	h.send = s.SetDecorations
 	h.notify = s.ShowMessage
+	h.report = s.ReportProgress
 	h.done = make(chan struct{})
 	go h.work()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -279,6 +282,13 @@ func (h *highlighter) reportProblems() {
 func (h *highlighter) message(level ext.MessageLevel, text string) {
 	if err := h.notify(level, text); err != nil {
 		h.log.Printf("message/show: %v", err)
+	}
+}
+
+// progress は、progress/report を送る。送れなければログに書く。
+func (h *highlighter) progress(p ext.ProgressReportParams) {
+	if err := h.report(p); err != nil {
+		h.log.Printf("progress/report: %v", err)
 	}
 }
 

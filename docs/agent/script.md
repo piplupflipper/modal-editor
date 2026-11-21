@@ -292,6 +292,9 @@ b が nil になる場合と、結果の Transaction の BaseVersion の扱い�
   同じ op を 2 回登録するか（ProviderAsync との重複を含む）、Serve の後に呼ぶと panic する。
   登録していない操作の provider/invoke には、JSON-RPC のエラー（InvalidParams）を応答する。
 - `func (s *Server) ProviderAsync(op ext.Operation, h AsyncProviderHandler)`: Provider の非同期版である。
+- `func (s *Server) ReportProgress(p ext.ProgressReportParams) error`: 本体へ progress/report を送り、時間のかかる処理の進み具合を知らせる。
+  p.Kind が ext.ProgressBegin（begin） なら始め、ext.ProgressReport（report） なら本文か百分率を変え、ext.ProgressEnd（end） なら終える。
+  識別子 p.Token は拡張機能の中で一意にする。応答は待たない。どこから呼んでもよい。
 - `func (s *Server) Run(ctx context.Context) error`: 標準入力と標準出力で本体と通信し、Serve と同じく動く。
   拡張機能の main から呼ぶ。
 - `func (s *Server) SaveBuffer(ctx context.Context, p ext.BufferSaveParams) (ext.BufferSaveResult, error)`: 本体へ buffer/save を送り、バッファをファイルへ書き出させる。

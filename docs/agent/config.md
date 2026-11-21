@@ -92,6 +92,8 @@
 | `comment.string` | 文字列 | バッファごと | `""` |  |
 | `cursorHold.delayMs` | 整数 | エディタ全体 | `4000` | 0 から 60000 |
 | `diagnostic.popup` | 真偽 | エディタ全体 | `false` |  |
+| `progress.show` | 真偽 | エディタ全体 | `true` |  |
+| `progress.doneMs` | 整数 | エディタ全体 | `3000` | 0 から 60000 |
 <!-- generated:options:end -->
 
 各項目の説明と、`:set` で使える Vim の名前は `vi-imitation --docs usage 設定の名前の一覧` にある。
