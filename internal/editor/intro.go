@@ -35,7 +35,14 @@ import (
 //
 // :intro（FR-207）は、上の条件によらず、打った client の画面に、表示領域を空白で塗ってから案内を出し、その client の次のキーを 1 つ待つ。
 // そのキーは案内を消すだけで、コマンドとしては使わない（Neovim 0.12.5 の ex_intro が plain_vgetc で 1 文字を読んで捨てるのと同じ）。
-// 待つのは利用者の端末のキーだけで、マクロの再生の残りのキーは待たない（再生は handleKey を通らない）。
+// 次のキーは、利用者の端末のキー（handleKey）か、キーマップの展開の残りのキー（feedMapped）である。
+// マクロとドットリピートの再生の中の :intro は、案内を出さず、キーも待たない。再生の残りのキーは command.State が自分で読み、
+// 本体はその 1 つを捨てられないので、出すと再生の後に案内が残り、利用者が次に打ったキーを捨ててしまうためである（PR #358 のレビューの推奨 4）。
+// Neovim は再生の次のキーを読んで捨てる。違いは docs/vim-differences.md にある。
+// 案内を消したキーは、マクロに記録しない（記録は command.State がキーを受けたときに行う）。これも Neovim と違う。
+//
+// 設定ファイルがあるかは、案内の文面を作るときに 1 回だけ確かめて覚え、:intro のたびに確かめ直す（introState.lines。PR #358 のレビューの推奨 1）。
+// 案内を見て設定ファイルを置き、:intro で確かめられるようにするためである。
 
 // introExtension は、コマンドラインの表（exCommands）で :intro に入れる拡張機能の ID の代わりの値である（messagesExtension と同じ形）。
 const introExtension = " intro"
@@ -53,8 +60,8 @@ type introState struct {
 	off bool
 	// forced は、:intro で案内を出している client である。その client の次のキーで nil に戻す（dismissIntro）。
 	forced *clientView
-	// lines は、案内の文面の覚えである。最初に出すときに作る（設定ファイルがあるかを確かめるのを 1 回にするため）。
-	lines []string
+	// lines は、案内の文面の覚えである。最初に出すときと :intro のたびに作り直す（描くたびに設定ファイルがあるかを確かめないため）。
+	lines []ui.IntroLine
 }
 
 // addIntroCommand は、コマンドラインの表に :intro を足す。拡張機能が同じ ID のコマンドを宣言していれば、本体の :intro を優先し、誤りを返す。
@@ -71,18 +78,24 @@ func addIntroCommand(cmds map[string]string) []error {
 
 // showIntro は、:intro で、操作中の client の画面に起動の案内を出す（FR-207。このファイルの doc）。
 // 引数は取らず、付ければ E488 にする（Vim 9.1 と Neovim 0.12.5 の :intro x と同じ）。
+// replaying（マクロとドットリピートの再生の中）なら、案内を出さず、キーも待たない（このファイルの doc）。
+// 文面は作り直し、設定ファイルがあるかを確かめ直す。
 //
 // req: FR-207
-func (e *Editor) showIntro(args string) error {
+func (e *Editor) showIntro(args string, replaying bool) error {
 	if args = strings.TrimSpace(args); args != "" {
 		return fmt.Errorf("E488: 余分な文字があります: %s", args)
 	}
+	if replaying {
+		return nil
+	}
+	e.intro.lines = nil
 	e.intro.forced = e.op
 	return nil
 }
 
 // dismissIntro は、操作中の client に :intro の案内を出していれば消して true を返す（FR-207）。
-// handleKey は、true ならそのキーをコマンドとして使わない。
+// handleKey（利用者のキー）と feedMapped（キーマップの展開の残りのキー）は、true ならそのキーをコマンドとして使わない。
 //
 // req: FR-207
 func (e *Editor) dismissIntro() bool {
@@ -121,8 +134,8 @@ func (e *Editor) mayShowIntro() bool {
 		bs.buf.LineCount() == 1 && bs.buf.Line(0) == ""
 }
 
-// introText は、起動の案内の文面を返す。最初に呼んだときに作って覚える（introState.lines）。
-func (e *Editor) introText() []string {
+// introText は、起動の案内の文面を返す。覚えが無ければ作って覚える（introState.lines）。
+func (e *Editor) introText() []ui.IntroLine {
 	if e.intro.lines == nil {
 		e.intro.lines = introLines(version.String(), e.introConfig())
 	}
@@ -170,24 +183,45 @@ func shortHome(path, home string) string {
 }
 
 // introLines は、起動の案内の文面である（仮。オーナーが後で決める。#355）。文面を変えるときは、この関数だけを変える。
+// テストと文書は、この関数の返す行から期待値を作るか、行数と幅に依らない規則だけを書くので、ここを変えても直す所は増えない。
 // 中身は、名前と版、:q で終わる案内、:help の案内、設定ファイルの場所の 4 つである（#355 の本文）。
-// ui の drawIntro が行ごとに表示領域の中央へ寄せて描くので、列をそろえたい行（コマンドの 2 行）は、空白で表示幅をそろえる。
-// 案内の全体が表示領域に余白付きで収まらなければ出さない（drawIntro）ので、行を増やしたり広げたりすると、狭い端末で出なくなる。
-// 設定ファイルのパスを見出しと別の行にするのは、パスの分だけ広い 1 行にして、狭い端末で案内の全体が出なくなるのを避けるためである
-// （既定の置き場所の ~/.config/vi-imitation/config.jsonc は 35 列で、案内は 37 列の端末から出る）。
-func introLines(ver string, cfg introConfigFile) []string {
-	conf := []string{"設定ファイルの場所を決められない", "（XDG_CONFIG_HOME と HOME が無い）"}
+// ui の drawIntro が行ごとに表示領域の中央へ寄せて描くので、列をそろえたい行（コマンドの表）は introTable で表示幅をそろえる。
+// 案内の全体が表示領域に余白付きで収まらなければ出さない（drawIntro）。ただし、設定ファイルのパスの行は省いてよい行（ui.IntroLine.Elide）にし、
+// 幅に収まらなければ左を詰めて描く。パスは利用者の環境（XDG_CONFIG_HOME）で長くなるので、その行だけで案内の全体が出なくならないようにする
+// （PR #358 のレビューの推奨 2）。パスを見出しと別の行にするのは、詰めても見出しを読めるようにするためである。
+func introLines(ver string, cfg introConfigFile) []ui.IntroLine {
+	conf := []ui.IntroLine{{Text: "設定ファイルの場所を決められない"}, {Text: "（XDG_CONFIG_HOME と HOME が無い）"}}
 	switch {
 	case cfg.path != "" && cfg.exists:
-		conf = []string{"設定ファイル", cfg.path}
+		conf = []ui.IntroLine{{Text: "設定ファイル"}, {Text: cfg.path, Elide: true}}
 	case cfg.path != "":
-		conf = []string{"設定ファイル（まだ無い）", cfg.path}
+		conf = []ui.IntroLine{{Text: "設定ファイル（まだ無い）"}, {Text: cfg.path, Elide: true}}
 	}
-	return append([]string{
-		"vi-imitation " + ver,
-		"",
-		":q<Enter>     で終わる      ",
-		":help<Enter>  でヘルプを開く",
-		"",
-	}, conf...)
+	lines := []ui.IntroLine{{Text: "vi-imitation " + ver}, {}}
+	lines = append(lines, introTable([][2]string{
+		{":q<Enter>", "で終わる"},
+		{":help<Enter>", "でヘルプを開く"},
+	})...)
+	lines = append(lines, ui.IntroLine{})
+	return append(lines, conf...)
+}
+
+// introTable は、左の列と右の列の組を、左の列の幅をそろえ（間は 2 列）、行の表示幅もそろえた行にする。
+// drawIntro は行ごとに中央へ寄せるので、表示幅をそろえた行は同じ列から描かれ、列がそろう。
+func introTable(rows [][2]string) []ui.IntroLine {
+	width := func(s string) int { return ui.StringWidth(s, ui.DefaultTabStop) }
+	left, total := 0, 0
+	for _, r := range rows {
+		left = max(left, width(r[0]))
+	}
+	texts := make([]string, len(rows))
+	for i, r := range rows {
+		texts[i] = r[0] + strings.Repeat(" ", left-width(r[0])+2) + r[1]
+		total = max(total, width(texts[i]))
+	}
+	out := make([]ui.IntroLine, len(rows))
+	for i, s := range texts {
+		out[i] = ui.IntroLine{Text: s + strings.Repeat(" ", total-width(s))}
+	}
+	return out
 }

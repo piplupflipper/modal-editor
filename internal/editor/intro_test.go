@@ -3,10 +3,12 @@ package editor
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/piplupflipper/vi-imitation/internal/option"
+	"github.com/piplupflipper/vi-imitation/internal/version"
 )
 
 // startIntro は、80 列 24 行の端末で、起動の引数のファイルを files にして（無ければ引数なしで）エディタを起動する。
@@ -29,38 +31,43 @@ func startIntro(t *testing.T, cfg Config, files ...string) (*harness, string) {
 // noConfigPath は、起動の案内のテストの、無い設定ファイルのパスである（startIntro）。
 const noConfigPath = "/vi-imitation-intro-test/config.jsonc"
 
-// introShown は、h の最後の画面に起動の案内の最初の行があるかを返す。
+// introShown は、h の最後の画面に起動の案内の最初の行（名前と版）があるかを返す。
 func introShown(h *harness) bool {
 	h.t.Helper()
 	h.settle()
 	h.e.do(func() {}) // 最後のキーの後の描画を待つ
-	return strings.Contains(h.term.screen(), "vi-imitation dev")
+	return strings.Contains(h.term.screen(), introLines(version.String(), introConfigFile{})[0].Text)
+}
+
+// screenHasIntro は、screen に、cfg の設定ファイルで作った案内の文面（introLines）の各行が、上から順に 1 行ずつ続けてあるかを確かめる。
+// 文面を introLines から作るので、文面を変えてもこのテストは直さなくてよい。
+func screenHasIntro(t *testing.T, screen string, cfg introConfigFile) {
+	t.Helper()
+	want := introLines(version.String(), cfg)
+	rows := strings.Split(screen, "\n")
+	first := slices.IndexFunc(rows, func(r string) bool { return strings.Contains(r, want[0].Text) })
+	if first < 0 || first+len(want) > len(rows) {
+		t.Fatalf("画面に案内の最初の行 %q が無い:\n%s", want[0].Text, screen)
+	}
+	for i, l := range want {
+		if text := strings.TrimSpace(l.Text); !strings.Contains(rows[first+i], text) {
+			t.Errorf("案内の %d 行目に %q が無い（%q）:\n%s", i, text, rows[first+i], screen)
+		}
+	}
 }
 
 // 引数なしで起動したら、画面の中央に、名前と版、:q と :help の案内、設定ファイルの場所を出す。
-// 設定ファイルが無ければ、置く場所として出す。
+// 設定ファイルが無ければ、置く場所として出す。行の並びは、表示領域の行の中ほどに置く。
 //
 // req: FR-205
 func TestIntroAtStartup(t *testing.T) {
 	h, conf := startIntro(t, Config{})
 	scr := h.term.screen()
-	for _, want := range []string{"vi-imitation dev", ":q<Enter>     で終わる", ":help<Enter>  でヘルプを開く", "設定ファイル（まだ無い）", conf} {
-		if !strings.Contains(scr, want) {
-			t.Errorf("画面に %q が無い:\n%s", want, scr)
-		}
-	}
-	rows := strings.Split(scr, "\n")
-	if !strings.Contains(rows[1+12], "設定ファイル（まだ無い）") || !strings.Contains(rows[1+13], conf) {
-		t.Errorf("設定ファイルの見出しとパスの行が違う:\n%s", scr)
-	}
-	// タブの行の下が表示領域（21 行）で、案内の 7 行を上に (21-7)/2 = 7 行を空けて置く。
-	if !strings.HasPrefix(rows[1+7], "~") || !strings.Contains(rows[1+7], "vi-imitation dev") {
+	screenHasIntro(t, scr, introConfigFile{path: conf})
+	// タブの行の下が表示領域（端末の 24 行から、タブの行、ステータス行、コマンドラインの行を除いた 21 行）である。
+	n := len(introLines(version.String(), introConfigFile{path: conf}))
+	if row := strings.Split(scr, "\n")[1+(21-n)/2]; !strings.HasPrefix(row, "~") || !strings.Contains(row, "vi-imitation") {
 		t.Errorf("案内の最初の行の位置が違う:\n%s", scr)
-	}
-	// 同じ列から始めるコマンドの 2 行は、表示幅をそろえてあるので、同じ列から描く。
-	q, help := rows[1+9], rows[1+10]
-	if strings.Index(q, ":q") != strings.Index(help, ":help") {
-		t.Errorf("コマンドの 2 行の列がそろっていない:\n%s\n%s", q, help)
 	}
 
 	// 設定ファイルがあれば、そのパスを出す。
@@ -68,12 +75,50 @@ func TestIntroAtStartup(t *testing.T) {
 	if err := os.WriteFile(conf, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	h2 := startIntroWide(t, conf)
+	screenHasIntro(t, h2.term.screen(), introConfigFile{path: conf, exists: true})
+}
+
+// startIntroWide は、一時ディレクトリのパス（テストの名前を含んで長い）も詰めずに収まる 200 列の端末で、
+// 設定ファイルのパスを conf にして、引数なしでエディタを起動する。
+func startIntroWide(t *testing.T, conf string) *harness {
+	t.Helper()
 	term := newFakeTerm()
-	term.w, term.h = 200, 24 // 一時ディレクトリのパスが長くても収まる幅にする
-	h2 := startTerm(t, term, Config{WorkDir: t.TempDir(), ExtManager: ExtManagerConfig{ConfigPath: conf}})
-	h2.settle()
-	if scr := h2.term.screen(); !strings.Contains(scr, conf) || strings.Contains(scr, "まだ無い") || !strings.Contains(scr, "設定ファイル") {
-		t.Errorf("設定ファイルがあるときの画面:\n%s", scr)
+	term.w, term.h = 200, 24
+	h := startTerm(t, term, Config{WorkDir: t.TempDir(), ExtManager: ExtManagerConfig{ConfigPath: conf}})
+	h.settle()
+	return h
+}
+
+// :intro は、設定ファイルがあるかを確かめ直す。起動の後に置いた設定ファイルも、:intro で「ある」と出す（PR #358 のレビューの推奨 1）。
+//
+// req: FR-207
+func TestIntroRechecksConfig(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "config.jsonc")
+	h := startIntroWide(t, conf)
+	screenHasIntro(t, h.term.screen(), introConfigFile{path: conf})
+	if err := os.WriteFile(conf, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.keys(":intro<CR>")
+	if !introShown(h) {
+		t.Fatalf(":intro で出していない:\n%s", h.term.screen())
+	}
+	screenHasIntro(t, h.term.screen(), introConfigFile{path: conf, exists: true})
+}
+
+// 幅に収まらない設定ファイルのパスは、左を詰めて出し、案内のほかの行は出す（PR #358 のレビューの推奨 2）。
+//
+// req: FR-205
+func TestIntroLongConfigPath(t *testing.T) {
+	long := "/" + strings.Repeat("d", 120) + "/vi-imitation/config.jsonc"
+	h, _ := startIntro(t, Config{ExtManager: ExtManagerConfig{ConfigPath: long}})
+	scr := h.term.screen()
+	if !introShown(h) {
+		t.Fatalf("長いパスで案内を出していない:\n%s", scr)
+	}
+	if !strings.Contains(scr, "…") || !strings.Contains(scr, "/vi-imitation/config.jsonc") || strings.Contains(scr, long) {
+		t.Errorf("長いパスを左で詰めていない:\n%s", scr)
 	}
 }
 
@@ -230,6 +275,40 @@ func TestIntroCommand(t *testing.T) {
 	h2.settle()
 	if got := h2.text(); strings.Contains(got, "a") {
 		t.Errorf(":intro の後の i を使った: text = %q", got)
+	}
+}
+
+// キーマップの展開の中の :intro は、展開の次のキーで消え、そのキーは使わない（Neovim が先行入力から 1 文字を読んで捨てるのと同じ）。
+// マクロの再生の中の :intro は、案内を出さず、キーも待たない。再生の後に案内が残って、利用者の次のキーを捨てることはない
+// （PR #358 のレビューの推奨 4）。案内を消したキーは、マクロに記録しない。
+//
+// req: FR-207
+func TestIntroInMappingAndMacro(t *testing.T) {
+	km := map[string]map[string]string{"normal": {"<Space>i": ":intro<CR>x"}}
+	h, _ := startIntro(t, Config{Keymap: km}, "a.txt")
+	h.keys("<Space>i")
+	if introShown(h) {
+		t.Errorf("展開の次のキーで消えていない:\n%s", h.term.screen())
+	}
+	if got := h.text(); got != "abc" {
+		t.Errorf("展開の中で案内を消した x を使った: text = %q", got)
+	}
+
+	h.keys("qa:intro<CR>xq")
+	h.settle()
+	var reg string
+	h.e.do(func() { r, _ := h.e.cur.state.Registers().Get('a'); reg = r.Text })
+	if reg != ":intro\r" {
+		t.Errorf(`"a = %q（案内を消した x は記録しない）`, reg)
+	}
+	h.keys("@a")
+	if introShown(h) {
+		t.Errorf("再生の後に案内が残っている:\n%s", h.term.screen())
+	}
+	h.keys("x")
+	h.settle()
+	if got := h.text(); got != "bc" {
+		t.Errorf("再生の後のキーを捨てた: text = %q", got)
 	}
 }
 

@@ -303,6 +303,10 @@ func (e *Editor) handleKey(k editcmd.Key) {
 // 終わった後に、再び展開せずに続ける（Vim はコマンドが終わってから展開の残りを実行する）。
 func (e *Editor) feedMapped(keys []editcmd.Key) {
 	for i, k := range keys {
+		if e.dismissIntro() {
+			// 展開の途中の :intro の案内は、展開の次のキーで消し、そのキーは使わない（Neovim の plain_vgetc が先行入力から読むのと同じ。intro.go）。
+			continue
+		}
 		ok := e.feedKey(k)
 		if h := e.suspension(); h != nil {
 			h.mapped = append(h.mapped, keys[i+1:]...)

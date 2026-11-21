@@ -518,7 +518,7 @@ func (x *extQuery) Action(ref editcmd.Ref, b *buffer.Buffer, q command.ActionQue
 		return extManagerTx(b), nil
 	}
 	if ref.Extension == introExtension {
-		return extManagerTx(b), x.e.showIntro(q.Text)
+		return extManagerTx(b), x.e.showIntro(q.Text, info.Replaying)
 	}
 	p := ext.CommandExecuteParams{
 		Buffer: x.bs.id, Version: ext.Version(b.Version()), ID: ref.ID,

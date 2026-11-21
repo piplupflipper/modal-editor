@@ -7,13 +7,22 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/buffer"
 )
 
+// introOf は、texts を、詰めない行の並びにした起動の案内の行を返す。
+func introOf(texts ...string) []IntroLine {
+	out := make([]IntroLine, len(texts))
+	for i, s := range texts {
+		out[i] = IntroLine{Text: s}
+	}
+	return out
+}
+
 // 起動の案内は、行の並びを表示領域の行の中ほどに置き、各行を表示領域の幅の中ほどに寄せて、"~" の行の上に描く。
 // 文字の無いセル（左の "~" と空の行）は下に描いたもののまま残し、ステータス行とコマンドラインの行は覆わない。
 // 上と下に 1 行、左と右に 1 列の余りが残らなければ描かない。
 //
 // req: FR-205
 func TestRenderIntro(t *testing.T) {
-	intro := &Intro{Lines: []string{"ab", "", "xyz", "あい"}}
+	intro := &Intro{Lines: introOf("ab", "", "xyz", "あい")}
 	render := func(width, height int) Screen {
 		r := &Renderer{Width: width, Height: height}
 		return r.Render(&Frame{Text: buffer.New(""), Intro: intro})
@@ -72,13 +81,46 @@ func TestRenderIntro(t *testing.T) {
 	}
 }
 
+// 詰めてよい行（IntroLine.Elide）は、案内の全体が収まるかの判定に数えず、幅に収まらなければ左を省略の印にして詰める。
+// ほかの行は今までどおり描く。詰めた行も、左と右に 1 列の余りを残す。
+//
+// req: FR-205
+func TestRenderIntroElide(t *testing.T) {
+	path := "/very/long/config/dir/vi-imitation/config.jsonc"
+	intro := &Intro{Lines: append(introOf("ab", ""), IntroLine{Text: path, Elide: true})}
+	for _, width := range []int{12, 30, 80} {
+		r := &Renderer{Width: width, Height: 10}
+		got := rowTexts(r.Render(&Frame{Text: buffer.New(""), Intro: intro}), 8)
+		text := strings.Join(got, "\n")
+		if !strings.Contains(got[2], "ab") {
+			t.Errorf("%d 列: ほかの行が出ていない:\n%s", width, text)
+		}
+		row := strings.TrimPrefix(got[4], "~")
+		trimmed := strings.TrimSpace(row)
+		switch {
+		case StringWidth(path, DefaultTabStop) <= width-2:
+			if trimmed != path {
+				t.Errorf("%d 列: 収まる行を詰めた: %q", width, got[4])
+			}
+		case !strings.HasPrefix(trimmed, introEllipsis) || !strings.HasSuffix(path, strings.TrimPrefix(trimmed, introEllipsis)):
+			t.Errorf("%d 列: 左を詰めていない: %q", width, got[4])
+		case StringWidth(got[4], DefaultTabStop) > width-1:
+			t.Errorf("%d 列: 右の 1 列の余りが無い: %q", width, got[4])
+		}
+	}
+	// 全角の文字の途中では切らない。
+	if got := elideLeft("あいうえお", 6, DefaultTabStop); StringWidth(got, DefaultTabStop) > 6 || !strings.HasSuffix(got, "えお") {
+		t.Errorf("elideLeft(あいうえお, 6) = %q", got)
+	}
+}
+
 // :intro の案内は、表示領域を空白で塗ってから描き、収まらない行と列は切る。
 // 案内の上には、スクロールバーなど、窓の重なりの表で上にある部品が重なる。
 //
 // req: FR-207
 func TestRenderIntroClear(t *testing.T) {
 	text := buffer.New(strings.Repeat("hello\n", 100))
-	intro := &Intro{Lines: []string{"ab", "", "xyz"}, Clear: true}
+	intro := &Intro{Lines: introOf("ab", "", "xyz"), Clear: true}
 	r := &Renderer{Width: 10, Height: 7}
 	s := r.Render(&Frame{Text: text, Intro: intro, Scrollbar: &Scrollbar{}})
 	got := rowTexts(s, 5)
@@ -100,7 +142,7 @@ func TestRenderIntroClear(t *testing.T) {
 		t.Errorf("2 列 2 行の表示領域 = %q", got)
 	}
 	tiny := &Renderer{Width: 2, Height: 3}
-	if row := rowTexts(tiny.Render(&Frame{Text: text, Intro: &Intro{Lines: []string{"xyz"}, Clear: true}}), 1)[0]; row != "xy" {
+	if row := rowTexts(tiny.Render(&Frame{Text: text, Intro: &Intro{Lines: introOf("xyz"), Clear: true}}), 1)[0]; row != "xy" {
 		t.Errorf("1 行の表示領域 = %q", row)
 	}
 }
