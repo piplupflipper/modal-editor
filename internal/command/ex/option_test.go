@@ -241,6 +241,63 @@ func TestLineNumberOptions(t *testing.T) {
 	}
 }
 
+// コメントの形 comment.string は、:set の Vim の名前 commentstring と cms で読み書きできる。空でなく %s を含まない値は E537 にする。
+// :set の値の \ は次の 1 文字をそのまま残し、\ の後の空白は引数を区切らない。
+// 期待値は 2026-11-21 に Vim 9.1（vim -Nu NONE）と Neovim 0.12.5（nvim --clean）で :set cms=... の後の &cms を読んで確かめた
+// （a\b%s は ab%s、a\\b%s は a\b%s、//\ %s は // %s、%s\ は %s\、:set cms=// と cms=\ と cms=a\ は E537。どちらも同じだった）。
+//
+// req: FR-169
+func TestCommentStringOption(t *testing.T) {
+	tests := []struct {
+		name       string
+		cmdline    string
+		wantSets   []string
+		wantNotice string
+		wantCode   string
+		wantPos    int
+	}{
+		{name: ":set commentstring", cmdline: `set commentstring=//\ %s`, wantSets: []string{"comment.string=// %s"}},
+		{name: ":set cms", cmdline: `set cms=#\ %s`, wantSets: []string{"comment.string=# %s"}},
+		{name: ":set cms の前後の \\ と空白", cmdline: `set cms=/*\ %s\ */ filetype=c`, wantSets: []string{"comment.string=/* %s */", "filetype=c"}},
+		{name: ":set cms の \\ は次の文字を残す", cmdline: `set cms=a\b%s`, wantSets: []string{"comment.string=ab%s"}},
+		{name: ":set cms の \\\\", cmdline: `set cms=a\\b%s`, wantSets: []string{"comment.string=a\\b%s"}},
+		{name: ":set cms の \\ の後のタブ文字", cmdline: "set cms=//\\\t%s", wantSets: []string{"comment.string=//\t%s"}},
+		{name: ":set cms=（空）", cmdline: "set cms=", wantSets: []string{"comment.string="}},
+		{name: ":set cms?", cmdline: "set cms?", wantNotice: "comment.string="},
+		{name: ":set cms は値を出す", cmdline: "set commentstring", wantNotice: "comment.string="},
+		{name: ":set cms に %s が無い", cmdline: "set cms=//", wantCode: "E537", wantPos: 4},
+		// 末尾の \ は値に残す（Vim 9.1 と Neovim 0.12.5 と同じ。PR #331 のレビューの推奨 3）。
+		{name: ":set cms=\\ は E537", cmdline: `set cms=\`, wantCode: "E537", wantPos: 4},
+		{name: ":set cms=\\\\ は \\ で E537", cmdline: `set cms=\\`, wantCode: "E537", wantPos: 4},
+		{name: ":set cms=a\\ は E537", cmdline: `set cms=a\`, wantCode: "E537", wantPos: 4},
+		{name: ":set cms=%s\\ は末尾の \\ を残す", cmdline: `set cms=%s\`, wantSets: []string{`comment.string=%s\`}},
+		{name: ":set cms=%s\\\\ は \\ 1 つ", cmdline: `set cms=%s\\`, wantSets: []string{`comment.string=%s\`}},
+		{name: ":set nocms", cmdline: "set nocms", wantCode: "E474", wantPos: 4},
+		{name: ":option.set comment.string", cmdline: "option.set comment.string // %s", wantSets: []string{"comment.string=// %s"}},
+		{name: ":option.set comment.string に %s が無い", cmdline: "option.set comment.string abc", wantCode: "E537", wantPos: 26},
+		{name: ":option.set comment.string の空", cmdline: "option.set comment.string", wantSets: []string{"comment.string="}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := &fakeOptions{}
+			st := &State{Options: opts}
+			res, err := Execute(buffer.New("a\nb\n"), st, 0, tt.cmdline)
+			if code := errCode(t, err); code != tt.wantCode {
+				t.Fatalf("code = %q, want %q (err = %v)", code, tt.wantCode, err)
+			}
+			if e := (*Error)(nil); tt.wantCode != "" && errors.As(err, &e) && e.Pos != tt.wantPos {
+				t.Errorf("pos = %d, want %d (err = %v)", e.Pos, tt.wantPos, err)
+			}
+			if !slices.Equal(opts.sets, tt.wantSets) {
+				t.Errorf("sets = %q, want %q", opts.sets, tt.wantSets)
+			}
+			if tt.wantCode == "" && res.Notice.Text != tt.wantNotice {
+				t.Errorf("notice = %q, want %q", res.Notice.Text, tt.wantNotice)
+			}
+		})
+	}
+}
+
 // 設定の値を読み書きする口が無ければ、:option.set、:option.get、:set は E319 にする。
 //
 // req: FR-132

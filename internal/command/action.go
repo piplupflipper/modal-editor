@@ -32,6 +32,7 @@ var repeatableActions = map[string]bool{
 	"dedent-line":        true,
 	"surround-delete":    true,
 	"surround-replace":   true,
+	"comment-line":       true,
 }
 
 func init() {
@@ -45,9 +46,12 @@ func init() {
 		"substitute-line":    actShorthand("change", editcmd.Target{Kind: editcmd.TargetLine}),
 		"indent-line":        actShorthand("indent", editcmd.Target{Kind: editcmd.TargetLine}),
 		"dedent-line":        actShorthand("dedent", editcmd.Target{Kind: editcmd.TargetLine}),
-		"surround-delete":    actSurroundDelete,
-		"surround-replace":   actSurroundReplace,
-		"yank-line":          actShorthand("yank", editcmd.Target{Kind: editcmd.TargetLine}),
+		// gcc は gc の行単位の対象に当たる（Neovim の gcc は gc_。3gcc は 3 行）。ドットリピートには省略形の値のまま記録する。
+		// req: FR-169
+		"comment-line":     actShorthand("comment", editcmd.Target{Kind: editcmd.TargetLine}),
+		"surround-delete":  actSurroundDelete,
+		"surround-replace": actSurroundReplace,
+		"yank-line":        actShorthand("yank", editcmd.Target{Kind: editcmd.TargetLine}),
 		// Y の y$ は、D の d$ と同じく回数を y$ の回数として渡す（3Y は 3y$）。
 		// req: FR-146
 		"yank-to-line-end":   actShorthand("yank", editcmd.Target{Kind: editcmd.TargetMotion, Ref: editcmd.Ref{ID: "line-end"}}),

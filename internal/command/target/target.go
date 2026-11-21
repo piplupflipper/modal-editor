@@ -150,6 +150,11 @@ type Request struct {
 	// / と ? は、回数の分だけ検索した一致から、回数の一致を 1 単位にして、正ならバッファの末尾の方へ、負なら先頭の方へ動かした一致へ移る（FindMatch）。
 	// 向き（/ か ?）によらず、正はバッファの末尾の方である。n と N は見ない。
 	SearchSteps int
+	// CommentString は、位置 at で使う行のコメントの形（設定 comment.string。"// %s" など）を返す関数である（FR-169）。
+	// コメントのまとまりのテキストオブジェクト（gc）だけが、カーソルの位置で呼ぶ。nil なら空の形として扱う。
+	// 形を決めるのは呼び出し側（internal/command の State.commentString）で、後に tree-sitter の拡張機能でカーソルの位置の言語の形を
+	// 使うときのために位置を渡す。そのときに前もって要る口（言語の範囲を先に持っておく口と、別の種類の形を段から決める口）は、基本設計 3.3 にある。
+	CommentString func(at buffer.Position) string
 }
 
 // count1 は、回数を 1 以上にして返す。
@@ -291,6 +296,7 @@ var textObjects = map[string]TextObjectFunc{
 	"a-brace":            block(true, '{', '}'),  // a{ a} aB
 	"inner-paragraph":    paragraphObject(false), // ip
 	"a-paragraph":        paragraphObject(true),  // ap
+	"commented-lines":    commentedLines,         // オペレーターの後の gc
 }
 
 // LookupMotion は、ID が name のモーションを返す。

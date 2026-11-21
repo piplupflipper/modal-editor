@@ -46,6 +46,7 @@ const (
 	codeUnknownOption    = "E518" // 知らない設定
 	codeNumberRequired   = "E521" // 数の要る設定に数でない値を書いた
 	codeNotPositive      = "E487" // 設定の値が範囲の下限より小さい（Vim の :set numberwidth=0 と同じ番号）
+	codeMissingContains  = "E537" // 設定の値が、含まなければならない文字列を含まない（Vim の :set commentstring=// と同じ番号）
 )
 
 // CodeNoWrite は、未保存の変更があるので :q や :e を実行できないことを表すエラー番号である。

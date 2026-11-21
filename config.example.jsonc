@@ -138,8 +138,11 @@
 
   // ファイルの種類ごとの値。キーは filetype の値で、中は最上位と同じ形で書く（範囲がバッファごとの項目だけを書ける）。
   // 例えば YAML を 2 列で字下げするなら、次の行のコメントを外す
+  // gc と gcc（ノーマルモードとビジュアルモードの <C-/> も）で切り替えるコメントの形（comment.string。nvim の commentstring）も、
+  // ここで変えられる。Go、Python などの既定は本体が持つ（nvim の ftplugin と同じ値。docs/usage.md の「コメントの切り替え」）
   "fileTypeOptions": {
     // "yaml": { "indent": { "width": 2 } },
+    // "c": { "comment": { "string": "/* %s */" } },
   },
 
   // Ex コマンドの別名。名前から、付け替える先のコマンド（command）と、省略できる最短の長さ（min。省くと省略できない）への対応である。

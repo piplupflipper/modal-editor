@@ -91,6 +91,13 @@ var (
 		{keys: "g~", id: "toggle-case", desc: "大文字と小文字を入れ替える"},
 		{keys: "gu", id: "lowercase", desc: "小文字にする"},
 		{keys: "gU", id: "uppercase", desc: "大文字にする"},
+		// 行のコメントを切り替える（Neovim 0.12.5 の gc。FR-169）。ビジュアルモードでは選んだ行を切り替える。
+		// ビジュアルモードの <C-_> と <C-/> は、オーナーの nvim の割り当て（ビジュアルモードでは gc）に合わせた。
+		// 端末は Ctrl-/ を多くの場合 0x1f で送り、internal/term は <C-_> と読む。<C-/> は CSI u で区別して送る端末のための登録である。
+		// req: FR-169
+		{keys: "gc", id: "comment", desc: "行のコメントを切り替える"},
+		{keys: "<C-_>", id: "comment", modes: MapVisual, desc: "選んだ行のコメントを切り替える（gc）"},
+		{keys: "<C-/>", id: "comment", modes: MapVisual, desc: "選んだ行のコメントを切り替える（gc）"},
 		// 囲みを足す（vim-sandwich の sa。FR-73、基本設計 4.8）。対象の後に囲みの文字を 1 つ取る。
 		// 囲みのキーはノーマルモードだけに置く。ビジュアルモードの s は、選択を消して入力するオペレーターのまま残す。
 		{keys: "sa", id: "surround-add", takesChar: true, modes: MapNormal, desc: "対象を {文字} で囲む（sa{対象}{文字}）"},
@@ -140,6 +147,12 @@ var (
 		{keys: "aB", id: "a-brace", desc: "{…} の全体"},
 		{keys: "ip", id: "inner-paragraph", desc: "段落"},
 		{keys: "ap", id: "a-paragraph", desc: "段落と後ろの空行"},
+		// カーソルの行を含む、続くコメントの行（Neovim 0.12.5 のオペレーターの後の gc。FR-169）。
+		// ビジュアルモードの gc はオペレーターなので、既定のキーはオペレーターの後だけに置き、ビジュアルモードには既定のキーの無い行を置く
+		// （設定の keymap の visual で割り当てられる）。
+		// req: FR-169
+		{keys: "gc", id: "commented-lines", modes: MapOperatorPending, desc: "続くコメントの行"},
+		{keys: "", id: "commented-lines", modes: MapVisual, desc: "続くコメントの行"},
 	}
 
 	builtinActions = []spec{
@@ -169,6 +182,13 @@ var (
 		// 囲みを消す（sd{文字}）と替える（sr{前の文字}{後の文字}）。vim-sandwich の sd と sr に当たる（FR-74、FR-75、基本設計 4.8）。
 		{keys: "sd", id: "surround-delete", takesChar: true, desc: "{文字} の囲みを消す（sd{文字}）"},
 		{keys: "sr", id: "surround-replace", takesChar: true, takesChar2: true, desc: "囲みを替える（sr{前の文字}{後の文字}）"},
+		// gcc は、Neovim 0.12.5 と同じく gc の後の行単位の対象（回数は行数）に当たる省略形にする（FR-169）。
+		// gc（オペレーター）と gcc の両方があるので、gc の後は次のキーを待つ（Parser の説明。Neovim の gc と gcc の割り当てと同じ）。
+		// <C-_> と <C-/> は、オーナーの nvim の割り当て（ノーマルモードでは gcc）に合わせた。
+		// req: FR-169
+		{keys: "gcc", id: "comment-line", modes: MapNormal, desc: "行のコメントを切り替える（gcc。回数は行数）"},
+		{keys: "<C-_>", id: "comment-line", modes: MapNormal, desc: "行のコメントを切り替える（gcc。回数は行数）"},
+		{keys: "<C-/>", id: "comment-line", modes: MapNormal, desc: "行のコメントを切り替える（gcc。回数は行数）"},
 		{keys: "J", id: "join-lines", desc: "行をつなげる"},
 		{keys: "o", id: "open-below", next: editcmd.ModeInsert, desc: "下に行を足して入力する"},
 		{keys: "O", id: "open-above", next: editcmd.ModeInsert, desc: "上に行を足して入力する"},

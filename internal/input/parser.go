@@ -116,8 +116,9 @@ func (p *Parser) Feed(k editcmd.Key) []editcmd.Result {
 // 確定させるのは、溜めた列の接頭辞に完成した登録があり、かつより長い登録を待っている場合だけである
 // （本体の y と拡張機能の ys の y）。このときは最長の完成した登録に決め、残りのキーを続けて解釈する。
 // 本体の操作の途中（g、di、ci、3、"a、f）のように完成した候補が無い場合は、何もせず nil を返し、
-// 次のキーを待ち続ける。本体の操作だけの表では、完成した候補とより長い候補が両方ある列は無いので、
-// Flush は常に何もしない（見比べの do と dp も、表の列ではなく d のオペレーターの後の o と p として読む。match）。
+// 次のキーを待ち続ける。本体の操作だけの表で、完成した候補とより長い候補が両方ある列は、ノーマルモードの gc（オペレーター）と
+// gcc（comment-line）だけである。gc の後に時間が切れると gc のオペレーターに決め、続く c は重ね押しとして行単位の対象になるので、
+// 結果は gcc と同じになる（見比べの do と dp は、表の列ではなく d のオペレーターの後の o と p として読む。match）。
 func (p *Parser) Flush() []editcmd.Result {
 	n := p.longestExact()
 	if n == 0 {
@@ -261,6 +262,9 @@ func (p *Parser) resolve(n int) (results []editcmd.Result, rest []editcmd.Key) {
 // match は、現在の状態で引く操作のうち、seq に一致するものと、より長い登録があるかを返す。
 // オペレーターの後では、重ね押し（オペレーターのキーの列そのものか、その最後のキー）も候補にする。
 // 重ね押しとモーションの両方に一致する場合は重ね押しを優先する。
+// ただし、2 キー以上のオペレーターのキーの列そのものが、テキストオブジェクトのキーの列でもあれば、テキストオブジェクトを優先する。
+// gc の後の gc（gcgc）は、Neovim 0.12.5 と同じく、コメントのまとまりのテキストオブジェクト（commented-lines）に gc を働かせる
+// （2026-11-21 に確かめた。行単位の重ね押しは gcc で打つ）。
 //
 // 本体の d のオペレーターの後の o と p は、どの登録にも一致しなければ、見比べの do と dp（FR-101）の操作にする。
 // Vim 9.1 の nv_open と nv_put_opt（src/normal.c）が、オペレーターが d のときに nv_diffgetput を呼ぶのと同じで、
@@ -273,8 +277,10 @@ func (p *Parser) match(seq []editcmd.Key) (exact *Binding, longer bool) {
 		return p.km.match(MapNormal, seq)
 	}
 	exact, longer = p.km.match(MapOperatorPending, seq)
-	for _, form := range [][]editcmd.Key{p.opKeys, p.opKeys[len(p.opKeys)-1:]} {
+	textObject := exact != nil && exact.Kind == BindTextObject
+	for i, form := range [][]editcmd.Key{p.opKeys, p.opKeys[len(p.opKeys)-1:]} {
 		switch {
+		case slices.Equal(form, seq) && i == 0 && len(form) > 1 && textObject:
 		case slices.Equal(form, seq):
 			exact = &Binding{Kind: bindLine}
 		case len(form) > len(seq) && slices.Equal(form[:len(seq)], seq):
