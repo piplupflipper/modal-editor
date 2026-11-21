@@ -378,6 +378,74 @@ func TestMouseWheel(t *testing.T) {
 	check("ステータス行のクリック", 12, 14)
 }
 
+// インサートモードのホイールは、カーソルを表示領域の中へ移すときに、インサートモードに入った位置の列を望みの列として使い、
+// 望みの列を変えない（#347）。
+//
+// 期待値は、2026-11-22 に、Neovim 0.12.5（nvim --clean -n、'noautoindent'、'showtabline' を 2、'laststatus' を 2）を
+// tmux 3.6 の 40 列 12 行のペインで起動し、同じテキストのファイルを開いて、keys のキーと、画面の 3 行目の 3 列目（0 から数える）の
+// SGR の形のホイールの列（tmux send-keys -H）を送った後の、インサートモードの line('.')、col('.') と winsaveview() の curswant、
+// line('w0') と、<Esc> の後の line('.')、col('.') と curswant である。行と列は 1 から数える。Vim 9.1（vim -Nu NONE -n、
+// mouse=a、ttymouse=sgr）も同じ値だった。テキストは internal/command の TestInsertWantNeovim と同じものである。
+//
+// req: FR-182
+func TestMouseWheelInsertWant(t *testing.T) {
+	var lines []string
+	for n := 1; n <= 30; n++ {
+		lines = append(lines, fmt.Sprintf("line%d ", n)+"abcdefghijklmnopqrstuvwxyz"[:n*7%23])
+	}
+	text := strings.Join(lines, "\n") + "\n"
+	cases := []struct {
+		keys            []string // "wd" と "wu" はホイールの下と上、ほかはキーの列
+		insert          string   // インサートモードのカーソル（行:列）
+		insertWant, top int
+		normal          string // <Esc> の後のカーソル（行:列）
+		normalWant      int
+	}{
+		{[]string{"A", "wd"}, "4:12", 13, 4, "4:11", 10},
+		{[]string{"A", "wd", "wd"}, "7:10", 13, 7, "7:9", 8},
+		{[]string{"A", "wd", "<Down>"}, "5:14", 13, 4, "5:13", 12},
+		{[]string{"A<Down>", "wd"}, "4:12", 13, 4, "4:11", 10},
+		{[]string{"Ax", "wd"}, "4:12", 14, 4, "4:11", 10},
+		{[]string{"$i", "wd"}, "4:12", 12, 4, "4:11", 10},
+		{[]string{"GA", "wu"}, "27:11", 10, 19, "27:10", 9},
+		{[]string{"GA", "wu", "<Up>"}, "26:11", 10, 19, "26:10", 9},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.keys, " "), func(t *testing.T) {
+			h := mouseStart(t, Config{}, map[string]string{"a.txt": text}, "a.txt")
+			for _, k := range tc.keys {
+				switch k {
+				case "wd":
+					h.mouse("<ScrollWheelDown>", 3, 3)
+				case "wu":
+					h.mouse("<ScrollWheelUp>", 3, 3)
+				default:
+					h.keys(k)
+					h.settle()
+				}
+			}
+			state := func() (string, int) {
+				var want int
+				h.e.do(func() { want = h.e.cur.state.Want() })
+				c := h.cursor()
+				return fmt.Sprintf("%d:%d", c.Line+1, c.Byte+1), want
+			}
+			if h.mode() != command.ModeInsert {
+				t.Fatalf("モード = %v, want インサートモード", h.mode())
+			}
+			if cur, want := state(); cur != tc.insert || want != tc.insertWant || h.viewTop()+1 != tc.top {
+				t.Errorf("インサートモードのカーソル %s、望みの列 %d、最初の行 %d, want %s、%d、%d",
+					cur, want, h.viewTop()+1, tc.insert, tc.insertWant, tc.top)
+			}
+			h.keys("<Esc>")
+			h.settle()
+			if cur, want := state(); cur != tc.normal || want != tc.normalWant {
+				t.Errorf("<Esc> の後のカーソル %s、望みの列 %d, want %s、%d", cur, want, tc.normal, tc.normalWant)
+			}
+		})
+	}
+}
+
 // 行を折り返さないときの横のホイールは、表示領域の左の端を mouse.scrollColumns の列（既定は 6）だけ送る。
 // 左の端は見える行のうち最も長い行の最後の列より右へ送らず、カーソルの行がその列より短ければ最も長い行へ移る（Neovim 0.12.5 と同じ）。
 //

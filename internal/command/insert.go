@@ -67,9 +67,15 @@ func (s *State) startInsertAt(cmd editcmd.Command, repeat int, sites []buffer.Po
 
 // beginInsert は、startInsertAt の、カーソルの行が自動インデント（FR-162）で入れた字下げのままか（autoIndent）を指定する形である。
 // o、O と、行単位の c（cc、S）が、字下げを入れてから呼ぶ。
+//
+// 望みの列は、入力を始める位置（カーソル）の列にする。ノーマルモードの望みの列（j で短い行へ移る前の列、$ の後の行末）は引き継がない。
+// A の後も、行末の位置の列であり、target.WantEOL（<End> の後）ではない。
+// Vim 9.1 の edit() は、カーソルキーを使っていない間（arrow_used が偽）は毎回 w_set_curswant を立て、次の <Up> と <Down> の前に
+// カーソルの列から curswant を数え直す。Neovim 0.12.5 では、"abc" と "abcdef" の 1 行目の A<Down> は 2 行目の 4 列目へ移る（#347）。
 func (s *State) beginInsert(cmd editcmd.Command, repeat int, sites []buffer.Position, autoIndent bool) {
 	s.mode = ModeInsert
 	s.cursor = sites[0]
+	s.updateWant()
 	// . の中では、バッファの最後の行で位置が足りなくても、記録した行の数を保つ（Vim 9.1 の矩形選択の I の後の . と同じく、
 	// 次の . は記録した数の行に置く）。
 	lines := max(len(sites), s.repeatLines)
@@ -173,7 +179,8 @@ func InsertActionIDs() []string {
 // c は既定のキー（<Left> など）で、操作の ID（insert.left など）から insertActions が渡す。設定で別のキーに割り当てても同じく動く。
 //
 //   - <Left> と <Right> は 1 文字動く。行の先頭と行末の位置を越えない（'whichwrap' の既定）
-//   - <Up> と <Down> は、望みの列を保って 1 行動く。行の幅が望みの列に届かなければ行末の位置へ移る
+//   - <Up> と <Down> は、望みの列を保って 1 行動く。行の幅が望みの列に届かなければ行末の位置へ移る。
+//     望みの列は、インサートモードに入った位置か、最後に入力した後の位置の列である（beginInsert と typeInput）
 //   - <Home> は行の先頭へ、<End> は行末の位置へ移る。<End> の後の <Up> と <Down> も行末の位置へ移る
 //   - <PageUp> と <PageDown> は、ノーマルモードと同じく 1 ページスクロールする（scrollPage）
 //
