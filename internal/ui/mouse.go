@@ -95,6 +95,8 @@ type hitState struct {
 	barCells []scrollbarCell
 	barThumb int
 	barLines int
+	// pin は、つまみのドラッグの間に、つまみを描く行（Renderer.HoldScrollbarThumb）である。Render の始めに空にしない。
+	pin scrollbarPin
 }
 
 // reset は、h を空にする。

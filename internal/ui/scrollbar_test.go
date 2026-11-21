@@ -222,7 +222,7 @@ func TestScrollbarDragAndMarks(t *testing.T) {
 		{Lines: []int{3, 7, 7, 12}, Priority: 2, Style: StyleScrollbarDiagnosticError, Symbol: SymbolScrollbarDiagnosticError},
 	}}
 	r := &Renderer{Width: 10, Height: 12}
-	if _, ok := r.ScrollbarTop(0); ok {
+	if _, _, ok := r.ScrollbarTop(0); ok {
 		t.Errorf("描く前の ScrollbarTop が ok")
 	}
 	r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 50}, Scrollbar: sb}) // つまみは 4 行目と 5 行目
@@ -234,9 +234,9 @@ func TestScrollbarDragAndMarks(t *testing.T) {
 		}
 	}
 	// h は 10 行、n は 100 行。
-	for _, c := range []struct{ i, want int }{{-3, 0}, {0, 0}, {1, 11}, {4, 44}, {5, 55}, {8, 88}, {9, 99}, {20, 99}} {
-		if got, ok := r.ScrollbarTop(c.i); !ok || got != c.want {
-			t.Errorf("ScrollbarTop(%d) = %d, %v, want %d", c.i, got, ok, c.want)
+	for _, c := range []struct{ i, wantRow, want int }{{-3, 0, 0}, {0, 0, 0}, {1, 1, 11}, {4, 4, 44}, {5, 5, 55}, {8, 8, 88}, {9, 9, 99}, {20, 9, 99}} {
+		if row, got, ok := r.ScrollbarTop(c.i); !ok || row != c.wantRow || got != c.want {
+			t.Errorf("ScrollbarTop(%d) = %d, %d, %v, want %d, %d", c.i, row, got, ok, c.wantRow, c.want)
 		}
 	}
 	if got := fmt.Sprint(r.ScrollbarMarkLines(0)); got != "[3 7 7]" {
@@ -256,11 +256,51 @@ func TestScrollbarDragAndMarks(t *testing.T) {
 	if h := r.HitTest(3, 9, HitScrollbar); h.Area != HitNone {
 		t.Errorf("描いていないときのドラッグ = %+v", h)
 	}
-	if _, ok := r.ScrollbarTop(3); ok {
+	if _, _, ok := r.ScrollbarTop(3); ok {
 		t.Errorf("描いていないときの ScrollbarTop が ok")
 	}
 	if got := r.ScrollbarMarkLines(0); got != nil {
 		t.Errorf("描いていないときの印の行 = %v", got)
+	}
+}
+
+// ScrollbarTop の最初の行で描き直すと、つまみがその行からずれることがある（40 行の表示領域、201 行で、1 行目の最初の行は 5 で、
+// 元の数え方のつまみは 0 行目）。HoldScrollbarThumb の後は、最初の行がその行の間だけ、つまみを決めた行に描き、
+// HitTest の ThumbRow もその行にする。最初の行が変われば元の数え方に戻る。
+//
+// req: FR-210
+func TestScrollbarHoldThumb(t *testing.T) {
+	var lines strings.Builder
+	for range 201 {
+		lines.WriteString("0123456789\n")
+	}
+	text := buffer.New(lines.String())
+	sb := &Scrollbar{}
+	bg := Indexed(8)
+	r := &Renderer{Width: 10, Height: 42, Theme: Theme{StyleScrollbar: {Bg: bg}}} // 表示領域は 40 行
+	r.Render(&Frame{Text: text, Scrollbar: sb})
+	row, top, ok := r.ScrollbarTop(1)
+	if !ok || row != 1 || top != 5 {
+		t.Fatalf("ScrollbarTop(1) = %d, %d, %v", row, top, ok)
+	}
+	r.SetScrollHeld(top, 0, 5)
+	s := r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 5}, Scrollbar: sb})
+	// 元の数え方では、つまみは 0 行目（5×40÷201 の切り捨て）から 9 行目（45×40÷201 の切り上げ）の手前までである。
+	if got := thumbRows(s, 11, bg); got != "#########.." {
+		t.Errorf("元の数え方のつまみ = %q", got)
+	}
+	r.HoldScrollbarThumb(row, top)
+	s = r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 5}, Scrollbar: sb})
+	if got := thumbRows(s, 11, bg); got != ".#########." {
+		t.Errorf("決めた行のつまみ = %q", got)
+	}
+	if h := r.HitTest(1, 9, HitNone); h.Area != HitScrollbar || !h.Thumb || h.ThumbRow != 1 {
+		t.Errorf("決めた行のつまみの HitTest = %+v", h)
+	}
+	r.SetScrollHeld(4, 0, 4)
+	s = r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 4}, Scrollbar: sb})
+	if got := thumbRows(s, 11, bg); got != "#########.." {
+		t.Errorf("最初の行が変わった後のつまみ = %q", got)
 	}
 }
 

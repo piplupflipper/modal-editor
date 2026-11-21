@@ -176,7 +176,7 @@ func TestScrollbarThumbDragWrap(t *testing.T) {
 
 // 印を押すと、その印のセルの印の行のうちカーソルの行より後の最初の行へ移り、無ければ最初の行へ回る。移る前の位置は
 // ジャンプリストに記録する（<C-o> で戻れる）。つまみの上に描いた印は、つまみを動かさずに離したときに移る。
-// ビジュアルモードでは選択を終えてから、インサートモードではインサートモードのまま移る。ダブルクリックは何もしない。
+// ビジュアルモードでは選択を終えてから、インサートモードではインサートモードのまま移る。ダブルクリックも 1 回のクリックとして扱う。
 //
 // req: FR-211
 func TestScrollbarMarkClick(t *testing.T) {
@@ -252,13 +252,104 @@ func TestScrollbarMarkClick(t *testing.T) {
 	}
 	h.keys("<Esc>")
 	h.settle()
-	// ダブルクリック（<2-LeftMouse>）は、印の上でも何もしない。
+	// すばやく続けて押した 2 回目と 3 回目（<2-LeftMouse>、<3-LeftMouse>）も、もう 1 回のクリックとして扱い、同じセルの印を順に回る
+	// （Neovim では 2 回目が本文の単語の選択になる。docs/vim-differences.md）。つまみの上の印は、離したときに移る。
 	h.keys("gg")
 	h.settle()
-	h.mouse("<2-LeftMouse>", 6, 39)
+	h.click(3, 39)
+	waitBar(h, "..=..=....")
+	h.mouse("<2-LeftMouse>", 3, 39)
+	h.mouse("<LeftRelease>", 3, 39)
+	if m, cur := h.mode(), h.cursor(); m != command.ModeNormal || cur.Line != 51 {
+		t.Errorf("印の上の 2 回目のクリックの後 = %v %+v, want 51 行目", m, cur)
+	}
+	h.mouse("<3-LeftMouse>", 3, 39)
+	h.mouse("<LeftRelease>", 3, 39)
+	if m, cur := h.mode(), h.cursor(); m != command.ModeNormal || cur.Line != 49 {
+		t.Errorf("印の上の 3 回目のクリックの後 = %v %+v, want 49 行目", m, cur)
+	}
+}
+
+// つまみを押したまま、行を変えずに動かしても（横にぶれても）、表示領域もカーソルも動かさない。つまみの上の印なら、動かさずに
+// 離したときと同じくその行へ移る。表示領域が 1 行なら、どこへドラッグしても動かない（nvim-scrollview も、寄せたつまみの行が
+// 変わったときだけ最初の行を決め直す）。
+//
+// req: FR-210, FR-211
+func TestScrollbarThumbDragSameRow(t *testing.T) {
+	// Neovim: 100G の後につまみを押して横へドラッグして離すと、最初の行 96、カーソル 100 のまま。
+	h := barStart(t, barLines(200), nil)
+	h.keys("100G")
+	h.settle()
+	top, cur := h.viewTop(), h.cursor()
+	if top != 95 || cur.Line != 99 {
+		t.Fatalf("100G の後 = 最初の行 %d、カーソル %+v", top, cur)
+	}
+	h.mouse("<LeftMouse>", 5, 39)
+	h.mouse("<LeftDrag>", 5, 30)
+	h.mouse("<LeftRelease>", 5, 30)
+	if gt, gc := h.viewTop(), h.cursor(); gt != top || gc != cur {
+		t.Errorf("横へのドラッグの後 = 最初の行 %d、カーソル %+v, want %d、%+v", gt, gc, top, cur)
+	}
+
+	// 95 行目と 98 行目（本体の 94、97）に一致があり、つまみ（表示領域の 4 行目と 5 行目）の 4 行目の上に印がある。
+	h = barStart(t, barLines(200, 95, 98), map[string]option.Value{option.SearchHighlight: option.BoolValue(true)})
+	h.keys("/x<CR>100G")
+	h.settle()
+	waitBar(h, "....=#....")
+	h.mouse("<LeftMouse>", 5, 39)
+	h.mouse("<LeftDrag>", 5, 30)
+	h.mouse("<LeftRelease>", 5, 30)
+	if cur := h.cursor(); cur.Line != 94 || h.viewTop() < 90 {
+		t.Errorf("つまみの上の印から横へのドラッグの後 = 最初の行 %d、カーソル %+v, want 94 行目", h.viewTop(), cur)
+	}
+
+	// 40 列 4 行の端末（表示領域は 1 行）。Neovim の 80 列 3 行: 20G の後に同じ操作をしても、最初の行 20、カーソル 20 のまま。
+	dir := writeFiles(t, map[string]string{"a.txt": barLines(50)})
+	term := newFakeTerm()
+	term.w, term.h = 40, 4
+	h = startTerm(t, term, Config{WorkDir: dir, Options: scrollbarOpts(nil)}, "a.txt")
+	h.keys("20G")
+	h.settle()
+	h.mouse("<LeftMouse>", 1, 39)
+	h.mouse("<LeftDrag>", 3, 39)
+	h.mouse("<LeftRelease>", 3, 39)
+	if top, cur := h.viewTop(), h.cursor(); top != 19 || cur.Line != 19 {
+		t.Errorf("表示領域が 1 行のドラッグの後 = 最初の行 %d、カーソル %+v, want 19、19 行目", top, cur)
+	}
+}
+
+// つまみのドラッグの途中でマウスでないキーを受けたら、ドラッグを終える。続くドラッグは何もせず、キーの働き（v の選択、j の移動）は
+// そのまま残る（nvim-scrollview も、マウスでない入力でドラッグを終える）。
+//
+// req: FR-210
+func TestScrollbarThumbDragKey(t *testing.T) {
+	h := barStart(t, barLines(200), nil)
+	h.mouse("<LeftMouse>", 1, 39)
+	h.mouse("<LeftDrag>", 3, 39)
+	if top, cur := h.viewTop(), h.cursor(); top != 44 || cur.Line != 44 {
+		t.Fatalf("ドラッグの後 = 最初の行 %d、カーソル %+v", top, cur)
+	}
+	h.keys("v")
+	h.settle()
+	h.mouse("<LeftDrag>", 6, 39)
 	h.mouse("<LeftRelease>", 6, 39)
-	if m, cur := h.mode(), h.cursor(); m != command.ModeNormal || cur.Line != 0 {
-		t.Errorf("印の上のダブルクリックの後 = %v %+v", m, cur)
+	if top, cur, m := h.viewTop(), h.cursor(), h.mode(); top != 44 || cur.Line != 44 || m != command.ModeVisual {
+		t.Errorf("v の後のドラッグ = 最初の行 %d、カーソル %+v、モード %v", top, cur, m)
+	}
+	h.keys("<Esc>")
+	h.settle()
+
+	h.mouse("<LeftMouse>", 3, 39)
+	h.mouse("<LeftDrag>", 4, 39)
+	top := h.viewTop()
+	h.keys("jjj")
+	h.settle()
+	want := h.cursor()
+	h.mouse("<LeftDrag>", 4, 39)
+	h.mouse("<LeftDrag>", 6, 39)
+	h.mouse("<LeftRelease>", 6, 39)
+	if gt, gc := h.viewTop(), h.cursor(); gt != top || gc != want {
+		t.Errorf("jjj の後のドラッグ = 最初の行 %d、カーソル %+v, want %d、%+v", gt, gc, top, want)
 	}
 }
 

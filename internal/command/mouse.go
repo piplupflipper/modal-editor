@@ -61,9 +61,12 @@ type Mouse interface {
 	// （タブの見出しならそのタブへ移り、フォーカスのあるポップアップの外のテキストなら、元のタブへ戻ってその位置へ移る）。
 	// 別のバッファへ移したら ErrBufferSwitched を返す。
 	Activate() error
-	// ScrollbarTop は、直前の描画が描いたスクロールバーのつまみの最初の行を、表示領域の row 行目（範囲の外は端の行へ寄せる）へ
-	// 動かすときの、表示領域の最初の行を返す（つまみのドラッグ。FR-210）。スクロールバーを描いていなければ ok は false である。
-	ScrollbarTop(row int) (line int, ok bool)
+	// ScrollbarTop は、直前の描画が描いたスクロールバーのつまみの最初の行を、表示領域の row 行目へ動かすときの、表示領域の中へ
+	// 寄せた行 at と、表示領域の最初の行 line を返す（つまみのドラッグ。FR-210）。スクロールバーを描いていなければ ok は false である。
+	ScrollbarTop(row int) (at, line int, ok bool)
+	// HoldScrollbarThumb は、表示領域の最初の行が line の間、次からの描画がつまみの最初の行を row 行目に描くようにする
+	// （ドラッグの間に、つまみをマウスの行に置く。FR-210）。
+	HoldScrollbarThumb(row, line int)
 }
 
 // HorizontalViewport は、行を折り返さないときに横の位置も動かせる表示領域である（ホイールの横のスクロール。FR-182）。
@@ -283,8 +286,9 @@ func (s *State) mouseRelease() error {
 type mouseBarDrag struct {
 	// offset は、つまみの最初の行から押した行を引いた行の数である。ドラッグの間、マウスの行とつまみの最初の行の差をこの値に保つ。
 	offset int
-	// row は、押した行（表示領域の中の行）である。moved は、押した行から動かしたかである。
-	row   int
+	// prev は、最後に表示領域の最初の行を決めたときの、表示領域の中へ寄せたつまみの最初の行である（押したときはつまみの最初の行）。
+	// moved は、それが押したときから変わったかである（変わらないドラッグでは表示領域を動かさず、印へ移る）。
+	prev  int
 	moved bool
 	// cursorRow と cursorCol は、押したときのカーソルの、表示領域の中の見た目の行と列である。行を折り返さないときの列は、
 	// 行の先頭からの表示の列である（縦に送っても横の位置は変わらないため）。
@@ -317,7 +321,7 @@ func (s *State) mouseBarPress(t MouseTarget) {
 	if !ok {
 		return
 	}
-	d := &mouseBarDrag{offset: t.ThumbRow - t.Row, row: t.Row, marks: t.Marks}
+	d := &mouseBarDrag{offset: t.ThumbRow - t.Row, prev: t.ThumbRow, marks: t.Marks}
 	// カーソルの見た目の行の、表示領域の最初の行からの行数。
 	height := s.lineHeight()
 	d.cursorRow = -v.Skip + s.cursorRow()
@@ -334,7 +338,11 @@ func (s *State) mouseBarPress(t MouseTarget) {
 // mouseBarMove は、つまみを押した後のドラッグ（<LeftDrag>）である（FR-210）。nvim-scrollview の handle_mouse に合わせた。
 //
 //   - つまみの最初の行を、マウスの行に押したときの差（mouseBarDrag.offset）を足した行（表示領域の外なら端の行）へ動かす。
-//     表示領域の最初の行は Mouse.ScrollbarTop が決める（0 行目なら最初の行、最後の行ならバッファの最後の行）
+//     表示領域の最初の行は Mouse.ScrollbarTop が決める（0 行目なら最初の行、最後の行ならバッファの最後の行）。
+//     つまみは、その行に描かせる（Mouse.HoldScrollbarThumb）
+//   - 寄せたつまみの行が前のドラッグ（初めは押したときのつまみの行）から変わらなければ、何もしない（nvim-scrollview の
+//     previous_row ~= row。つまみを掴んだまま横へ動かしても、表示領域は動かない）
+//   - ドラッグの途中でマウスでないキーを受けたら、ドラッグを終える（State.feed。nvim-scrollview も、マウスでない入力でドラッグを終える）
 //   - カーソルは、押したときと同じ表示領域の中の見た目の行と列に置く。その行が最後の行より下なら最後の行にする。上下の余白
 //     （scroll.margin）の中になったら、表示領域を動かさずに、余白の外の行へ移す（View.CursorCorrect）。望みの列は置いた列にする。
 //     nvim-scrollview は、ドラッグの間はカーソルを最初の行に置き、離したときに押したときの位置へ戻す（H0 と gj と l で動かす）が、
@@ -349,18 +357,17 @@ func (s *State) mouseBarMove() {
 	if t.Kind != MouseScrollbar {
 		return
 	}
-	if t.Row != d.row {
-		d.moved = true
-	}
-	top, ok := s.Mouse.ScrollbarTop(t.Row + d.offset)
-	if !ok {
+	at, top, ok := s.Mouse.ScrollbarTop(t.Row + d.offset)
+	if !ok || at == d.prev {
 		return
 	}
 	v, ok := s.scrollView()
 	if !ok {
 		return
 	}
+	d.prev, d.moved = at, true
 	v.Top, v.Skip = min(max(top, 0), s.lastLine()), 0
+	s.Mouse.HoldScrollbarThumb(at, v.Top)
 	// 押したときのカーソルの見た目の行に当たる、新しい表示領域の行と、その行の中の見た目の行。
 	height := s.lineHeight()
 	line, k := v.Top, max(d.cursorRow, 0)
@@ -422,9 +429,10 @@ func (s *State) mouseMarkJump(lines []int) {
 // インサートモードでは、インサートモードを抜けてから選ぶ。続くドラッグは、選んだ範囲の始まりから文字単位で広げる
 // （Neovim は単語と行の単位で広げる。docs/vim-differences.md）。
 // 4 回目のクリック（Neovim の矩形の選択）は、本体に矩形のビジュアルモードが無いので、1 回目と同じ操作（mouse.click）にした。
-// 右端のスクロールバーのつまみと印の上では何もしない（docs/vim-differences.md）。
+// 右端のスクロールバーのつまみと印の上では、もう 1 回の 1 回目のクリックとして扱う（mouseBarPress。印をすばやく続けて押して、
+// 同じセルの印の行を順に回れるようにする。docs/vim-differences.md）。
 //
-// req: FR-183
+// req: FR-183, FR-211
 func (s *State) mouseSelect(line bool) error {
 	s.mouseAnchor, s.mouseDragging, s.mouseBar = nil, false, nil
 	if s.Mouse == nil {
@@ -432,7 +440,10 @@ func (s *State) mouseSelect(line bool) error {
 	}
 	t := s.Mouse.Target(false)
 	switch t.Kind {
-	case MouseNone, MouseWindow, MouseScrollbar:
+	case MouseNone, MouseWindow:
+		return nil
+	case MouseScrollbar:
+		s.mouseBarPress(t)
 		return nil
 	case MouseElsewhere:
 		return s.Mouse.Activate()

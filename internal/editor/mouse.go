@@ -164,17 +164,36 @@ func (m mouseLocator) Target(drag bool) command.MouseTarget {
 }
 
 // ScrollbarTop は、command.Mouse の ScrollbarTop である（FR-210）。読み込んでいる client が最後に受けたマウスの出来事の画面の、
-// 直前の描画が描いたスクロールバーのつまみの最初の行を row 行目（表示領域の中の行）へ動かすときの、表示領域の最初の行を返す
+// 直前の描画が描いたスクロールバーのつまみの最初の行を row 行目（表示領域の中の行）へ動かすときの、寄せた行と表示領域の最初の行を返す
 // （ui.Renderer.ScrollbarTop）。
 //
 // req: FR-210
-func (m mouseLocator) ScrollbarTop(row int) (int, bool) {
+func (m mouseLocator) ScrollbarTop(row int) (at, line int, ok bool) {
+	r := m.barRenderer()
+	if r == nil {
+		return 0, 0, false
+	}
+	return r.ScrollbarTop(row)
+}
+
+// HoldScrollbarThumb は、command.Mouse の HoldScrollbarThumb である（FR-210。ui.Renderer.HoldScrollbarThumb）。
+//
+// req: FR-210
+func (m mouseLocator) HoldScrollbarThumb(row, line int) {
+	if r := m.barRenderer(); r != nil {
+		r.HoldScrollbarThumb(row, line)
+	}
+}
+
+// barRenderer は、読み込んでいる client が最後に受けたマウスの出来事の画面の描画の部品を返す。スクロールバーを出さない画面
+// （部品の client の画面）と、出来事の無いときは nil である。
+func (m mouseLocator) barRenderer() *ui.Renderer {
 	c := m.e.view
 	if c == nil || c.detached || !c.mouse.ok || c.mouse.comp != nil {
-		return 0, false
+		return nil
 	}
 	r, _ := m.e.mouseScreen(c)
-	return r.ScrollbarTop(row)
+	return r
 }
 
 // Activate は、command.Mouse の Activate である（FR-181）。
