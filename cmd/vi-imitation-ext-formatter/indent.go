@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -142,9 +145,9 @@ func (c *config) projectIndent(path, ft string) (out indentConfig, sources []str
 		var srcs []string
 		switch kind {
 		case "biome":
-			ic, srcs, err = biomeIndent(dir, ft)
+			ic, srcs, err = biomeIndent(path, ft)
 		case "prettier":
-			ic, srcs, err = prettierIndent(dir)
+			ic, srcs, err = prettierIndent(path)
 		case "ruff":
 			ic, srcs, err = ruffIndent(dir)
 		}
@@ -237,17 +240,17 @@ var biomeLanguage = map[string]string{
 // 2026-11-22 に biome 2.4.15 で、biome.json、biome.jsonc、.biome.json、.biome.jsonc の順に勝つことを確かめた（PR #352 のレビューの推奨 1）。
 var biomeFiles = []string{"biome.json", "biome.jsonc", ".biome.json", ".biome.jsonc"}
 
-// biomeIndent は、biome の設定ファイルを読む。
+// biomeIndent は、ファイル file（ファイルの種類 ft）について、biome の設定ファイルを読む。
 //
 // ファイルのディレクトリから上へ、各ディレクトリで biomeFiles の順に探し、最初に見つけたもの（近い設定）を使う。
 // formatter.indentStyle（tab か space）と formatter.indentWidth を読み、ファイルの種類の言語の <言語>.formatter に書いた項目を重ねる。
-// 近い設定が "extends": "//" なら、その上へ探した根の設定（"root": false でない設定）を先に当て、近い設定を重ねる。
+// その上に、file に当たる overrides を順に重ねる（overrideMatch で当たるかを決められないものは configError）。
+// extends（biomeExtends）は、近い設定より先に当てる。
 // "extends" の無い近い設定は、"root": false でも上の設定を引き継がない。
-// 2026-11-22 に biome 2.4.15 の format --stdin-file-path=<絶対パス>（この拡張機能の設定の例と同じ渡し方）で、この 3 つを確かめた
-// （PR #352 のレビューの推奨 2）。
-// "//" でない extends（ほかの設定ファイルや共有の設定）と、overrides の中のインデントの項目は読めないので、configError にする。
-func biomeIndent(dir, ft string) (indentConfig, []string, error) {
-	path, ok := findUp(dir, biomeFiles, isFile, nil)
+// 2026-11-22 に biome 2.4.15 の format --stdin-file-path=<絶対パス>（この拡張機能の設定の例と同じ渡し方）で、これらを確かめた
+// （PR #352 のレビューの推奨 2 と、再レビューの推奨 2、3、4）。
+func biomeIndent(file, ft string) (indentConfig, []string, error) {
+	path, ok := findUp(filepath.Dir(file), biomeFiles, isFile, nil)
 	if !ok {
 		return indentConfig{}, nil, nil
 	}
@@ -255,49 +258,102 @@ func biomeIndent(dir, ft string) (indentConfig, []string, error) {
 	if err != nil {
 		return indentConfig{}, nil, err
 	}
-	nested, err := biomeDocIndent(path, doc, ft)
+	own, err := biomeDocIndent(path, doc, file, ft, true)
 	if err != nil {
 		return indentConfig{}, nil, err
 	}
-	raw, extends := doc["extends"]
-	if !extends {
-		return nested, []string{path}, nil
+	base, srcs, err := biomeExtends(path, doc, file, ft)
+	if err != nil {
+		return indentConfig{}, nil, err
+	}
+	return base.merge(own), append([]string{path}, srcs...), nil
+}
+
+// biomeExtends は、biome の設定ファイル path（中身 doc）の extends の設定を、近い設定より先に当てる値にする。
+//
+//   - "//": 上へ探した根の設定（"root": false でない設定）。近い設定と根の設定の間に、別の "root": false の設定があれば
+//     （3 段の入れ子）、biome の決め方を確かめていないので configError にする（PR #352 の再レビューの推奨 3。biome 2.4.15 は、
+//     その間の設定を使うように見える）
+//   - 配列: 書いた順に当てる設定ファイル（後のものが勝つ）。相対パスか絶対パスの .json と .jsonc だけを読み、
+//     共有の設定（パッケージの名前）は configError にする。空の配列は extends が無いのと同じである
+//
+// extends の先の設定がさらに extends を持つもの、extends の先の overrides でインデントを変えているものは、当てる順を確かめていないので
+// configError にする。
+func biomeExtends(path string, doc map[string]json.RawMessage, file, ft string) (indentConfig, []string, error) {
+	raw, ok := doc["extends"]
+	if !ok {
+		return indentConfig{}, nil, nil
 	}
 	var s string
-	if json.Unmarshal(raw, &s) != nil || s != "//" {
-		return indentConfig{}, nil, &configError{path: path, err: errors.New(`extends は "//" のほかを読めない`)}
-	}
-	var rootErr error
-	var rootDoc map[string]json.RawMessage
-	rootPath, found := findUp(filepath.Dir(filepath.Dir(path)), biomeFiles, func(p string) bool {
-		if !isFile(p) {
-			return false
+	if json.Unmarshal(raw, &s) == nil {
+		if s != "//" {
+			return indentConfig{}, nil, &configError{path: path, err: fmt.Errorf("extends の %q を読めない", s)}
 		}
-		d, rerr := readBiome(p)
-		if rerr != nil {
-			rootErr = rerr
+		var rootErr error
+		var rootDoc map[string]json.RawMessage
+		var middle string
+		rootPath, found := findUp(filepath.Dir(filepath.Dir(path)), biomeFiles, func(p string) bool {
+			if !isFile(p) {
+				return false
+			}
+			d, rerr := readBiome(p)
+			if rerr != nil {
+				rootErr = rerr
+				return true
+			}
+			if r, ok := d["root"]; ok && string(bytes.TrimSpace(r)) == "false" {
+				middle = p
+				return false
+			}
+			rootDoc = d
 			return true
+		}, nil)
+		switch {
+		case rootErr != nil:
+			return indentConfig{}, nil, rootErr
+		case middle != "":
+			return indentConfig{}, nil, &configError{path: path, err: fmt.Errorf("根の設定との間に、ほかの入れ子の設定 %s がある（3 段の入れ子は読めない）", middle)}
+		case !found:
+			return indentConfig{}, nil, nil
 		}
-		if r, ok := d["root"]; ok && string(bytes.TrimSpace(r)) == "false" {
-			return false
+		root, err := biomeBase(rootPath, rootDoc, file, ft)
+		return root, []string{rootPath}, err
+	}
+	var list []string
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return indentConfig{}, nil, &configError{path: path, err: fmt.Errorf("extends を読めない: %w", err)}
+	}
+	var out indentConfig
+	var srcs []string
+	for _, e := range list {
+		local := strings.HasPrefix(e, "./") || strings.HasPrefix(e, "../") || filepath.IsAbs(e)
+		if ext := filepath.Ext(e); !local || ext != ".json" && ext != ".jsonc" {
+			return indentConfig{}, nil, &configError{path: path, err: fmt.Errorf("extends の %q（共有の設定）は読めない", e)}
 		}
-		rootDoc = d
-		return true
-	}, nil)
-	switch {
-	case rootErr != nil:
-		return indentConfig{}, nil, rootErr
-	case !found:
-		return nested, []string{path}, nil
+		target := e
+		if !filepath.IsAbs(e) {
+			target = filepath.Join(filepath.Dir(path), e)
+		}
+		d, err := readBiome(target)
+		if err != nil {
+			return indentConfig{}, nil, err
+		}
+		ic, err := biomeBase(target, d, file, ft)
+		if err != nil {
+			return indentConfig{}, nil, err
+		}
+		out = out.merge(ic)
+		srcs = append(srcs, target)
 	}
-	if _, ok := rootDoc["extends"]; ok {
-		return indentConfig{}, nil, &configError{path: rootPath, err: errors.New("根の設定の extends を読めない")}
+	return out, srcs, nil
+}
+
+// biomeBase は、extends の先の設定ファイル path（中身 doc）からインデントを読む。さらに extends を持つものは configError にする。
+func biomeBase(path string, doc map[string]json.RawMessage, file, ft string) (indentConfig, error) {
+	if _, ok := doc["extends"]; ok {
+		return indentConfig{}, &configError{path: path, err: errors.New("extends の先の設定の extends は読めない")}
 	}
-	root, err := biomeDocIndent(rootPath, rootDoc, ft)
-	if err != nil {
-		return indentConfig{}, nil, err
-	}
-	return root.merge(nested), []string{path, rootPath}, nil
+	return biomeDocIndent(path, doc, file, ft, false)
 }
 
 // readBiome は、biome の設定ファイル path を、最上位の項目から JSON への対応にする。
@@ -380,28 +436,120 @@ func biomeSection(where string, doc map[string]json.RawMessage, ft string) (ic i
 	return ic, hasIndent, nil
 }
 
-// biomeDocIndent は、biome の設定ファイル path の中身 doc からインデントを読む。overrides の中のインデントの項目は configError にする。
-func biomeDocIndent(path string, doc map[string]json.RawMessage, ft string) (indentConfig, error) {
+// biomeDocIndent は、biome の設定ファイル path の中身 doc から、ファイル file のインデントを読む。
+// apply が true なら、file に当たる overrides のインデントを順に重ねる（後のものが勝つ。2026-11-22 に biome 2.4.15 で確かめた）。
+// overrides の includes は path のディレクトリからの相対パスに当て（overrideMatch。biome の *.js はそのディレクトリの直下のファイルにだけ当たる）、
+// 当たるかを決められないもので、インデントを変えているものは configError にする。当たらないと分かるものは読み飛ばす。
+// apply が false（extends の先の設定）なら、インデントを変えている overrides は、当てる順を確かめていないので configError にする。
+func biomeDocIndent(path string, doc map[string]json.RawMessage, file, ft string, apply bool) (indentConfig, error) {
 	ic, _, err := biomeSection("", doc, ft)
 	if err != nil {
 		return indentConfig{}, &configError{path: path, err: err}
 	}
-	if raw, ok := doc["overrides"]; ok {
-		var overrides []map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &overrides); err != nil {
-			return indentConfig{}, &configError{path: path, err: fmt.Errorf("overrides: %w", err)}
+	raw, ok := doc["overrides"]
+	if !ok {
+		return ic, nil
+	}
+	var overrides []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &overrides); err != nil {
+		return indentConfig{}, &configError{path: path, err: fmt.Errorf("overrides: %w", err)}
+	}
+	rel := relSlash(filepath.Dir(path), file)
+	for i, o := range overrides {
+		x, has, err := biomeSection(fmt.Sprintf("overrides[%d].", i), o, ft)
+		if err != nil {
+			return indentConfig{}, &configError{path: path, err: err}
 		}
-		for i, o := range overrides {
-			_, has, err := biomeSection(fmt.Sprintf("overrides[%d].", i), o, ft)
-			if err != nil {
-				return indentConfig{}, &configError{path: path, err: err}
+		if !has {
+			continue
+		}
+		if !apply {
+			return indentConfig{}, &configError{path: path, err: fmt.Errorf("extends の先の overrides[%d] でインデントを変えている（読めない）", i)}
+		}
+		var includes []string
+		_, legacy := o["include"]
+		if r, ok := o["includes"]; ok && !legacy {
+			if err := json.Unmarshal(r, &includes); err != nil {
+				return indentConfig{}, &configError{path: path, err: fmt.Errorf("overrides[%d].includes: %w", i, err)}
 			}
-			if has {
-				return indentConfig{}, &configError{path: path, err: fmt.Errorf("overrides[%d] でインデントを変えている（overrides は読めない）", i)}
-			}
+		}
+		match, known := overrideMatch(includes, nil, rel, false)
+		switch {
+		case !known:
+			return indentConfig{}, &configError{path: path, err: fmt.Errorf("overrides[%d] がこのファイルに当たるかを決められない（読めない）", i)}
+		case match:
+			ic = ic.merge(x)
 		}
 	}
 	return ic, nil
+}
+
+// relSlash は、ディレクトリ dir からファイル file への相対パスを、/ で区切って返す。求められなければ file のファイル名を返す。
+func relSlash(dir, file string) string {
+	rel, err := filepath.Rel(dir, file)
+	if err != nil {
+		return filepath.Base(file)
+	}
+	return filepath.ToSlash(rel)
+}
+
+// overrideMatch は、overrides の当てるパターン includes（! で始まるものは除くパターン）と除くパターン excludes が、
+// 設定ファイルのディレクトリからの相対パス rel に当たるかを返す。決められなければ known が false である。
+//
+// 決められるのは、*SUF と **/*SUF（SUF は * ? [ ] { } / を含まない）のパターンだけである。**/*SUF は深さを問わずに、
+// *SUF は anyDepth（prettier の、/ を含まないパターンはファイル名に当てる決め）なら深さを問わずに、そうでなければ
+// rel が / を含まないとき（biome の、設定ファイルのディレクトリの直下）だけ、ファイル名が SUF で終われば当たる。
+// 2026-11-22 に biome 2.4.15 と prettier 3.6.2 で、src/a.js に *.js が biome では当たらず、prettier では当たることを確かめた。
+// ほかのパターンが 1 つでもあれば、決められないとする。
+func overrideMatch(includes, excludes []string, rel string, anyDepth bool) (match, known bool) {
+	var pos, neg []string
+	for _, p := range includes {
+		if n, ok := strings.CutPrefix(p, "!"); ok {
+			neg = append(neg, strings.TrimPrefix(n, "!"))
+		} else {
+			pos = append(pos, p)
+		}
+	}
+	neg = append(neg, excludes...)
+	if len(pos) == 0 {
+		return false, false
+	}
+	for _, p := range pos {
+		m, k := simpleGlob(p, rel, anyDepth)
+		if !k {
+			return false, false
+		}
+		match = match || m
+	}
+	if !match {
+		return false, true
+	}
+	for _, p := range neg {
+		m, k := simpleGlob(p, rel, anyDepth)
+		if !k {
+			return false, false
+		}
+		if m {
+			return false, true
+		}
+	}
+	return true, true
+}
+
+// simpleGlob は、*SUF か **/*SUF のパターン p が rel に当たるかを返す（overrideMatch の doc）。ほかのパターンは known が false である。
+func simpleGlob(p, rel string, anyDepth bool) (match, known bool) {
+	deep := false
+	if rest, ok := strings.CutPrefix(p, "**/"); ok {
+		p, deep = rest, true
+	}
+	suf, ok := strings.CutPrefix(p, "*")
+	if !ok || strings.ContainsAny(suf, "*?[]{}/\\!") {
+		return false, false
+	}
+	if !strings.HasSuffix(path.Base(rel), suf) {
+		return false, true
+	}
+	return deep || anyDepth || !strings.Contains(rel, "/"), true
 }
 
 // prettierFiles は、prettier が 1 つのディレクトリで設定を探す順である。
@@ -421,11 +569,11 @@ var prettierFiles = []string{
 // ファイルのディレクトリから上へ、各ディレクトリで prettierFiles の順に探し、最初に見つけたものだけを使う
 // （prettier の文書の「searching up the file tree until a config file is (or isn't) found」）。
 // useTabs と tabWidth を読む。.prettierrc と YAML の形は、ブロックの形と流れの形（{ useTabs: true }）を読む。
-// 読めない形（JavaScript、TypeScript、JSON5、package.yaml、package.json の共有の設定の名前）と、overrides（読めないので、
-// JSON の形でインデントの項目を書いたものと、YAML と TOML の形のものすべて）は configError にする。
-func prettierIndent(dir string) (indentConfig, []string, error) {
+// ファイル file に当たる overrides は重ねる（prettierOverrides）。
+// 読めない形（JavaScript、TypeScript、JSON5、package.yaml、package.json の共有の設定の名前）と、読めない overrides は configError にする。
+func prettierIndent(file string) (indentConfig, []string, error) {
 	var readErr error
-	path, ok := findUp(dir, prettierFiles, func(p string) bool {
+	path, ok := findUp(filepath.Dir(file), prettierFiles, func(p string) bool {
 		if !isFile(p) {
 			return false
 		}
@@ -484,46 +632,104 @@ func prettierIndent(dir string) (indentConfig, []string, error) {
 	if err != nil {
 		return indentConfig{}, nil, &configError{path: path, err: err}
 	}
-	if err := prettierOverrides(doc, jsonForm); err != nil {
+	ic, err := prettierOptions(doc)
+	if err != nil {
 		return indentConfig{}, nil, &configError{path: path, err: err}
 	}
+	over, err := prettierOverrides(doc, string(data), jsonForm, relSlash(filepath.Dir(path), file))
+	if err != nil {
+		return indentConfig{}, nil, &configError{path: path, err: err}
+	}
+	return ic.merge(over), []string{path}, nil
+}
+
+// prettierOptions は、prettier の設定（か overrides の options）doc の useTabs と tabWidth を読む。
+func prettierOptions(doc map[string]any) (indentConfig, error) {
 	var ic indentConfig
 	if v, ok := doc["useTabs"]; ok {
 		b, isBool := v.(bool)
 		if !isBool {
-			return indentConfig{}, nil, &configError{path: path, err: errors.New("useTabs は true か false にする")}
+			return indentConfig{}, errors.New("useTabs は true か false にする")
 		}
 		ic.useTabs = &b
 	}
 	if v, ok := doc["tabWidth"]; ok {
 		w, err := widthOf("tabWidth", v)
 		if err != nil {
-			return indentConfig{}, nil, &configError{path: path, err: err}
+			return indentConfig{}, err
 		}
 		ic.width = w
 	}
-	return ic, []string{path}, nil
+	return ic, nil
 }
 
-// prettierOverrides は、prettier の設定 doc の overrides を確かめる。JSON の形（jsonForm）なら、options に useTabs か tabWidth を
-// 書いたものを誤りにする。YAML と TOML の形は中身を読めないので、overrides があれば誤りにする。
-func prettierOverrides(doc map[string]any, jsonForm bool) error {
+// indentKey は、YAML と TOML の本文の中の、prettier のインデントの項目の鍵（useTabs: と tabWidth:、TOML の useTabs = と tabWidth =）である。
+var indentKey = regexp.MustCompile(`(?m)(^|[\s{,'"])(useTabs|tabWidth)['"]?\s*[:=]`)
+
+// prettierOverrides は、prettier の設定 doc の overrides のうち、ファイル（設定ファイルのディレクトリからの相対パス rel）に当たるものの
+// useTabs と tabWidth を、順に重ねて返す（後のものが勝つ。PR #352 の再レビューの推奨 2）。
+//
+// JSON の形（jsonForm）では、options に useTabs か tabWidth を書いたものの files と excludeFiles を overrideMatch で当て
+// （prettier は / を含まないパターンをファイル名に当てる）、当たるかを決められないものは誤りにする。当たらないと分かるものは読み飛ばす。
+// YAML と TOML の形（本文 src）は overrides の中を読めないので、本文が最上位のほかに useTabs か tabWidth の鍵を含むときだけ誤りにする
+// （インデントを変えない overrides は読み飛ばせる）。
+func prettierOverrides(doc map[string]any, src string, jsonForm bool, rel string) (indentConfig, error) {
+	if !jsonForm {
+		top := 0
+		for _, k := range []string{"useTabs", "tabWidth"} {
+			if _, ok := doc[k]; ok {
+				top++
+			}
+		}
+		_, hasOverrides := doc["overrides"]
+		hasTOMLOverrides := slices.ContainsFunc(slices.Collect(maps.Keys(doc)), func(k string) bool { return strings.HasPrefix(k, "overrides") })
+		if (hasOverrides || hasTOMLOverrides) && len(indentKey.FindAllString(src, -1)) > top {
+			return indentConfig{}, errors.New("overrides でインデントを変えている（YAML と TOML の形の overrides は読めない）")
+		}
+		return indentConfig{}, nil
+	}
 	v, ok := doc["overrides"]
 	if !ok {
-		return nil
-	}
-	if !jsonForm {
-		return errors.New("overrides は JSON の形でないと読めない")
+		return indentConfig{}, nil
 	}
 	list, _ := v.([]any)
+	var out indentConfig
 	for i, o := range list {
 		m, _ := o.(map[string]any)
 		opts, _ := m["options"].(map[string]any)
-		_, tabs := opts["useTabs"]
-		_, width := opts["tabWidth"]
-		if tabs || width {
-			return fmt.Errorf("overrides[%d] でインデントを変えている（overrides は読めない）", i)
+		x, err := prettierOptions(opts)
+		if err != nil {
+			return indentConfig{}, fmt.Errorf("overrides[%d]: %w", i, err)
 		}
+		if x == (indentConfig{}) {
+			continue
+		}
+		match, known := overrideMatch(stringList(m["files"]), stringList(m["excludeFiles"]), rel, true)
+		switch {
+		case !known:
+			return indentConfig{}, fmt.Errorf("overrides[%d] がこのファイルに当たるかを決められない（読めない）", i)
+		case match:
+			out = out.merge(x)
+		}
+	}
+	return out, nil
+}
+
+// stringList は、JSON の文字列か文字列の配列 v を、文字列の列にする。どちらでもなければ空である。
+func stringList(v any) []string {
+	switch x := v.(type) {
+	case string:
+		return []string{x}
+	case []any:
+		var out []string
+		for _, e := range x {
+			s, ok := e.(string)
+			if !ok {
+				return nil
+			}
+			out = append(out, s)
+		}
+		return out
 	}
 	return nil
 }
@@ -534,7 +740,8 @@ func prettierOverrides(doc map[string]any, jsonForm bool) error {
 // pyproject.toml は [tool.ruff] の表（鍵の無い見出しだけでもよい）があるときだけ当たる（2026-11-22 に ruff 0.15.16 の
 // check --show-settings で、この順と、[tool.ruff] の無い pyproject.toml を飛ばすこと、鍵の無い [tool.ruff] の pyproject.toml を使うことを確かめた）。
 // indent-width と format.indent-style（space か tab）を読む。pyproject.toml では tool.ruff の下を読む。
-// extend（ほかの設定ファイルを引き継ぐ）は読めないので configError にする。
+// extend（ほかの設定ファイルを引き継ぐ）は、その設定ファイル（相対パスは extend を書いた設定ファイルのディレクトリから）を先に当てて重ねる
+// （ruffExtend。PR #352 の再レビューの推奨 2）。
 func ruffIndent(dir string) (indentConfig, []string, error) {
 	var readErr error
 	var doc map[string]any
@@ -542,47 +749,105 @@ func ruffIndent(dir string) (indentConfig, []string, error) {
 		if !isFile(p) {
 			return false
 		}
-		data, err := readConfigFile(p)
+		d, has, err := readRuff(p)
 		if err != nil {
 			readErr = err
 			return true
 		}
-		d, err := parseTOML(string(data))
-		if err != nil {
-			readErr = &configError{path: p, err: err}
-			return true
-		}
-		if filepath.Base(p) == "pyproject.toml" {
-			if !hasTable(d, "tool.ruff") {
-				return false
-			}
-			d = subTable(d, "tool.ruff")
-		}
 		doc = d
-		return true
+		return has
 	}, nil)
 	if !ok || readErr != nil {
 		return indentConfig{}, nil, readErr
 	}
-	if _, ok := doc["extend"]; ok {
-		return indentConfig{}, nil, &configError{path: path, err: errors.New("extend は読めない")}
+	doc, srcs, err := ruffExtend(path, doc, 0)
+	if err != nil {
+		return indentConfig{}, nil, err
 	}
+	ic, err := ruffDocIndent(path, doc)
+	return ic, append([]string{path}, srcs...), err
+}
+
+// readRuff は、ruff の設定ファイル p を読む。pyproject.toml なら tool.ruff の下を返し、[tool.ruff] が無ければ has が false である。
+func readRuff(p string) (doc map[string]any, has bool, err error) {
+	data, err := readConfigFile(p)
+	if err != nil {
+		return nil, false, err
+	}
+	d, err := parseTOML(string(data))
+	if err != nil {
+		return nil, false, &configError{path: p, err: err}
+	}
+	if filepath.Base(p) == "pyproject.toml" {
+		if !hasTable(d, "tool.ruff") {
+			return nil, false, nil
+		}
+		d = subTable(d, "tool.ruff")
+	}
+	return d, true, nil
+}
+
+// maxRuffExtend は、ruff の extend をたどる深さの上限である（輪になった extend で止まらなくならないように）。
+const maxRuffExtend = 8
+
+// ruffExtend は、ruff の設定 doc（ファイル path）の extend の先を先に当て、doc を重ねた設定を返す。extend の先がさらに extend を持てば、
+// 同じくたどる。2026-11-22 に ruff 0.15.16 で、extend の先の値を使うこと、extend を書いた設定の値が勝つこと、
+// [tool.ruff] の無い pyproject.toml を extend の先にすると何も引き継がないことを確かめた。
+func ruffExtend(path string, doc map[string]any, depth int) (map[string]any, []string, error) {
+	v, ok := doc["extend"]
+	if !ok {
+		return doc, nil, nil
+	}
+	s, isString := v.(string)
+	if !isString || s == "" {
+		return nil, nil, &configError{path: path, err: errors.New("extend は設定ファイルのパスの文字列にする")}
+	}
+	if depth >= maxRuffExtend {
+		return nil, nil, &configError{path: path, err: fmt.Errorf("extend が %d 段より深い", maxRuffExtend)}
+	}
+	target := s
+	if rest, ok := strings.CutPrefix(s, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, nil, &configError{path: path, err: err}
+		}
+		target = filepath.Join(home, rest)
+	} else if !filepath.IsAbs(s) {
+		target = filepath.Join(filepath.Dir(path), s)
+	}
+	base, _, err := readRuff(target)
+	if err != nil {
+		return nil, nil, err
+	}
+	base, srcs, err := ruffExtend(target, base, depth+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := map[string]any{}
+	maps.Copy(out, base)
+	maps.Copy(out, doc)
+	delete(out, "extend")
+	return out, append([]string{target}, srcs...), nil
+}
+
+// ruffDocIndent は、ruff の設定 doc（ファイル path）の indent-width と format.indent-style を読む。
+func ruffDocIndent(path string, doc map[string]any) (indentConfig, error) {
 	var ic indentConfig
 	if v, ok := doc["format.indent-style"]; ok {
 		t, err := styleOf("format.indent-style", v, "tab", "space")
 		if err != nil {
-			return indentConfig{}, nil, &configError{path: path, err: err}
+			return indentConfig{}, &configError{path: path, err: err}
 		}
 		ic.useTabs = t
 	}
 	if v, ok := doc["indent-width"]; ok {
 		w, err := widthOf("indent-width", v)
 		if err != nil {
-			return indentConfig{}, nil, &configError{path: path, err: err}
+			return indentConfig{}, &configError{path: path, err: err}
 		}
 		ic.width = w
 	}
-	return ic, []string{path}, nil
+	return ic, nil
 }
 
 // hasTable は、parseTOML の結果 d に、表 name（その下の鍵か、鍵の無い見出しの印）があるかを返す。

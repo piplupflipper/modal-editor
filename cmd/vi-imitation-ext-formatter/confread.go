@@ -715,8 +715,13 @@ func yamlKeyValue(line string) (string, any, error) {
 }
 
 // yamlScalar は、最上位の鍵の値の文字列 s を読む。
+// 値の前のアンカー（&w 4）は除いて読む（prettier 3.6.2 は tabWidth: &w 4 を 4 と読む。PR #352 の再レビューの推奨 4）。
 func yamlScalar(s string) (any, error) {
 	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "&") {
+		_, rest, _ := strings.Cut(s, " ")
+		s = strings.TrimSpace(rest)
+	}
 	if s != "" && (s[0] == '"' || s[0] == '\'') {
 		q := s[0]
 		end := strings.IndexByte(s[1:], q)

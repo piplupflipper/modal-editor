@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -268,7 +270,12 @@ func TestExtensionOptionMask(t *testing.T) {
 
 	h.keys(":set filetype=go<CR>")
 	run(`op.setft cur python {"tab.width":3}`)
-	indent("種類の合わない値は隠さない（go の本体の既定は useSpaces と width を隠す）", "false 4 5")
+	indent("種類の合わない値は捨てる（go の本体の既定は useSpaces と width を隠す）", "false 4 5")
+	h.e.do(func() {
+		if got := h.e.cur.extOptions["op"][option.TabWidth]; got != option.IntValue(2) {
+			t.Errorf("種類の合わない値を段に入れた: tab.width = %v, want 2（前の値のまま）", got)
+		}
+	})
 	run(`op.setft cur go {"tab.width":3}`)
 	indent("合う種類の最初の値は隠す", "false 4 3")
 
@@ -279,6 +286,70 @@ func TestExtensionOptionMask(t *testing.T) {
 	h.keys(":set filetype=lua<CR>")
 	run(`op.set cur {"tab.width":2}`)
 	indent("FileType の無い値は隠さない", "true 7 9")
+
+	// 異常で終わって起動し直した後も、勝ち負けは同じ（起動し直した後の最初の値で隠し直す。PR #352 の再レビューの推奨 1）。
+	h.keys(":set filetype=sh<CR>")
+	run(`op.setft cur sh {"tab.width":2}`)
+	indent("sh の最初の値で隠す", "true 7 2")
+	h.keys(":op.crash<CR>")
+	h.eventually("異常で終わった後に値を取り下げる", func() bool { return indentValues(h.e.cur) == "true 7 9" })
+	h.eventually("起動し直す", func() bool {
+		st, _ := h.e.host.State("op")
+		return st == exthost.StateRunning || st == exthost.StateNotStarted
+	})
+	run(`op.setft cur sh {"tab.width":2}`)
+	indent("起動し直した後の最初の値で隠し直す", "true 7 2")
+}
+
+// buildFormatter は、整形ツールの拡張機能（cmd/vi-imitation-ext-formatter）をビルドし、settings の設定で、
+// fileTypes のファイルの種類で起動する定義を返す。
+func buildFormatter(t *testing.T, settings string, fileTypes ...string) exthost.Spec {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("拡張機能のビルドが要る")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go が無い")
+	}
+	dir := t.TempDir()
+	src := filepath.Join("..", "..", "cmd", "vi-imitation-ext-formatter")
+	//nolint:gosec // 引数は定数と、テストが作った一時ディレクトリのパスだけである
+	cmd := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "vi-imitation-ext-formatter"), "./"+filepath.ToSlash(src))
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build extension: %v\n%s", err, out)
+	}
+	m := ext.Manifest{ID: "formatter", Command: "./vi-imitation-ext-formatter"}
+	for _, ft := range fileTypes {
+		m.Activation = append(m.Activation, ext.Activation{On: ext.ActivationFileType, Pattern: ft})
+	}
+	if _, err := ext.ValidateManifests([]ext.Manifest{m}); err != nil {
+		t.Fatal(err)
+	}
+	return exthost.Spec{Manifest: m, Dir: dir, Settings: json.RawMessage(settings)}
+}
+
+// 整形ツールの拡張機能と結合して、ファイルの種類を A→B→A と続けて変えても、毎回 A の整形ツールの値が :set の値を隠す。
+// 拡張機能が 2 つの buffer/open を 1 回の読み直しにまとめても、種類が変わったバッファには値が同じでも送り直すためである
+// （PR #352 の再レビューの必須 1。前は 30 回中 14 回、隠さなかった）。
+//
+// req: FR-190, FR-193
+func TestFormatterIndentRetype(t *testing.T) {
+	spec := buildFormatter(t, `{"formatters": [
+		{"command": "ruff", "fileTypes": ["python"]},
+		{"command": "biome", "fileTypes": ["javascript"]}
+	]}`, "python", "javascript")
+	dir := writeFiles(t, map[string]string{"pyproject.toml": "[tool.ruff]\nindent-width = 2\n", "a.py": "x = 1\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, "a.py")
+	h.eventually("ruff の幅", func() bool { return indentValues(h.e.cur) == "false 2 2" })
+	for i := range 20 {
+		h.keys(":set sw=3<CR>")
+		h.eventually("sw=3", func() bool { return h.e.cur.option(option.IndentWidth).Int() == 3 })
+		h.keys(":set filetype=javascript | set filetype=python<CR>")
+		h.eventually(fmt.Sprintf("%d 回目: python に戻った後に ruff の幅が :set を隠す", i+1), func() bool {
+			return h.e.cur.fileType() == "python" && indentValues(h.e.cur) == "false 2 2"
+		})
+	}
 }
 
 // 複数の拡張機能が同じ項目に値を入れたら、宣言ファイルを先に読んだ拡張機能の値が勝つ。届いた順には依らない。

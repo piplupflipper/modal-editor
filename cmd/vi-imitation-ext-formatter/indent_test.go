@@ -132,6 +132,54 @@ func TestProjectIndent(t *testing.T) {
 		{`実物: ruff は文字列の \e（TOML 1.1）を読む`, map[string]string{
 			"pyproject.toml": "[project]\ndescription = \"\\e\"\n[tool.ruff]\nindent-width = 2\n",
 		}, "a.py", "python", "null 2 2", nil},
+		// 以下は再レビューの推奨 2、4 の入力。
+		{`実物: biome の "extends" の配列は書いた順に当てる`, map[string]string{
+			"base.json": `{"formatter":{"indentStyle":"tab"}}`, "base2.json": `{"formatter":{"indentStyle":"space","indentWidth":3}}`,
+			"biome.json": `{"extends":["./base.json","./base2.json"]}`,
+		}, "src/a.js", "javascript", "true 3 3", []string{"biome.json", "base.json", "base2.json"}},
+		{`実物: biome の "extends" の上に自分の設定を重ねる`, map[string]string{
+			"base.json": `{"formatter":{"indentStyle":"tab"}}`, "biome.json": `{"extends":["./base.json"],"formatter":{"indentWidth":5}}`,
+		}, "src/a.js", "javascript", "false 5 5", nil},
+		{`実物: biome の "extends": [] は extends が無いのと同じ`, map[string]string{
+			"biome.json": `{"extends":[],"formatter":{"indentStyle":"space"}}`,
+		}, "src/a.js", "javascript", "true null null", nil},
+		{"実物: biome の overrides の **/*.js は当てる", map[string]string{
+			"biome.json": `{"formatter":{"indentStyle":"tab"},"overrides":[{"includes":["**/*.js"],"formatter":{"indentStyle":"space","indentWidth":2}}]}`,
+		}, "src/a.js", "javascript", "true 2 2", nil},
+		{"実物: biome の overrides の *.js は入れ子のディレクトリのファイルに当てない", map[string]string{
+			"biome.json": `{"formatter":{"indentStyle":"tab"},"overrides":[{"includes":["*.js"],"formatter":{"indentStyle":"space","indentWidth":2}}]}`,
+		}, "src/a.js", "javascript", "false 0 null", nil},
+		{"実物: biome の当たる overrides は順に重ねる", map[string]string{
+			"biome.json": `{"formatter":{"indentStyle":"tab"},"overrides":[{"includes":["**/*.js"],"formatter":{"indentStyle":"space","indentWidth":2}},{"includes":["**/*.js"],"formatter":{"indentWidth":4}}]}`,
+		}, "src/a.js", "javascript", "true 4 4", nil},
+		{"実物: biome の overrides の言語ごとの formatter", map[string]string{
+			"biome.json": `{"formatter":{"indentStyle":"tab"},"overrides":[{"includes":["**/*.js"],"javascript":{"formatter":{"indentStyle":"space","indentWidth":2}}}]}`,
+		}, "src/a.js", "javascript", "true 2 2", nil},
+		{"実物: biome の当たらない overrides は読み飛ばす", map[string]string{
+			"biome.json": `{"formatter":{"indentStyle":"tab"},"overrides":[{"includes":["**/*.json"],"formatter":{"indentStyle":"space","indentWidth":2}}]}`,
+		}, "src/a.js", "javascript", "false 0 null", nil},
+		{"prettier の overrides の *.md は深さを問わずに当てる", map[string]string{
+			".prettierrc.json": `{"tabWidth":4,"overrides":[{"files":"*.md","options":{"tabWidth":2}}]}`,
+		}, "sub/a.md", "markdown", "null 2 2", nil},
+		{"prettier の当たらない overrides は読み飛ばす", map[string]string{
+			"package.json": `{"prettier":{"useTabs":true,"overrides":[{"files":"*.yaml","options":{"tabWidth":2}}]}}`,
+		}, "a.md", "markdown", "false 0 null", nil},
+		{"実物: prettier の YAML の、インデントを変えない overrides は読み飛ばす", map[string]string{
+			".prettierrc.yml": "tabWidth: 4\noverrides:\n  - files: \"*.md\"\n    options:\n      proseWrap: always\n",
+		}, "a.md", "markdown", "null 4 4", nil},
+		{"実物: prettier の YAML のアンカー", map[string]string{".prettierrc.yml": "tabWidth: &w 3\n"}, "a.md", "markdown", "null 3 3", nil},
+		{"実物: ruff の extend の先を引き継ぐ", map[string]string{
+			"pyproject.toml": "[tool.ruff]\nindent-width = 3\n[tool.ruff.format]\nindent-style = \"tab\"\n", "src/ruff.toml": "extend = \"../pyproject.toml\"\n",
+		}, "src/a.py", "python", "false 3 3", []string{"src/ruff.toml", "pyproject.toml"}},
+		{"実物: ruff の extend を書いた設定の値が勝つ", map[string]string{
+			"pyproject.toml": "[tool.ruff]\nindent-width = 3\n[tool.ruff.format]\nindent-style = \"tab\"\n", "src/ruff.toml": "extend = \"../pyproject.toml\"\nindent-width = 5\n",
+		}, "src/a.py", "python", "false 5 5", nil},
+		{"実物: ruff の extend をたどる", map[string]string{
+			"base.toml": "indent-width = 6\n", "pyproject.toml": "[tool.ruff]\nextend = \"base.toml\"\n", "src/ruff.toml": "extend = \"../pyproject.toml\"\n",
+		}, "src/a.py", "python", "null 6 6", nil},
+		{"実物: ruff の extend の先の [tool.ruff] の無い pyproject.toml は何も引き継がない", map[string]string{
+			"base.toml": "indent-width = 6\n", "pyproject.toml": "extend = \"base.toml\"\n", "src/ruff.toml": "extend = \"../pyproject.toml\"\n",
+		}, "src/a.py", "python", "null null null", nil},
 		{"ruff は .ruff.toml、ruff.toml、pyproject.toml の順", map[string]string{
 			".ruff.toml": "indent-width = 7\n", "ruff.toml": "indent-width = 5\n", "pyproject.toml": "[tool.ruff]\nindent-width = 3\n",
 		}, "a.py", "python", "null 7 7", nil},
@@ -165,45 +213,87 @@ func TestProjectIndent(t *testing.T) {
 }
 
 // 読めない設定ファイル（壊れた JSON、TOML、YAML、型と範囲の合わない値）と、小さな読み手で扱えない書き方
-// （overrides の字下げ、"//" でない extends、ruff の extend、prettier の JavaScript の設定など）は、そのパスを付けた誤りにする。
-// 誤った値を送らないためである。「実物:」のケースは、実物がその設定で、拡張機能の読み方と違う値で整形することを確かめた。
+// （当たるかを決められない overrides の字下げ、共有の設定の extends、3 段の biome の入れ子、prettier の JavaScript の設定など）は、
+// そのパスを付けた誤りにする。誤った値を送らないためである。
+// 「実物:」のケースは、実物がその設定で、拡張機能が読み飛ばしたときに送る値と違う値で整形することを確かめた。
 //
 // req: FR-193
 func TestProjectIndentBroken(t *testing.T) {
 	c := indentCfg(t)
 	for _, tc := range []struct {
-		file, body, path, ft, want string
+		files             map[string]string
+		path, ft, errFile string
+		want              string
 	}{
-		{"biome.json", `{"formatter": {`, "a.js", "javascript", "biome.json"},
-		{"biome.json", `{"formatter": {"indentStyle": "tabs"}}`, "a.js", "javascript", `indentStyle は "tab" か "space"`},
-		{"biome.json", `{"formatter": {"indentWidth": 0}}`, "a.js", "javascript", "1 から 9999"},
-		{"biome.json", `{"javascript": {"formatter": {"indentWidth": "2"}}}`, "a.js", "javascript", "javascript.formatter.indentWidth は整数"},
-		// 実物: biome 2.4.15 は a.js を 2 つのスペースで字下げする（overrides が勝つ）。
-		{"biome.json", `{"formatter":{"indentStyle":"tab"},"overrides":[{"includes":["**/*.js"],"formatter":{"indentStyle":"space","indentWidth":2}}]}`, "a.js", "javascript", "overrides[0]"},
-		{"biome.json", `{"overrides":[{"includes":["*.css"],"css":{"formatter":{"indentWidth":2}}}]}`, "a.js", "javascript", "overrides[0]"},
-		// 実物: biome 2.4.15 は extends のファイル（ここでは無いファイル）の設定を使う。
-		{"biome.json", `{"extends":["./base.json"]}`, "a.js", "javascript", "extends"},
-		{".prettierrc", "- a\n", "a.md", "markdown", "最上位"},
-		{".prettierrc", "useTabs: maybe\n", "a.md", "markdown", "useTabs は true か false"},
-		{".prettierrc", "tabWidth: 2\n{useTabs: true}\n", "a.md", "markdown", "最上位"},
-		// 実物: prettier 3.6.2 は overrides の useTabs: false で a.js をスペースで字下げする。YAML の overrides は中を読めない。
-		{".prettierrc.yaml", "useTabs: true\noverrides:\n  - files: \"*.md\"\n    options:\n      useTabs: false\n", "a.md", "markdown", "overrides"},
-		{".prettierrc.json", `{"overrides": [{"files": "*.md", "options": {"tabWidth": 8}}]}`, "a.md", "markdown", "overrides[0]"},
-		{"prettier.config.js", "export default {tabWidth: 2}", "a.md", "markdown", "読めない"},
-		{"package.json", `{"prettier": "@company/prettier-config"}`, "a.md", "markdown", "共有の設定"},
-		{"package.yaml", "prettier:\n  tabWidth: 3\n", "a.md", "markdown", "読めない"},
-		{"package.json", `{"prettier": `, "a.md", "markdown", "package.json"},
-		{"pyproject.toml", "[tool.ruff\n", "a.py", "python", "pyproject.toml"},
-		{"ruff.toml", "indent-width = 2.5\n", "a.py", "python", "indent-width は整数"},
-		{"ruff.toml", "[format]\nindent-style = \"tabs\"\n", "a.py", "python", `indent-style は "tab" か "space"`},
-		// 実物: ruff 0.15.16 は extend の先（base.toml）の indent-width を使う。
-		{"ruff.toml", "extend = \"base.toml\"\n", "a.py", "python", "extend"},
+		{map[string]string{"biome.json": `{"formatter": {`}, "a.js", "javascript", "biome.json", "biome.json"},
+		{map[string]string{"biome.json": `{"formatter": {"indentStyle": "tabs"}}`}, "a.js", "javascript", "biome.json", `indentStyle は "tab" か "space"`},
+		{map[string]string{"biome.json": `{"formatter": {"indentWidth": 0}}`}, "a.js", "javascript", "biome.json", "1 から 9999"},
+		{map[string]string{"biome.json": `{"javascript": {"formatter": {"indentWidth": "2"}}}`}, "a.js", "javascript", "biome.json", "javascript.formatter.indentWidth は整数"},
+		{map[string]string{"biome.json": `{"overrides":[{"includes":["src/**"],"formatter":{"indentWidth":2}}]}`}, "src/a.js", "javascript", "biome.json", "overrides[0]"},
+		{map[string]string{"biome.json": `{"overrides":[{"includes":["**/*.js","!**/gen/*.js"],"formatter":{"indentWidth":2}}]}`}, "src/a.js", "javascript", "biome.json", "overrides[0]"},
+		{map[string]string{"biome.json": `{"extends":["@company/biome-config"]}`}, "a.js", "javascript", "biome.json", "共有の設定"},
+		{map[string]string{"biome.json": `{"extends":["./base.json"]}`, "base.json": `{"extends":["./other.json"]}`}, "a.js", "javascript", "base.json", "extends"},
+		// 実物: biome 2.4.15 は、(a) pkg/src/a.js をスペース 5 で、(b) タブで整形する（PR #352 の再レビューの推奨 3）。
+		{map[string]string{
+			"biome.json": `{"formatter":{"indentStyle":"space","indentWidth":3}}`, "pkg/biome.json": `{"root":false,"extends":"//","formatter":{"indentWidth":5}}`,
+			"pkg/src/biome.json": `{"root":false,"extends":"//"}`,
+		}, "pkg/src/a.js", "javascript", "pkg/src/biome.json", "3 段"},
+		{map[string]string{
+			"biome.json": `{"formatter":{"indentStyle":"space","indentWidth":3}}`, "pkg/biome.json": `{"root":false,"formatter":{"indentWidth":5}}`,
+			"pkg/src/biome.json": `{"root":false,"extends":"//"}`,
+		}, "pkg/src/a.js", "javascript", "pkg/src/biome.json", "3 段"},
+		{map[string]string{".prettierrc": "- a\n"}, "a.md", "markdown", ".prettierrc", "最上位"},
+		{map[string]string{".prettierrc": "useTabs: maybe\n"}, "a.md", "markdown", ".prettierrc", "useTabs は true か false"},
+		{map[string]string{".prettierrc": "tabWidth: 2\n{useTabs: true}\n"}, "a.md", "markdown", ".prettierrc", "最上位"},
+		// 実物: prettier 3.6.2 は overrides の useTabs: false で、当たるファイルをスペースで字下げする。YAML の overrides は中を読めない。
+		{map[string]string{".prettierrc.yaml": "useTabs: true\noverrides:\n  - files: \"*.md\"\n    options:\n      useTabs: false\n"}, "a.md", "markdown", ".prettierrc.yaml", "overrides"},
+		{map[string]string{".prettierrc.toml": "[[overrides]]\nfiles = \"*.md\"\n[overrides.options]\ntabWidth = 2\n"}, "a.md", "markdown", ".prettierrc.toml", "overrides"},
+		{map[string]string{".prettierrc.json": `{"overrides": [{"files": "docs/**/*.md", "options": {"tabWidth": 8}}]}`}, "a.md", "markdown", ".prettierrc.json", "overrides[0]"},
+		{map[string]string{".prettierrc.json": `{"overrides": [{"files": "**/*.md", "excludeFiles": "sub/**", "options": {"tabWidth": 8}}]}`}, "a.md", "markdown", ".prettierrc.json", "overrides[0]"},
+		{map[string]string{"prettier.config.js": "export default {tabWidth: 2}"}, "a.md", "markdown", "prettier.config.js", "読めない"},
+		{map[string]string{"package.json": `{"prettier": "@company/prettier-config"}`}, "a.md", "markdown", "package.json", "共有の設定"},
+		{map[string]string{"package.yaml": "prettier:\n  tabWidth: 3\n"}, "a.md", "markdown", "package.yaml", "読めない"},
+		{map[string]string{"package.json": `{"prettier": `}, "a.md", "markdown", "package.json", "package.json"},
+		{map[string]string{"pyproject.toml": "[tool.ruff\n"}, "a.py", "python", "pyproject.toml", "pyproject.toml"},
+		{map[string]string{"ruff.toml": "indent-width = 2.5\n"}, "a.py", "python", "ruff.toml", "indent-width は整数"},
+		{map[string]string{"ruff.toml": "[format]\nindent-style = \"tabs\"\n"}, "a.py", "python", "ruff.toml", `indent-style は "tab" か "space"`},
+		{map[string]string{"ruff.toml": "extend = 3\n"}, "a.py", "python", "ruff.toml", "extend は"},
+		{map[string]string{"ruff.toml": "extend = \"base.toml\"\n"}, "a.py", "python", "base.toml", "base.toml"},
+		{map[string]string{"ruff.toml": "extend = \"ruff.toml\"\n"}, "a.py", "python", "ruff.toml", "深い"},
 	} {
 		root := t.TempDir()
-		writeTree(t, root, map[string]string{tc.file: tc.body})
+		writeTree(t, root, tc.files)
 		_, _, err := c.projectIndent(filepath.Join(root, tc.path), tc.ft)
-		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), filepath.Join(root, tc.file)) {
-			t.Errorf("%s %q: %v, want %q とパス", tc.file, tc.body, err, tc.want)
+		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), filepath.Join(root, tc.errFile)) {
+			t.Errorf("%v: %v, want %q と %s", tc.files, err, tc.want, tc.errFile)
+		}
+	}
+}
+
+// overrides のパターンの当て方（overrideMatch）。決められるのは *SUF と **/*SUF だけで、ほかは決められないとする。
+func TestOverrideMatch(t *testing.T) {
+	for _, tc := range []struct {
+		includes, excludes []string
+		rel                string
+		anyDepth           bool
+		match, known       bool
+	}{
+		{[]string{"*.js"}, nil, "a.js", false, true, true},
+		{[]string{"*.js"}, nil, "src/a.js", false, false, true},
+		{[]string{"*.js"}, nil, "src/a.js", true, true, true},
+		{[]string{"**/*.js"}, nil, "src/a.js", false, true, true},
+		{[]string{"**/*.json"}, nil, "src/a.js", false, false, true},
+		{[]string{"*.test.js"}, nil, "a.js", false, false, true},
+		{[]string{"src/*.js"}, nil, "src/a.js", false, false, false},
+		{[]string{"**/*.js", "!*.min.js"}, nil, "a.min.js", false, false, true},
+		{[]string{"**/*.js", "!**/gen/*.js"}, nil, "a.js", false, false, false},
+		{[]string{"**/*.json", "!**/gen/*.json"}, nil, "a.js", false, false, true},
+		{nil, nil, "a.js", false, false, false},
+		{[]string{"*.md"}, []string{"*.min.md"}, "a.md", true, true, true},
+	} {
+		m, k := overrideMatch(tc.includes, tc.excludes, tc.rel, tc.anyDepth)
+		if m != tc.match || k != tc.known {
+			t.Errorf("overrideMatch(%q, %q, %q, %v) = %v, %v; want %v, %v", tc.includes, tc.excludes, tc.rel, tc.anyDepth, m, k, tc.match, tc.known)
 		}
 	}
 }
@@ -229,6 +319,37 @@ func TestToolKind(t *testing.T) {
 		if got := toolKind(tc.f); got != tc.want {
 			t.Errorf("toolKind(%+v) = %q, want %q", tc.f, got, tc.want)
 		}
+	}
+}
+
+// A→B→A と種類が変わった 2 つの buffer/open を 1 回の読み直しにまとめても、値も種類も前に送ったものと同じまま送る
+// （本体は、種類が変わった後の最初の値で :set の値を隠すので、送らないと隠さない。PR #352 の再レビューの必須 1）。
+// 種類の変わらない buffer/open が続いたときは送らない。
+//
+// req: FR-193
+func TestIndentSyncRetype(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"biome.json": `{"formatter": {"indentStyle": "tab"}}`, "a.js": ""})
+	var sent []string
+	s := newIndentSync(func() *config { return indentCfg(t) }, func(_ context.Context, p ext.OptionSetParams) error {
+		sent = append(sent, p.FileType)
+		return nil
+	}, func(string) {}, t.Logf)
+	drain := func() {
+		for s.step(context.Background()) {
+		}
+	}
+	js := bufferInfo{path: filepath.Join(root, "a.js"), fileType: "javascript"}
+	s.opened(1, js)
+	drain()
+	s.opened(1, bufferInfo{path: js.path, fileType: "json"})
+	s.opened(1, js)
+	drain()
+	s.opened(1, js)
+	s.opened(1, js)
+	drain()
+	if got := strings.Join(sent, " "); got != "javascript javascript" {
+		t.Errorf("送った種類 = %q, want %q", got, "javascript javascript")
 	}
 }
 

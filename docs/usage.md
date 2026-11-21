@@ -2347,16 +2347,28 @@ vi-imitation は上のとおり、そのような shim を使わずに `mise exe
 | ruff | `.ruff.toml`、`ruff.toml`、`pyproject.toml` の `[tool.ruff]` | `indent-width`、`[format]`（`pyproject.toml` では `[tool.ruff.format]`）の `indent-style`（`"space"` か `"tab"`） |
 
 ファイルのディレクトリから上へ（Git の根を越えてファイルシステムの根まで）探し、最初に見つけた設定ファイルを使う（近い設定ファイルは上の設定ファイルを引き継がない）。
-例外は biome の `"extends": "//"` で、上の根の設定（`"root": false` でない設定）に近い設定を重ねる（biome と同じ）。
-YAML の形の `.prettierrc` は、`{ useTabs: true, tabWidth: 4 }` のような流れの形でもよい。
+次の引き継ぎは、それぞれの整形ツールと同じく読む。
+
+- biome の `"extends": "//"`: 上の根の設定（`"root": false` でない設定）に近い設定を重ねる
+- biome の `"extends": ["./base.json"]`: 相対パスか絶対パスの設定ファイルを書いた順に当て、その上に自分の設定を重ねる
+- ruff の `extend = "../pyproject.toml"`: その設定ファイルを先に当て、自分の設定を重ねる（`extend` の先の `extend` もたどる）
+- biome と prettier の `overrides`: パターンが `*.js` か `**/*.js` の形なら、そのファイルに当たるものを順に重ねる（biome の `*.js` は設定ファイルのディレクトリの直下のファイルにだけ、prettier の `*.js` はどの深さのファイルにも当たる）。当たらないものは読み飛ばす
+
+YAML の形の `.prettierrc` は、`{ useTabs: true, tabWidth: 4 }` のような流れの形でもよい。値の前のアンカー（`tabWidth: &w 4`）も読む。
 タブにして幅を書かなければ、`indent.width` を 0（`tab.width` と同じ幅）にする。幅は `indent.width` と `tab.width` の両方にする。
 設定ファイルに書いていない項目は変えない（整形ツールの既定値は使わない）。
 
 次の書き方は読めないので、整形ツールと違う字下げにならないように、そのファイルではインデントを変えず、メッセージの行に 1 回だけ知らせる。
 
-- biome と prettier の `overrides` で字下げを変えたもの（prettier の YAML と TOML の形は、`overrides` があれば読めない）
-- biome の `"//"` でない `extends`、ruff の `extend`
-- prettier の JavaScript と TypeScript の設定ファイル（`prettier.config.js` など）、`.prettierrc.json5`、`package.yaml`、共有の設定の名前（`"prettier": "@company/prettier-config"`）
+| 整形ツール | 読めない書き方 |
+|---|---|
+| biome | `overrides` のパターンが `*.js` と `**/*.js` のほかの形（`src/**`、`!**/gen/*.js` など）で、字下げを変えているもの |
+| biome | 共有の設定（パッケージの名前）の `extends`、`extends` の先の設定の `extends`、`extends` の先と根の設定の `overrides` で字下げを変えているもの |
+| biome | 近い設定と根の設定の間に、ほかの `"root": false` の設定がある 3 段の入れ子 |
+| prettier | JSON の形の `overrides` のパターン（`files` と `excludeFiles`）が `*.md` と `**/*.md` のほかの形で、字下げを変えているもの |
+| prettier | YAML と TOML の形の `overrides` で、字下げ（`useTabs`、`tabWidth`）を変えているもの |
+| prettier | JavaScript と TypeScript の設定ファイル（`prettier.config.js` など）、`.prettierrc.json5`、`package.yaml`、共有の設定の名前（`"prettier": "@company/prettier-config"`） |
+| ruff | 文字列でない `extend`、8 段より深い（輪になった）`extend` |
 
 読むのは、ファイルを開いたとき、別名で保存したとき、`:set filetype=` でファイルの種類を変えたとき、`:w` で保存したときである。
 `biome.json` などの設定ファイルをこのエディタで保存すると、開いているすべてのバッファで読み直す。

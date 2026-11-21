@@ -37,6 +37,10 @@ type indentSync struct {
 	mu      sync.Mutex
 	bufs    map[ext.BufferID]bufferInfo
 	pending map[ext.BufferID]bool
+	// retyped は、前の buffer/open からファイルの種類が変わったバッファである。読み直したときに、値が同じでも送る。
+	// 最後に送った種類と比べるだけでは、A から B へ変わってすぐ A に戻ったときの 2 つの buffer/open を 1 回の読み直しにまとめると、
+	// 送らずに済ませてしまい、本体が :set の値を隠さない（PR #352 の再レビューの必須 1）。
+	retyped map[ext.BufferID]bool
 	wake    chan struct{}
 	started bool
 
@@ -57,7 +61,7 @@ var configNames = slices.Concat(biomeFiles, []string{".ruff.toml", "ruff.toml", 
 func newIndentSync(cfg func() *config, setOptions func(context.Context, ext.OptionSetParams) error, warn func(string), logf func(string, ...any)) *indentSync {
 	return &indentSync{
 		cfg: cfg, setOptions: setOptions, warn: warn, logf: logf,
-		bufs: map[ext.BufferID]bufferInfo{}, pending: map[ext.BufferID]bool{}, wake: make(chan struct{}, 1),
+		bufs: map[ext.BufferID]bufferInfo{}, pending: map[ext.BufferID]bool{}, retyped: map[ext.BufferID]bool{}, wake: make(chan struct{}, 1),
 		sent: map[ext.BufferID]sentIndent{}, reported: map[string]string{},
 	}
 }
@@ -84,8 +88,12 @@ func (s *indentSync) start(ctx context.Context) {
 }
 
 // opened は、バッファ id を開いた（buffer/open を受けた）ことを記録し、読み直しを頼む。
+// 前の buffer/open からファイルの種類が変わっていれば、読み直したときに値が同じでも送る印を付ける。
 func (s *indentSync) opened(id ext.BufferID, info bufferInfo) {
 	s.mu.Lock()
+	if prev, ok := s.bufs[id]; ok && prev.fileType != info.fileType {
+		s.retyped[id] = true
+	}
 	s.bufs[id] = info
 	s.pending[id] = true
 	s.mu.Unlock()
@@ -97,6 +105,7 @@ func (s *indentSync) closed(id ext.BufferID) {
 	s.mu.Lock()
 	delete(s.bufs, id)
 	delete(s.pending, id)
+	delete(s.retyped, id)
 	s.mu.Unlock()
 }
 
@@ -151,9 +160,11 @@ func (s *indentSync) step(ctx context.Context) bool {
 	}
 	delete(s.pending, id)
 	info, open := s.bufs[id]
+	retyped := s.retyped[id]
+	delete(s.retyped, id)
 	s.mu.Unlock()
 	if open {
-		s.apply(ctx, id, info)
+		s.apply(ctx, id, info, retyped)
 	} else {
 		delete(s.sent, id)
 	}
@@ -163,6 +174,8 @@ func (s *indentSync) step(ctx context.Context) bool {
 // apply は、バッファ id のインデントを読み、前に送った値かファイルの種類と違えば option/set で送る（FR-193）。
 // 送るときは、値を決めたファイルの種類を FileType に付ける（本体は、ファイルの種類が変わった後の最初の値で :set の値を隠す）。
 // ファイルの種類だけが変わったときも送り直すのは、本体に新しい種類の値として :set の値を隠させるためである。
+// retyped（前の buffer/open からファイルの種類が変わった）なら、値も種類も前に送ったものと同じでも送る（A→B→A の 2 つの
+// buffer/open を 1 回の読み直しにまとめたとき。本体は、種類が変わった後の最初の値を待っている）。
 //
 // 読めない設定ファイルがあれば、知らせる（同じファイルの同じ誤りは 1 回だけ）。
 // 前に送った値をその設定ファイルから読んだなら、送らずに前の値を保つ（本体の設定を変えない）。
@@ -170,7 +183,7 @@ func (s *indentSync) step(ctx context.Context) bool {
 // 別の整形ツールの値が残らないようにするためである（PR #352 のレビューの推奨 7）。
 //
 // req: FR-193
-func (s *indentSync) apply(ctx context.Context, id ext.BufferID, info bufferInfo) {
+func (s *indentSync) apply(ctx context.Context, id ext.BufferID, info bufferInfo, retyped bool) {
 	if info.path == "" {
 		return
 	}
@@ -193,7 +206,7 @@ func (s *indentSync) apply(ctx context.Context, id ext.BufferID, info bufferInfo
 	opts := ic.options()
 	b, _ := json.Marshal(opts) // 誤りにならない
 	prev, had := s.sent[id]
-	if had && string(b) == prev.options && prev.fileType == info.fileType || !had && ic == (indentConfig{}) {
+	if had && !retyped && string(b) == prev.options && prev.fileType == info.fileType || !had && ic == (indentConfig{}) {
 		if had {
 			prev.sources = sources
 			s.sent[id] = prev

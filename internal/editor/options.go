@@ -321,6 +321,9 @@ func (e *Editor) optionSetRequest(ev *exthost.OptionSetRequest) {
 	}
 	set := map[string]option.Value{}
 	var unset []string
+	// 種類が変わる前に決めた、遅れて届いた値は、成功で応答して捨てる（送り直さない拡張機能で前の種類の値が残らないように。
+	// PR #352 の再レビューの推奨 4）。名前と値の検査は、捨てる前にも同じく行う。
+	stale := bs != nil && ev.Params.FileType != "" && ev.Params.FileType != bs.fileType()
 	for _, name := range slices.Sorted(maps.Keys(ev.Params.Options)) {
 		d, err := extOptionDef(name, bs != nil)
 		if err != nil {
@@ -338,6 +341,10 @@ func (e *Editor) optionSetRequest(ev *exthost.OptionSetRequest) {
 			return
 		}
 		set[name] = v
+	}
+	if stale {
+		_ = ev.Reply()
+		return
 	}
 	if bs != nil {
 		bs.extOptions = mergeExtValues(bs.extOptions, ev.Extension, set, unset)
@@ -361,6 +368,8 @@ func (e *Editor) optionSetRequest(ev *exthost.OptionSetRequest) {
 // 送る最初の option/set のうち、FileType（ext.OptionSetParams）が今のファイルの種類と同じものだけ、値を書いた項目の :set の値を隠す。
 // ファイルの種類の変更と関係なく届いた値（設定ファイルを保存した、など。2 つ目からの option/set）と、FileType を省いた値は隠さない。
 // ファイルの種類が変わった後、値が届く前に利用者が :set で変えた項目は隠さない（Neovim の ftplugin は :set より前に当たるため）。
+// FileType が今の種類と違う値は、optionSetRequest が段に入れずに捨てる。拡張機能が止まったら、その拡張機能の最初の値を受け取った印も
+// 消し（forget）、起動し直した後の最初の値で隠し直す。
 type extMaskState struct {
 	// fileType は、変わった後のファイルの種類である。バッファを開いたとき（と :e）は空で、何も隠さない。
 	fileType string
@@ -414,12 +423,15 @@ func (m *extMaskState) received(extID, ft, cur string, set map[string]option.Val
 }
 
 // forget は、拡張機能 extID が隠させた項目を、隠すのをやめる（拡張機能が止まったとき）。
+// その拡張機能の最初の値を受け取った印も消すので、起動し直した拡張機能が送る最初の値（種類が今と同じもの）で、同じ規則のとおりに
+// 隠し直す。止まる前と後で、利用者の :set の値と拡張機能の値の勝ち負けが変わらないようにするためである（PR #352 の再レビューの推奨 1）。
 func (m *extMaskState) forget(extID string) {
 	for name, id := range m.names {
 		if id == extID {
 			delete(m.names, name)
 		}
 	}
+	delete(m.done, extID)
 }
 
 // extOptionDef は、option/set が名前 name の項目を変えられるかを確かめて、表の行を返す。
