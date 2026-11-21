@@ -2,11 +2,13 @@ package editor
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/piplupflipper/vi-imitation/ext"
+	"github.com/piplupflipper/vi-imitation/internal/command"
 	"github.com/piplupflipper/vi-imitation/internal/option"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
@@ -66,16 +68,20 @@ func diagFloat(h *harness) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	var title string
-	h.e.do(func() {
-		if f := h.e.float; f != nil {
-			title = f.title
-		}
-	})
-	if title != diagnosticPopupTitle {
+	var diag bool
+	h.e.do(func() { diag = h.e.float != nil && h.e.float.diagnostic && h.e.float.title == diagnosticPopupTitle })
+	if !diag {
 		return "", false
 	}
 	return fi.text, true
+}
+
+// viewDiagFloat は、client c が出している診断のポップアップの中身を返す。出していなければ空である。イベントループの goroutine で呼ぶ。
+func viewDiagFloat(h *harness, c *clientView) string {
+	if f := h.e.viewOf(c).float; f != nil && f.diagnostic {
+		return f.bs.buf.Text()
+	}
+	return ""
 }
 
 // カーソルが止まると、カーソルの行の診断をすべて、重要度の順に、出どころとコードを付けてカーソルの近くのポップアップに出す
@@ -360,5 +366,203 @@ func TestDiagnosticPopupLines(t *testing.T) {
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("色の範囲 = %q\nwant %q", got, want)
+	}
+}
+
+// 診断の範囲の向きをそろえ、掛かる行を決めるのは diagnosticSpanOf の 1 か所で、行の先頭で終わる複数の行の範囲は終わりの行に掛からない。
+// メッセージの行の 1 行の表示（FR-30）と次の診断へ移る操作も、同じ関数を使う。
+//
+// req: FR-171
+func TestDiagnosticSpanOf(t *testing.T) {
+	pos := func(l, b int) ext.Position { return ext.Position{Line: l, Byte: b} }
+	for _, tt := range []struct {
+		r           ext.Range
+		start       ext.Position
+		first, last int
+	}{
+		{ext.Range{Start: pos(1, 2), End: pos(1, 5)}, pos(1, 2), 1, 1},
+		{ext.Range{Start: pos(1, 5), End: pos(1, 2)}, pos(1, 2), 1, 1},
+		{ext.Range{Start: pos(1, 3), End: pos(3, 0)}, pos(1, 3), 1, 2},
+		{ext.Range{Start: pos(3, 0), End: pos(1, 3)}, pos(1, 3), 1, 2},
+		{ext.Range{Start: pos(1, 3), End: pos(3, 1)}, pos(1, 3), 1, 3},
+		{ext.Range{Start: pos(2, 0), End: pos(2, 0)}, pos(2, 0), 2, 2}, // 1 行の中の空の範囲は、その行に掛かる
+	} {
+		s := diagnosticSpanOf(tt.r)
+		if s.r.Start != tt.start || s.first != tt.first || s.last != tt.last {
+			t.Errorf("diagnosticSpanOf(%+v) = %+v, want start %+v, 行 %d〜%d", tt.r, s, tt.start, tt.first, tt.last)
+		}
+	}
+	bs := &bufferState{diagnostics: map[string][]ext.Diagnostic{
+		"x": {{Range: ext.Range{Start: pos(0, 2), End: pos(1, 0)}, Severity: ext.SeverityError, Message: "span"}},
+	}}
+	if _, ok := bs.cursorDiagnostic(pos(1, 0)); ok {
+		t.Error("メッセージの行の表示が、行の先頭で終わる範囲の終わりの行に出た")
+	}
+	if m, ok := bs.cursorDiagnostic(pos(0, 0)); !ok || m.Text != "E span" {
+		t.Errorf("始まりの行のメッセージの行の表示 = %q, %v", m.Text, ok)
+	}
+}
+
+// カーソルが止まった契機は、どの契機を待つものにも共通の条件（問い、待ち、先打ちのキー）と、契機を待つものごとの条件（ready）で知らせる。
+// インサートモードで受けるもの（Vim の CursorHoldI に当たる）を差し込むと、インサートモードの間にも呼ばれ、
+// ノーマルモードでだけ受ける診断のポップアップは出ない。ノーマルモードに戻ると、差し込んだものは呼ばれず、診断のポップアップが出る。
+// 時間は、契機を待つものすべてに共通の cursorHold.delayMs の 1 つである。
+//
+// req: FR-171
+func TestCursorHoldInsertListener(t *testing.T) {
+	h, ft := startDiagPopup(t, diagPopupOpts, Config{}, map[string]string{"a.txt": "abc\ndef\n"}, "a.txt")
+	setDiags(h, "lsp", []ext.Diagnostic{{Range: diagRange(0, 0, 3), Severity: ext.SeverityError, Message: "bad"}})
+	var calls []string
+	h.e.do(func() {
+		h.e.holdListeners = append(h.e.holdListeners, holdListener{
+			wants: func(*Editor) bool { return true },
+			ready: func(e *Editor) bool { return e.cur.state.Mode() == command.ModeInsert },
+			held:  func(e *Editor) { calls = append(calls, e.cur.buf.Text()) },
+		})
+	})
+	h.keys("ix")
+	holdFire(h, ft)
+	var got []string
+	h.e.do(func() { got = slices.Clone(calls) })
+	if len(got) != 1 || got[0] != "xabc\ndef" {
+		t.Errorf("インサートモードで受けるものの呼ばれ方 = %q, want [xabc]", got)
+	}
+	if _, ok := h.float(); ok {
+		t.Error("インサートモードの間に診断のポップアップを出した")
+	}
+	// 問いの間（共通の条件）は、どれも呼ばない。
+	h.keys("<Esc>:2,1d<CR>")
+	h.settle()
+	holdFire(h, ft)
+	h.e.do(func() { got = slices.Clone(calls) })
+	if _, ok := h.float(); ok || len(got) != 1 {
+		t.Errorf("問いの間に知らせた: ポップアップ %v, 呼ばれ方 %q", ok, got)
+	}
+	h.keys("n")
+	holdFire(h, ft)
+	h.e.do(func() { got = slices.Clone(calls) })
+	if len(got) != 1 {
+		t.Errorf("ノーマルモードで、インサートモードで受けるものを呼んだ: %q", got)
+	}
+	if text, ok := diagFloat(h); !ok || text != "1. bad" {
+		t.Errorf("ノーマルモードに戻った後 = %q, %v", text, ok)
+	}
+}
+
+// ペインの部品の client（ファイラなど）でキーを打つと、元の client の画面の診断のポップアップを閉じ、元の client のカーソルが止まった契機を
+// 待ち直さない（Neovim も、別の窓へ移ると open_float の窓を閉じる。PR #333 のレビューの推奨 1）。
+// 元の client でキーを打てば、また待つ。
+//
+// req: FR-171
+func TestDiagnosticPopupPaneKeys(t *testing.T) {
+	var calls muxCalls
+	cfg := Config{Extensions: fakeSpecs(t), Options: diagPopupOpts}
+	calls.config(&cfg)
+	h := start(t, cfg)
+	ft := &fakeTimers{}
+	h.e.do(func() { h.e.afterFunc = ft.after })
+	peer := h.attach(ClientInfo{ID: 2, Pane: "%9"})
+	peer.keys(":fake.pane tree<CR>")
+	h.eventually("OpenPane", func() bool { _, ok := calls.last(true); return ok })
+	call, _ := calls.last(true)
+	h.waitPaneOpened(call.view)
+	comp := h.attachComponent(call.view, true)
+	comp.waitScreen("▸ dir")
+	var pc *clientView
+	h.e.do(func() {
+		pc = h.clientOf(peer.term)
+		bs := h.e.viewOf(pc).cur
+		h.e.setDiagnostics("lsp", ext.DiagnosticSetParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Diagnostics: []ext.Diagnostic{
+			{Range: diagRange(0, 0, 0), Severity: ext.SeverityError, Message: "bad"},
+		}})
+	})
+	peer.keys("0")
+	holdFire(h, ft)
+	var shown string
+	h.e.do(func() { shown = viewDiagFloat(h, pc) })
+	if shown != "1. bad" {
+		t.Fatalf("元の client の診断のポップアップ = %q", shown)
+	}
+	n := ft.count()
+	comp.keys("j")
+	h.settle()
+	h.e.do(func() { shown = viewDiagFloat(h, pc) })
+	if shown != "" {
+		t.Errorf("ペインのキーの後も元の client の診断のポップアップが残る: %q", shown)
+	}
+	if got := ft.count(); got != n {
+		t.Errorf("ペインのキーでタイマーを掛け直した（%d → %d）", n, got)
+	}
+	// 元の client のキーで掛けたタイマーが時間の来る前なら、ペインのキーで止め、止めたタイマーの知らせは捨てる。
+	peer.keys("0")
+	h.settle()
+	m := ft.count() - 1
+	comp.keys("k")
+	h.settle()
+	ft.mu.Lock()
+	stopped := ft.stopped[m]
+	ft.mu.Unlock()
+	if !stopped || ft.count() != m+1 {
+		t.Errorf("ペインのキーで元の client のタイマーを止めて掛け直さない: 止めた %v, タイマー %d 個", stopped, ft.count())
+	}
+	holdFire(h, ft)
+	h.e.do(func() { shown = viewDiagFloat(h, pc) })
+	if shown != "" {
+		t.Errorf("ペインのキーの後に止まって、元の client に出した: %q", shown)
+	}
+	peer.keys("0")
+	holdFire(h, ft)
+	h.e.do(func() { shown = viewDiagFloat(h, pc) })
+	if shown != "1. bad" {
+		t.Errorf("元の client のキーの後 = %q", shown)
+	}
+}
+
+// 2 つの client のキーが交互に来ても、client ごとのタイマーは互いを止めない。A のキー、B のキー、A の時間が来る、の順なら
+// A の画面にだけ出し、続けて B の時間が来れば B の画面にも出す（PR #333 のレビューの推奨 4）。
+//
+// req: FR-171
+func TestDiagnosticPopupTwoClients(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "alpha\n", "b.txt": "beta\n"})
+	h, ft := startDiagPopup(t, diagPopupOpts, Config{WorkDir: dir}, nil, filepath.Join(dir, "a.txt"))
+	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt")}})
+	var ac, bc *clientView
+	h.e.do(func() {
+		ac, bc = h.clientOf(h.term), h.clientOf(b.term)
+		for _, bs := range h.e.bufs {
+			h.e.setDiagnostics("lsp", ext.DiagnosticSetParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Diagnostics: []ext.Diagnostic{
+				{Range: diagRange(0, 0, 1), Severity: ext.SeverityError, Message: "bad " + filepath.Base(bs.path)},
+			}})
+		}
+	})
+	h.keys("l")
+	h.settle()
+	ai := ft.count() - 1
+	b.keys("l")
+	h.settle()
+	bi := ft.count() - 1
+	ft.mu.Lock()
+	aStopped := ft.stopped[ai]
+	ft.mu.Unlock()
+	if ai == bi || aStopped {
+		t.Fatalf("B のキーで A のタイマーを止めた（A %d、B %d、止めた %v）", ai, bi, aStopped)
+	}
+	ft.fire(ai)
+	var a, bs string
+	h.e.do(func() { a, bs = viewDiagFloat(h, ac), viewDiagFloat(h, bc) })
+	if a != "1. bad a.txt" || bs != "" {
+		t.Errorf("A の時間が来た後: A = %q, B = %q", a, bs)
+	}
+	ft.fire(bi)
+	h.e.do(func() { a, bs = viewDiagFloat(h, ac), viewDiagFloat(h, bc) })
+	if a != "1. bad a.txt" || bs != "1. bad b.txt" {
+		t.Errorf("B の時間も来た後: A = %q, B = %q", a, bs)
+	}
+	// B のキーは A のポップアップを閉じない（ポップアップも client ごと）。
+	b.keys("h")
+	h.settle()
+	h.e.do(func() { a, bs = viewDiagFloat(h, ac), viewDiagFloat(h, bc) })
+	if a != "1. bad a.txt" || bs != "" {
+		t.Errorf("B のキーの後: A = %q, B = %q", a, bs)
 	}
 }

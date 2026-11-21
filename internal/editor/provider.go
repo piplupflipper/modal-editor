@@ -126,11 +126,7 @@ func diagnosticStarts(bs *bufferState) []buffer.Position {
 	var ps []buffer.Position
 	for _, id := range slices.Sorted(maps.Keys(bs.diagnostics)) {
 		for _, d := range bs.diagnostics[id] {
-			s := d.Range.Start
-			if d.Range.End.Line < s.Line || (d.Range.End.Line == s.Line && d.Range.End.Byte < s.Byte) {
-				s = d.Range.End
-			}
-			ps = append(ps, fromExtPos(s))
+			ps = append(ps, fromExtPos(diagnosticSpanOf(d.Range).r.Start))
 		}
 	}
 	slices.SortFunc(ps, func(a, b buffer.Position) int {

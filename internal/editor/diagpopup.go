@@ -35,7 +35,8 @@ import (
 //   - 窓の幅の上限と枠線は、ホバーと同じ部品の規則による（80 列まで。Neovim は画面の幅まで広げる）。折り返した続きの行は字下げしない
 //     （Neovim は breakindent で字下げする）
 //   - Neovim の窓は、診断が変わっても、インサートモードに入っても（文字を打つまで）閉じない。ここではホバーと同じく、次のキー、
-//     カーソルの移動、タブの移動で閉じる（expireFloat、dismissFloat）。診断が変わっただけでは閉じない（Neovim と同じ）
+//     カーソルの移動、タブの移動で閉じる（expireFloat、dismissFloat）。ペインの部品の client のキーでも閉じる（paneInput。
+//     Neovim も別の窓へ移ると閉じる）。診断が変わっただけでは閉じない（Neovim と同じ）
 
 // diagnosticPopupTitle は、診断のポップアップの見出しである（Neovim の open_float の header の "Diagnostics:"）。
 const diagnosticPopupTitle = "診断"
@@ -64,14 +65,39 @@ func (e *Editor) showDiagnosticPopup() {
 	}
 	lines, decs := diagnosticPopupLines(ds, ui.PopupTextWidth(e.renderer.Width), e.scratchTabWidth())
 	if f := e.openLinesFloat(diagnosticPopupTitle, lines, false); f != nil {
+		f.diagnostic = true
 		e.setPopupDecorations(f.bs, decs)
 	}
 }
 
-// lineDiagnostics は、バッファ bs の行 line（0 から）に掛かる診断を、ポップアップに並べる順にして返す。
+// diagnosticSpan は、診断の範囲の向きをそろえたもの（r）と、その診断が掛かる行の始まりと終わり（first から last まで。0 から数える）である。
+type diagnosticSpan struct {
+	r           ext.Range
+	first, last int
+}
+
+// diagnosticSpanOf は、診断の範囲 r の始まりと終わりが逆なら入れ替え、掛かる行を決める。
+// 診断の範囲の向きと掛かる行は、この関数だけで決める（ポップアップ、メッセージの行の 1 行の表示、次と前の診断へ移る操作が使う。
+// 後で右端の列に診断の位置を示すときも、全部の診断を 1 回走査してここで行に振り分ける。#317 の第 2 弾）。
 //
-// 行に掛かるかは Neovim 0.12.5 の open_float の scope = "line" と同じく決める。範囲の始まりの行から終わりの行までに掛かるが、
-// 複数の行にまたがる範囲が行の先頭で終わるなら、終わりの行には掛からないとする。
+// 掛かる行は Neovim 0.12.5 の open_float の scope = "line" と同じく決める。範囲の始まりの行から終わりの行までに掛かるが、
+// 複数の行にまたがる範囲が行の先頭（バイト 0）で終わるなら、終わりの行には掛からないとする。
+//
+// req: FR-171
+func diagnosticSpanOf(r ext.Range) diagnosticSpan {
+	s, end := r.Start, r.End
+	if end.Line < s.Line || (end.Line == s.Line && end.Byte < s.Byte) {
+		s, end = end, s
+	}
+	last := end.Line
+	if s.Line != end.Line && end.Byte == 0 {
+		last--
+	}
+	return diagnosticSpan{r: ext.Range{Start: s, End: end}, first: s.Line, last: last}
+}
+
+// lineDiagnostics は、バッファ bs の行 line（0 から）に掛かる診断（diagnosticSpanOf）を、ポップアップに並べる順にして返す。
+// 返す診断の範囲は、向きをそろえたものである。
 // 並びは重要度の重い順で、同じ重要度なら範囲の始まり（行、列）、終わり（行、列）の順にする（Neovim の severity_sort）。
 // それも同じなら、送った拡張機能の ID の順と、拡張機能が送った順にする。
 //
@@ -80,14 +106,11 @@ func lineDiagnostics(bs *bufferState, line int) []ext.Diagnostic {
 	var out []ext.Diagnostic
 	for _, id := range slices.Sorted(maps.Keys(bs.diagnostics)) {
 		for _, d := range bs.diagnostics[id] {
-			s, end := d.Range.Start, d.Range.End
-			if end.Line < s.Line || (end.Line == s.Line && end.Byte < s.Byte) {
-				s, end = end, s
-			}
-			if line < s.Line || line > end.Line || (s.Line != end.Line && line == end.Line && end.Byte == 0) {
+			span := diagnosticSpanOf(d.Range)
+			if line < span.first || line > span.last {
 				continue
 			}
-			d.Range = ext.Range{Start: s, End: end}
+			d.Range = span.r
 			out = append(out, d)
 		}
 	}

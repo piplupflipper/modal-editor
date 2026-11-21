@@ -96,6 +96,9 @@ type floatState struct {
 	transient bool
 	// scratch は、bs をこのポップアップのために作ったことを表す。閉じたら bs も閉じる。
 	scratch bool
+	// diagnostic は、カーソルが止まったときに出した診断のポップアップ（diagpopup.go。FR-171）であることを表す。
+	// ペインの部品の client のキーで閉じる（paneInput）。
+	diagnostic bool
 	// shrunk は、bs が :popup で縮めたタブであることを表す。閉じたらタブの並びの tabIndex 番目（縮める前の位置）へ戻す。
 	shrunk   bool
 	tabIndex int

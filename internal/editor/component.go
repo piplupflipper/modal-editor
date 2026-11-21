@@ -239,6 +239,11 @@ func (e *Editor) feedInput(in keyInput) {
 //
 // req: FR-115
 func (e *Editor) paneInput(p *floatState, in keyInput) {
+	if f := e.float; f != nil && f.diagnostic && !f.focused {
+		// 元の client の画面の診断のポップアップは、利用者がペインへ移ったので閉じる（Neovim も、別の窓へ移ると open_float の窓を閉じる。
+		// PR #333 のレビューの推奨 1）。ペインのキーの間は、カーソルが止まった契機も待ち直さない（afterKey）。
+		e.closeFloat(true)
+	}
 	e.paneSaved, e.paneActive = e.float, p
 	p.base = e.cur
 	p.focused = false
