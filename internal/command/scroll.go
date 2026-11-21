@@ -410,7 +410,7 @@ func actScrollCursor(kind scrollCursorKind, firstNonBlank bool) actionFunc {
 			v.CursorBot(cur, 0, true)
 		}
 		// 決めた位置は、描画でもう一度余白を数え直す。Neovim 0.12.5 も、zz と zb の後に余白（'scrolloff'）を数え直す
-		// （500 行目までのファイルの 95 行目で so=5 の zz は、最初の行を 91 行目にせず 90 行目のままにする。2026-11-21 に確かめた）。
+		// （100 行のファイルの 95 行目で so=5 の zz は、最初の行を 91 行目にせず 90 行目のままにする。2026-11-21 に確かめた）。
 		s.setView(v, false)
 		return nil
 	}

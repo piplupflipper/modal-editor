@@ -72,6 +72,8 @@
 | `lineNumber.minWidth` | 整数 | エディタ全体 | `4` | 1 から 20 |
 | `lineWrap.enabled` | 真偽 | エディタ全体 | `false` |  |
 | `whitespace.show` | 真偽 | エディタ全体 | `false` |  |
+| `scroll.margin` | 整数 | エディタ全体 | `0` | 0 から 9999 |
+| `scroll.sideMargin` | 整数 | エディタ全体 | `0` | 0 から 9999 |
 | `search.highlight` | 真偽 | エディタ全体 | `false` |  |
 | `search.incrementalTimeoutMs` | 整数 | エディタ全体 | `500` | 1 から 10000 |
 | `search.showCount` | 真偽 | エディタ全体 | `false` |  |

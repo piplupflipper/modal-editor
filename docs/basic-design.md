@@ -612,7 +612,7 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 | 操作の種類 | 提供者へ振り分ける操作（`input.ProviderExtension`）にし、ID の接頭辞を `preview.`（`input.PreviewPrefix`）にした。キーの一覧の操作（7.2）と同じく、ドットリピートに記録せず、編集を禁止したバッファ（ファイラの木、プレビュー）でも断らない扱いにするためである。提供者へは問い合わせず、本体が行う。ノーマルモードでは、ほかの提供者の操作と同じく `extQuery.Action` から呼ぶ（回数を付けると、その回数だけ動く）。インサートモードの `command.State` は提供者の操作を実行しないので、フォーカスのあるポップアップのキーの口（`command.State.KeyHook` の `floatKey`）で、インサートモードの操作の表を引いて行う（`previewInsertKey`）。どちらもキーはマクロに記録され、再生でも同じく動く |
 | 効く所 | キーを受けているバッファが、フォーカスのある中央のポップアップか分割したペインの部品（ペインのキーを処理する間は、その部品が元の client のフォーカスのあるポップアップになる。1.2）のバッファか、その部品のプレビューへフォーカスを移したときのプレビューのバッファであるとき。プレビューを出していない部品（窓が狭い、プレビューの欄が無い）、中身の無いプレビュー（理由だけを出している）、まだ描いていないプレビュー、編集のバッファでは何もしない。誤りも出さない（Vim の `<S-Down>` の 1 画面のスクロールは、本体では今まで割り当てていなかった） |
 | 動く量と端 | 1 画面は、プレビューの中身の行数から 2 を引いた行数（Vim の `<C-f>` と同じ。1 より少なければ 1）。下へは、最後の行がプレビューの最後の行に来た位置で止める（fzf-lua が下の端で `zb` するのと同じく、最後の行の後に空の行を出さない）。行を真ん中に置いて開いたために最後の行の後が空いているときは、下へのスクロールで上へ戻さない。上へは最初の行で止める。端でもう一度打っても動かず、失敗にしない |
-| 持ち方 | プレビューの中身を描く子の Renderer（`ui.Renderer.PreviewRenderer`。端末多重化ソフトのポップアップとペインでは部品の client の Renderer のもの）の最初の行を動かす。子の Renderer は描くたびにカーソルが窓に収まるようにスクロールし直すので、中身のカーソルも窓の中へ動かす。プレビューのために作ったバッファはそのカーソルを、開いているバッファを出しているときは、そのバッファ（タブ）のカーソルを動かさず、プレビューの側に持つ行（`previewState.anchor`）を動かす。色を付ける行（grep の一致した行）は変えない。別の項目へ移ると、その項目の行を真ん中に置き直す（プレビューの `ID` が替わるため） |
+| 持ち方 | プレビューの中身を描く子の Renderer（`ui.Renderer.PreviewRenderer`。端末多重化ソフトのポップアップとペインでは部品の client の Renderer のもの）の最初の行を動かす。子の Renderer は描くたびにカーソルが窓に収まるようにスクロールし直すので、中身のカーソルも窓の中へ動かす。プレビューのために作ったバッファはそのカーソルを、開いているバッファを出しているときは、そのバッファ（タブ）のカーソルを動かさず、プレビューの側に持つ行（`previewState.anchor`）を動かす。中身のカーソルは、窓の上と下に余白（`scroll.margin`。FR-174）を残した範囲に入れる（`scroll.View.CursorCorrect`。#337。窓の端に置くと、次の描画が余白を残すためにスクロールを戻す）。色を付ける行（grep の一致した行）は変えない。別の項目へ移ると、その項目の行を真ん中に置き直す（プレビューの `ID` が替わるため） |
 | フォーカス | 一覧のカーソル、入力の行、モード、フォーカスは変えない。`<C-w>w` でプレビューへフォーカスを移したときも同じ操作で動き、そのときは見えているカーソルも動く |
 
 ## 2. 本体のパッケージ構成
@@ -674,6 +674,13 @@ tmux 3.4 の `tmux(1)` の `display-popup` に「Panes are not updated while a p
 | パッケージ | 責務 | 持たないもの |
 |---|---|---|
 | `internal/editorconfig` | 開いたファイルに当たる `.editorconfig` を親のディレクトリへ探して読み、ファイルに当たる項目（名前と値の文字列）を返す。EditorConfig の仕様の glob の解釈（外部ライブラリを足さずに自前で書いた） | 項目を本体の設定へ写すこと（`internal/editor`） |
+
+#337 で、次のパッケージを土台の層に足した（6.7 の「スクロールと余白」）。他のパッケージを import しない。図 2 にはまだ描いていない。
+描画（`internal/ui`）とスクロールの操作（`internal/command`）は同じ層で互いを import しないので、両方が同じ数え方を使うために土台の層に置いた。
+
+| パッケージ | 責務 | 持たないもの |
+|---|---|---|
+| `internal/scroll` | 表示領域の縦の位置（最初の行と、最初の行の途中から見せる見た目の行の数）の数え方。カーソルを余白を残して表示領域に入れる位置、`zt`、`zz`、`zb` の位置、`<C-e>` と `<C-y>` と、見た目の行で送るページ単位のスクロールの位置、余白の外へ動かすカーソルの行（Neovim 0.12.5 の `move.c` を写したもの） | 行の高さの数え方（呼び出し側が行ごとの見た目の行の数を渡す）、カーソルの列と望みの列、横の位置 |
 
 Go は、パッケージが互いを import する循環を、コンパイルエラーにする。
 層を決めておくのは、実装の途中で循環に行き当たるのを避けるためである。
@@ -3098,8 +3105,8 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 | 続きの行の記号 | 記号 `lineWrap.showBreak`（7.1。Vim の `'showbreak'`）を、続きの見た目の行の頭に `nontext` の色で描き、その右から文字を置く。既定は空で、本文の幅から 2 を引いた列数より広ければ付けない（全角文字を 1 つは置けるようにするため）。記号の列も表示の列に数えるので、続きの行のタブの幅は nvim 0.12.5 の `showbreak=>>` と同じになる（2026-11-20 に確かめた） |
 | 収まらない最後の行 | 表示領域の最後に収まりきらない行は、入るところまで描き、最後の行の右の 3 列に `@@@`（`nontext`）を出す（`'display'` の `lastline`）。ただし、その行が表示領域の最初の行（表示領域より高い行）なら出さない（nvim 0.12.5 で確かめた） |
 | 表示領域より高い行 | 最初の行が表示領域より高く、カーソルがその行にあるときだけ、行の途中の見た目の行から描く（Vim の `w_skipcol`。`Renderer.skip` に見た目の行の数で持つ）。そのときは表示領域の最初の行の左の 3 列に `<<<`（`nontext`）を出す（nvim は行番号の列の上にも描くので、同じく画面の左の端から描く）。表示の位置（`ui.ScrollPos`）に `skip` を足したので、打つたびの検索（「打つたびの検索」）が覚えて戻す位置にも入る |
-| スクロール | 折り返すときは横にスクロールしない。縦は Vim 9.1 の `update_topline` と `curs_columns`（`'scrolloff'` は 0）を見た目の行の数で写した（`Renderer.scrollWrapped`）。カーソルの行が最初の行より下なら、カーソルの行の全体が入るまで行の単位でスクロールする（Vim の `w_botline` の扱い）。カーソルの行が最初の行より上なら、カーソルの行を最初の行にする。大きく離れたとき（折り返さないときと同じ境目）は、Vim の `scroll_cursor_halfway` と同じく、カーソルの行の上と下の見た目の行の数をそろえて中ほどに置く。カーソルの行が表示領域より高いときは、カーソルの見た目の行が隠れたら、隠れなくなる最小の分だけ `skip` を動かす（nvim 0.12.5 の `gj`、`gk`、`$` で確かめた）。表示領域の行数が変わったとき（`fitHeight`）と、バッファを替えたとき（`EnterBuffer`）も、見た目の行の数で位置を決める。ルーラーの位置（`Top`、`Bot`、`NN%`）は、最後まで描いた行の次の行（Vim の `w_botline`）から数える |
-| ページ単位のスクロール | `<PageDown>` と `<PageUp>`（`command.State.scrollPage`）は、Vim 9.1 の `onepage` の行の高さを、見た目の行の数で数える（折り返さないときは 1）。行の高さは、`command.State.ScreenLines` で数える |
+| スクロール | 折り返すときは横にスクロールしない。縦は、折り返さないときと同じ数え方（`internal/scroll`。下の「スクロールと余白」）で、行の高さを見た目の行の数にして決める。カーソルの行の全体が入るまで行の単位でスクロールする（Vim の `w_botline` の扱い）。カーソルの行が表示領域より高いときは、カーソルの見た目の行が余白を残して見えるように `skip` を動かす（Neovim 0.12.5 の `curs_columns`）。表示領域の行数が変わったとき（`fitHeight`）と、バッファを替えたとき（`EnterBuffer`）も、見た目の行の数で位置を決める。ルーラーの位置（`Top`、`Bot`、`NN%`）は、最後まで描いた行の次の行（Vim の `w_botline`）から数える |
+| ページ単位のスクロール | `<C-f>`、`<C-b>`、`<C-d>`、`<C-u>`（`<PageDown>`、`<PageUp>` を含む）は、Neovim 0.12.5 の `pagescroll` と同じく見た目の行の数で送る（「スクロールと余白」）。行の高さは、`command.State.ScreenLines` で数える |
 | カーソル | インサートモードで、ちょうど見た目の行の幅で終わる行の行末にいるカーソルは、次の見た目の行の左の端に置く。行の見た目の行の数は増やさない（nvim 0.12.5 と同じ） |
 | 設定の読み方 | 描画は、描くたびに設定の今の値を読む（`ui.Frame.Wrap` を `Editor.bufferFrame` が詰める）。`:set wrap` などで値を変えたときに呼ぶ処理は無い（7.3）。プレビュー（1.4 の「#288 のプレビュー」）の中身は本文と同じバッファの表示なので、同じ値で折り返す（`Editor.floatFrame`）。ホバーとヘルプのポップアップは、今までどおり窓の幅で折り返してからバッファにする |
 
@@ -3129,7 +3136,7 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 |---|---|
 | 本文の描画、カーソルの位置、折り返し、ルーラーの列、ステータス行とポップアップの窓の幅 | `ui.Frame.TabStop`。`internal/editor` が描くたびに、表示領域に描くバッファの今の値を詰める（`Editor.frame`）。`Renderer.Render` が描く間の値（`Renderer.tabStop`）にし、描画の中でタブ幅を使う箇所が読む。公開していた `Renderer.TabStop` は無くした |
 | ポップアップとプレビューの中身 | それぞれの中身のバッファの値を `Float.View.TabStop`、`Preview.View.TabStop` に詰める（`Editor.floatFrame`、`Editor.uiPreview`）。プレビューに開いたファイルは、ファイルの種類ごとの値で描く（プレビューのバッファは名前を持たないので、`.editorconfig` は読まない） |
-| `gj` と `gk`、ページ単位のスクロール（`command.State.ScreenLines`） | `ui.Renderer.WrapLines` の引数の `ui.LineLayout`（#328 で、タブ文字の幅と空白の記号を描くかを 1 つの値にした。次の節）。`internal/editor` の `screenLines` が State のバッファの今の値を渡す。次の描画の前に `:set tabstop=` で変えても、今の値で数える |
+| `gj` と `gk`、スクロールの操作（`command.State.ScreenLines`） | `ui.Renderer.WrapLines` の引数の `ui.LineLayout`（#328 で、タブ文字の幅と空白の記号を描くかを 1 つの値にした。次の節）。`internal/editor` の `screenLines` が State のバッファの今の値を渡す。次の描画の前に `:set tabstop=` で変えても、今の値で数える |
 | 望みの列（`command.State.Columns`） | `internal/editor` の `wrapColumns` が、そのつど `ui.Columns{LineLayout: …}` を作る。それまでは State を作るときに `Renderer.Columns()` で写した値を使い続けていた |
 | 字下げの幅（3.2） | `command.State.TextWidth`（`ui.StringWidth`）の引数 |
 | ホバーとヘルプのポップアップの中身を窓の幅で折り返すとき（`ui.WrapText`） | 名前もファイルの種類も無いバッファの初めの値（`Editor.scratchTabWidth`。設定ファイルの最上位の `tab.width`）。そのバッファを描くときと同じ幅で数える |
@@ -3170,7 +3177,52 @@ nvim 0.12.5 は、記号（`Whitespace`）と `^A` などの表記（`SpecialKey
 行末の記号を消す切り替えは、`ui.LineLayout` に項目を足す形になる見込みである（行末の記号の有無は見た目の行の数を変えるので、描画と `gj`、`gk`、ページ単位のスクロールに同時に届く必要がある）。
 `'linebreak'` の切る位置は、1 文字ずつの配置（`lineRule.glyph`）ではなく、見た目の行に分ける側（`wrapper.place`、`rows`、`span`）の仕事になる見込みである。`'list'` との組み合わせ（`tab:` が無いときの `^I` など）は、そのときに Vim 9.1 で確かめる。
 
+#### スクロールと余白
 
+#337 で、Vim のスクロールのキー（FR-173）と、カーソルの上下と左右の余白（FR-174。Vim の `'scrolloff'` と `'sidescrolloff'`）を足した。
+余白は、設定の表（7.3）のエディタ全体の項目 `scroll.margin` と `scroll.sideMargin` で決める（既定はどちらも 0）。
+動きは Neovim 0.12.5 の既定（`'nostartofline'`、`'smoothscroll'` はオフ、`'scrolljump'` は 1）に合わせ、2026-11-21 に `nvim --clean --headless` で、キーを 1 つずつ打って `:redraw` を挟んで突き合わせた（`internal/editor` の `TestScrollNeovim`。42 ケース、437 キー）。
+画面の位置は、tmux の上で Neovim 0.12.5 と並べて `capture-pane` でも比べた（`G <PageUp>` の位置、`<C-d>`、`zz`、余白）。
+
+縦の位置の数え方は、土台の層の `internal/scroll`（2 章）の 1 か所に置いた。
+Neovim 0.12.5 の `src/nvim/move.c` の関数を、行の番号を 0 から数え、`w_skipcol` を隠す見た目の行の数（`View.Skip`）にして写した。
+行の高さ（見た目の行の数）は呼び出し側が渡し（`scroll.Lines`）、折り返さないときはどの行も 1 である。このため、折り返すときのための分岐は数え方の中に無い。
+数え方の入力は、表示領域の行数、本文の幅、余白、最初の行、隠す見た目の行の数で、カーソルの行は引数で受け取る。
+
+| 関数（`scroll.View`） | Neovim 0.12.5 | 使うところ |
+|---|---|---|
+| `Follow` | `update_topline` と、`curs_columns` の `w_skipcol` を決める部分 | 描画（`ui.Renderer.scroll`）が、描くたびにカーソルを余白を残して表示領域に入れる。カーソルをどの操作で動かしても（`j`、検索、`G`、ジャンプ、`gj`）ここを通るので、余白のための操作ごとの分岐は無い |
+| `CursorTop`、`CursorBot`、`CursorHalfway` | `scroll_cursor_top`、`scroll_cursor_bot`、`scroll_cursor_halfway` | `Follow` の中と、`zt`、`zb`、`zz`。`scroll_cursor_halfway` は Neovim 0.12.5 の形（カーソルの行の下と上へ 1 行ずつ交互に足す）を写した。Vim 9.1 は上と下に足した見た目の行の数をそろえるので、折り返すときに 1 行ずれることがある |
+| `CursorCorrect` | `cursor_correct` | 余白があるときの `<C-e>`、`<C-y>`、ページ単位のスクロールの後に、カーソルの行を余白の外へ動かす。プレビューのスクロール（1.4 の「#308 のプレビューのスクロール」）も、カーソルを窓の中へ入れるのに使う |
+| `ScrollRedraw` | `scroll_redraw`（`scrollup`、`scrolldown`） | `<C-e>` と `<C-y>`。バッファの行で送る |
+| `ScrollSmooth`、`Overlap`、`TopRows`、`RowsBetween` | `scroll_with_sms`、`get_scroll_overlap`、`plines_correct_topline`、`plines_m_win` | ページ単位のスクロール（`command.State.pageScroll`。Neovim の `pagescroll`）。Neovim と同じく、一時的に `'smoothscroll'` をオンにして見た目の行で送り、最初の行が途中から見える位置で止まったら行の切れ目まで送り足すか戻す |
+
+スクロールの操作は `internal/command` の `scroll.go` にある。
+
+| 操作の ID（キー） | 動き |
+|---|---|
+| `scroll-line-down`、`scroll-line-up`（`<C-e>`、`<C-y>`） | 表示領域を回数の行だけ送る（`ScrollRedraw`）。カーソルが表示領域から出たら、余白の外の行へ動かし、列は望みの列で決める（望みの列は変えない）。バッファの端で動けなくても失敗しない |
+| `half-page-down`、`half-page-up`（`<C-d>`、`<C-u>`） | Vim の `'scroll'` の行数（回数を付けた `<C-d>` と `<C-u>` が決め、表示領域の行数が変わるまで保つ。`command.State.scrollAmount`）の見た目の行だけ送り、カーソルも同じ数の見た目の行だけ動かす（折り返すときは `gj` と `gk`、そうでなければ `j` と `k`）。前へは、最後の行の後の `~` の行を出すほどは送らない。表示領域もカーソルも動かなければ失敗する |
+| `page-down`、`page-up`（`<C-f>`、`<C-b>`、`<PageDown>`、`<PageUp>`） | 回数 × 1 画面（表示領域の行数から、前の画面と重ねて残す 0 から 2 行を引いた数）の見た目の行を送り、カーソルを、前へなら新しい最初の行、後ろへなら最後まで見える最後の行へ移す。インサートモードの `<PageDown>` と `<PageUp>` も同じ |
+| `scroll-cursor-top`、`scroll-cursor-center`、`scroll-cursor-bottom`（`zt`、`zz`、`zb`） | カーソルの行を上の端、中ほど、下の端に置く。回数があれば、カーソルをその行へ移してジャンプリストに記録する（列は移る前のバイトの位置を丸めた位置）。`zz` はバッファの末尾の近くでも `~` の行を数えて中ほどに置く |
+| `scroll-cursor-top-first-nonblank` ほか 2 つ（`z<CR>`、`z.`、`z-`） | `zt`、`zz`、`zb` の前に、カーソルを行の最初の空白でない文字へ移し、望みの列をその列にする |
+
+どの操作もノーマルモードとビジュアルモードで使え、オペレーターの後では誤りになる。編集を禁止したバッファでも使える（4.6）。
+表示の位置は描画の側（`ui.Renderer`）が持つので、`command.Viewport`（最初の行、隠す見た目の行の数、表示領域の行数を読み、決めた位置を書く口）を通して読み書きする。
+`internal/editor` の 3 つの口（client の画面の `viewport`、ポップアップの `floatViewport`、プレビューの `previewViewport`）が、それぞれの窓を描く `ui.Renderer` につなぐ。
+余白の値は、描画は `ui.Frame.Margins`（`Editor.margins` が、client の画面、ポップアップ、プレビューの中身の Frame に詰める）で、操作は設定の口（`command.State.Ex.Options`）で読む。ファインダーの一覧（fzf に当たる部品）には余白を付けない。
+
+| 項目 | 決めたこと |
+|---|---|
+| 最初の行を決め直す契機 | 描画は、前の描画からカーソルの行、テキスト（バッファのバージョン番号）、表示領域の大きさ、行の並べ方、余白のどれも変わっていなければ、最初の行を決め直さず、隠す見た目の行だけを決め直す（`ui.Renderer` の `valid`、`scroll.View.KeepTop`）。Neovim の `VALID_TOPLINE` に当たる。行の中だけでカーソルが動いたとき（表示領域より高い行の中の `gk`）に、隠す見た目の行を余白に合わせて減らす動きが Neovim と同じになる（`internal/ui` の `TestGoldenWrapSkip`） |
+| 決めた位置を保つ | 余白のある `<C-e>`、`<C-y>`、ページ単位のスクロールは、決めた位置を、カーソルがその行にある間は描画で決め直させない（`command.Viewport.SetView` の hold、`ui.Renderer.SetScrollHeld`）。バッファの末尾の近くで、余白をすべては残せない位置に決めたとき（`G<C-e>` の後に表示領域の半分以上の余白で決め直すと、最初の行が戻る）に効く（Neovim の `scroll_redraw` の「the screen jumps back at the end of the file」）。`zt`、`zz`、`zb` の後は決め直す（Neovim 0.12.5 でも、100 行のファイルの 95 行目で余白が 5 の `zz` は、最初の行を 91 行目にせず 90 行目のままにする） |
+| 描画の前に続けて動いたとき | マクロの再生などで、描画の前にカーソルが表示領域から出ていれば、操作は、描画と同じくカーソルを表示領域に入れた位置（`Follow`）から数える（`command.State.scrollView`） |
+| ページ単位のスクロールの列 | Neovim の `pagescroll` は、一時的に `'smoothscroll'` をオンにした間に、カーソルが最初の行にあれば望みの列を最初の行の見えている部分へ動かす（`cursor_correct_sms`）。`<C-f>` と `<C-b>` の後のカーソルの列はその望みの列で決まるので、同じく写した（`command.State.smoothCursor`。`scroll.View.SmoothCursor`）。行を折り返すときだけ働く |
+| 横の余白 | 行を折り返さないとき、カーソルの文字が、左右に余白の列を残した範囲から出たら、カーソルを画面の幅の半分の位置に置く（`ui.Renderer.scroll`。Neovim の `curs_columns` の `'sidescroll'` が 0 のとき）。判定の左の端は、カーソルの文字が占める最初の列（ノーマルモードのタブではタブの最初の列）である。Neovim 0.12.5 の `'sidescroll'` の既定は 1 だが、本体は #337 より前から 0 の動きなので保った（[Vim との違い](vim-differences.md)） |
+| `<PageDown>` と `<PageUp>` | #337 より前は Vim 9.1 の古いページ送り（`onepage`。'startofline' がオン）を写していた（`command.State.scrollPage`）。`<C-f>` と `<C-b>` と同じ操作にし、Neovim 0.12.5 の `pagescroll` に替えた。カーソルの列は望みの列のままになる |
+
+`G` と `gg` などの、Neovim の `'nostartofline'` で列を保つ操作は、今までどおり行の最初の空白でない文字へ移る（FR-173 に含めない）。
+`zh`、`zl`、`zs`、`ze` などの横のスクロールのキー、`H`、`M`、`L`、`'scrolljump'`、`'smoothscroll'` は #337 の範囲に入れていない。
 
 #### 検索の一致の色付け
 
@@ -4075,6 +4127,8 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `lineNumber.minWidth` | 整数（1 から 20） | エディタ全体 | `4` | `numberwidth` | 行番号の列の最小の列数（FR-136）。範囲は Vim の `'numberwidth'` と同じ |
 | `lineWrap.enabled` | 真偽 | エディタ全体 | `false` | `wrap` | 長い行を本文の幅で折り返して描くか（6.7 の「行の折り返し」。FR-156）。既定は折り返さない（Vim と Neovim の既定は折り返す。#300 のオーナーの決め）。同梱の `config.example.jsonc` では折り返す。単語の切れ目で折り返す設定（Vim の `'linebreak'`）を後で足すときは `lineWrap.` の下に足す |
 | `whitespace.show` | 真偽 | エディタ全体 | `false` | `list` | タブ文字、空白、ノーブレークスペース、行末を記号で描くか（6.7 の「空白の記号」。FR-170）。既定は Vim と Neovim と同じく描かない。同梱の `config.example.jsonc` では描く。Vim の `'list'` は窓ごとの設定だが、本体には窓が無いので、同じく窓ごとの `'number'` と `'wrap'` に当たる `lineNumber.show` と `lineWrap.enabled` と同じくエディタ全体にした |
+| `scroll.margin` | 整数（0 から 9999） | エディタ全体 | `0` | `scrolloff`、`so` | カーソルの行の上と下に残す余白の行数（6.7 の「スクロールと余白」。FR-174）。既定は Vim 9.1 と Neovim 0.12.5 と同じく 0。行を折り返すときは見た目の行で数える。描画と、スクロールの操作と、プレビューのスクロールが、使うたびに読む。Vim の `'scrolloff'` は窓ごとにも持てるが、`lineWrap.enabled` と同じくエディタ全体にした。Vim に上限は無いが、`indent.width` と同じ 9999 にした。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `5` |
+| `scroll.sideMargin` | 整数（0 から 9999） | エディタ全体 | `0` | `sidescrolloff`、`siso` | 行を折り返さないときに、カーソルの左と右に残す余白の列数（6.7 の「スクロールと余白」。FR-174）。既定は Vim 9.1 と Neovim 0.12.5 と同じく 0。描画が描くたびに読む。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `8` |
 | `search.highlight` | 真偽 | エディタ全体 | `false` | `hlsearch` | 直前の検索のパターンの一致に色を付けるか（6.7 の「検索の一致の色付け」。FR-137）。既定は Vim と同じく付けない |
 | `search.incrementalTimeoutMs` | 整数（1 から 10000） | エディタ全体 | `500` | 無し（Vim の `'incsearch'` の時間の上限は設定にない） | `/` と `?` でパターンを打っている間の、打つたびの検索の時間の上限のミリ秒（6.7 の「打つたびの検索」。FR-153）。超えたらその回は一致を出さない。既定は Vim 9.1 の `'incsearch'` が検索を約 0.5 秒で打ち切る（`:help 'incsearch'`）のに合わせた。Vim の `'redrawtime'`（既定 2000）は `'hlsearch'` の色付けなどの上限で、打つたびの検索には使わない（2026-11-20 に Vim 9.1 の `:set redrawtime?` と `:help 'redrawtime'` で確かめた）。打つたびの検索をしない設定は持たない（#296 のオーナーの決め）ので、下限は 0 でなく 1 にした |
 | `search.showCount` | 真偽 | エディタ全体 | `false` | 無し（Vim の `'shortmess'` の `S` に当たるが、`'shortmess'` は多くのフラグをまとめた設定なので別名を作らない） | 検索で動いたときに、メッセージの行の右に一致の件数を出すか（6.7 の「検索の一致の件数」。FR-167）。既定は Vim 9.1 の既定（`'shortmess'` に `S` があり、出さない）に合わせて出さない。同梱の `config.example.jsonc` では出す（オーナーの nvim は Neovim の既定のまま出している）。検索するたびに読む |
@@ -4100,6 +4154,7 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 #329 の issue の案は、時間を `diagnostic.popupDelayMs` としていた。時間を待つ仕組みを汎用の契機にしたので、時間は「止まってから時間が経った」契機（Vim の `CursorHold` と `CursorHoldI`。どちらも `'updatetime'` で動く）の設定として、`cursorHold.` の下に 1 つだけ置いた。
 表示の変化を拡張機能に知らせる口（#317 の第 3 弾）は、この契機に載せず、この時間も使わない（PR #333 のレビューの裁定要へのオーケストレータの決定。6.7 の「カーソルが止まった契機」）。
 #328 の名前は issue の案のとおりにした。記号の名前（7.1）も `whitespace.` の下に置き、設定と記号が同じ機能のものと名前で分かるようにした。
+`scroll.margin` と `scroll.sideMargin` は #337 で足した。名前は issue の案のとおりにした。
 #318 の 4 つの名前は、issue の案のとおりにした。インデントの文字と幅は `indent.` の下に、タブ文字の表示幅は字下げに限らない（行の途中のタブ文字も描く）ので `tab.` の下に置いた。
 `preview.*` の名前は、何の窓の何の値かが分かるように、窓の幅の境目（`minWindowWidth`）、プレビューの割合（`widthPercent`）、窓の割合（`windowWidthPercent`）にした（fzf-lua の `flip_columns` は、何を反転するのかが名前から分からないため写さなかった）。
 
@@ -4282,8 +4337,8 @@ Vim との完全な互換は目指さない（オーナーの方針。設計の�
 | `:set <Vim の名前>?` | `option.get <正規の名前>` |
 | `:set <名前> <名前> …` | 空白で区切った引数ごとに上のどれかへ変換し、左から順に実行する。途中の引数が誤りなら止め、前の引数の設定は残す（Vim 9.1 の `:set ts=4 foo ts=8` と同じ） |
 
-- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を、#275 で `hlsearch` から `search.highlight` を、#300 で `wrap` から `lineWrap.enabled` を、#318 で `expandtab`（`et`）、`shiftwidth`（`sw`）、`tabstop`（`ts`）、`autoindent`（`ai`）を足した。#327 で `commentstring`（`cms`）から `comment.string` を、#328 で `list` から `whitespace.show` を足した
-- `inv` の接頭辞、`+=`、`-=`、`^=`、`&`（既定値に戻す）、短い名前（`nu`、`ft`）は受け付けず、知らない設定のエラー（`E518`）にする。ただし字下げの 4 項目の短い名前（`et`、`sw`、`ts`、`ai`）は、`:set et sw=4 ts=4` の形で書くことが多いので、#318 の決めで受け付ける。Vim の `'softtabstop'`（`sts`）と `'smarttab'`（`sta`）は、別の設定にしない（3.2）ので `E518` になる
+- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を、#275 で `hlsearch` から `search.highlight` を、#300 で `wrap` から `lineWrap.enabled` を、#318 で `expandtab`（`et`）、`shiftwidth`（`sw`）、`tabstop`（`ts`）、`autoindent`（`ai`）を足した。#327 で `commentstring`（`cms`）から `comment.string` を、#328 で `list` から `whitespace.show` を、#337 で `scrolloff`（`so`）から `scroll.margin` を、`sidescrolloff`（`siso`）から `scroll.sideMargin` を足した
+- `inv` の接頭辞、`+=`、`-=`、`^=`、`&`（既定値に戻す）、短い名前（`nu`、`ft`）は受け付けず、知らない設定のエラー（`E518`）にする。ただし字下げの 4 項目の短い名前（`et`、`sw`、`ts`、`ai`）は、`:set et sw=4 ts=4` の形で書くことが多いので、#318 の決めで受け付ける。余白の 2 項目の短い名前（`so`、`siso`）も、#337 の issue の決めで受け付ける。Vim の `'softtabstop'`（`sts`）と `'smarttab'`（`sta`）は、別の設定にしない（3.2）ので `E518` になる
 - 引数の無い `:set` は `E471` にする
 - `:setlocal` は、別名の表に行が無いので、知らないコマンドのエラー（`E492`）になる（#264 の本文は「知らない設定のエラーにする」としたが、`:setlocal` は設定でなくコマンドの名前なので、他の知らないコマンドと同じにした）
 - `:set` の引数は、`:w` と同じく `\` の付かない `|` で終わり、`\|` は `|` になる
@@ -4351,6 +4406,7 @@ Vim 9.1 の `:tabe` を引数なしで打つと、`:tabnew` と同じく空の�
 - ヤンクした範囲の色付け（#283）は、`yank.highlightMs` を表に足し、ヤンクのたびに今の値を読む形で入った（6.7 の「一時的な色付け」）。Vim の名前が無いので、`vimOptionNames` には行を足していない（`:set` では変えられず、`:option.set` で変える）
 - 行の折り返し（#300）は、`lineWrap.enabled` を表に足し、描画が描くたびに、gj と gk が見た目の行を数えるたびに今の値を読む形で入った（6.7 の「行の折り返し」）。`:set wrap` は、`vimOptionNames` に 1 行を足して使えるようにした
 - 空白の記号（#328）は、`whitespace.show` を表に足し、描画が描くたびに、望みの列を数えるたびに今の値を読む形で入った（6.7 の「空白の記号」）。`:set list` は、`vimOptionNames` に 1 行を足して使えるようにした
+- カーソルの上下と左右の余白（#337）は、`scroll.margin` と `scroll.sideMargin` を表に足し、描画が描くたびに（`ui.Frame.Margins`）、スクロールの操作が動かすたびに（`command.State.Ex.Options`）今の値を読む形で入った（6.7 の「スクロールと余白」）。`:set scrolloff=5` と `:set so=5` は、`vimOptionNames` に 4 行を足して使えるようにした
 - 打つたびの検索（#296）は、`search.incrementalTimeoutMs` を表に足し、検索を始めるたびに今の値を読む形で入った（6.7 の「打つたびの検索」）。Vim に対応する設定が無いので、`vimOptionNames` には行を足していない。`:set incsearch` に当たる真偽の項目は、常に行うので作っていない
 - 検索の一致の件数（#320）は、`search.showCount` を表に足し、検索するたびに今の値を読む形で入った（6.7 の「検索の一致の件数」）。`'shortmess'` は多くのフラグをまとめた設定で、別名にするとほかのフラグの意味まで受け付けることになるので、`vimOptionNames` には行を足していない（#320 のオーナーの決め）
 - 字下げとタブの表示幅（#318）は、範囲がバッファごとの 4 項目と `editorConfig.enabled` を表に足し、バッファごとの項目を設定ファイルに書けるようにして、初めの値の段（「バッファごとの項目の初めの値」）を足した。使う側（3.2、6.7 の「タブ文字の表示幅」）は、使うたびにバッファの今の値を読む
@@ -4530,3 +4586,4 @@ tmux の中の構成（server と編集の client が別のプロセス）の起
 | 拡張機能が本体の API の版を見分ける方法。いまは `initialize` の `apiVersion`（`ext/server` の `InitializeEvent.APIVersion`）の文字列だけで、版の比べ方と、古い本体に合わせて送り方を変える規則が無い（拡張機能 API の版の付け方の項と合わせて決める。PR #239 のレビュー） | 5.3 |
 | 今の設定ファイルの項目（`fixendofline`、`autoread` など）を設定の表へ移すかと、移すときの正規の名前の付け直し（#264 では扱わない。行番号、検索の一致の色付け、コマンドラインの位置の issue の後に決める）。整数の項目の値の範囲（Vim の `E487`）を表の行に持たせるか（整数の項目を足す issue で決める） | 7.3 |
 | 幅が足りないときに、拡張機能の部品より優先して残す名前の末尾の列の数（仮に 20。`ui` の `nameKeep`）と、1 つの部品の中身の文字の上限（仮に 256。`editor` の `maxStatusPartRunes`）（PR #239 のレビューの推奨 1） | 7.1 |
+| Neovim 0.12.5 の既定に合わせて、`G`、`gg` など列を保たない操作を `'nostartofline'` の動き（列を保つ）にするかと、横のスクロールを `'sidescroll'` が 1 の動き（1 列ずつ送る）にするか。#337 では、スクロールのキーだけを Neovim に合わせ、ほかの操作と横のスクロールは今の動き（Vim 9.1 の既定）を保った | 6.7 の「スクロールと余白」 |

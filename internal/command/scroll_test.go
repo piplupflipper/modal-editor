@@ -9,8 +9,9 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/option"
 )
 
-// scrollState は、"line 1" から "line 100" の 100 行のバッファを、rows 行の表示領域で開いた State を作る。margin は scroll.margin である。
-func scrollState(t *testing.T, rows, margin int) (*State, *fakeViewport) {
+// scrollState は、"line 1" から "line 100" の 100 行のバッファを、10 行の表示領域で開いた State を作る。margin は scroll.margin である。
+func scrollState(t *testing.T, margin int) (*State, *fakeViewport) {
+	const rows = 10
 	t.Helper()
 	lines := make([]string, 100)
 	for i := range lines {
@@ -32,7 +33,7 @@ func scrollState(t *testing.T, rows, margin int) (*State, *fakeViewport) {
 // req: FR-173
 func TestScrollKeysAfterOperator(t *testing.T) {
 	for _, keys := range []string{"d<C-e>", "d<C-y>", "d<C-d>", "d<C-u>", "d<C-f>", "d<C-b>", "dzt", "dzz"} {
-		s, vp := scrollState(t, 10, 0)
+		s, vp := scrollState(t, 0)
 		vp.top = 20
 		s.SetCursor(pos(25, 0))
 		rs := feedKeys(s, keys)
@@ -64,7 +65,7 @@ func TestScrollKeysAtEdge(t *testing.T) {
 		{"<C-e>", 99, 99, false},
 	}
 	for _, tt := range tests {
-		s, vp := scrollState(t, 10, 0)
+		s, vp := scrollState(t, 0)
 		vp.top = tt.top
 		s.SetCursor(pos(tt.line, 0))
 		r := feedKeys(s, tt.keys)[0]
@@ -79,7 +80,7 @@ func TestScrollKeysAtEdge(t *testing.T) {
 //
 // req: FR-173
 func TestHalfPageAmount(t *testing.T) {
-	s, vp := scrollState(t, 10, 0)
+	s, vp := scrollState(t, 0)
 	step := func(keys string, top, line int) {
 		t.Helper()
 		feedKeys(s, keys)
@@ -102,7 +103,7 @@ func TestHalfPageAmount(t *testing.T) {
 //
 // req: FR-173, FR-174
 func TestScrollCursorJumpAndHold(t *testing.T) {
-	s, vp := scrollState(t, 10, 0)
+	s, vp := scrollState(t, 0)
 	nav := &jumpCountNav{}
 	s.Navigator = nav
 	feedKeys(s, "30zt")
@@ -118,7 +119,7 @@ func TestScrollCursorJumpAndHold(t *testing.T) {
 		t.Errorf("余白の無い <C-e>: hold %d, want -1", vp.hold)
 	}
 
-	s, vp = scrollState(t, 10, 3)
+	s, vp = scrollState(t, 3)
 	feedKeys(s, "<C-e>")
 	if vp.top != 1 || s.Cursor().Line != 4 || vp.hold != 4 {
 		t.Errorf("余白の 3 行を残す <C-e>: 最初の行 %d、カーソル %v、hold %d", vp.top, s.Cursor(), vp.hold)

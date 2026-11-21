@@ -131,6 +131,8 @@ func (v *View) checkTopOffset(cursor int) bool {
 //   - カーソルが表示領域の下へ出たか、下の余白が足りなければ、離れが小さいときは下の余白の位置に置き（CursorBot）、
 //     大きいとき（Height+1 行より多い）は中ほどに置く
 //   - カーソルの行が最初の行で、表示領域より高ければ、カーソルの見た目の行が余白を残して見えるように Skip を決める（fitSkip）
+//
+// req: FR-174
 func (v *View) Follow(cursor, row int) {
 	n := v.count()
 	cursor = min(max(cursor, 0), n-1)
