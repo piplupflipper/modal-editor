@@ -1455,7 +1455,7 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 	view := &ui.Frame{
 		Text:        f.bs.buf,
 		LineLayout:  e.lineLayout(f.bs, false),
-		Margins:     e.margins(),
+		Margins:     e.marginsFor(st),
 		Cursor:      st.Cursor(),
 		Decorations: f.bs.decoView,
 		Diagnostics: f.bs.uiDiagnostics(),

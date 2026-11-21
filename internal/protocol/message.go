@@ -154,6 +154,9 @@ type Event struct {
 	// Resize は、端末の大きさが Width と Height に変わったことを表す。
 	Resize        bool
 	Width, Height int
+	// MouseRow と MouseCol は、Key がマウスの出来事（editcmd.Key.IsMouse）のときの、client の画面の行と列（0 から数える）である（FR-184）。
+	// server は、この client の画面（部品の client ならその部品の画面）の座標として解く。
+	MouseRow, MouseCol int
 }
 
 func (Event) clientMessage() {}

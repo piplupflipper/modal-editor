@@ -81,6 +81,9 @@ type TermEvent struct {
 	// Resize は、端末の大きさが Width と Height に変わったことを表す。
 	Resize        bool
 	Width, Height int
+	// MouseRow と MouseCol は、Key がマウスの出来事（editcmd.Key.IsMouse）のときの、この端末の画面の行と列（0 から数える）である（FR-184）。
+	// 部品の client の端末なら、その部品の画面の座標である（mouse.go）。
+	MouseRow, MouseCol int
 	// Client は、このイベントを受けた client である（基本設計 2.1 の段階 3）。internal/server が接続ごとに割り当てる。
 	// 今は編集の client が 1 つだけなので、イベントループは読まない。forwardInput がキーの列に積むときに捨て、大きさも 1 つに上書きする。
 	// 2 段目以降の複数の client の issue で、キーの列、中断の印、キーの列の待ち、オペレーターの途中の状態を client ごとに分けるときに使う（基本設計 2.1、FR-62）。
@@ -1022,6 +1025,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.TextWidth = ui.StringWidth
 	bs.state.Extensions = &extQuery{e: e, bs: bs}
 	bs.state.Navigator = navigator{e: e, bs: bs, st: bs.state}
+	bs.state.Mouse = mouseLocator{e: e, bs: bs}
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Ex.Options = optionAccess{e: e, bs: bs}
 	bs.state.Ex.Aliases = e.aliases

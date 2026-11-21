@@ -214,6 +214,8 @@ func TestActionIDUnique(t *testing.T) {
 		"comment": {"gc", "<C-_>", "<C-/>"}, "comment-line": {"gcc", "<C-_>", "<C-/>"}, "commented-lines": {"gc", ""},
 		// <C-f> と <C-b> は、Vim と Neovim と同じく <PageDown> と <PageUp> と同じ操作である（FR-173）。
 		"page-down": {"<PageDown>", "<C-f>"}, "page-up": {"<PageUp>", "<C-b>"},
+		// 4 回目のクリックは、矩形のビジュアルモードが無いので 1 回目と同じ操作である（FR-183）。
+		"mouse.click": {"<LeftMouse>", "<4-LeftMouse>"},
 	}
 	rows := map[string][]string{}
 	for _, tb := range builtinTables {

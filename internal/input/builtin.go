@@ -266,6 +266,22 @@ var (
 		// 移らないのでモーションでなく操作にし、オペレーターの後には使えない（d* は誤りになる）。ID はモーションだったときのまま変えない。
 		{keys: "*", id: "search-word-forward", modes: MapNormal | MapVisual, desc: "カーソルの単語を前方への検索のパターンにする（移らない）"},
 		{keys: "#", id: "search-word-backward", modes: MapNormal | MapVisual, desc: "カーソルの単語を後方への検索のパターンにする（移らない）"},
+		// マウスの出来事（FR-181〜FR-184）。設定の mouse.enabled が真の間だけ端末から届く。Neovim 0.12.5 の mouse=a の既定の働きに合わせ、
+		// ノーマルモード、ビジュアルモード、インサートモードに同じ操作の ID で置く（インサートモードの操作の ID の insert. は付けない。
+		// どのモードでも「マウスの位置へ移る」などの同じ操作で、モードごとの違いは実装の側が持つ。internal/command の mouse.go）。
+		// オペレーターの後には置かない（d<LeftMouse> は誤りになる）。<4-LeftMouse> は、矩形のビジュアルモードが無いので 1 回目と同じにした。
+		// 中と右のボタンの出来事（<MiddleMouse>、<RightMouse> など）と、修飾キーの付いた出来事は、既定では割り当てない。
+		// req: FR-181, FR-182, FR-183, FR-184
+		{keys: "<LeftMouse>", id: "mouse.click", modes: MapNormal | MapVisual | MapInsert, desc: "マウスの位置へ移る（タブの行ならそのタブへ移る）"},
+		{keys: "<4-LeftMouse>", id: "mouse.click", modes: MapNormal | MapVisual | MapInsert, desc: "マウスの位置へ移る（タブの行ならそのタブへ移る）"},
+		{keys: "<LeftDrag>", id: "mouse.drag", modes: MapNormal | MapVisual | MapInsert, desc: "ボタンを押した位置からマウスの位置までを選ぶ"},
+		{keys: "<LeftRelease>", id: "mouse.release", modes: MapNormal | MapVisual | MapInsert, desc: "ドラッグを終える"},
+		{keys: "<2-LeftMouse>", id: "mouse.select-word", modes: MapNormal | MapVisual | MapInsert, desc: "マウスの位置の単語を選ぶ"},
+		{keys: "<3-LeftMouse>", id: "mouse.select-line", modes: MapNormal | MapVisual | MapInsert, desc: "マウスの位置の行を選ぶ"},
+		{keys: "<ScrollWheelDown>", id: "mouse.scroll-down", modes: MapNormal | MapVisual | MapInsert, desc: "表示領域を mouse.scrollLines の行だけ下へ送る"},
+		{keys: "<ScrollWheelUp>", id: "mouse.scroll-up", modes: MapNormal | MapVisual | MapInsert, desc: "表示領域を mouse.scrollLines の行だけ上へ送る"},
+		{keys: "<ScrollWheelRight>", id: "mouse.scroll-right", modes: MapNormal | MapVisual | MapInsert, desc: "行を折り返さないとき、表示領域を mouse.scrollColumns の列だけ右へ送る"},
+		{keys: "<ScrollWheelLeft>", id: "mouse.scroll-left", modes: MapNormal | MapVisual | MapInsert, desc: "行を折り返さないとき、表示領域を mouse.scrollColumns の列だけ左へ送る"},
 	}
 
 	// builtinInsert は、インサートモードのカーソルの移動と削除の操作である（FR-127）。internal/command の State.insertAction が実装を引く。

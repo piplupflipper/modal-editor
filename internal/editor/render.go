@@ -48,7 +48,7 @@ func (e *Editor) frame() *ui.Frame {
 	f := &ui.Frame{
 		Text:            bs.buf,
 		LineLayout:      e.lineLayout(bs, false), // 空白の記号を描くかは bufferFrame が決め直す
-		Margins:         e.margins(),
+		Margins:         e.marginsFor(bs.state),
 		Name:            bufferTitle(cur),
 		Modified:        cur.buf.Modified(),
 		ReadOnly:        cur.buf.ReadOnly(),
@@ -199,6 +199,18 @@ func (e *Editor) margins() ui.Margins {
 		Rows:    e.options.Get(option.ScrollMargin).Int(),
 		Columns: e.options.Get(option.ScrollSideMargin).Int(),
 	}
+}
+
+// marginsFor は、State st の表示領域に詰める余白を返す。マウスでドラッグして選んでいる間（command.State.MouseDragging）は、
+// Neovim 0.12.5 と同じく上下の余白を残さない（ドラッグの位置が表示領域の端の行でも、表示領域を送らない。FR-183）。
+//
+// req: FR-174, FR-183
+func (e *Editor) marginsFor(st *command.State) ui.Margins {
+	m := e.margins()
+	if st != nil && st.MouseDragging() {
+		m.Rows = 0
+	}
+	return m
 }
 
 // lineWrap は、長い行を折り返して描くかを、エディタ全体の設定の今の値（lineWrap.enabled）から返す（FR-156）。
@@ -354,6 +366,15 @@ func (v viewport) Rows() int { return max(v.r.TextRows(), 1) }
 // SetView は、command.Viewport の SetView である。hold が負なら、次の描画でカーソルに合わせて決め直す（ui.Renderer.SetScrollHeld）。
 func (v viewport) SetView(top, skip, hold int) { v.r.SetScrollHeld(top, skip, hold) }
 
+// Left は、command.HorizontalViewport の Left である（ホイールの横のスクロール。FR-182）。
+func (v viewport) Left() int { return v.r.Left() }
+
+// Columns は、command.HorizontalViewport の Columns である。直前の描画の本文の列数である。
+func (v viewport) Columns() int { return v.r.TextWidth() }
+
+// SetLeft は、command.HorizontalViewport の SetLeft である。
+func (v viewport) SetLeft(left int) { v.r.SetLeft(left) }
+
 // render は、繋いでいるすべての client の画面を描いて、それぞれの端末へ出す。
 // 描き終えたら、読み込む client を描く前のものに戻す。
 // 見比べている組は、描く前に差分の計算し直しを始め、描いた後に両側のスクロールをそろえる（diff.go）。
@@ -378,6 +399,8 @@ func (e *Editor) renderView() {
 		return
 	}
 	scr := e.renderer.Render(e.bufferFrame())
+	// 端末にマウスの報告を求めるかは、描くたびに設定の今の値で決める（FR-180。:option.set の後の次の描画から効く）。
+	scr.Mouse = e.mouseEnabled()
 	if err := e.term.Draw(scr); err != nil {
 		e.log.Error("描画に失敗", "err", err)
 	}

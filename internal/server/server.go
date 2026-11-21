@@ -722,7 +722,10 @@ func (t *clientTerm) termEvent(ev protocol.Event) editor.TermEvent {
 		Resize: ev.Resize,
 		Width:  ev.Width,
 		Height: ev.Height,
-		Client: t.id,
+		// マウスの出来事の位置（FR-184）は、この client の画面の座標のまま渡す。
+		MouseRow: ev.MouseRow,
+		MouseCol: ev.MouseCol,
+		Client:   t.id,
 	}
 }
 

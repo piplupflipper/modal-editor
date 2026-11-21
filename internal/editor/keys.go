@@ -20,6 +20,8 @@ type keyInput struct {
 	c     *clientView
 	key   editcmd.Key
 	paste string
+	// mouseRow と mouseCol は、key がマウスの出来事のときの、受けた端末の画面の位置である（FR-185。mouse.go）。
+	mouseRow, mouseCol int
 	// comp は、入力を受けた部品の client である（component.go）。nil なら c の端末で受けた。
 	// 部品の client で受けた入力は、元の client c の操作として扱う（基本設計 1.2）。
 	comp *component
@@ -156,6 +158,10 @@ func (e *Editor) handleKeys() {
 		// この client の端末でキーを受けたので、フォーカスはこの client のペインに戻っている（cursorhold.go の leaveFocus）。
 		in.c.focusAway = false
 	}
+	if in.paste == "" && in.key.IsMouse() {
+		// マウスの出来事の位置を、キーマップと操作の表を通った後の操作が解けるように覚える（mouse.go）。
+		e.noteMouse(in.c, in.comp, in.key, in.mouseRow, in.mouseCol)
+	}
 	if in.comp != nil {
 		e.componentInput(in)
 		return
@@ -244,6 +250,11 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		e.interrupt.Store(false)
 		e.op.intr.Store(false)
 		k = editcmd.Esc
+	}
+	if k.IsMouse() && (e.confirm != nil || e.prompt != nil || e.activeChoice() != nil || e.regList != nil) {
+		// 問いと一覧の窓を出している間のマウスの出来事（ホイールなど）は、答えにも一覧の操作にもせずに捨てる（FR-184）。
+		// 答えにすると、問いの間にホイールを回しただけで y でない答え（n）になるためである。
+		return
 	}
 	e.dismissFloat(k)
 	if e.confirm != nil {

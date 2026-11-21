@@ -157,6 +157,8 @@ type State struct {
 	Viewport Viewport
 	// Navigator は、ジャンプリストとバッファの切り替えの口である。nil なら、ジャンプを記録せず、<C-o>、<C-i>、<C-^> は失敗する。
 	Navigator Navigator
+	// Mouse は、マウスの出来事の位置を解く口である（FR-181〜FR-185。mouse.go）。nil なら、マウスの出来事の操作は何もしない。
+	Mouse Mouse
 	// KeyHook は、ノーマルモードでキーの列の途中でないときと、インサートモードのときに、キーを解釈する前に呼ぶ関数である。
 	// done が true のキーは、この State では解釈しない。返した誤りは操作の失敗として結果に入れる（ErrBufferSwitched なら、
 	// マクロの再生の残りは移った先のバッファで続く）。nil なら呼ばない。
@@ -174,6 +176,10 @@ type State struct {
 	// scrollAmount は、回数を付けた <C-d> と <C-u> が決めた、送る行数（Vim の 'scroll'）である。0 なら決めていない。
 	// scrollAmountRows は、決めたときの表示領域の行数で、表示領域の行数が変わったら決めていないとして扱う（halfAmount）。
 	scrollAmount, scrollAmountRows int
+	// mouseAnchor は、マウスのボタンを押した位置（ドラッグで選ぶ範囲の始まり）である。ボタンを押していなければ nil である（mouse.go）。
+	mouseAnchor *buffer.Position
+	// mouseDragging は、ボタンを押した後にドラッグで選び始め、まだ離していないことを表す（MouseDragging）。
+	mouseDragging bool
 
 	parser    KeyParser
 	registers Registers

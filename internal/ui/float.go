@@ -201,6 +201,13 @@ func (r *Renderer) drawFloat(g *Grid, theme Theme, fl *Float, curRow, curCol int
 		view.Mode = ModeNormal
 	}
 	inner := sub.render(&view)
+	// マウスの出来事の位置を解くために、窓の場所と、中のテキストの場所を残す（mouse.go）。「残り N 行」の行はテキストに数えない。
+	r.hits.cover(top-b, x0-b, boxH+2*b, outerW+2*b)
+	textH := boxH - head
+	if note != "" {
+		textH--
+	}
+	r.hits.float, r.hits.floatOK = rect{top: top + head, left: x0 + 1, h: max(textH, 0), w: sub.Width}, textH > 0
 	a := theme.attr(StylePopup)
 	sel := theme.attr(StylePopupSelected)
 	if bordered {
@@ -330,6 +337,8 @@ func (r *Renderer) drawList(g *Grid, theme Theme, l *List) (Cursor, bool) {
 	first := max(sel-shown+1, 0)
 	a := theme.attr(StylePopup)
 	sa := theme.attr(StylePopupSelected)
+	// 浮かべた一覧の窓の中は、マウスで操作しない（mouse.go。窓の場所だけを残す）。
+	r.hits.cover(0, x0-b, 1+shown+2*b, boxW+2*b)
 	if bordered {
 		r.drawBorder(g, theme, chars, b, x0, 1+shown, boxW)
 	}

@@ -113,8 +113,8 @@ server と client は、server のソケット（Unix ドメインソケット�
 |---|---|---|
 | client → server | `client/hello` | 接続の最初のメッセージ。client の種類（`edit`、`popup`、`pane`、`wait`）と端末の大きさ。編集の client の起動の引数のファイルと `-R`（#201）、ペインの ID と作業ディレクトリと環境変数（#215）。待つだけの client が開くファイルと、タブを開く先の client の識別子 `parent`、client が扱える機能の列 `features`（#226）。部品の client が描く部品の ID `view`（#244。元の client は載せず、server が部品から引く）。起動の引数の `-` で標準入力を読んだ client は `stdin` を true にし、続けて `client/stdin` を送る（#301） |
 | client → server | `client/stdin` | `client/hello` の直後に続ける、標準入力から読んだ中身の塊（FR-158。#301。下の「標準入力から読んだ中身（#301）」） |
-| client → server | `client/event` | キー、貼り付け、端末の大きさの変化 |
-| server → client | `screen/draw` | 画面の格子の差分（変わった行）とカーソル |
+| client → server | `client/event` | キー、貼り付け、端末の大きさの変化。マウスの出来事のキーには、その client の画面の位置 `mouseRow` と `mouseCol` を載せる（#343。3.4） |
+| server → client | `screen/draw` | 画面の格子の差分（変わった行）とカーソル。端末にマウスの報告を求めるか `mouse`（#343。3.4） |
 | server → client | `clipboard/set` | ホストのクリップボードへの書き込みの依頼（FR-56） |
 | server → client | `server/exit` | 接続を閉じる前の終わりの知らせ。理由が空なら正常な終わり（`:q` など） |
 | server → client | `terminal/run` | 端末を子プロセスへ渡してコマンドを動かす頼み（`:!` と権限を上げた保存。4.7、4.9。#226） |
@@ -925,6 +925,58 @@ Vim 9.1 には既定の `gc` が無いので、Neovim 0.12.5 の組み込みの 
 
 期待値は、2026-11-21 に手元の Neovim 0.12.5（`nvim --clean --headless`）で、新しいバッファに行を入れて `'commentstring'` を変え、`nvim_feedkeys(keys, "xt")` で打って取った（`internal/command` の `comment_cases_test.go`。102 件）。
 Neovim と違えたのは、テキストオブジェクトの 2 点（上の表の「形が空」と、カーソルの行がコメントでないときに失敗すること）と、何も変えない `gc` がバッファを変更ありにしないことである（`docs/vim-differences.md`）。
+
+### 3.4 マウス
+
+2026-11-21 のオーナーとの相談（#317 の索引。#343）で、マウスを本体で扱うことにした（FR-180〜FR-185）。
+動きは、オーナーの nvim と同じ Neovim 0.12.5 の `mouse=a` に合わせた。
+#343 で次のとおりに実装した（どれも仮）。
+
+マウスの出来事は、Vim と同じくキーとして扱う（FR-184）。
+端末の解読（`internal/term`）が SGR の形の報告を `<LeftMouse>`、`<LeftDrag>`、`<LeftRelease>`、`<ScrollWheelDown>` などのキー（`editcmd.CodeLeftMouse` など）にし、キーは他のキーと同じく、利用者のキーマップの展開、操作の表、マクロの記録を通る。
+キーの値には位置を含めず、位置は `client/event` の `mouseRow` と `mouseCol` でキーと一緒に届ける。
+キーの値を比較とマップのキーに使い続けるためで、Vim もマウスの位置をキーの外（`mouse_row` と `mouse_col`）に持つ。
+このため、マクロに記録したマウスのキーを再生すると、最後に届いた出来事の位置で働く（Vim と同じ）。
+最後の出来事の位置は client ごとに持ち（`clientView.mouse`。部品の client で受けた出来事は、元の client の欄に部品と一緒に残す）、マクロの再生とキーマップの展開は、それを行う client の位置で解く。
+同じ server の別の client が後から受けた出来事の位置を、その client の画面の座標で解いて違う位置を書き換えないためである（PR #346 のレビューの必須 1）。
+
+| 部品 | 置き場所 | 内容 |
+|---|---|---|
+| 報告を求めることと止めること（FR-180） | `internal/term` の `Painter` と `seqLeave` | 画面（`ui.Screen.Mouse`）が求めていれば DECSET 1002 と 1006 を出し、求めなくなったら戻す。端末を戻す列（終わるとき、`:!` と `:terminal.popup` の端末の受け渡し、一時停止）にも戻す列を入れ、取り戻した後の最初の描画で求め直す。`internal/editor` は、描くたびに設定 `mouse.enabled` の今の値を画面に入れる。部品の client の画面にも入れる |
+| 解読と回数 | `internal/term` の `mouseKey` と `clickCounter` | ボタン、動き、離す、ホイール、修飾キー（Shift、Alt、Ctrl）を解読する。同じボタンを同じ修飾キーと位置で 500 ms（Neovim の `'mousetime'` の既定）より短い間に押したら、2 回目から 4 回目のクリック（`<2-LeftMouse>` など。修飾キーと同じビットの `editcmd.ModClick2` など）にし、5 回目は 1 回目に戻す。ESC の単独の区別と同じく、届いた時間に依るので端末を持つ client で数える |
+| 位置を部品に解く処理（FR-185） | `internal/ui` の `Renderer.HitTest` | 直前の描画が残した部品の場所（`hitState`）から、タブの行のタブの見出し、バッファの表示領域の行と表示の列、ポップアップの窓の中のテキストの行と列を返す。表示の列は望みの列と同じ数え方で、行を折り返すときは `WrapLines` の列である。ステータス行とコマンドラインの行も種類として返す。ドラッグの間は、位置を画面の中へ寄せてから（端末が画面の外の位置を報告しても、Neovim と同じく画面の端の行として数える）、ボタンを押した部品の中へ寄せ、はみ出した行の数を返す。後から足す部品（右の端の位置の印の列、窓の上端の帯）は、`HitArea` に種類を足し、描く関数が場所を残す |
+| 位置をバッファに解く口 | `internal/editor` の `mouseLocator`（`command.Mouse`） | キーを受けた端末の画面（編集の client なら `viewFields.renderer`、部品の client なら `component.r`）で `HitTest` を引き、その位置が State のバッファのテキストかを返す。タブの見出しと、フォーカスのあるカーソルの近くのポップアップの外は、ほかの部品（`MouseElsewhere`）として `Activate` で扱う |
+| 操作（FR-181〜FR-183） | `internal/command` の `mouse.go` | ノーマルモード、ビジュアルモード、インサートモードで同じ操作の ID（`mouse.click` など）を持ち、モードごとの違いを実装の側で持つ（インサートモードの操作の ID の `insert.` は付けない）。テキストを変えないので編集を禁止したバッファでも使え、ドットリピートに記録しない。オペレーターの後には置かない |
+
+既定のキーは次のとおりである（`internal/input` の `builtinActions`）。
+
+| キー | 操作の ID | 内容 |
+|---|---|---|
+| `<LeftMouse>`、`<4-LeftMouse>` | `mouse.click` | その位置へ移る。ビジュアルモードは選択を終えてから、インサートモードはインサートモードのまま移る。タブの見出しならそのタブへ移る。4 回目のクリック（Neovim の矩形の選択）は、矩形のビジュアルモードが無いので 1 回目と同じにした |
+| `<LeftDrag>` | `mouse.drag` | 押した位置から動かした位置までを、文字単位のビジュアルモードで選ぶ。表示領域の上か下へはみ出したら、はみ出した行の数だけ送り、表示領域の端の行へ移る。選び始めてから離すまでは、上下の余白（`scroll.margin`）を残さない（Neovim の `mouse_dragging`。`command.State.MouseDragging`） |
+| `<LeftRelease>` | `mouse.release` | ドラッグを終える。選択は残す |
+| `<2-LeftMouse>` | `mouse.select-word` | その位置の単語（`iw` と同じ範囲）を文字単位のビジュアルモードで選び、カーソルを単語の終わりに置く |
+| `<3-LeftMouse>` | `mouse.select-line` | その位置の行を行単位のビジュアルモードで選ぶ。カーソルは押した位置に置く |
+| `<ScrollWheelDown>`、`<ScrollWheelUp>` | `mouse.scroll-down`、`mouse.scroll-up` | 表示領域を `mouse.scrollLines` の行だけ送る。送り方は `<C-e>` と `<C-y>`（6.7 の「スクロールと余白」）と同じである |
+| `<ScrollWheelRight>`、`<ScrollWheelLeft>` | `mouse.scroll-right`、`mouse.scroll-left` | 行を折り返さないとき、表示領域を `mouse.scrollColumns` の列だけ横に送る。左の端は見える行のうち最も長い行の最後の列より右へ送らず、カーソルの行がその列より短ければ最も長い行へ移る。横の位置は `command.HorizontalViewport` で動かす |
+
+位置にある部品ごとの扱いは次のとおりである。
+
+| 部品 | 扱い |
+|---|---|
+| バッファの表示領域 | 行末より右は最後の文字（インサートモードでは行末の位置）、印の列と行番号の列はその行の本文の左の端、最後の行より下の `~` の行は最後の行のその列にする。望みの列は押した列にする |
+| ポップアップの窓の中のテキスト | 窓のバッファのテキストとして扱う。フォーカスのある窓（ヘルプ、キーの一覧）ならその中でカーソルを動かす。フォーカスの無い窓（ホバーなど）の中では何もしない（ホバーは、他のキーと同じく、押したキーで閉じる） |
+| フォーカスのあるカーソルの近くのポップアップの外 | フォーカスを元のタブへ戻し、押した位置へ移る。中央のポップアップは、開いている間はそれだけを操作する（FR-68）ので、外を押しても何もしない |
+| 部品の client の画面（一覧、木、テキストのペイン） | 部品のバッファのカーソルを移す。項目を選んで開く操作は、今はキー（`<CR>` など）で行う |
+| タブの行 | タブの見出しならそのタブへ移る。見出しの無い列は何もしない |
+| ステータス行、コマンドラインの行 | その画面でキーを受けるバッファの窓のテキストでない部分（`command.MouseWindow`）として扱う。クリックでは何もせず、ホイールはその表示領域を送る（Neovim 0.12.5 は、ステータス行ではその上の窓を、コマンドラインの行では今の窓を送る。画面の窓は 1 つなので、どちらも同じ窓になる。PR #346 のレビューの推奨 1） |
+| 枠線、見出し、プレビュー、ファインダーの窓、浮かべた一覧の窓、出力の欄 | 何もしない |
+| 問い（確認、`choice/ask` の選択肢、`:registers` の一覧）を出している間 | 位置に依らず、出来事を答えにも一覧の操作にもせずに捨てる（`internal/editor` の `handleKey`）。問いの間にホイールを回しただけで答えが決まらないためである |
+| コマンドラインモード | コマンドラインはマウスの出来事を読まず、何もしない |
+
+期待値は、2026-11-21 に Neovim 0.12.5（`nvim --clean`、`mouse=a`。横のスクロールは `'sidescroll'` を 0 にした）を tmux 3.6 の 40 列 12 行と 60 列 12 行のペインで動かし、同じ SGR の列を `tmux send-keys -H` で送って、カーソルの位置と画面を比べて取った。
+本体のテストは `internal/editor` の `mouse_test.go`、`internal/ui` の `mouse_test.go`、`internal/term` の `decode_test.go` にある。
+Neovim と違えたことは `docs/vim-differences.md` にある。
 
 ## 4. バッファと編集
 
@@ -4218,6 +4270,9 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `diagnostic.popup` | 真偽 | エディタ全体 | `false` | 無し | カーソルが止まったときに、カーソルの行の診断をカーソルの近くの浮かべた窓に出すか（6.7 の「診断のポップアップ」。FR-171）。既定は Vim と Neovim と同じく出さない。真なら、メッセージの行に診断の本文を出さない。同梱の `config.example.jsonc` では `true` |
 | `progress.show` | 真偽 | エディタ全体 | `true` | 無し（Vim と Neovim に対応する設定が無い） | 拡張機能の進み具合を、編集の client の画面の右下に重ねて出すか（6.7 の「進み具合の表示」。FR-178）。既定を出すにした理由は同じ節にある。同梱の `config.example.jsonc` でも `true` |
 | `progress.doneMs` | 整数（0 から 60000） | エディタ全体 | `3000` | 無し | 終わった進み具合を出しておくミリ秒（FR-178）。既定は fidget.nvim の `done_ttl` の既定（3 秒）と同じ。0 なら終わったらすぐに消す。上限は `cursorHold.delayMs` と同じ 1 分にした |
+| `mouse.enabled` | 真偽 | エディタ全体 | `false` | 無し（Vim の `'mouse'` はモードのフラグの文字列で、`:set mouse=a` を真偽に写せないので別名を作らない） | マウスを使うか（3.4。FR-180）。既定は Vim 9.1 と同じく使わない（Neovim 0.12.5 の既定は `nvi`）。描くたびに読み、真なら client の端末にマウスの報告を求める。同梱の `config.example.jsonc` では、オーナーの nvim の `mouse=a` に当たる `true` |
+| `mouse.scrollLines` | 整数（0 から 9999） | エディタ全体 | `3` | 無し | ホイールを 1 回回したときに表示領域を送る行数（3.4。FR-182）。既定は Neovim 0.12.5 の `'mousescroll'` の `ver:3` と同じ。0 なら縦に送らない。ホイールの出来事のたびに読む |
+| `mouse.scrollColumns` | 整数（0 から 9999） | エディタ全体 | `6` | 無し | 行を折り返さないときに、ホイールを 1 回傾けたときに表示領域を送る列数（3.4。FR-182）。既定は `'mousescroll'` の `hor:6` と同じ。0 なら横に送らない |
 
 `lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で、`progress.show` と `progress.doneMs` は #340 で足した。
 #319 の 2 つの名前は、issue の案のとおりにした。`cursor.restore` には Vim の名前が無い（Vim は設定でなく `defaults.vim` の自動コマンドで戻す）ので、`:set` では受け付けない。
@@ -4226,6 +4281,7 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 表示の変化を拡張機能に知らせる口（#317 の第 3 弾）は、この契機に載せず、この時間も使わない（PR #333 のレビューの裁定要へのオーケストレータの決定。6.7 の「カーソルが止まった契機」）。
 #328 の名前は issue の案のとおりにした。記号の名前（7.1）も `whitespace.` の下に置き、設定と記号が同じ機能のものと名前で分かるようにした。
 `scroll.margin` と `scroll.sideMargin` は #337 で足した。名前は issue の案のとおりにした。
+`mouse.enabled`、`mouse.scrollLines`、`mouse.scrollColumns` は #343 で足した。issue は名前を実装者に任せていた。Neovim の `'mousescroll'` の 2 つの値を、行と列の 2 つの項目に分けた。
 #318 の 4 つの名前は、issue の案のとおりにした。インデントの文字と幅は `indent.` の下に、タブ文字の表示幅は字下げに限らない（行の途中のタブ文字も描く）ので `tab.` の下に置いた。
 `preview.*` の名前は、何の窓の何の値かが分かるように、窓の幅の境目（`minWindowWidth`）、プレビューの割合（`widthPercent`）、窓の割合（`windowWidthPercent`）にした（fzf-lua の `flip_columns` は、何を反転するのかが名前から分からないため写さなかった）。
 

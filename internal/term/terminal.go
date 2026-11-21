@@ -28,9 +28,9 @@ const (
 	// seqEnter は、代替画面に切り替え（DECSET 1049）、bracketed paste を有効にし（DECSET 2004）、
 	// 行末での折り返しを止める（DECRST 7。右下のセルに書いても画面が上へずれないようにする）。
 	seqEnter = "\x1b[?1049h\x1b[?2004h\x1b[?7l"
-	// seqLeave は、seqEnter と、描画が変えた状態（文字の属性、カーソルの形と表示）を戻す。
-	// カーソルの形は、端末の既定の形（DECSCUSR 0）に戻す。
-	seqLeave = "\x1b[0m\x1b[0 q\x1b[?25h\x1b[?7h\x1b[?2004l\x1b[?1049l"
+	// seqLeave は、seqEnter と、描画が変えた状態（文字の属性、カーソルの形と表示、マウスの報告）を戻す。
+	// カーソルの形は、端末の既定の形（DECSCUSR 0）に戻す。マウスの報告（ui.Screen.Mouse。FR-180）は、求めていなくても止める列を出す。
+	seqLeave = "\x1b[0m\x1b[0 q\x1b[?25h" + seqMouseOff + "\x1b[?7h\x1b[?2004l\x1b[?1049l"
 )
 
 // Event は、端末からのイベント 1 件である。internal/protocol の Event と同じ形で、型の変換で渡せる。
@@ -42,6 +42,8 @@ type Event struct {
 	// Resize は、端末の大きさが Width と Height に変わったことを表す。
 	Resize        bool
 	Width, Height int
+	// MouseRow と MouseCol は、Key がマウスの出来事のときの、画面の行と列（0 から数える。Decoded.MouseRow と同じ）である。
+	MouseRow, MouseCol int
 }
 
 // Options は、Terminal の設定である。ゼロ値の項目は既定値を使う。
@@ -108,6 +110,8 @@ type Terminal struct {
 
 	// gate は、読み取りの goroutine を止めて再開させる仕組みである（handover.go の readGate）。
 	gate readGate
+	// clicks は、複数回のクリックを数える（mouse.go）。解読したキーを送る goroutine（loop）だけが使う。
+	clicks clickCounter
 }
 
 // Open は、in を raw モードにし、out を代替画面に切り替えて、Terminal を返す。
@@ -405,9 +409,11 @@ func (t *Terminal) loop(chunks <-chan []byte) {
 }
 
 // send は、解読したキーと貼り付けを events へ送る。Close で止められたら false を返す。
+// マウスのボタンを押したことのキーには、何回目のクリックかを付ける（clickCounter）。
 func (t *Terminal) send(ds []Decoded) bool {
 	for _, d := range ds {
-		if !t.emit(Event{Key: d.Key, Paste: d.Paste}) {
+		d = t.clicks.count(d, time.Now())
+		if !t.emit(Event{Key: d.Key, Paste: d.Paste, MouseRow: d.MouseRow, MouseCol: d.MouseCol}) {
 			return false
 		}
 	}

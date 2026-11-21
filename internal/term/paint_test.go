@@ -287,6 +287,43 @@ func TestPaintEraseAttr(t *testing.T) {
 	}
 }
 
+// TestPaintMouse は、画面のマウスの報告（ui.Screen.Mouse）が変わったときだけ、報告を求める列と止める列を書き、
+// Invalidate の後（端末を戻す列で止めた後）は求め直すことを確かめる（FR-180）。
+//
+// req: FR-180
+func TestPaintMouse(t *testing.T) {
+	r := &ui.Renderer{Width: 10, Height: 3}
+	f := &ui.Frame{Text: lines{"abc"}}
+	var p Painter
+	var buf bytes.Buffer
+	paint := func(mouse bool) string {
+		s := r.Render(f)
+		s.Mouse = mouse
+		buf.Reset()
+		p.Paint(&buf, s)
+		return buf.String()
+	}
+	if o := paint(false); strings.Contains(o, "1002") || strings.Contains(o, "1006") {
+		t.Errorf("求めていないのにマウスの列を書いた: %q", o)
+	}
+	if o := paint(true); !strings.HasPrefix(o, seqMouseOn) {
+		t.Errorf("求める列が無い: %q", o)
+	}
+	if o := paint(true); o != "" {
+		t.Errorf("同じ画面で書いた: %q", o)
+	}
+	p.Invalidate()
+	if o := paint(true); !strings.HasPrefix(o, seqMouseOn) {
+		t.Errorf("Invalidate の後に求め直さない: %q", o)
+	}
+	if o := paint(false); o != seqMouseOff {
+		t.Errorf("止める列 = %q, want %q", o, seqMouseOff)
+	}
+	if !strings.Contains(seqLeave, seqMouseOff) {
+		t.Errorf("端末を戻す列にマウスの報告を止める列が無い: %q", seqLeave)
+	}
+}
+
 // TestPaintInvalidate は、Invalidate の後は画面の全体を書き直すことを確かめる。
 func TestPaintInvalidate(t *testing.T) {
 	r := &ui.Renderer{Width: 10, Height: 3}

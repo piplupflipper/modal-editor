@@ -185,6 +185,8 @@ func TestSocketRoundTrip(t *testing.T) {
 		Event{Key: editcmd.Key{Code: editcmd.CodeEsc}},
 		Event{Paste: "a\nb\tc"},
 		Event{Resize: true, Width: 100, Height: 30},
+		// マウスの出来事のキーと位置（FR-184）。
+		Event{Key: editcmd.Key{Code: editcmd.CodeLeftMouse, Mod: editcmd.ModClick2 | editcmd.ModShift}, MouseRow: 3, MouseCol: 250},
 	}
 	for _, m := range sent {
 		if err := c.Send(m); err != nil {
@@ -208,10 +210,11 @@ func TestSocketRoundTrip(t *testing.T) {
 	})
 	screens := []ui.Screen{
 		{Grid: wide, Cursor: ui.Cursor{Row: 1, Col: 2, Shape: ui.CursorBar, Visible: true}},
-		{Grid: screenOf(4, "abcd", "efgh")},                                                // 1 行目だけでなく 2 行目も変わる
-		{Grid: screenOf(4, "abcd", "efgX")},                                                // 2 行目だけ変わる
-		{Grid: screenOf(3, "abc", "def", "ghi")},                                           // 大きさが変わる
-		{Grid: screenOf(3, "abc", "def", "ghi"), Cursor: ui.Cursor{Row: 2, Visible: true}}, // カーソルだけ変わる
+		{Grid: screenOf(4, "abcd", "efgh")},                                                             // 1 行目だけでなく 2 行目も変わる
+		{Grid: screenOf(4, "abcd", "efgX")},                                                             // 2 行目だけ変わる
+		{Grid: screenOf(3, "abc", "def", "ghi")},                                                        // 大きさが変わる
+		{Grid: screenOf(3, "abc", "def", "ghi"), Cursor: ui.Cursor{Row: 2, Visible: true}},              // カーソルだけ変わる
+		{Grid: screenOf(3, "abc", "def", "ghi"), Cursor: ui.Cursor{Row: 2, Visible: true}, Mouse: true}, // マウスの報告だけ変わる（FR-180）
 	}
 	for i, scr := range screens {
 		if err := s.Send(Draw{Screen: scr}); err != nil {
@@ -232,7 +235,7 @@ func TestSocketRoundTrip(t *testing.T) {
 		if !ok {
 			t.Fatalf("client Recv = %#v, want Draw", m)
 		}
-		if !sameGrid(d.Screen.Grid, want.Grid) || d.Screen.Cursor != want.Cursor {
+		if !sameGrid(d.Screen.Grid, want.Grid) || d.Screen.Cursor != want.Cursor || d.Screen.Mouse != want.Mouse {
 			t.Fatalf("screen %d = %q %+v, want %q %+v", i, d.Screen.Grid.String(), d.Screen.Cursor, want.Grid.String(), want.Cursor)
 		}
 		if i == 1 {

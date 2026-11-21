@@ -35,6 +35,8 @@ type wireDraw struct {
 	Height int        `json:"height"`
 	Rows   []wireRow  `json:"rows,omitempty"`
 	Cursor wireCursor `json:"cursor"`
+	// Mouse は、ui.Screen.Mouse（端末にマウスの報告を求めるか。FR-180）である。版の古い client は読み飛ばし、報告を求めない。
+	Mouse bool `json:"mouse,omitempty"`
 }
 
 // wireRow は、変わった 1 行である。行のセルを、属性が同じ連続の区間（wireRun）に分けて持つ。
@@ -92,6 +94,7 @@ func (e *screenEncoder) encode(s ui.Screen) wireDraw {
 		Width:  g.Width(),
 		Height: g.Height(),
 		Cursor: wireCursor{Row: s.Cursor.Row, Col: s.Cursor.Col, Shape: s.Cursor.Shape, Visible: s.Cursor.Visible},
+		Mouse:  s.Mouse,
 	}
 	for r := range g.Height() {
 		if !full && sameRow(e.prev, g, r) {
@@ -166,7 +169,7 @@ func (dec *screenDecoder) decode(d wireDraw) (ui.Screen, error) {
 		g.SetRow(row.Row, dec.cells)
 	}
 	c := d.Cursor
-	return ui.Screen{Grid: g, Cursor: ui.Cursor{Row: c.Row, Col: c.Col, Shape: c.Shape, Visible: c.Visible}}, nil
+	return ui.Screen{Grid: g, Cursor: ui.Cursor{Row: c.Row, Col: c.Col, Shape: c.Shape, Visible: c.Visible}, Mouse: d.Mouse}, nil
 }
 
 // decodeRow は、runs のセルを cells に足して返す。

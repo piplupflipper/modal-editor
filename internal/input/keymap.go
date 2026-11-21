@@ -236,7 +236,10 @@ func InsertTableKey(k editcmd.Key) bool {
 	case editcmd.CodeRune, editcmd.CodeEsc, editcmd.CodeEnter, editcmd.CodeTab:
 		return false
 	case editcmd.CodeBackspace, editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
-		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1:
+		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1,
+		editcmd.CodeLeftMouse, editcmd.CodeLeftDrag, editcmd.CodeLeftRelease, editcmd.CodeMiddleMouse, editcmd.CodeMiddleDrag,
+		editcmd.CodeMiddleRelease, editcmd.CodeRightMouse, editcmd.CodeRightDrag, editcmd.CodeRightRelease,
+		editcmd.CodeScrollWheelUp, editcmd.CodeScrollWheelDown, editcmd.CodeScrollWheelLeft, editcmd.CodeScrollWheelRight:
 	}
 	return true
 }

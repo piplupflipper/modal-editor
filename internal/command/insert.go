@@ -113,8 +113,11 @@ func (s *State) insertKey(k editcmd.Key) {
 			s.insertRune(k.Rune)
 			return
 		case editcmd.CodeBackspace, editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
-			editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1:
-			// 操作の経路へ進む。
+			editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1,
+			editcmd.CodeLeftMouse, editcmd.CodeLeftDrag, editcmd.CodeLeftRelease, editcmd.CodeMiddleMouse, editcmd.CodeMiddleDrag,
+			editcmd.CodeMiddleRelease, editcmd.CodeRightMouse, editcmd.CodeRightDrag, editcmd.CodeRightRelease,
+			editcmd.CodeScrollWheelUp, editcmd.CodeScrollWheelDown, editcmd.CodeScrollWheelLeft, editcmd.CodeScrollWheelRight:
+			// 操作の経路へ進む。マウスの出来事（FR-184）も、ほかの特殊キーと同じく操作の表を引く。
 		}
 	}
 	ref, ok := s.parser.InsertAction(k)
@@ -216,7 +219,10 @@ func (s *State) insertMove(c editcmd.Code) {
 		s.afterInsertMove(p) // p は動く前のカーソルのまま
 		return
 	case editcmd.CodeRune, editcmd.CodeEsc, editcmd.CodeEnter, editcmd.CodeTab, editcmd.CodeBackspace, editcmd.CodeDelete,
-		editcmd.CodeInsert, editcmd.CodeF1:
+		editcmd.CodeInsert, editcmd.CodeF1,
+		editcmd.CodeLeftMouse, editcmd.CodeLeftDrag, editcmd.CodeLeftRelease, editcmd.CodeMiddleMouse, editcmd.CodeMiddleDrag,
+		editcmd.CodeMiddleRelease, editcmd.CodeRightMouse, editcmd.CodeRightDrag, editcmd.CodeRightRelease,
+		editcmd.CodeScrollWheelUp, editcmd.CodeScrollWheelDown, editcmd.CodeScrollWheelLeft, editcmd.CodeScrollWheelRight:
 		return
 	}
 	old := s.cursor

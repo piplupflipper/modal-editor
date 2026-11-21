@@ -413,7 +413,10 @@ func charArg(k editcmd.Key) (rune, bool) {
 	case editcmd.CodeTab:
 		return '\t', true
 	case editcmd.CodeEsc, editcmd.CodeBackspace, editcmd.CodeDelete, editcmd.CodeUp, editcmd.CodeDown, editcmd.CodeLeft, editcmd.CodeRight,
-		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1:
+		editcmd.CodeHome, editcmd.CodeEnd, editcmd.CodePageUp, editcmd.CodePageDown, editcmd.CodeInsert, editcmd.CodeF1,
+		editcmd.CodeLeftMouse, editcmd.CodeLeftDrag, editcmd.CodeLeftRelease, editcmd.CodeMiddleMouse, editcmd.CodeMiddleDrag,
+		editcmd.CodeMiddleRelease, editcmd.CodeRightMouse, editcmd.CodeRightDrag, editcmd.CodeRightRelease,
+		editcmd.CodeScrollWheelUp, editcmd.CodeScrollWheelDown, editcmd.CodeScrollWheelLeft, editcmd.CodeScrollWheelRight:
 	}
 	return 0, false
 }

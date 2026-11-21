@@ -46,6 +46,14 @@ func TestParseKeys(t *testing.T) {
 		{in: "<S-1>", want: []Key{{Code: CodeRune, Rune: '1', Mod: ModShift}}},
 		{in: "<Insert><F1><F12><F20>", want: []Key{Special(CodeInsert), Special(CodeF1), Special(CodeF1 + 11), Special(CodeF1 + 19)}},
 		{in: "<f5><C-F2><insert>", want: []Key{Special(CodeF1 + 4), {Code: CodeF1 + 1, Mod: ModCtrl}, Special(CodeInsert)}, str: "<F5><C-F2><Insert>"},
+		// マウスの出来事（FR-184）。複数回のクリックは修飾キーの後に回数を書く。
+		{in: "<LeftMouse><LeftDrag><LeftRelease><ScrollWheelUp><ScrollWheelRight>", want: []Key{
+			Special(CodeLeftMouse), Special(CodeLeftDrag), Special(CodeLeftRelease), Special(CodeScrollWheelUp), Special(CodeScrollWheelRight),
+		}},
+		{in: "<2-LeftMouse><3-leftmouse><S-4-RightMouse>", want: []Key{
+			{Code: CodeLeftMouse, Mod: ModClick2}, {Code: CodeLeftMouse, Mod: ModClick3}, {Code: CodeRightMouse, Mod: ModShift | ModClick4},
+		}, str: "<2-LeftMouse><3-LeftMouse><S-4-RightMouse>"},
+		{in: "<2-C-MiddleMouse>", want: []Key{{Code: CodeMiddleMouse, Mod: ModCtrl | ModClick2}}, str: "<C-2-MiddleMouse>"},
 	}
 	for _, tt := range tests {
 		got, err := ParseKeys(tt.in)
@@ -70,7 +78,7 @@ func TestParseKeys(t *testing.T) {
 }
 
 func TestParseKeysError(t *testing.T) {
-	for _, in := range []string{"<x>", "<Foo>", "a<Spcae>", "<Q-x>", "<>", "<C-Foo>", "<F0>", "<F21>"} {
+	for _, in := range []string{"<x>", "<Foo>", "a<Spcae>", "<Q-x>", "<>", "<C-Foo>", "<F0>", "<F21>", "<2-a>", "<2-LeftDrag>", "<3-Esc>"} {
 		if keys, err := ParseKeys(in); err == nil {
 			t.Errorf("ParseKeys(%q) = %+v, want エラー", in, keys)
 		}
@@ -115,6 +123,37 @@ func TestFunctionKey(t *testing.T) {
 		if c, ok := FunctionKey(n); ok {
 			t.Errorf("FunctionKey(%d) = %v, true, want false", n, c)
 		}
+	}
+}
+
+// マウスの出来事のキーの種類と、クリックの回数の読み書き（FR-184）。
+//
+// req: FR-184
+func TestMouseKey(t *testing.T) {
+	for c := CodeLeftMouse; c <= CodeScrollWheelRight; c++ {
+		if !Special(c).IsMouse() {
+			t.Errorf("%v.IsMouse() = false", Special(c))
+		}
+	}
+	for _, k := range []Key{Esc, Rune('a'), Special(CodeF1 + MaxFunctionKey - 1)} {
+		if k.IsMouse() {
+			t.Errorf("%v.IsMouse() = true", k)
+		}
+	}
+	k := Special(CodeLeftMouse)
+	for n := 1; n <= 4; n++ {
+		if got := k.WithClicks(n).Clicks(); got != n {
+			t.Errorf("WithClicks(%d).Clicks() = %d", n, got)
+		}
+	}
+	if got := k.WithClicks(9).Clicks(); got != 4 {
+		t.Errorf("WithClicks(9).Clicks() = %d, want 4", got)
+	}
+	if got := (Key{Code: CodeLeftMouse, Mod: ModShift}).WithClicks(2); got.Mod != ModShift|ModClick2 {
+		t.Errorf("修飾キーを残さない: %+v", got)
+	}
+	if !Special(CodeRightMouse).IsMousePress() || Special(CodeLeftDrag).IsMousePress() {
+		t.Error("IsMousePress の判定が違う")
 	}
 }
 
