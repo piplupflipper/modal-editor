@@ -944,7 +944,7 @@ Neovim と違えたのは、テキストオブジェクトの 2 点（上の表�
 |---|---|---|
 | 報告を求めることと止めること（FR-180） | `internal/term` の `Painter` と `seqLeave` | 画面（`ui.Screen.Mouse`）が求めていれば DECSET 1002 と 1006 を出し、求めなくなったら戻す。端末を戻す列（終わるとき、`:!` と `:terminal.popup` の端末の受け渡し、一時停止）にも戻す列を入れ、取り戻した後の最初の描画で求め直す。`internal/editor` は、描くたびに設定 `mouse.enabled` の今の値を画面に入れる。部品の client の画面にも入れる |
 | 解読と回数 | `internal/term` の `mouseKey` と `clickCounter` | ボタン、動き、離す、ホイール、修飾キー（Shift、Alt、Ctrl）を解読する。同じボタンを同じ修飾キーと位置で 500 ms（Neovim の `'mousetime'` の既定）より短い間に押したら、2 回目から 4 回目のクリック（`<2-LeftMouse>` など。修飾キーと同じビットの `editcmd.ModClick2` など）にし、5 回目は 1 回目に戻す。ESC の単独の区別と同じく、届いた時間に依るので端末を持つ client で数える |
-| 位置を部品に解く処理（FR-185） | `internal/ui` の `Renderer.HitTest` | 直前の描画が残した部品の場所（`hitState`）から、タブの行のタブの見出し、バッファの表示領域の行と表示の列、ポップアップの窓の中のテキストの行と列を返す。表示の列は望みの列と同じ数え方で、行を折り返すときは `WrapLines` の列である。ステータス行とコマンドラインの行も種類として返す。ドラッグの間は、位置を画面の中へ寄せてから（端末が画面の外の位置を報告しても、Neovim と同じく画面の端の行として数える）、ボタンを押した部品の中へ寄せ、はみ出した行の数を返す。後から足す部品（右の端の位置の印の列、窓の上端の帯）は、`HitArea` に種類を足し、描く関数が場所を残す |
+| 位置を部品に解く処理（FR-185） | `internal/ui` の `Renderer.HitTest` | 直前の描画が残した部品の場所（`hitState`）から、タブの行のタブの見出し、バッファの表示領域の行と表示の列、ポップアップの窓の中のテキストの行と列を返す。表示の列は望みの列と同じ数え方で、行を折り返すときは `WrapLines` の列である。ステータス行とコマンドラインの行も種類として返す。ドラッグの間は、位置を画面の中へ寄せてから（端末が画面の外の位置を報告しても、Neovim と同じく画面の端の行として数える）、ボタンを押した部品の中へ寄せ、はみ出した行の数を返す。後から足す部品（右の端の位置の印の列、窓の上端の帯）は、`HitArea` に種類を足し、描く関数が場所を残す。#348 で、右の端のスクロールバーの列を `HitScrollbar` として足した（6.7 の「スクロールバー」） |
 | 位置をバッファに解く口 | `internal/editor` の `mouseLocator`（`command.Mouse`） | キーを受けた端末の画面（編集の client なら `viewFields.renderer`、部品の client なら `component.r`）で `HitTest` を引き、その位置が State のバッファのテキストかを返す。タブの見出しと、フォーカスのあるカーソルの近くのポップアップの外は、ほかの部品（`MouseElsewhere`）として `Activate` で扱う |
 | 操作（FR-181〜FR-183） | `internal/command` の `mouse.go` | ノーマルモード、ビジュアルモード、インサートモードで同じ操作の ID（`mouse.click` など）を持ち、モードごとの違いを実装の側で持つ（インサートモードの操作の ID の `insert.` は付けない）。テキストを変えないので編集を禁止したバッファでも使え、ドットリピートに記録しない。オペレーターの後には置かない |
 
@@ -3173,6 +3173,36 @@ Vim と Neovim には対応する既定が無い（要件定義の FR-178 の後
 回る印（fidget.nvim の `progress_icon` の既定の `dots`）は持たない。
 印を回すには、知らせの無い間も一定の間隔で描き直し続ける必要があり、本体はその仕組みを持たないためである（一時的な色付けとカーソルが止まった契機は、1 回のタイマーで 1 回描き直すだけである）。
 
+#### スクロールバー
+
+#348 で、バッファの表示領域の右端の 1 列に、見えている行の範囲のつまみ（スクロールバー）と、診断と検索の一致の位置の印を描けるようにした（`internal/ui` の `scrollbar.go`、`internal/editor` の `scrollbar.go`。FR-186〜FR-188。マウスの位置を解く口は FR-189）。
+オーナーの nvim の nvim-scrollview（`lua/plugins/scrollview.lua` の設定と、2026-11-21 に読んだオーナーの手元のコミット ce007c654e6af5f9dc5a8c92ea300e623fface1a の `doc/scrollview.txt` と `lua/scrollview.lua`）の出し方に合わせ、端末のセルで表せないところを変えた。
+表に無い点は、どれも仮である。
+
+| 点 | 決めたこと |
+|---|---|
+| 出すかどうか | 設定の表（7.3）の `scrollbar.show` が真で、表示領域にバッファの全体が収まらないときだけ出す（nvim-scrollview の既定の `visibility = 'overflow'`）。収まらないとは、最初の行が先頭でない、最初の行を途中の見た目の行から描いた、最後まで描いた行の次の行（`ui.Renderer.Botline`）が最後の行より前、表示領域の最後の行に描いた行を描ききれなかった、のどれかである（`Renderer.overflows`）。収まるかは描画が決めるので、`internal/editor` は設定とファイルの種類だけで `ui.Frame.Scrollbar` を詰める |
+| 出す画面 | client の画面のバッファの表示領域だけ（`Editor.bufferFrame`）。ポップアップ、プレビュー、ファインダーの中身の Frame は、描くときに `Scrollbar` を空にする（`drawFloat`、`drawPreview`、`drawFinder`）。部品の client の画面（ファイラ、ファインダーのペインとポップアップ）は `bufferFrame` を通らない。nvim-scrollview の `excluded_filetypes` にオーナーが書いたファイラとヘルプは、本体ではどれもこの出さない画面に当たる |
+| 今の client だけ | `scrollbar.currentOnly` が真なら、操作中の client（`Editor.op`）の画面にだけ出す（nvim-scrollview の `current_only`）。描くたびに決めるので、キーを打つ client が替われば、次の描画でバーも移る。ペインのフォーカスを端末多重化ソフトで移しただけ（キーを打っていない）では移らない |
+| 出さないファイルの種類 | `scrollbar.excludedFileTypes` にコンマで区切って書いたファイルの種類のバッファには出さない（`optionList`。名前の前後の空白を除く） |
+| 列 | 本文の最後の列（表示領域の右の端の列）の上に重ねる。本文の幅を変えないので、バーを出し入れしても折り返しと横のスクロールが変わらない（nvim-scrollview も、浮かべた窓として本文の上に描く）。本文の幅が 2 列より狭いときは描かない |
+| 数え方 | 見た目の行でなく本文の行で数える（nvim-scrollview の `simple` の数え方に近い）。行 l を表示領域の floor(l×行数÷バッファの行数) 行目に当てる。つまみは、最初の行を当てた行から、`Botline` を当てた行の手前（端数は切り上げ）までで、少なくとも 1 行、最後の行まで見えていれば表示領域の最後の行まで伸ばす（`Renderer.scrollbarThumb`）。見た目の行で数えると、描くたびにバッファの全体の行の高さを数えることになり、1 万行を超えるファイルで描画が遅くなるためである。見比べの詰め物の行も数えない |
+| つまみの描き方 | 下に描いた文字と色を残し、色の名前 `scrollbar`（7.1）の色を上に重ねる。nvim-scrollview はつまみの窓を `winblend` で透かすが、端末のセルでは色を混ぜられないので、背景の色を替えて下の文字を残す形で代えた（[Vim との違い](vim-differences.md)）。全角文字の右半分に当たるときは、その文字を空白にする（浮かべた窓の端と同じ） |
+| 印の行 | 診断は範囲の始まりの行（印の列の診断の印と同じ）、検索の一致は一致のある行である。表示領域の行 i に当たる行の範囲 [ceil(i×n÷h), ceil((i+1)×n÷h)) に印を出す行があれば、その行に印を出す。行の一覧は小さい順に並べて渡し、描画は行ごとに二分探索で引く（`Renderer.scrollbarMark`）ので、描く量は表示領域の行数と種類の数に比例し、一致の行の数によらない |
+| 印の重なり | 同じセルには、優先（`ui.ScrollbarMarks.Priority`）の最も大きい種類を 1 つだけ出す。優先は、誤り 60、警告 50、検索の一致 45、情報 40、ヒント 30 である（`internal/editor` の `scrollbarPriority*`）。nvim-scrollview の既定は検索の一致（70）を最も上にするが、一致の行の多い検索で、数の少ない誤りと警告を隠さないよう順を変えた（#348 の本文の例の順）。nvim-scrollview の既定（`signs_scrollbar_overlap = 'off'`）は、つまみの行の印をつまみの左の列へずらすが、1 列に収めるため、つまみの上に重ねる。つまみの上の印は、`scrollbar` の色の上に印の色を重ね、つまみの位置が印の行でも分かるようにする |
+| 印の種類 | 種類は `internal/editor` の表 `scrollbarKinds`（`diagnostic` と `search`）の行で、`scrollbar.marks` にコンマで区切って書いた名前の種類だけを出す。知らない名前は読み飛ばす（後に拡張機能が足す種類の名前を、拡張機能が起動する前の設定に書けるようにするため）。描画（`internal/ui`）は種類の名前で分岐せず、種類ごとの行の一覧、優先、色の名前、記号の名前（`ui.ScrollbarMarks`）だけで描く。診断は重要度ごとに別の種類にし、色と記号の名前は `scrollbar.diagnostic.<重要度>` である（7.1） |
+| 検索の一致の印 | 一致に色を付けている間（`ui.Frame.Search` が nil でない間。`search.highlight` が真で、`:nohlsearch` で消していない。`/` で打っている間は打っているパターン）だけ出す（nvim-scrollview の `search` の印も `v:hlsearch` の間だけ出す） |
+| 一致のある行の集め方 | 描画の中では集めない。描くたびに、最後に集め終えた結果（`bufferState.scrollSearch`）が、パターン、バッファ、バージョン番号のどれかで今と違えば、打つたびの検索と同じ行の写し（`incSearchLines`）を作り、イベントループの外の goroutine で集め（`matchLines`。行ごとに `regexp.MatchString`）、結果を `inspect` でイベントループへ戻す（2.1）。集め終えるまでは、パターンとバッファが同じなら前の結果で描く。パターンかバッファが替わったら、集めている検索を取り消して集め直す。バージョン番号だけが替わったときは取り消さず、集め終えてから今のバージョン番号で集め直す（大きなバッファで打ち続ける間に、集め終えないまま始め直し続けないため。集める検索は 1 つのバッファに 1 つまで） |
+| 時間の上限 | 集めるのに 2 秒（Vim 9.1 の `'redrawtime'` の既定。`'hlsearch'` の色付けの上限）を超えたら、その結果を一致の無い結果として覚え、パターンかバージョン番号が変わるまで集め直さない（描くたびに上限まで待たない）。`target.FindMatches`（検索の一致の件数。FR-167）は件数の上限を持ち、上限を超えた先の一致の行を返さないので使わず、行に一致があるかだけを調べる `matchLines` を置いた |
+| マウス | 描いたスクロールバーの列を、`ui.Renderer.HitTest`（3.4）が 1 つの場所 `ui.HitScrollbar` として解く（FR-189）。`drawScrollbar` が列の場所とつまみの行の範囲を `hitState` に残し、`HitTest` は浮かべた窓とその枠の下でなければ、その行に割り付けたバッファの行の範囲（`Hit.Line` から `Hit.LineEnd` の手前まで。描画と同じ割り付け）と、つまみの上か（`Hit.Thumb`）を返す。描いていない行と、ドラッグの間にテキストへ寄せて解くとき（`clamp` が `HitText`）は、今までどおりテキストである。`internal/editor` の `mouseLocator.Target` は、キーを受けるバッファがタブのバッファなら、ステータス行と同じく窓のテキストでない部分（`command.MouseWindow`）として返すので、押してもカーソルは動かず、ホイールは表示領域を送る。つまみのドラッグと印のクリックの動きは、別の issue で足す（この口の `Line`、`LineEnd`、`Thumb` を使う見込みである） |
+
+速さ: 描くたびの量は、つまみが表示領域の行数、印が表示領域の行数 × 種類の数 × 行の一覧の二分探索で、どちらもバッファの行数によらない。
+`internal/editor` は描くたびに、診断の始まりの行を重要度ごとに並べ直す（診断の数に比例する）。検索の一致の行の一覧は、集めた結果をそのまま渡す。
+行の写し（`incSearchLines`）を作るのはイベントループの goroutine で、量は行の数に比例する（打つたびの検索と同じ）。
+
+この上に、マウスでつまみと印を操作する機能（#343 の後の別の issue）と、拡張機能が自分の印の種類（git の変更の位置など）を足す口（#317 の第 3 弾）が載る。
+拡張機能の印の種類は、`scrollbarKinds` に行を足すか、拡張機能から送られた一覧を `ui.ScrollbarMarks` にする形になる見込みである。
+
 #### 行番号の列
 
 #268 で、印の列（「表示のデータ」の `sign/set`）の右、本文の左に行番号の列を置けるようにした（FR-135、FR-136）。
@@ -4015,6 +4045,11 @@ fidget.nvim の既定は、表題を続いている間は `WarningMsg`、終わ�
 既定はそれに合わせ、`progress` は色なし、`progress.title` と `progress.done` は本体の既定の `message.warning` と `constant` と同じ端末の 16 色の 11 と 13 にした。
 同梱の iceberg には、iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の dark の側の `WarningMsg` と `Constant` の文字の色を写した。進み具合は本文の上に重ねるので、`WarningMsg` の背景の色は写していない。
 PR #345 のレビューの推奨 2 で、失敗して終わったものの色の名前 `progress.failed` を足した。fidget.nvim に対応するものは無く、既定は印の列の誤りの診断の印（`sign.diagnostic.error`）と同じ端末の 16 色の 9、同梱の iceberg では `ErrorMsg` の文字の色（`WarningMsg` と同じ `#e27878` なので、印で見分ける）にした。
+#348 で、右端のスクロールバー（6.7 の「スクロールバー」）のつまみの色の名前 `scrollbar` と、印の色の名前 `scrollbar.diagnostic.error`、`scrollbar.diagnostic.warning`、`scrollbar.diagnostic.info`、`scrollbar.diagnostic.hint`、`scrollbar.search` を足した（nvim-scrollview の `ScrollView`、`ScrollViewDiagnosticsError` など、`ScrollViewSearch`）。
+nvim-scrollview の既定のリンク先は、`ScrollView` が `Visual`、診断の印が印の列の `DiagnosticSign*`、検索の一致の印が `NonText` である（2026-11-21 にオーナーの手元のコミット ce007c654e6af5f9dc5a8c92ea300e623fface1a の `doc/scrollview.txt` で読んだ）。
+本体の既定の `visual` は反転で、つまみに重ねると下の文字が読みにくくなるので、`scrollbar` の既定は浮かべる窓（`popup`）の背景と同じ端末の 16 色の 8 の背景だけにした（主張を抑える色。透かしの代わり）。
+診断の印は `sign.diagnostic.*` と同じ番号にし、`hint` だけはつまみの背景と同じ 8 では見えないので 7 にした。検索の一致の印は `nontext` と同じ 12 である。
+同梱の iceberg には、iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の dark の側の、それぞれのリンク先のグループの色を写した（印はつまみの上に重ねるので、文字の色だけ）。
 
 ```jsonc
 {
@@ -4102,6 +4137,9 @@ PR #345 のレビューの推奨 2 で、失敗して終わったものの色の
 #340 で、画面の右下の進み具合（6.7 の「進み具合の表示」）の行の右の端に付ける印 `progress.running`（既定は `...`）と `progress.done`（既定は `done`）を足した（fidget.nvim の `progress_icon` と `done_icon`）。
 fidget.nvim の既定（回る点と `✔`）は ASCII でなく、回る印は時間ごとの描き直しが要るので、既定は ASCII の文字列にした。任意の文字列を書け、空なら付けない。同梱の `config.example.jsonc` では `progress.done` を `✔` にしている。
 PR #345 のレビューの推奨 2 で、失敗して終わったものの印 `progress.failed`（既定は `failed`。同梱の `config.example.jsonc` では `✘`）を足した。
+#348 で、右端のスクロールバー（6.7 の「スクロールバー」）の印 `scrollbar.diagnostic.error`、`scrollbar.diagnostic.warning`、`scrollbar.diagnostic.info`、`scrollbar.diagnostic.hint`（既定は `E`、`W`、`I`、`H`）と `scrollbar.search`（既定は `=`）を足した。
+既定は nvim-scrollview の既定（診断は印の列の記号が無ければ `E`、`W`、`I`、`H`。検索の一致は、1 つの印に当たる行が 1 つのときの `=`）に合わせた。nvim-scrollview は印に当たる行の数で記号を替えられる（検索の一致の既定は `=`、`=`、`≡`）が、本体の記号は 1 つにした。
+値は空か表示幅が 1 の文字 1 つで、空ならその種類の印を描かない（1 列のセルに描くため。`CheckSymbol`）。同梱の `config.example.jsonc` では、診断の印を印の列と同じ記号にしている。
 
 #295 で、一覧と木の項目のファイルの種類のアイコン（1.4 の「#295 のアイコン」。FR-152）の表を、設定の `icons` で書き換えられるようにした。
 記号と違い、既定は ASCII にせず、Nerd Font のグリフで出す（#295 のオーナーの決め）。
@@ -4273,8 +4311,14 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `mouse.enabled` | 真偽 | エディタ全体 | `false` | 無し（Vim の `'mouse'` はモードのフラグの文字列で、`:set mouse=a` を真偽に写せないので別名を作らない） | マウスを使うか（3.4。FR-180）。既定は Vim 9.1 と同じく使わない（Neovim 0.12.5 の既定は `nvi`）。描くたびに読み、真なら client の端末にマウスの報告を求める。同梱の `config.example.jsonc` では、オーナーの nvim の `mouse=a` に当たる `true` |
 | `mouse.scrollLines` | 整数（0 から 9999） | エディタ全体 | `3` | 無し | ホイールを 1 回回したときに表示領域を送る行数（3.4。FR-182）。既定は Neovim 0.12.5 の `'mousescroll'` の `ver:3` と同じ。0 なら縦に送らない。ホイールの出来事のたびに読む |
 | `mouse.scrollColumns` | 整数（0 から 9999） | エディタ全体 | `6` | 無し | 行を折り返さないときに、ホイールを 1 回傾けたときに表示領域を送る列数（3.4。FR-182）。既定は `'mousescroll'` の `hor:6` と同じ。0 なら横に送らない |
+| `scrollbar.show` | 真偽 | エディタ全体 | `false` | 無し（Vim と Neovim にスクロールバーの設定は無い） | 表示領域の右端の列に、スクロールバーと印を出すか（6.7 の「スクロールバー」。FR-186）。既定は Vim と Neovim と同じく出さない（#317 の方針）。同梱の `config.example.jsonc` では `true`。描くたびに読む |
+| `scrollbar.currentOnly` | 真偽 | エディタ全体 | `false` | 無し | 操作中の client の画面にだけ出すか（FR-186。nvim-scrollview の `current_only`）。既定は nvim-scrollview の既定と同じ。同梱の `config.example.jsonc` では `true` |
+| `scrollbar.marks` | 文字列 | エディタ全体 | `diagnostic,search` | 無し | 出す印の種類の名前をコンマで区切ったもの（FR-187。nvim-scrollview の `signs_on_startup`）。知らない名前は読み飛ばす。既定はオーナーの nvim と同じ（nvim-scrollview の既定は、これに `marks` を足したもの） |
+| `scrollbar.excludedFileTypes` | 文字列 | エディタ全体 | 空 | 無し | 出さないバッファのファイルの種類をコンマで区切ったもの（FR-186。nvim-scrollview の `excluded_filetypes`）。既定は nvim-scrollview と同じく空 |
 
-`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で、`progress.show` と `progress.doneMs` は #340 で足した。
+`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で、`progress.show` と `progress.doneMs` は #340 で、`scrollbar.*` の 4 つは #348 で足した。
+#348 の名前は、nvim-scrollview の設定の名前を camelCase にして `scrollbar.` の下に置いた（`signs_on_startup` は、起動の後に変えても効くので `marks` にした）。
+設定の表の型は真偽、整数、文字列だけなので、名前の並びはコンマで区切った文字列にした（Vim の `'listchars'` などと同じ書き方）。
 #319 の 2 つの名前は、issue の案のとおりにした。`cursor.restore` には Vim の名前が無い（Vim は設定でなく `defaults.vim` の自動コマンドで戻す）ので、`:set` では受け付けない。
 `comment.string` の名前は、#327 の本文の案のとおりにした。
 #329 の issue の案は、時間を `diagnostic.popupDelayMs` としていた。時間を待つ仕組みを汎用の契機にしたので、時間は「止まってから時間が経った」契機（Vim の `CursorHold` と `CursorHoldI`。どちらも `'updatetime'` で動く）の設定として、`cursorHold.` の下に 1 つだけ置いた。

@@ -106,7 +106,11 @@ func (e *Editor) mouseFloat() *floatState {
 //   - ステータス行とコマンドラインの行は、その画面でキーを受けるバッファ（cur。部品の client ならその部品のバッファ）の窓の、
 //     テキストでない部分（MouseWindow。ホイールでその表示領域を送る）である。画面に窓は 1 つなので、Neovim のステータス行
 //     （その上の窓）とコマンドラインの行（今の窓）の決め方は、どちらもこの窓になる
+//   - 表示領域の右端のスクロールバー（FR-186）は、キーを受けるバッファがタブのバッファなら、その窓のテキストでない部分
+//     （MouseWindow）である。押してもカーソルは動かず、ホイールで表示領域を送る（FR-189）
 //   - ほか（枠線、ファインダー、閉じた窓の跡など）は MouseNone である
+//
+// req: FR-189
 func (m mouseLocator) Target(drag bool) command.MouseTarget {
 	none := command.MouseTarget{Kind: command.MouseNone}
 	h, ok := m.hit(drag)
@@ -142,6 +146,12 @@ func (m mouseLocator) Target(drag bool) command.MouseTarget {
 		if h.Tab >= 0 && h.Tab < len(e.view.tabs) && e.mouseComp() == nil && !drag {
 			return command.MouseTarget{Kind: command.MouseElsewhere}
 		}
+	case ui.HitScrollbar:
+		// 右端のスクロールバー（FR-186）は、タブのバッファの窓のテキストでない部分である（FR-189）。押してもカーソルを動かさず、
+		// ホイールはステータス行の上と同じくその表示領域を送る。つまみのドラッグと印を押す操作は、まだ無い。
+		if e.tab() == m.bs && e.cur == m.bs && e.mouseComp() == nil && !drag {
+			return command.MouseTarget{Kind: command.MouseWindow}
+		}
 	case ui.HitNone:
 	}
 	return none
@@ -176,7 +186,7 @@ func (m mouseLocator) Activate() error {
 		if base := e.cur; base != m.bs {
 			base.state.MoveToMouse(command.MouseTarget{Kind: command.MouseText, Line: h.Line, Col: h.Col})
 		}
-	case ui.HitFloat, ui.HitNone, ui.HitStatusLine, ui.HitCommandLine:
+	case ui.HitFloat, ui.HitNone, ui.HitStatusLine, ui.HitCommandLine, ui.HitScrollbar:
 	}
 	if e.cur != m.bs {
 		return command.ErrBufferSwitched

@@ -324,7 +324,9 @@ func (r *Renderer) render(f *Frame) Screen {
 		}
 	}
 	d.drawMarks(rows)
-	r.drawProgress(g, theme, f.Progress, textArea{top: 0, rows: rows, width: r.Width})
+	area := textArea{top: 0, rows: rows, width: r.Width}
+	r.drawScrollbar(g, theme, f.Scrollbar, text, area)
+	r.drawProgress(g, theme, f.Progress, area)
 	curRow, curCol := r.cursorScreen(text, f, cur)
 	var listCursor *Cursor
 	switch {

@@ -136,8 +136,8 @@ type Float struct {
 	// ID は、窓を見分ける番号である。替わったら窓の中のスクロールの位置を決め直す。0 も 1 つの窓として扱う。
 	ID uint64
 	// View は、窓の中に描くバッファの Frame である。Text、Cursor、Mode、Selection、Decorations、Diagnostics、Wrap を読み、
-	// Tabs、Output、List、Choice、Float、Diff、Message、LineNumbers、Search、Highlights、Progress は読まない
-	// （窓の中に行番号と検索の一致の色とヤンクした範囲の色は出さない）。
+	// Tabs、Output、List、Choice、Float、Diff、Message、LineNumbers、Search、Highlights、Progress、Scrollbar は読まない
+	// （窓の中に行番号と検索の一致の色とヤンクした範囲の色とスクロールバーは出さない）。
 	// Text が nil なら窓を出さない。
 	View *Frame
 	// Title は、窓の見出しである。空なら出さない。
@@ -300,6 +300,10 @@ type Frame struct {
 	// internal/editor が、client の画面（bufferFrame）にだけ、描くたびに設定の今の値（progress.show）と今の進み具合から詰める。
 	// 描き方は drawProgress の doc にある。
 	Progress []Progress
+	// Scrollbar は、バッファの表示領域の右端の 1 列に描くスクロールバーと印である（FR-186、FR-187）。nil なら描かない。
+	// internal/editor が、client の画面（bufferFrame）にだけ、描くたびに設定の今の値（scrollbar.show など）から詰める。
+	// 描くのは、表示領域にバッファの全体が収まらないときだけである。描き方は drawScrollbar の doc にある。
+	Scrollbar *Scrollbar
 	// Output は、開いている出力の欄である。nil なら欄を開いていない。
 	Output *Output
 	// Float は、バッファの表示領域の上に浮かべて出すポップアップである（基本設計 1.4。FR-68）。nil なら出さない。

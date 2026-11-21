@@ -87,6 +87,17 @@ const (
 	// StyleProgressFailed は、失敗して終わった進み具合（progress/report の end の failed）の表題と記号（progress.failed）である。
 	// fidget.nvim の end には成否の区別が無いので、対応するグループは無い。
 	StyleProgressFailed = "progress.failed"
+	// StyleScrollbar は、バッファの表示領域の右端のスクロールバー（Frame.Scrollbar。FR-186）のつまみである（nvim-scrollview の ScrollView）。
+	// つまみのセルの文字と色の上に重ねるので、背景の色だけを持たせると下の文字が残る。
+	StyleScrollbar = "scrollbar"
+	// StyleScrollbarDiagnosticError などは、スクロールバーの印（FR-187）である。名前は "scrollbar." と印の種類をつないだもの。
+	// 診断の印は "scrollbar.diagnostic." と重要度をつなぐ（nvim-scrollview の ScrollViewDiagnosticsError など）。
+	// StyleScrollbarSearch は、検索の一致の印である（nvim-scrollview の ScrollViewSearch）。つまみの上の印は、StyleScrollbar の上に重ねる。
+	StyleScrollbarDiagnosticError   = "scrollbar.diagnostic.error"
+	StyleScrollbarDiagnosticWarning = "scrollbar.diagnostic.warning"
+	StyleScrollbarDiagnosticInfo    = "scrollbar.diagnostic.info"
+	StyleScrollbarDiagnosticHint    = "scrollbar.diagnostic.hint"
+	StyleScrollbarSearch            = "scrollbar.search"
 	// StyleStatusLineMode などは、ステータス行の部品ごとの色である。名前は "statusline." と部品の ID（StatusPart...）をつないだもの。
 	// 部品は StyleStatusLine の上に重ねて描く（Attr.Over）ので、文字の色だけを変えることもできる。既定の対応には無い。
 	StyleStatusLineMode      = "statusline.mode"
@@ -122,6 +133,8 @@ var styleNames = []string{
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
 	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch, StylePreviewLine,
 	StyleProgress, StyleProgressTitle, StyleProgressDone, StyleProgressFailed,
+	StyleScrollbar, StyleScrollbarDiagnosticError, StyleScrollbarDiagnosticWarning, StyleScrollbarDiagnosticInfo, StyleScrollbarDiagnosticHint,
+	StyleScrollbarSearch,
 	StyleSignBreakpoint, StyleSignBreakpointUnverified, StyleSignExecutionPoint,
 	StyleSignDiagnosticError, StyleSignDiagnosticWarning, StyleSignDiagnosticInfo, StyleSignDiagnosticHint,
 	StyleStatusLineMode, StyleStatusLineName, StyleStatusLineModified, StyleStatusLineReadOnly, StyleStatusLineFileType,
@@ -208,14 +221,25 @@ func DefaultTheme() Theme {
 		StyleProgressTitle: {Fg: Indexed(11)},
 		StyleProgressDone:  {Fg: Indexed(13)},
 		// 失敗して終わった進み具合は、印の列の誤りの診断の印（sign.diagnostic.error）と同じ赤にした。fidget.nvim に対応するものは無い。
-		StyleProgressFailed:           {Fg: Indexed(9)},
-		StyleSignBreakpoint:           {Fg: Indexed(9), Bold: true},
-		StyleSignBreakpointUnverified: {Fg: Indexed(8)},
-		StyleSignExecutionPoint:       {Fg: Indexed(11), Bold: true},
-		StyleSignDiagnosticError:      {Fg: Indexed(9)},
-		StyleSignDiagnosticWarning:    {Fg: Indexed(11)},
-		StyleSignDiagnosticInfo:       {Fg: Indexed(12)},
-		StyleSignDiagnosticHint:       {Fg: Indexed(8)},
+		StyleProgressFailed: {Fg: Indexed(9)},
+		// スクロールバーのつまみは、背景の色だけを持ち、下の文字を残す。nvim-scrollview の既定は Visual へのリンクを winblend で透かすが、
+		// 端末のセルでは透かせず、本体の既定の visual は反転で下の文字が読みにくくなるので、浮かべる窓（popup）と同じ暗い灰色の背景にした。
+		StyleScrollbar: {Bg: Indexed(8)},
+		// スクロールバーの診断の印は、印の列の診断の印（sign.diagnostic.*）と同じ番号にした（nvim-scrollview の既定も、印の列の
+		// DiagnosticSign* の色へのリンク）。ただし hint は、sign.diagnostic.hint の 8 番ではつまみの背景と同じ色で見えないので 7 番にした。
+		// 検索の一致の印は、nvim-scrollview の既定の ScrollViewSearch（NonText へのリンク）に合わせ、nontext と同じ番号にした。
+		StyleScrollbarDiagnosticError:   {Fg: Indexed(9)},
+		StyleScrollbarDiagnosticWarning: {Fg: Indexed(11)},
+		StyleScrollbarDiagnosticInfo:    {Fg: Indexed(12)},
+		StyleScrollbarDiagnosticHint:    {Fg: Indexed(7)},
+		StyleScrollbarSearch:            {Fg: Indexed(12)},
+		StyleSignBreakpoint:             {Fg: Indexed(9), Bold: true},
+		StyleSignBreakpointUnverified:   {Fg: Indexed(8)},
+		StyleSignExecutionPoint:         {Fg: Indexed(11), Bold: true},
+		StyleSignDiagnosticError:        {Fg: Indexed(9)},
+		StyleSignDiagnosticWarning:      {Fg: Indexed(11)},
+		StyleSignDiagnosticInfo:         {Fg: Indexed(12)},
+		StyleSignDiagnosticHint:         {Fg: Indexed(8)},
 		// タブの行は Vim 9.1 の暗い背景の既定（TabLine は下線、TabLineSel は太字、TabLineFill は反転）に近づけた。
 		StyleTabLine:         {Underline: true, Fg: Indexed(15), Bg: Indexed(8)},
 		StyleTabLineSelected: {Bold: true},

@@ -53,6 +53,9 @@
     "sign.diagnostic.info": { "fg": "#89b8c2" },
     "sign.diagnostic.hint": { "fg": "#6b7089" },
     "linenr": { "fg": "#444b71" },
+    // 右端のスクロールバーの検索の一致の印も、iceberg の NonText（#242940。nvim-scrollview の既定の ScrollViewSearch のリンク先）では
+    // 透過した背景で見えないので、nontext と同じ色にする
+    "scrollbar.search": { "fg": "#444b71" },
 
     // ステータス行を lightline の iceberg に近づける。値は iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の
     // autoload/lightline/colorscheme/iceberg.vim の dark の側のパレットから写した。
@@ -103,6 +106,12 @@
     "progress.done": "✔",
     // 失敗して終わった進み具合の印（本体の既定は failed。印の列の誤りの診断の印と同じ記号にした）
     "progress.failed": "✘",
+    // 右端のスクロールバーの診断の印（本体の既定は E、W、I、H）。nvim-scrollview の既定と同じく、印の列の診断の印と同じ記号にした。
+    // 検索の一致の印は本体の既定（=）のまま
+    "scrollbar.diagnostic.error": "✘",
+    "scrollbar.diagnostic.warning": "▲",
+    "scrollbar.diagnostic.info": "ⓘ",
+    "scrollbar.diagnostic.hint": "⚑",
   },
 
   // ファジーファインダーとファイラの項目の前に、ファイルの種類のアイコンを付ける（本体の既定も付ける）。
@@ -159,6 +168,15 @@
   // 本体の既定も出す。終わったものは doneMs（既定は 3000）ミリ秒の後に消える。印は上の symbols の progress.* にある。
   // 説明は docs/usage.md の「拡張機能の進み具合」にある
   "progress": { "show": true },
+
+  // ファイルが画面に収まらないとき、画面の右端の列に、今見ている範囲のつまみと、診断と検索の一致の位置の印を出す
+  // （nvim の nvim-scrollview に当たる。本体の既定は出さない）。currentOnly で、最後にキーを打った client の画面にだけ出す
+  // （見比べで分割したときにバーが 2 本出ないように。nvim-scrollview の current_only = true と同じ）。
+  // 出す印は marks（既定は "diagnostic,search"）で選ぶ。検索の一致の印は、search.highlight で一致に色を付けている間だけ出る。
+  // nvim-scrollview の excluded_filetypes に書くファイラとヘルプは、本体ではポップアップかペインで開くので、もともとバーを出さない。
+  // ほかに出さないファイルの種類があれば、excludedFileTypes に "markdown,gitcommit" のようにコンマで区切って書く。
+  // 説明は docs/usage.md の「スクロールバー」にある
+  "scrollbar": { "show": true, "currentOnly": true },
 
   // 字下げを 4 列のスペースで作り、タブ文字を 4 列で描き、自動インデントを行う
   // （nvim の expandtab、shiftwidth=4、softtabstop=4、tabstop=4、autoindent に当たる。本体の既定は Vim と同じくタブ文字、8 列、自動インデントなし）。
