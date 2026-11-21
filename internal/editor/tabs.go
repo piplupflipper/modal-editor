@@ -145,9 +145,11 @@ func (e *Editor) removeTab(bs *bufferState) {
 
 // closeBufferState は、バッファ bs を閉じる（FR-64）。タブなら持ち主の client のタブから外し、拡張機能へ buffer/close を送り、
 // 一覧と、すべての client の裏のタブとジャンプリストから除く。未保存の変更は確かめない（呼び出し側が確かめる）。
+// 閉じる前に、ファイルのバッファのカーソルの位置を残す（設定の cursor.restore が真のとき。FR-166）。
 //
 // req: FR-64, FR-16
 func (e *Editor) closeBufferState(bs *bufferState) {
+	e.saveCursor(bs)
 	e.closeFloatsOf(bs)
 	if o := bs.owner; o != nil {
 		e.withView(o, func() { e.removeTab(bs) })

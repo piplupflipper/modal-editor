@@ -19,6 +19,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/command"
 	"github.com/piplupflipper/vi-imitation/internal/command/ex"
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
+	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
 // 端末を子プロセスへ渡す実行と、待つだけの client（基本設計 4.7、4.9。FR-79、FR-80、FR-82、FR-83、FR-116、FR-117）。
@@ -608,9 +609,12 @@ func (e *Editor) elevatedDone(job *shellJob, r TerminalResult) {
 		e.showError(fmt.Errorf("E212: %s を書けません: %s が %d を返しました", s.path, elev, r.Status))
 		return
 	}
+	undoNote := ""
 	if s.own {
 		if bs.buf.Version() == s.version {
 			bs.buf.MarkSaved()
+			// 書いた中身は今のバッファと同じなので、:w と同じくアンドゥの履歴を残す（FR-165）。
+			undoNote = e.saveUndo(bs)
 		}
 		if st, err := statFile(s.path); err == nil {
 			bs.setDisk(st)
@@ -620,6 +624,9 @@ func (e *Editor) elevatedDone(job *shellJob, r TerminalResult) {
 		}
 	}
 	e.message = infoMessage(fmt.Sprintf("%s（%s で書き込みました）", writtenText(s.path, s.made), elev))
+	if undoNote != "" {
+		e.message = ui.Message{Text: fmt.Sprintf("%s（%s で書き込みました。%s）", writtenText(s.path, s.made), elev, undoNote), Level: ui.MessageWarning}
+	}
 	next := s.rest
 	if s.action.Kind == ex.ActionWriteAll {
 		// :wa は、残りの未保存のバッファも書き出す（書き出し済みのバッファは変更が無いので書かない）。

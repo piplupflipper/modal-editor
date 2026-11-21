@@ -297,14 +297,25 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 		bs.setDisk(st)
 	}
 	bs.buf.MarkSaved()
+	// アンドゥの履歴は、Vim の 'undofile' と同じく、バッファのファイルへ書いたときに残す（FR-165）。書けなくても保存は失敗にしない。
+	undoNote := e.saveUndo(bs)
 	if err := e.host.DidSave(ext.BufferDidSaveParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Path: path}); err != nil {
 		e.log.Error("buffer/didSave を送れない", "err", err)
 	}
+	// 拡張機能の誤りとアンドゥの履歴を残せなかったことの両方があれば、どちらも 1 行に出す（履歴が残っていないことに気付けるように）。
+	extra := ""
+	if undoNote != "" {
+		extra = "。" + undoNote
+	}
 	switch {
 	case len(notes) > 0 && made != "":
-		e.message = ui.Message{Text: fmt.Sprintf("%s（ディレクトリ \"%s\" を作りました）", notes[0], made), Level: ui.MessageWarning}
+		e.message = ui.Message{Text: fmt.Sprintf("%s（ディレクトリ \"%s\" を作りました%s）", notes[0], made, extra), Level: ui.MessageWarning}
+	case len(notes) > 0 && undoNote != "":
+		e.message = ui.Message{Text: fmt.Sprintf("%s（%s）", notes[0], undoNote), Level: ui.MessageWarning}
 	case len(notes) > 0:
 		e.message = ui.Message{Text: notes[0], Level: ui.MessageWarning}
+	case undoNote != "":
+		e.message = ui.Message{Text: fmt.Sprintf("%s（%s）", writtenText(path, made), undoNote), Level: ui.MessageWarning}
 	default:
 		e.message = infoMessage(writtenText(path, made))
 	}

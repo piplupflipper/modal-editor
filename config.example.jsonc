@@ -126,6 +126,16 @@
   "indent": { "useSpaces": true, "width": 4, "auto": true },
   "tab": { "width": 4 },
 
+  // ファイルのアンドゥの履歴を、保存するときに $XDG_STATE_HOME/vi-imitation/undo/ に残し、次に開いたときに読み戻す
+  // （nvim の undofile=true に当たる。:set undofile でも切り替えられる。本体の既定は Vim と同じく残さない）。
+  // 保存した後にファイルが外で変わっていたら、履歴は読まずに捨てる
+  "undo": { "persist": true },
+
+  // ファイルを閉じたときのカーソルの位置を $XDG_STATE_HOME/vi-imitation/state.json に残し、次に開いたときにその位置へ戻す
+  // （Vim の defaults.vim の BufReadPost の自動コマンドに当たる。本体の既定は戻さない）。git のコミットのメッセージでは戻さない。
+  // 説明は docs/usage.md の「アンドゥの履歴とカーソルの位置を残す」にある
+  "cursor": { "restore": true },
+
   // ファイルの種類ごとの値。キーは filetype の値で、中は最上位と同じ形で書く（範囲がバッファごとの項目だけを書ける）。
   // 例えば YAML を 2 列で字下げするなら、次の行のコメントを外す
   "fileTypeOptions": {

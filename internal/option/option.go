@@ -203,6 +203,16 @@ const (
 	// EditorConfigEnabled は、開いたファイルに当たる .editorconfig を読むかである（FR-164。Neovim の g:editorconfig）。
 	// 範囲はエディタ全体で、既定は Neovim と同じく読む。バッファを開くときに読むので、変えた後に開いたバッファから効く。
 	EditorConfigEnabled = "editorConfig.enabled"
+	// UndoPersist は、ファイルのアンドゥの履歴を、そのファイルを保存するときに状態の置き場（$XDG_STATE_HOME/vi-imitation/undo）へ残し、
+	// 次にそのファイルを開いたときに読み戻すかである（FR-165。Vim の 'undofile'）。
+	// 既定は Vim と同じく残さない（#319 のオーナーの決め）。false の間は、読みも書きもせず、置き場に何も作らない。
+	// 保存するときと開くときに読む。
+	UndoPersist = "undo.persist"
+	// CursorRestore は、ファイルを閉じたときのカーソルの位置を状態の置き場（$XDG_STATE_HOME/vi-imitation/state.json）へ残し、
+	// 次にそのファイルを開いたときにその位置へカーソルを置くかである（FR-166。Vim の defaults.vim の BufReadPost の自動コマンドに当たる）。
+	// 既定は Vim の既定（defaults.vim を読まない）と同じく残さない（#319 のオーナーの決め）。false の間は、読みも書きもしない。
+	// ファイルを閉じるときと開くときに読む。
+	CursorRestore = "cursor.restore"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -229,6 +239,8 @@ var defs = []Def{
 	{Name: TabWidth, Type: Int, Scope: ScopeBuffer, Default: IntValue(8), Range: &IntRange{Min: 1, Max: 9999}},
 	{Name: IndentAuto, Type: Bool, Scope: ScopeBuffer, Default: BoolValue(false)},
 	{Name: EditorConfigEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(true)},
+	{Name: UndoPersist, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: CursorRestore, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 }
 
 // fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。

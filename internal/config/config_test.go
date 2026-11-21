@@ -514,6 +514,29 @@ func TestDefaultPath(t *testing.T) {
 	}
 }
 
+// 状態のファイルの置き場所は、設定ファイルと同じ規則で $XDG_STATE_HOME か $HOME/.local/state の下の vi-imitation にする。
+func TestStateDir(t *testing.T) {
+	cases := []struct {
+		name, xdg, home, want string
+		wantErr               bool
+	}{
+		{"XDG", "/x/state", "/home/u", "/x/state/vi-imitation", false},
+		{"XDG が空", "", "/home/u", "/home/u/.local/state/vi-imitation", false},
+		{"XDG が相対パス", "rel", "/home/u", "/home/u/.local/state/vi-imitation", false},
+		{"どちらも無い", "", "", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", c.xdg)
+			t.Setenv("HOME", c.home)
+			got, err := StateDir()
+			if (err != nil) != c.wantErr || got != c.want {
+				t.Errorf("StateDir() = %q, %v; want %q, 誤り %v", got, err, c.want, c.wantErr)
+			}
+		})
+	}
+}
+
 func TestExtensionDirs(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "/x/data")
 	t.Setenv("HOME", "/home/u")
