@@ -91,4 +91,6 @@ package ext
 // 足した（#308。FR-148）。古い本体は help の editor/list を知らない一覧として誤りで断り、help だけの editor/execute も誤りで断る。
 // 0.14.0 で、時間のかかる処理の進み具合を知らせる progress/report（ProgressReportParams。progress.go）を足した（#340。FR-178）。
 // 古い本体は知らない通知として捨てる（ログに残すだけ）ので、進み具合は出ない。
-const APIVersion = "0.14.0"
+// 0.15.0 で、本体の設定の項目の値を拡張機能から変える option/set と、今の値を読む option/get を足した（option.go。#349。FR-190〜FR-192）。
+// 古い本体はどちらにも method not found で応答する。
+const APIVersion = "0.15.0"

@@ -891,6 +891,43 @@ JSON の文字列である。
 - `"warning"`（MessageWarning）
 - `"error"`（MessageError）
 
+#### `OptionGetParams`
+
+option/get の params である。
+
+- `buffer`（`BufferID`、省ける）: 範囲がバッファごとの項目を読むバッファである。省く（0）と、エディタ全体の項目だけを読める。
+- `names`（`[]string`、省ける）: 読む項目の正規の名前である。空なら、Buffer を書いたときはすべての項目を、省いたときはエディタ全体のすべての項目を読む。
+  表に無い名前と、Buffer を省いたときのバッファごとの項目は、誤りで断る。
+
+#### `OptionGetResult`
+
+option/get の result である。
+
+- `values`（`map[string]json.RawMessage`）: 項目の正規の名前から今の値（項目の型の JSON の値）への対応である。
+
+#### `OptionSetParams`
+
+option/set の params である。
+
+- `buffer`（`BufferID`、省ける）: 範囲がバッファごとの項目を変えるバッファである。省く（0）と、範囲がエディタ全体の項目を変える。
+  Buffer を書いたときにエディタ全体の項目を、省いたときにバッファごとの項目を書くと、誤りで断る。
+- `options`（`map[string]json.RawMessage`）: 項目の正規の名前から値への対応である。値は項目の型の JSON の値か、取り下げる null である。空にできない。
+- `fileType`（`string`、省ける）: バッファごとの項目の値を、どのファイルの種類のバッファ（buffer/open の fileType）として決めたかである。省ける。
+  バッファのファイルの種類が変わった（:set filetype=、種類の決まる名前での保存）後に、この拡張機能がそのバッファへ送る最初の
+  option/set で、FileType が今のファイルの種類と同じなら、本体は Options に値を書いた項目の :set の値を隠し、この値を使う
+  （本体のファイルの種類ごとの段と同じ。Neovim の ftplugin が :set の値を上書きするのと同じ考え方）。
+  ファイルの種類の変更と関係なく送った値（設定ファイルが変わったなど）と、FileType を省いた値は、:set の値を隠さない。
+  FileType が今のファイルの種類と違う値（種類が変わる前に決めた、遅れて届いた値）は、本体は成功で応答して捨てる。
+  :set の値を隠させたい拡張機能は、前と種類の違う buffer/open を受けるたびに、値が前に送ったものと同じでも送る
+  （A→B→A と続けて変わったとき、本体は A に戻った後の最初の値を待つ）。
+  拡張機能が異常で終わって起動し直したときは、起動し直した後の最初の値（種類が今と同じもの）で、同じ規則のとおりに隠し直す。
+
+#### `OptionSetResult`
+
+option/set の result である。中身は無いが、後から項目を足せるように構造体にしている。
+
+項目は無い（`{}`）。
+
 #### `OutputAppendParams`
 
 output/append の params である。

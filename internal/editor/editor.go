@@ -286,8 +286,13 @@ type Editor struct {
 	// options は、範囲がエディタ全体の設定の項目の値である（options.go。初めの値は Config.Options）。
 	options option.Values
 	// layers は、バッファごとの設定の項目の初めの値の段を当てる順に並べたものである（options.go の optionLayers の写し）。
-	// テストは、後で足す段（拡張機能から設定を変える口）を、この末尾に足して確かめる。
+	// テストは、後で足す段を、この末尾に足して確かめる。
 	layers []optionLayer
+	// extOptions は、拡張機能が option/set で入れた範囲がエディタ全体の項目の値を、拡張機能の ID ごとに持つ（options.go。FR-191）。
+	extOptions map[string]map[string]option.Value
+	// userOptions は、範囲がエディタ全体の項目のうち、利用者が :option.set と :set で変えた項目の名前である（options.go。FR-191）。
+	// この項目には、拡張機能の値を当てない。
+	userOptions map[string]bool
 	// fixEOL は、開くバッファに設定する末尾の改行の補い（Config.FixEndOfLine）である。
 	fixEOL bool
 	// popupKeys は、拡張機能の ID から、その拡張機能の contributes.popupKeys のキーへの表である（FR-69。popup.go）。
@@ -492,6 +497,11 @@ type bufferState struct {
 	// editorConfig は、バッファを開いたとき（と、:e で開き直したとき、名前を付けたとき）に読んだ .editorconfig の項目である（FR-164）。
 	// 段を当て直すときは、読み直さずにこれを使う（Neovim も .editorconfig を読むのはバッファを読んだときと名前を変えたときだけである）。
 	editorConfig editorconfig.Properties
+	// extOptions は、拡張機能が option/set で入れた範囲がバッファごとの項目の値を、拡張機能の ID ごとに持つ（options.go。FR-190）。
+	// 初めの値の段の最後の段が読む。:e で開き直しても、ファイルの種類が変わっても捨てず、拡張機能が止まったら捨てる。
+	extOptions map[string]map[string]option.Value
+	// extMask は、ファイルの種類が変わった後に拡張機能が送った値で :set の値を隠すための状態である（options.go。FR-190）。
+	extMask extMaskState
 	// title は、ファイルでないバッファ（:help のヘルプ、キーの一覧。help.go）の名前である。タブの行、ステータス行、:ls に
 	// path の代わりに出す。ファイルのバッファと、名前の無いバッファ（[No Name]）では空である。
 	title string

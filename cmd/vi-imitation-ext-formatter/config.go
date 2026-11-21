@@ -32,6 +32,8 @@ type settings struct {
 // formatterConfig は、1 つの整形ツールの設定である。
 type formatterConfig struct {
 	// Name は、知らせに使う名前である。省くと Command のファイル名である。
+	// biome、prettier（prettierd）、ruff のどれかなら、その整形ツールの設定ファイルからインデントを読む（toolKind。indent.go）。
+	// npx や uvx で起動して、引数からも整形ツールが分からないときは、ここに整形ツールの名前を書く。
 	Name string `json:"name,omitempty"`
 	// Command は、整形ツールの実行ファイルの名前か絶対パスである。~/ で始めるとホームのディレクトリからのパスになる。
 	// 名前なら、プロジェクトの依存（LocalBinDirs）、PATH の順に探す（findCommand）。

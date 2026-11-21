@@ -362,3 +362,55 @@ func TestFileTypeDefaults(t *testing.T) {
 		t.Errorf("写しを変えると表が変わった: %q", got)
 	}
 }
+
+// 拡張機能 API の JSON の値は、項目の型の JSON の値だけを受け付け、:option.set と同じ Check を通す（#349）。
+// 書き出した JSON は、読み戻すと同じ値になる。
+//
+// req: FR-190
+func TestParseJSON(t *testing.T) {
+	width, _ := Lookup(IndentWidth)
+	spaces, _ := Lookup(IndentUseSpaces)
+	cms, _ := Lookup(CommentString)
+	for _, c := range []struct {
+		d    Def
+		raw  string
+		want Value
+		err  error
+	}{
+		{spaces, "true", BoolValue(true), nil},
+		{spaces, " false ", BoolValue(false), nil},
+		{spaces, `"true"`, Value{}, ErrInvalidBool},
+		{spaces, "1", Value{}, ErrInvalidBool},
+		{width, "2", IntValue(2), nil},
+		{width, "2.0", Value{}, ErrNumberRequired},
+		{width, "1e3", Value{}, ErrNumberRequired},
+		{width, `"2"`, Value{}, ErrNumberRequired},
+		{width, "-1", Value{}, ErrBelowMin},
+		{width, "10000", Value{}, ErrAboveMax},
+		{width, "99999999999999999999", Value{}, ErrAboveMax},
+		{cms, `"# %s"`, StringValue("# %s"), nil},
+		{cms, `"# %s"`, StringValue("# %s"), nil},
+		{cms, `""`, StringValue(""), nil},
+		{cms, `"//"`, Value{}, ErrMissingContains},
+		{cms, "3", Value{}, ErrStringRequired},
+		{cms, `"x`, Value{}, ErrStringRequired},
+	} {
+		got, err := c.d.ParseJSON([]byte(c.raw))
+		if got != c.want || !errors.Is(err, c.err) {
+			t.Errorf("%s.ParseJSON(%s) = %v, %v; want %v, %v", c.d.Name, c.raw, got, err, c.want, c.err)
+		}
+		if err != nil {
+			continue
+		}
+		out, err := got.MarshalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if back, err := c.d.ParseJSON(out); err != nil || back != got {
+			t.Errorf("%s: %s を読み戻すと %v, %v", c.d.Name, out, back, err)
+		}
+	}
+	if out, _ := (Value{}).MarshalJSON(); string(out) != "null" {
+		t.Errorf("ゼロ値の JSON = %s, want null", out)
+	}
+}

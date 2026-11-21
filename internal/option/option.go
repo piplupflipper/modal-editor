@@ -27,12 +27,20 @@
 //  3. 本体のファイルの種類ごとの既定（FileTypeDefaults）
 //  4. 設定ファイルのファイルの種類ごとの値（fileTypeOptions）
 //  5. 開いたファイルに当たる .editorconfig の値
+//  6. 拡張機能が option/set で入れた値（整形ツールの拡張機能が読んだ biome.json などの値。#349。FR-190）
 //
 // 3 を 2 の後に置くのは、Neovim が利用者の設定（init.lua の :set）の後にファイルの種類ごとの ftplugin を当てるのと同じにするためである。
 // 段を当てるのは internal/editor で、このパッケージは 1 と 3 の表を持つ。
+//
+// # JSON の値
+//
+// 拡張機能 API（option/set と option/get。#349）は、値を項目の型の JSON の値（true、整数、文字列）で受け渡す。
+// JSON から読むのは Def.ParseJSON で、:option.set と同じく Def.Check を通す。JSON に書くのは Value.MarshalJSON である。
 package option
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -405,6 +413,8 @@ var (
 	// ErrMissingContains は、文字列の項目の空でない値が、含まなければならない文字列（Def.Contains）を含まないことを表す
 	// （comment.string では、Vim 9.1 と Neovim 0.12.5 の 'commentstring' の E537 に当たる）。
 	ErrMissingContains = errors.New("option: value must be empty or contain the required text")
+	// ErrStringRequired は、文字列の項目の JSON の値が文字列でないことを表す（Def.ParseJSON）。
+	ErrStringRequired = errors.New("option: value must be a string")
 )
 
 // Check は、値 v が項目 d に入れられる値かを確かめる。型が項目の型と違えば ErrTypeMismatch を返す。
@@ -445,6 +455,68 @@ func (d Def) Parse(text string) (Value, error) {
 		return Value{}, err
 	}
 	return v, nil
+}
+
+// ParseJSON は、JSON の値 raw を項目の型の値に変換し、Check で確かめて返す（拡張機能 API の option/set。#349。FR-190）。
+// 真偽は JSON の true と false、整数は JSON の数のうち 10 進の整数の書き方のもの（ParseInt で読む。1.0 と 1e3 は断る）、
+// 文字列は JSON の文字列だけを受け付ける。型が違えば ErrInvalidBool、ErrNumberRequired、ErrStringRequired を
+// （int に収まらない整数は ParseInt の ErrBelowMin か ErrAboveMax を）、確かめて誤りなら Check の誤りを返す。
+// 変換の規則は設定ファイル（internal/config の source.convertOption）と同じで、値の検査は :option.set と同じ Check である。
+//
+// req: FR-190
+func (d Def) ParseJSON(raw []byte) (Value, error) {
+	v, err := d.convertJSON(bytes.TrimSpace(raw))
+	if err != nil {
+		return Value{}, err
+	}
+	if err := d.Check(v); err != nil {
+		return Value{}, err
+	}
+	return v, nil
+}
+
+// convertJSON は、JSON の値 raw を項目の型の値に変換する。値の検査はしない（Check）。
+func (d Def) convertJSON(raw []byte) (Value, error) {
+	switch d.Type {
+	case Bool:
+		switch string(raw) {
+		case "true":
+			return BoolValue(true), nil
+		case "false":
+			return BoolValue(false), nil
+		}
+		return Value{}, ErrInvalidBool
+	case Int:
+		n, err := ParseInt(string(raw))
+		if err != nil {
+			return Value{}, err
+		}
+		return IntValue(n), nil
+	case String:
+		if len(raw) == 0 || raw[0] != '"' {
+			return Value{}, ErrStringRequired
+		}
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return Value{}, ErrStringRequired
+		}
+		return StringValue(s), nil
+	}
+	return Value{}, ErrTypeMismatch
+}
+
+// MarshalJSON は、値を型の JSON の値（true か false、整数、文字列）にする（拡張機能 API の option/get。#349）。
+// どの型でもない値（ゼロ値）は null にする。
+func (v Value) MarshalJSON() ([]byte, error) {
+	switch v.typ {
+	case Bool:
+		return []byte(strconv.FormatBool(v.b)), nil
+	case Int:
+		return []byte(strconv.Itoa(v.n)), nil
+	case String:
+		return json.Marshal(v.s)
+	}
+	return []byte("null"), nil
 }
 
 // convert は、文字列 text を項目の型の値に変換する。値の検査はしない（Check）。

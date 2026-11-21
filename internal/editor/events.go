@@ -97,6 +97,10 @@ func (e *Editor) handleEvent(ev exthost.Event) {
 		e.withView(e.extView(ev.Extension), func() { _ = ev.Reply(e.editorList(ev.Params.List)) })
 	case *exthost.EditorExecuteRequest:
 		e.editorExecuteRequest(ev)
+	case *exthost.OptionSetRequest:
+		e.optionSetRequest(ev)
+	case *exthost.OptionGetRequest:
+		e.optionGetRequest(ev)
 	case *exthost.ViewUpdate:
 		e.viewUpdate(ev)
 	case *exthost.ViewClose:
@@ -142,8 +146,14 @@ func messageLevel(l ext.MessageLevel) ui.MessageLevel {
 }
 
 // stateChange は、拡張機能の状態の変化を処理する。異常で終わったら 1 行のメッセージで知らせ、表示のデータを消す（基本設計 8 章、6.7）。
+// 止まった拡張機能が option/set で入れた設定の値も捨てる（clearExtOptions。FR-190、FR-191）。
 func (e *Editor) stateChange(ev *exthost.StateChange) {
 	e.clearProgressLater(ev)
+	switch ev.State {
+	case exthost.StateRestartWait, exthost.StateDisabled, exthost.StateNotStarted:
+		e.clearExtOptions(ev.Extension)
+	case exthost.StateStarting, exthost.StateRunning, exthost.StateStopping:
+	}
 	switch ev.State {
 	case exthost.StateRestartWait, exthost.StateDisabled:
 		e.clearExtension(ev.Extension)

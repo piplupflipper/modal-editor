@@ -41,7 +41,7 @@
 | `vi-imitation-ext-acp` | ACP のクライアント | 不使用 | FR-34 |
 | `vi-imitation-ext-treesitter` | tree-sitter による構文解析 | 使用（glibc に動的にリンクする。9.1） | FR-35、FR-142 |
 | `vi-imitation-ext-script` | yaegi によるスクリプトの拡張機能の実行 | 不使用 | FR-36 |
-| `vi-imitation-ext-formatter` | 外部の整形ツールによる整形（6.10。#339） | 不使用 | FR-175、FR-176 |
+| `vi-imitation-ext-formatter` | 外部の整形ツールによる整形と、整形ツールの設定からのインデント（6.10。#339、#349） | 不使用 | FR-175、FR-176、FR-193 |
 
 利用者が足す拡張機能も、標準の拡張機能と同じ仕組みで起動する。
 
@@ -2003,6 +2003,18 @@ Ex コマンドの確認の問い（逆順の範囲の E493）を出している
 古い本体（0.13.0 まで）は、知らない通知として捨てる（ログに残すだけ）ので、進み具合は出ない。
 名前は、LSP の `$/progress` に近づけず、ほかの拡張機能から本体への通知（`statusline/set`、`message/show`）と同じく `<対象>/<動詞>` の形にした。
 
+#349 で、次を足した（拡張機能 API の版は 0.15.0。7.3 の「拡張機能から変えた値」）。
+
+| 向き | メソッド（仮） | 種類 | 内容 | 関係する要件 |
+|---|---|---|---|---|
+| 拡張機能 → 本体 | `option/set` | リクエスト | 設定の項目の値を変える（`ext.OptionSetParams`）。`buffer` を書けばそのバッファの範囲がバッファごとの項目を、省けば範囲がエディタ全体の項目を変える。`options` は正規の名前から項目の型の JSON の値への対応で、`null` は取り下げる。省ける `fileType` は、値を決めたファイルの種類で、ファイルの種類が変わった後の最初の値なら `:set` の値を隠す（7.3）。表に無い名前、`filetype`、範囲の合わない項目、型の違う値、範囲の外の値は、どの値も入れずに `CodeInvalidParams` の誤りで応答する | FR-190、FR-191 |
+| 拡張機能 → 本体 | `option/get` | リクエスト | 設定の項目の今の値を読む（`ext.OptionGetParams`。`buffer`、`names`）。result の `values` は正規の名前から JSON の値への対応 | FR-192 |
+
+古い本体（0.14.0 まで）は、どちらにも method not found で応答する。
+リクエストにしたのは、名前と値の誤りを拡張機能へ返すためである（`:option.set` と同じ検査を通す。issue の指示）。
+ほかの拡張機能から本体へのリクエストと同じく、本体が拡張機能の応答を待っている間は取っておき、待ちが終わってから処理する（この節の上の「待ち」の段落）。
+`ext/server` の口は `Server.SetOptions` と `Server.GetOptions` で、`Edit` と同じく、ハンドラーの上から呼ぶと `ErrEditInHandler` を返す。
+
 `popup/open` の params は、部品（`component`。`kind`、`title`、`text`、`format`、`highlights`、`items`）、置き場所（`placement`。`cursor` か `center`）、カーソルの近くの窓に開いた時点でフォーカスを入れるか（`focus`）である。
 部品の検査（種類、項目の ID の空と重複、改行、範囲）に通らない `popup/open` は、JSON-RPC の誤りで断る。通らない `view/update` は捨てる。
 `view/update` と `view/close` は、閉じた後や知らない ID なら黙って捨てる（`view/closed` と行き違うため）。
@@ -2192,7 +2204,7 @@ Go が無ければ、その旨をメッセージに出して止める。
 | DAP | ブレークポイントの切り替え、デバッグの開始と終了、続行とステップ実行、停止位置の表示、デバッグ対象の出力の表示 | バッファの同期、`command/execute`、`message/show` | `buffer/didSave`、`sign/set`、`editor/open`、`output/append` | 6.4 |
 | ACP | エージェントの起動、プロンプトの送信、返答の表示、権限の確認、エディタの内容を通したファイルの読み書き | バッファの同期、`command/execute`、`buffer/edit`、`message/show` | `editor/open`、`buffer/save`、`output/append`、`choice/ask` | 6.5 |
 | スクリプト | スクリプトの拡張機能が、モーション、テキストオブジェクト、オペレーター、コマンドを追加する | 5.3 の既存のメソッドすべて | 無し。宣言ファイルに項目を足す | 6.6 |
-| 整形ツール | 外部の整形ツールによる、保存の前の整形と、本体の操作 `format`（#339） | バッファの同期、`buffer/willSave`、`provider/invoke`、`buffer/edit`、`message/show` | 無し | 6.10 |
+| 整形ツール | 外部の整形ツールによる、保存の前の整形と、本体の操作 `format`（#339）。整形ツールの設定からのインデント（#349） | バッファの同期、`buffer/willSave`、`buffer/didSave`、`provider/invoke`、`buffer/edit`、`message/show`、`option/set` | 無し | 6.10 |
 
 表の「バッファの同期」は、`buffer/open`、`buffer/change`、`buffer/close`、`buffer/resync` の 4 つを指す。
 拡張機能の側で始める処理（言語サーバーへの問い合わせなど）は、キー入力ごとの問い合わせの期限（5.4）より長くかかることがある。
@@ -3808,9 +3820,27 @@ ruff の `--range` や clang-format の `--offset` のように範囲を受け�
 同じ操作を複数の拡張機能が名乗ったときの選び方は 10 章の未決の項目で、整形のためだけの選び方を先に作ると、その決定を縛るためである。
 今ある 2 つの設定（`formatters` の `fileTypes` と、言語サーバーの `formatOnSave`）で、オーナーの nvim と同じ動きを選べる。
 
+#### 整形ツールの設定からのインデント
+
+#349 で、整形ツールの設定ファイルからインデントの幅とタブかスペースかを読み、`option/set`（5.3。7.3 の「拡張機能から変えた値」）で本体のバッファの設定に渡すようにした（`cmd/vi-imitation-ext-formatter` の `indent.go`、`indentsync.go`、`confread.go`。FR-193。#317 の索引の「インデント」の 5 段目）。
+本体はその値を `.editorconfig` の後の段に入れるので、整形ツールの設定は `.editorconfig` に勝ち、利用者の `:set` に負ける。
+どれも仮である。
+
+| 項目 | 決めたこと |
+|---|---|
+| 読む整形ツール | バッファのファイルの種類に設定した整形ツール（`formatters` の `fileTypes`）のうち、`biome`、`prettier`（`prettierd` を含む）、`ruff` のものだけである。どの整形ツールかは、名前（`name`。省けば `command` のファイル名）、`command` のファイル名、`command` が `npx`、`pnpx`、`bunx`、`uvx`、`pnpm`、`yarn`、`bun`、`uv`、`pipx` なら `args` の最初の整形ツールの名前（`dlx`、`exec`、`x`、`run`、`tool` と `-` で始まる引数を除く。`prettier@3.6.2` の版と `@biomejs/biome` の scope を除く）の順に見て決める（`toolKind`。PR #352 のレビューの推奨 8）。これでも分からない起動の仕方では、`name` に整形ツールの名前を書く。使わない整形ツールの設定でインデントが変わらないように、全部は読まない。1 つのファイルの種類に複数あれば設定の順に読み、後の整形ツールの値を重ねる（後の整形ツールの出力が最後に残る） |
+| biome | ファイルのディレクトリから上へ、各ディレクトリで `biome.json`、`biome.jsonc`、`.biome.json`、`.biome.jsonc` の順に探し、最初に見つけた近い設定を使う（注釈と末尾のカンマを許す。`hujson`）。`formatter.indentStyle`（`tab` か `space`）と `formatter.indentWidth` を読み、ファイルの種類の言語の `<言語>.formatter`（`javascript`、`json`、`css`、`graphql`、`html`）を重ねる。重ね方は biome に合わせた（`biomeLayer`）。重ねる設定（`extends` の先と近い設定）は、トップと言語ごとに分けて後のものが前を上書きするように重ね、重ねた後で言語ごとの値をトップの値より強くする。根の `javascript.formatter` のスペース 3 は、`"extends": "//"` の近い設定のトップのタブに勝つ（PR #352 の 3 回目のレビューの必須）。その上に、ファイルに当たる `overrides` を順に重ねる（後のものが勝つ。1 つの `overrides` の中では言語ごとの値がトップの値より強い。言語ごとのスペース 3 の上に `overrides` のトップのタブを重ねるとタブになる）。`includes` が `*SUF` と `**/*SUF` の形のもの（`SUF` に `*`、`?`、`[`、`{`、`/` を含まない）だけを、設定ファイルのディレクトリからの相対パスに当てる。`*SUF` はそのディレクトリの直下のファイルにだけ当たる。当たらないと分かる `overrides` は読み飛ばし、当たるかを決められない `overrides` でインデントを変えているものは、読めない設定ファイルとして扱う。近い設定が `"extends": "//"` なら、その上へ探した根の設定（`"root": false` でない設定）を先に当て、近い設定を重ねる。近い設定と根の設定の間に別の `"root": false` の設定がある 3 段の入れ子は、biome の決め方を確かめていないので読めない設定ファイルとして扱う（biome はその間の設定を使うように見える。PR #352 の再レビューの推奨 3）。`extends` の配列は、相対パスか絶対パスの `.json` と `.jsonc` を書いた順に先に当てる（空の配列は `extends` が無いのと同じ）。共有の設定（パッケージの名前）の `extends`、`extends` の先の `extends`、`extends` の先と根の設定の `overrides` でインデントを変えているものは、読めない設定ファイルとして扱う。`extends` の無い近い設定は、`"root": false` でも上の設定を引き継がない。2026-11-22 に biome 2.4.15 の `format --stdin-file-path=<絶対パス>`（同梱の設定の例と同じ渡し方）で、この探す順、引き継ぎ方、`overrides` の当て方、Git の根より上の設定も使うことを確かめた（PR #352 のレビューの推奨 1、2 と、再レビューの推奨 2、4） |
+| prettier | 各ディレクトリで、`package.json` の `prettier`、`package.yaml`、`.prettierrc`、`.prettierrc.json`、`.prettierrc.yaml`、`.prettierrc.yml`、`.prettierrc.json5`、JavaScript と TypeScript の設定（`.prettierrc.js` から `prettier.config.cts` まで）、`.prettierrc.toml` の順に探し、最初に見つけた 1 つだけを使う。2026-11-22 に prettier 3.6.2 の `--find-config-path` でこの順を確かめた（TypeScript の形は手元の node で読めないので確かめていない。PR #352 のレビューの推奨 6）。`package.json` は `prettier` の鍵があるときだけ当たる。`useTabs` と `tabWidth` を読む。`.prettierrc`、`.prettierrc.yaml`、`.prettierrc.yml` は、JSON として読めればそう読み、読めなければ YAML（ブロックの形か、`{ useTabs: true }` のような流れの形）として読む（prettier はこれらを YAML として読む。PR #352 のレビューの推奨 5）。YAML の値の前のアンカー（`tabWidth: &w 4`）は除いて読む。JSON の形の `overrides` は、`files` と `excludeFiles` の中かっこ（`*.{js,jsx}`）を展開した後で、biome と同じ形のパターンのものだけを当て（PR #352 の 3 回目のレビューの推奨）、ファイルに当たるもののインデントを順に重ねる。`*SUF` は深さを問わずにファイル名に当てる（prettier は `/` を含まないパターンをファイル名に当てる。2026-11-22 に prettier 3.6.2 で確かめた）。YAML と TOML の形の `overrides` は中を読めないので、本文が最上位のほかに `useTabs` か `tabWidth` の鍵を含むときだけ読めない設定ファイルとして扱う（インデントを変えない `overrides` は読み飛ばす。PR #352 の再レビューの推奨 2）。JavaScript、TypeScript、JSON5、`package.yaml` の形、`package.json` の `prettier` が文字列（共有の設定の名前）のとき、当たるかを決められない `overrides` でインデントを変えているものは、読めない設定ファイルとして扱う（上の設定も探さない。prettier はその設定を使うため） |
+| ruff | 各ディレクトリで `.ruff.toml`、`ruff.toml`、`pyproject.toml` の順に探し、最初に見つけた 1 つだけを使う。`pyproject.toml` は `[tool.ruff]` の表（鍵の無い見出しだけでもよい）があるときだけ当たる。`indent-width` と `format.indent-style`（`space` か `tab`。`pyproject.toml` では `tool.ruff` の下）を読む。`extend` は、その設定ファイル（相対パスは `extend` を書いた設定ファイルのディレクトリから。`~/` はホームのディレクトリ）を先に当て、`extend` を書いた設定を重ねる。`extend` の先の `extend` も 8 段までたどる。`extend` の先の `pyproject.toml` に `[tool.ruff]` が無ければ、何も引き継がない（PR #352 の再レビューの推奨 2）。2026-11-22 に ruff 0.15.16 の `check --show-settings` で、この順と、`[tool.ruff]` の無い `pyproject.toml` を飛ばすこと、鍵の無い `[tool.ruff]` の `pyproject.toml` を使うこと（PR #352 のレビューの推奨 3）、Git の根より上の設定も使うこと、`extend` の引き継ぎ方を確かめた |
+| 探す範囲 | どれもファイルシステムの根まで探し、Git の根で止めない（実行ファイルの探し方の `findUp` と違う。整形ツールがそう探すため） |
+| 写し方 | `.editorconfig` の写し方（7.3）と同じにした。タブなら `indent.useSpaces` を false にし、幅が無ければ `indent.width` を 0（`tab.width` に従う）にする。スペースなら true にする。幅は `indent.width` と `tab.width` の両方にする（biome の `indentWidth`、prettier の `tabWidth`、ruff の `indent-width` は、どれもタブ文字の幅にも使われる）。書いていない項目は `null` で取り下げる。整形ツールの既定値（biome のタブ、ruff の幅 4）は渡さない（設定ファイルに書いた値だけを渡す） |
+| 読む時点 | `buffer/open` を受けたとき（開いたとき、別名で保存したとき、ファイルの種類が変わったとき。本体が送り直す）と、`buffer/didSave` を受けたときである。保存したファイルが整形ツールの設定ファイルの名前なら開いているすべてのバッファを、そうでなければそのバッファだけを読み直す。設定ファイルの変更を見張る仕組みは無いので、エディタの外で設定ファイルを変えたときは、そのバッファを保存すると効く |
+| 送り方 | 本体へのリクエストはハンドラーの上で送れない（2.2 の規約）ので、1 つの goroutine がバッファごとに順に送る。値を決めたファイルの種類を `fileType` に付けて送る（本体は、ファイルの種類が変わった後の最初の値で `:set` の値を隠す。7.3 の「拡張機能から変えた値」）。前に送った値とファイルの種類が同じなら送らない（ファイルの種類だけが変わったときは、新しい種類の値として送り直す）。ただし、前の `buffer/open` からファイルの種類が変わったバッファ（`indentSync.retyped`）には、値も種類も前に送ったものと同じでも送る。A→B→A と続けて変わった 2 つの `buffer/open` を 1 回の読み直しにまとめたとき、送らないと本体が `:set` の値を隠さない（PR #352 の再レビューの必須 1。前は 30 回中 14 回隠さなかった）。値を送ったことの無いバッファで、どの項目も書いていなければ送らない |
+| 読めない設定ファイル | 壊れた JSON、TOML、YAML、型や範囲の合わない値（幅は 1 から 9999 の整数、スタイルは決まった 2 つの語）と、小さな読み手で扱えない書き方（上の各行の「読めない設定ファイルとして扱う」もの）は、パスと理由を `message/show` の警告で知らせる。同じファイルの同じ誤りは 1 回だけ知らせる。整形ツールと食い違う値を送らないために、値は送らない。前に送った値をその設定ファイルから読んだなら、前の値を保つ（本体の設定を変えない）。そうでなければ（ファイルの種類が変わって別の整形ツールの設定を読むようになったなど）、前の値を `null` で取り下げる（別の整形ツールの値を残さない。PR #352 のレビューの推奨 7） |
+| TOML と YAML | 外部のライブラリは足さず、要る項目だけを読む小さな読み手を書いた（`confread.go`）。TOML は表の見出し（鍵の無い見出しも印として残す）、鍵（点で区切った鍵と引用した鍵）、文字列（TOML 1.1 の `\e` と `\xHH` を含む）、整数、真偽、インラインの表（TOML 1.1 の複数行と閉じる前のカンマを含む。ruff 0.15.16 が受け付ける。PR #352 のレビューの推奨 4）を読み、配列（複数行を含む）、複数行の文字列、浮動小数点数、日時は読み飛ばす。YAML は最上位の「鍵: 値」と、文書全体が流れの形のマッピング（`{ k: v, ... }`）のものを読み、字下げした行は読み飛ばす。どちらも、どの書き方にも当たらない行は誤りにする（黙って読み飛ばさない） |
+
 #### この上に載るもの
 
-- 整形ツールの設定（`biome.json`、`.prettierrc`、`pyproject.toml` の ruff）からインデントの幅とタブかスペースかを読み、本体のバッファの設定（7.3）に渡す機能（#317 の索引の「インデント」の 5 段目）。拡張機能から設定を変える口（`option/set` など）を本体に足したうえで、この拡張機能に載せる見込みである。ファイルのディレクトリから上へ設定ファイルを探す処理は、`findUp` を使える
 - 進み具合の知らせ（#317 の第 2 弾。#340 で `progress/report` を足した。6.7 の「進み具合の表示」）。整形に時間がかかったときの表示に使う見込みである
 
 ## 7. 設定
@@ -4417,6 +4447,7 @@ Vim 9.1 も、`autoread` で読み直したときは `'filetype'` を残す（20
 | 3 | 本体のファイルの種類ごとの既定 | `option.FileTypeDefaults`。`go` と `make` は `indent.useSpaces` を `false`、`indent.width` を 0 にする。#327 で、判定できる種類と `lua` の `comment.string` を足した（Vim 9.1 と Neovim 0.12.5 の ftplugin から写した。値が違う `c` は Neovim の `// %s`。`json` は ftplugin と同じく空） |
 | 4 | 設定ファイルのファイルの種類ごとの値 | `config.Config.FileTypeOptions`（`"fileTypeOptions": { "go": { "tab": { "width": 4 } } }`） |
 | 5 | 開いたファイルに当たる `.editorconfig` の値 | `internal/editorconfig` で読み、`internal/editor` の `editorConfigOptions` で写す |
+| 6 | 拡張機能が `option/set` で入れた値（#349。FR-190） | `bufferState.extOptions`。下の「拡張機能から変えた値」 |
 
 オーナーの決めの順（本体の既定、設定ファイルの値、設定ファイルのファイルの種類ごとの値、`.editorconfig`、プロジェクトの整形ツールの設定）に、本体のファイルの種類ごとの既定を足した。
 本体のファイルの種類ごとの既定は、Vim 9.1 と Neovim 0.12.5 の runtime の `ftplugin/make.vim` と `ftplugin/go.vim` が、どちらも `setlocal noexpandtab softtabstop=0 shiftwidth=0` とすることから持つことにした（2026-11-21 に読んだ。Makefile のレシピはタブ文字で始め、Go は gofmt がタブ文字で字下げする）。
@@ -4466,13 +4497,31 @@ Neovim は、`indent_size` を書くと `'softtabstop'` を `-1`（`'shiftwidth'
 読むときは、`options` に値があればそれを、無ければ `layered` の値を使う（`bufferState.option`。`option.Values.Lookup` で値を入れたかを見分ける）。
 このため、段の値を後から作り直しても、利用者が変えた値はどの段の値よりも勝つ。
 
-拡張機能から設定を変える口（`option/set`）と、プロジェクトの整形ツールの設定（`biome.json`、`.prettierrc`、`pyproject.toml` の ruff）を読む拡張機能（#318 の決めの 5）は、別の issue で作る。
-その口は、`optionLayers` の `.editorconfig` の後に段を 1 つ足し（段はバッファの拡張機能の値を返す）、値が届いたら `refreshOptionLayers` を呼ぶ。
-ほかの箇所は直さなくてよい。
-このとき、利用者の `:set sw=2` の後に拡張機能の値（`indent.width` 4）が届いても、`:set` の値が勝つ。
-範囲がバッファごとの項目を `:set` で変えるたびに `notifyBufferAttrs` が拡張機能へ `buffer/open` を送り直すが、その送り直しから設定の値を変える経路は無く、
+#318 の時点で、拡張機能から設定を変える口の形を、`optionLayers` の `.editorconfig` の後に段を 1 つ足し、値が届いたら `refreshOptionLayers` を呼ぶものと決めておいた。
+利用者の `:set sw=2` の後に拡張機能の値（`indent.width` 4）が届いても、`:set` の値が勝つ。
+範囲がバッファごとの項目を `:set` で変えるたびに `notifyBufferAttrs` が拡張機能へ `buffer/open` を送り直すが、
 拡張機能が `buffer/open` を受けて値を送り直しても、値は段に入るので `:set` の値を上書きしない。
 これを、`Editor.layers` の末尾に段を足しただけで確かめるテスト（`internal/editor` の `TestOptionLayerAddedLater`）で確かめた。開いたとき、`:set` の後、段の値が後から届いたとき、`:set filetype=` の後、名前を付けたときの値を比べる。
+#349 で、この形のとおりに段 6 を足した（次の「拡張機能から変えた値」）。
+
+##### 拡張機能から変えた値
+
+#349 で、拡張機能が `option/set`（5.3）で設定の項目の値を変える口と、`option/get` で今の値を読む口を作った（`internal/editor` の `options.go`。FR-190〜FR-192）。
+issue が実装者に任せた点は、次のとおりに決めた（どれも仮）。
+
+| 点 | 決めたこと | 理由 |
+|---|---|---|
+| 拡張機能ごとに段を分けるか | 値は拡張機能の ID ごとに分けて持ち（`bufferState.extOptions`、`Editor.extOptions`）、段 6 は 1 つにまとめる。同じ項目に複数の拡張機能が値を入れたら、宣言ファイルを先に読んだ拡張機能（`exthost.Host.Rank` の小さいもの）の値を使う | 届いた順で勝ち負けを決めると、拡張機能の起動の速さで値が変わる。宣言ファイルを読んだ順は、本体の操作の提供者の選び方（5.5）と同じ順で、利用者の拡張機能のディレクトリに置いた拡張機能が同梱のものより勝つ。分けて持つので、止まった拡張機能の値だけを外せる |
+| 値の渡し方 | `options` に書いた項目だけを変え、書かなかった項目は前の値のままにする。`null` で取り下げる | 1 つの項目だけを変えたいスクリプトと、持つ項目をまとめて送り直す整形ツールの拡張機能（取り下げる項目を `null` で送る）の両方に使える |
+| 誤り | 名前と値をすべて確かめてから入れ、1 つでも誤りがあればどの値も入れない。表に無い名前、`filetype`（`option.Def.Detected`）、範囲の合わない項目（`buffer` を書いたときのエディタ全体の項目と、省いたときのバッファごとの項目）、型の違う値（`option.Def.ParseJSON`）、範囲の外の値（`option.Def.Check`）を断る | 一部だけを入れると、拡張機能が本体の値を知らないまま食い違う。値の検査は `:option.set` と同じ `Check` を通す（FR-131） |
+| ファイルの種類が変わったとき | 拡張機能の値は捨てない。ファイルの種類が変わった後に、各拡張機能がそのバッファへ送る最初の `option/set` のうち、`fileType`（値を決めたファイルの種類）が今のファイルの種類と同じものは、本体のファイルの種類ごとの段と同じく、値を書いた項目の `:set` の値を隠す（`bufferState.masked` と同じ読み方の `extMaskState`）。ファイルの種類の変更と関係なく届いた値（2 つ目からの `option/set`。設定ファイルを保存した、など）、種類の合わない値、`fileType` の無い値、バッファを開いたとき（と `:e`）の値は隠さない。変わった後、値が届く前に利用者が `:set` で変えた項目も隠さない。隠した項目も、後で `:set` で変えればその値を使う。隠させた拡張機能が値を取り下げるか止まったら、隠すのをやめる。止まった拡張機能の最初の値を受け取った印も消すので、起動し直した拡張機能が送る最初の値（種類が今と同じもの）で隠し直し、止まる前と後で勝ち負けが変わらない（PR #352 の再レビューの推奨 1）。`fileType` が今の種類と違う値（種類が変わる前に決めた、遅れて届いた値）は、成功で応答して捨て、段に入れない（同じく推奨 4。送り直さない拡張機能で前の種類の値が残らないように）。隠させたい拡張機能は、前と種類の違う `buffer/open` を受けるたびに、値が同じでも送る（A→B→A と続けて変わったとき、本体は A に戻った後の最初の値を待つ。同じく必須 1） | PR #352 のレビューの推奨 9（裁定要）へのオーケストレータの決め（2026-11-22）。issue の「`masked` の規則」のとおりで、Neovim の ftplugin が `:set` の値を上書きするのと同じ考え方である。第 3 弾の拡張機能（言語ごとに `comment.string` を入れるなど）を ftplugin に当たるものとして使えるようにする。拡張機能は `buffer/open` を受けてから非同期に値を送るので、`changeFileTypeOptions` の時点では新しい種類の値がまだ無く、届いたときに隠す。`fileType` で、変わる前の種類の遅れた値を見分ける |
+| `:e` で開き直したとき | 拡張機能の値は捨てない | `:e` の後に本体は、ファイルの種類が変わらなければ `buffer/open` を送り直さない（`notifyBufferAttrs` は属性が変わったときだけ送る）ので、捨てると拡張機能に送り直す契機が無い |
+| エディタ全体の項目 | 拡張機能から変えられる。拡張機能の値は設定ファイルの値に勝ち、利用者が `:option.set` と `:set` で変えた項目（`Editor.userOptions`）には当てない（`applyEditorOption`） | オーナーの方針「設定できるものは、すべて API から呼べるようにする」。勝ち負けは、バッファごとの項目の段（設定ファイル < 拡張機能 < `:set`）と同じ順にした。エディタ全体の項目には段が無いので、拡張機能の値は `Editor.options` に写し、使う側（描画など）の読み方は変えない |
+| 拡張機能が止まったとき | 異常で終わった（再起動の待ち）、無効になった、`:ext sync` で止めた（未起動へ戻った）ときに、その拡張機能の値をすべて取り下げる（`clearExtOptions`）。バッファごとの項目は段を作り直し、エディタ全体の項目はほかの拡張機能の値か設定ファイルの値に戻す | 表示のデータ（色、診断、印、部品の中身、進み具合）と同じ扱い（6.7）。起動し直した拡張機能は、全文の `buffer/open` を受けて値を送り直せる |
+| 今の値を読む口 | `option/get` を足す。`editor/state` には足さない | `editor/state` は編集の状態の問い合わせで、MCP の拡張機能が全項目を毎回受け取ることになる。`option/get` は、名前を並べるか、範囲のすべての項目を読む。返すのは本体が使う値（`:set` の値、拡張機能の値、段の値を重ねたもの）である |
+| バッファの属性の知らせ直し | `option/set` では `notifyBufferAttrs` を呼ばない | 拡張機能は `filetype` を変えられず、パスとファイルの種類が変わらないので、送り直すものが無い。送り直すと、`buffer/open` を受けて値を送る拡張機能と行き来になる |
+
+`:verbose set` に当たる、どの段から値が来たかを見る手段は、本体にまだ無い（#349 の issue の「あれば」）。
 
 #### `:option.set`、`:option.get`、`:option.toggle`
 

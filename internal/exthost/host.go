@@ -396,6 +396,19 @@ func (h *Host) State(id string) (st State, ok bool) {
 	return e.state, true
 }
 
+// Rank は、拡張機能 id の宣言ファイルを読んだ順（[New] に渡した specs の順。0 から数える）を返す。ID が無ければ -1 を返す。
+// 複数の拡張機能が同じものを申し出たときの勝ち負けを、[Host.Provider] と同じ順で決めるのに使う（option/set。#349）。
+func (h *Host) Rank(id string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, e := range h.order {
+		if e.spec.Manifest.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
 // Provider は、本体の操作 op を、ファイルの種類 fileType のバッファで引き受ける拡張機能（提供者）の ID を返す（基本設計 5.5。FR-94）。
 // 選び方は [ext.Manifest] の Provides の doc のとおりで、op を provides で名乗り、fileType の候補になる
 // （[ext.Manifest.HandlesFileType]）拡張機能のうち、未起動か起動中か稼働中のものを、specs の順に探して最初のものを返す。
