@@ -500,6 +500,8 @@ type bufferState struct {
 	// extOptions は、拡張機能が option/set で入れた範囲がバッファごとの項目の値を、拡張機能の ID ごとに持つ（options.go。FR-190）。
 	// 初めの値の段の最後の段が読む。:e で開き直しても、ファイルの種類が変わっても捨てず、拡張機能が止まったら捨てる。
 	extOptions map[string]map[string]option.Value
+	// extMask は、ファイルの種類が変わった後に拡張機能が送った値で :set の値を隠すための状態である（options.go。FR-190）。
+	extMask extMaskState
 	// title は、ファイルでないバッファ（:help のヘルプ、キーの一覧。help.go）の名前である。タブの行、ステータス行、:ls に
 	// path の代わりに出す。ファイルのバッファと、名前の無いバッファ（[No Name]）では空である。
 	title string

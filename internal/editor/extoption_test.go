@@ -17,6 +17,7 @@ import (
 //
 //   - op.set: 引数は "<バッファ> <options の JSON>"。バッファが cur ならカーソルのあるバッファ、0 ならエディタ全体の項目を変える。
 //     結果を message/show で "set ok" か "set err=<誤り>" と出す
+//   - op.setft: 引数は "<バッファ> <ファイルの種類> <options の JSON>"。op.set と同じで、FileType を付けて送る
 //   - op.get: 引数は "<バッファ> <名前>..."。結果を "get <values の JSON>" か "get err=<誤り>" と出す
 //   - op.crash: 拡張機能を異常で終わらせる
 const optionScript = `package main
@@ -53,6 +54,20 @@ func main() {
 		_ = json.Unmarshal([]byte(rest), &opts)
 		go func() {
 			if err := s.SetOptions(ctx, ext.OptionSetParams{Buffer: buf, Options: opts}); err != nil {
+				_ = s.ShowMessage(ext.MessageInfo, "set err="+err.Error())
+				return
+			}
+			_ = s.ShowMessage(ext.MessageInfo, "set ok")
+		}()
+		return ext.CommandExecuteResult{OK: true}, nil
+	})
+	s.Command("op.setft", func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (ext.CommandExecuteResult, error) {
+		buf, rest := arg(p)
+		ft, rest, _ := strings.Cut(rest, " ")
+		var opts map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(rest), &opts)
+		go func() {
+			if err := s.SetOptions(ctx, ext.OptionSetParams{Buffer: buf, Options: opts, FileType: ft}); err != nil {
 				_ = s.ShowMessage(ext.MessageInfo, "set err="+err.Error())
 				return
 			}
@@ -106,8 +121,8 @@ func buildOptionScript(t *testing.T) exthost.Spec {
 	act := func(id string) ext.Activation { return ext.Activation{On: ext.ActivationCommand, ID: id} }
 	m := ext.Manifest{
 		ID: "op", Command: "./vi-imitation-ext-script", Args: []string{"op.go"},
-		Activation:  []ext.Activation{act("op.set"), act("op.get"), act("op.crash")},
-		Contributes: ext.Contributes{Commands: []ext.Contribution{{ID: "op.set"}, {ID: "op.get"}, {ID: "op.crash"}}},
+		Activation:  []ext.Activation{act("op.set"), act("op.setft"), act("op.get"), act("op.crash")},
+		Contributes: ext.Contributes{Commands: []ext.Contribution{{ID: "op.set"}, {ID: "op.setft"}, {ID: "op.get"}, {ID: "op.crash"}}},
 	}
 	if _, err := ext.ValidateManifests([]ext.Manifest{m}); err != nil {
 		t.Fatal(err)
@@ -209,6 +224,61 @@ func TestExtensionOptionSet(t *testing.T) {
 			t.Error("取り下げた後に :set nowrap の値が変わった")
 		}
 	})
+}
+
+// ファイルの種類が変わった後に、拡張機能が新しい種類の値として（FileType を付けて）送った最初の値は、本体のファイルの種類ごとの段と
+// 同じく、その値を持つ項目の :set の値を隠す（PR #352 のレビューの推奨 9 へのオーケストレータの決め）。
+// 2 つ目からの値（設定ファイルを保存した、など）、種類の合わない値、FileType の無い値、開いたときの値は隠さない。
+// 変わった後、値が届く前に :set で変えた項目も隠さない。隠した項目も、後で :set で変えればその値を使う。
+//
+// req: FR-190
+func TestExtensionOptionMask(t *testing.T) {
+	spec := buildOptionScript(t)
+	dir := writeFiles(t, map[string]string{"a.txt": "x\n"})
+	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, "a.txt")
+	h.settle()
+	run := func(cmd string) {
+		t.Helper()
+		h.settle()
+		h.e.do(func() { h.e.message.Text = "" })
+		h.keys(":" + cmd + "<CR>")
+		h.eventually(cmd+" の結果", func() bool { return strings.Contains(h.e.message.Text, "set ok") })
+	}
+	indent := func(what, want string) {
+		t.Helper()
+		h.settle()
+		h.e.do(func() {
+			if got := indentValues(h.e.cur); got != want {
+				t.Errorf("%s: %s, want %s", what, got, want)
+			}
+		})
+	}
+	h.keys(":set sw=3 et ts=5<CR>")
+	run(`op.setft cur text {"indent.width":2}`)
+	indent("開いたときの値は隠さない", "true 3 5")
+
+	h.keys(":set filetype=python<CR>")
+	indent(":set filetype=python の直後", "true 3 5")
+	run(`op.setft cur python {"indent.width":2,"tab.width":2}`)
+	indent("種類が変わった後の最初の値は :set の値を隠す", "true 2 2")
+	run(`op.setft cur python {"indent.useSpaces":false,"indent.width":4}`)
+	indent("2 つ目の値は新たに隠さない（隠した項目は新しい値になる）", "true 4 2")
+	h.keys(":set sw=7<CR>")
+	indent("隠した項目も :set で変えればその値", "true 7 2")
+
+	h.keys(":set filetype=go<CR>")
+	run(`op.setft cur python {"tab.width":3}`)
+	indent("種類の合わない値は隠さない（go の本体の既定は useSpaces と width を隠す）", "false 4 5")
+	run(`op.setft cur go {"tab.width":3}`)
+	indent("合う種類の最初の値は隠す", "false 4 3")
+
+	h.keys(":set filetype=c<CR>:set ts=9<CR>")
+	run(`op.setft cur c {"tab.width":2}`)
+	indent("変わった後に :set で変えた項目は隠さない", "true 7 9")
+
+	h.keys(":set filetype=lua<CR>")
+	run(`op.set cur {"tab.width":2}`)
+	indent("FileType の無い値は隠さない", "true 7 9")
 }
 
 // 複数の拡張機能が同じ項目に値を入れたら、宣言ファイルを先に読んだ拡張機能の値が勝つ。届いた順には依らない。

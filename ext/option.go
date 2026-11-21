@@ -21,6 +21,7 @@ import (
 // （本体の操作の提供者の選び方と同じ順。基本設計 5.5）。後から届いた順にしないのは、拡張機能の起動の速さで値が変わらないようにするためである。
 // 値は Options に書いた項目だけを変え（書かなかった項目は前に入れた値のまま）、null で取り下げる。
 // ファイルの種類が変わっても、本体は値を捨てない（buffer/open を新しいファイルの種類で送り直すので、拡張機能が送り直す）。
+// 送り直した値に、その種類を OptionSetParams.FileType で付けると、本体のファイルの種類ごとの段と同じく :set の値を隠す。
 //
 // # エディタ全体の項目
 //
@@ -48,6 +49,12 @@ type OptionSetParams struct {
 	Buffer BufferID `json:"buffer,omitempty"`
 	// Options は、項目の正規の名前から値への対応である。値は項目の型の JSON の値か、取り下げる null である。空にできない。
 	Options map[string]json.RawMessage `json:"options"`
+	// FileType は、バッファごとの項目の値を、どのファイルの種類のバッファ（buffer/open の fileType）として決めたかである。省ける。
+	// バッファのファイルの種類が変わった（:set filetype=、種類の決まる名前での保存）後に、この拡張機能がそのバッファへ送る最初の
+	// option/set で、FileType が今のファイルの種類と同じなら、本体は Options に値を書いた項目の :set の値を隠し、この値を使う
+	// （本体のファイルの種類ごとの段と同じ。Neovim の ftplugin が :set の値を上書きするのと同じ考え方。PR #352 のレビューの推奨 9）。
+	// ファイルの種類の変更と関係なく送った値（設定ファイルが変わったなど）と、FileType を省いた値は、:set の値を隠さない。
+	FileType string `json:"fileType,omitempty"`
 }
 
 // Validate は、option/set の params の形を確かめる。項目の名前と値は、本体が設定の表で確かめる。

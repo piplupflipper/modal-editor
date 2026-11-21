@@ -80,6 +80,7 @@ func (o optionAccess) Set(d option.Def, v option.Value) error {
 	}
 	if d.Scope == option.ScopeBuffer {
 		delete(o.bs.masked, d.Name)
+		o.bs.extMask.userSet(d.Name)
 		if o.bs.fileType() != o.bs.layeredType {
 			o.e.changeFileTypeOptions(o.bs)
 		}
@@ -110,7 +111,7 @@ func (e *Editor) notifyBufferAttrs(bs *bufferState) {
 // 当てた値（layered）を返す。
 // ファイルの種類が変わって、新しい種類の段が値を持つ項目（masked）は、利用者が変えた値を隠し、段の値を返す。
 func (bs *bufferState) option(name string) option.Value {
-	if v, ok := bs.options.Lookup(name); ok && !bs.masked[name] {
+	if v, ok := bs.options.Lookup(name); ok && !bs.masked[name] && bs.extMask.names[name] == "" {
 		return v
 	}
 	return bs.layered.Get(name)
@@ -174,6 +175,8 @@ func (e *Editor) renameBufferOptions(bs *bufferState) {
 func (e *Editor) changeFileTypeOptions(bs *bufferState) {
 	e.refreshOptionLayers(bs)
 	bs.masked = nil
+	// 拡張機能の段は、新しい種類の値が後から届く（buffer/open を受けてから送る）ので、届いたときに隠す（extMaskState）。
+	bs.extMask = extMaskState{fileType: bs.fileType()}
 	for _, layer := range e.layers {
 		if !layer.perType {
 			continue
@@ -209,6 +212,7 @@ func (e *Editor) applyOptionLayers(bs *bufferState) {
 	}
 	bs.options = kept
 	bs.masked = nil
+	bs.extMask = extMaskState{}
 	e.refreshOptionLayers(bs)
 }
 
@@ -248,8 +252,8 @@ type optionLayer struct {
 //  2. 本体のファイルの種類ごとの既定（option.FileTypeDefaults）
 //  3. 設定ファイルのファイルの種類ごとの値（Config.FileTypeOptions）
 //  4. .editorconfig の値（editorConfigOptions）
-//  5. 拡張機能が option/set で入れた値（extLayerValues。FR-190）。ファイルの種類ごとの段ではない（拡張機能は、ファイルの種類が
-//     変わると buffer/open を受けて値を送り直す）ので、ファイルの種類が変わっても :set の値を隠さない
+//  5. 拡張機能が option/set で入れた値（extLayerValues。FR-190）。値は拡張機能が後から送るので perType にはせず、ファイルの種類が
+//     変わった後に届いた最初の値で、その値を持つ項目の :set の値を隠す（extMaskState）
 func optionLayers() []optionLayer {
 	return []optionLayer{
 		{values: func(e *Editor, _ *bufferState) map[string]option.Value { return e.cfg.Options }},
@@ -337,6 +341,7 @@ func (e *Editor) optionSetRequest(ev *exthost.OptionSetRequest) {
 	}
 	if bs != nil {
 		bs.extOptions = mergeExtValues(bs.extOptions, ev.Extension, set, unset)
+		bs.extMask.received(ev.Extension, ev.Params.FileType, bs.fileType(), set, unset)
 		e.refreshOptionLayers(bs)
 	} else {
 		e.extOptions = mergeExtValues(e.extOptions, ev.Extension, set, unset)
@@ -345,6 +350,76 @@ func (e *Editor) optionSetRequest(ev *exthost.OptionSetRequest) {
 		}
 	}
 	_ = ev.Reply()
+}
+
+// extMaskState は、ファイルの種類が変わった後に拡張機能が送った値で、利用者が :set で変えた値を隠すための状態である
+// （PR #352 のレビューの推奨 9 へのオーケストレータの決め。基本設計 7.3 の「拡張機能から変えた値」）。
+//
+// 本体のファイルの種類ごとの段（optionLayer.perType）は、ファイルの種類が変わったときに、値を持つ項目の :set の値を隠す
+// （changeFileTypeOptions。Neovim の ftplugin と同じ）。拡張機能の段の値は、本体が新しい種類で buffer/open を送り直した後に
+// 非同期に届くので、changeFileTypeOptions の時点では隠せない。そこで、ファイルの種類が変わった後に、各拡張機能がそのバッファへ
+// 送る最初の option/set のうち、FileType（ext.OptionSetParams）が今のファイルの種類と同じものだけ、値を書いた項目の :set の値を隠す。
+// ファイルの種類の変更と関係なく届いた値（設定ファイルを保存した、など。2 つ目からの option/set）と、FileType を省いた値は隠さない。
+// ファイルの種類が変わった後、値が届く前に利用者が :set で変えた項目は隠さない（Neovim の ftplugin は :set より前に当たるため）。
+type extMaskState struct {
+	// fileType は、変わった後のファイルの種類である。バッファを開いたとき（と :e）は空で、何も隠さない。
+	fileType string
+	// done は、fileType になった後に、最初の option/set を受け取った拡張機能の ID である。
+	done map[string]bool
+	// typed は、fileType になった後に利用者が :set で変えた項目の名前である。
+	typed map[string]bool
+	// names は、:set の値を隠している項目の名前から、隠させた拡張機能の ID への対応である。
+	names map[string]string
+}
+
+// userSet は、利用者が :set で項目 name を変えたことを記録し、その項目を隠すのをやめる。
+func (m *extMaskState) userSet(name string) {
+	delete(m.names, name)
+	if m.fileType == "" {
+		return
+	}
+	if m.typed == nil {
+		m.typed = map[string]bool{}
+	}
+	m.typed[name] = true
+}
+
+// received は、拡張機能 extID が、バッファ（今のファイルの種類 cur）へ option/set で値 set を入れ、unset を取り下げたことを記録する。
+// その拡張機能が取り下げた項目は、隠すのをやめる。ファイルの種類が変わった後の、その拡張機能の最初の option/set で、
+// 値を決めた種類 ft が cur と同じなら、set の項目を隠す（:set の後に変えた項目を除く）。
+//
+// req: FR-190
+func (m *extMaskState) received(extID, ft, cur string, set map[string]option.Value, unset []string) {
+	for _, name := range unset {
+		if m.names[name] == extID {
+			delete(m.names, name)
+		}
+	}
+	if m.fileType == "" || m.fileType != cur || ft != cur || m.done[extID] {
+		return
+	}
+	if m.done == nil {
+		m.done = map[string]bool{}
+	}
+	m.done[extID] = true
+	for name := range set {
+		if m.typed[name] {
+			continue
+		}
+		if m.names == nil {
+			m.names = map[string]string{}
+		}
+		m.names[name] = extID
+	}
+}
+
+// forget は、拡張機能 extID が隠させた項目を、隠すのをやめる（拡張機能が止まったとき）。
+func (m *extMaskState) forget(extID string) {
+	for name, id := range m.names {
+		if id == extID {
+			delete(m.names, name)
+		}
+	}
 }
 
 // extOptionDef は、option/set が名前 name の項目を変えられるかを確かめて、表の行を返す。
@@ -441,6 +516,7 @@ func (e *Editor) applyEditorOption(name string) {
 // req: FR-190, FR-191
 func (e *Editor) clearExtOptions(extID string) {
 	for _, bs := range e.bufs {
+		bs.extMask.forget(extID)
 		if _, ok := bs.extOptions[extID]; ok {
 			delete(bs.extOptions, extID)
 			e.refreshOptionLayers(bs)

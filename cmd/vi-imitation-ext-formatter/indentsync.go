@@ -40,8 +40,8 @@ type indentSync struct {
 	wake    chan struct{}
 	started bool
 
-	// sent は、バッファごとに最後に送った options の JSON である。loop だけが触る。
-	sent map[ext.BufferID]string
+	// sent は、バッファごとに最後に送った値である。loop だけが触る。
+	sent map[ext.BufferID]sentIndent
 	// reported は、設定ファイルのパスごとに最後に知らせた誤りの文言である。loop だけが触る。
 	reported map[string]string
 }
@@ -52,13 +52,13 @@ type bufferInfo struct {
 }
 
 // configNames は、保存したときに開いているすべてのバッファのインデントを読み直す、整形ツールの設定ファイルの名前である。
-var configNames = slices.Concat([]string{"biome.json", "biome.jsonc", ".ruff.toml", "ruff.toml", "pyproject.toml"}, prettierFiles)
+var configNames = slices.Concat(biomeFiles, []string{".ruff.toml", "ruff.toml", "pyproject.toml"}, prettierFiles)
 
 func newIndentSync(cfg func() *config, setOptions func(context.Context, ext.OptionSetParams) error, warn func(string), logf func(string, ...any)) *indentSync {
 	return &indentSync{
 		cfg: cfg, setOptions: setOptions, warn: warn, logf: logf,
 		bufs: map[ext.BufferID]bufferInfo{}, pending: map[ext.BufferID]bool{}, wake: make(chan struct{}, 1),
-		sent: map[ext.BufferID]string{}, reported: map[string]string{},
+		sent: map[ext.BufferID]sentIndent{}, reported: map[string]string{},
 	}
 }
 
@@ -160,36 +160,59 @@ func (s *indentSync) step(ctx context.Context) bool {
 	return true
 }
 
-// apply は、バッファ id のインデントを読み、前に送った値と違えば option/set で送る（FR-193）。
-// 読めない設定ファイルがあれば、送らずに（本体の設定を変えずに）知らせる。同じファイルの同じ誤りは 1 回だけ知らせる。
+// apply は、バッファ id のインデントを読み、前に送った値かファイルの種類と違えば option/set で送る（FR-193）。
+// 送るときは、値を決めたファイルの種類を FileType に付ける（本体は、ファイルの種類が変わった後の最初の値で :set の値を隠す）。
+// ファイルの種類だけが変わったときも送り直すのは、本体に新しい種類の値として :set の値を隠させるためである。
+//
+// 読めない設定ファイルがあれば、知らせる（同じファイルの同じ誤りは 1 回だけ）。
+// 前に送った値をその設定ファイルから読んだなら、送らずに前の値を保つ（本体の設定を変えない）。
+// そうでなければ（ファイルの種類が変わって別の整形ツールの設定を読むようになったなど）、前の値を null で取り下げる。
+// 別の整形ツールの値が残らないようにするためである（PR #352 のレビューの推奨 7）。
 //
 // req: FR-193
 func (s *indentSync) apply(ctx context.Context, id ext.BufferID, info bufferInfo) {
 	if info.path == "" {
 		return
 	}
-	ic, err := s.cfg().projectIndent(info.path, info.fileType)
+	ic, sources, err := s.cfg().projectIndent(info.path, info.fileType)
 	if err != nil {
 		var ce *configError
-		if errors.As(err, &ce) {
-			if s.reported[ce.path] != ce.Error() {
-				s.reported[ce.path] = ce.Error()
-				s.warn(ce.Error())
-			}
-		} else {
+		if !errors.As(err, &ce) {
 			s.logf("indent: %v", err)
+			return
 		}
-		return
+		if s.reported[ce.path] != ce.Error() {
+			s.reported[ce.path] = ce.Error()
+			s.warn(ce.Error())
+		}
+		if prev, ok := s.sent[id]; ok && slices.Contains(prev.sources, ce.path) {
+			return
+		}
+		ic, sources = indentConfig{}, nil
 	}
 	opts := ic.options()
 	b, _ := json.Marshal(opts) // 誤りにならない
 	prev, had := s.sent[id]
-	if string(b) == prev || !had && ic == (indentConfig{}) {
+	if had && string(b) == prev.options && prev.fileType == info.fileType || !had && ic == (indentConfig{}) {
+		if had {
+			prev.sources = sources
+			s.sent[id] = prev
+		}
 		return
 	}
-	if err := s.setOptions(ctx, ext.OptionSetParams{Buffer: id, Options: opts}); err != nil {
+	if err := s.setOptions(ctx, ext.OptionSetParams{Buffer: id, Options: opts, FileType: info.fileType}); err != nil {
 		s.logf("option/set: %v", err)
 		return
 	}
-	s.sent[id] = string(b)
+	s.sent[id] = sentIndent{options: string(b), fileType: info.fileType, sources: sources}
+}
+
+// sentIndent は、バッファへ最後に送った値である。
+type sentIndent struct {
+	// options は、送った options の JSON である。
+	options string
+	// fileType は、値を決めたファイルの種類である。
+	fileType string
+	// sources は、値を読んだ設定ファイルのパスである。
+	sources []string
 }

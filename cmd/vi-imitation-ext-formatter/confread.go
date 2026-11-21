@@ -140,6 +140,8 @@ func (p *tomlParser) document() error {
 			if array {
 				prefix = key + "[]."
 			}
+			// 鍵の無い表（[tool.ruff] の 1 行だけ）も、表があることを hasTable で見分けられるように印を入れる（PR #352 のレビューの推奨 3）。
+			p.out[prefix] = otherValue{}
 			if err := p.eol(); err != nil {
 				return err
 			}
@@ -221,16 +223,69 @@ func (p *tomlParser) singleLineString(q byte) (string, error) {
 			if q == '\'' {
 				return lit[1 : len(lit)-1], nil
 			}
-			s, err := strconv.Unquote(lit)
-			if err != nil {
-				return "", fmt.Errorf("文字列 %s を読めない", lit)
-			}
-			return s, nil
+			return tomlUnescape(lit[1 : len(lit)-1])
 		default:
 			p.i++
 		}
 	}
 	return "", errors.New("文字列が閉じていない")
+}
+
+// tomlUnescape は、基本の文字列の中身 body の逃がし（\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX と、TOML 1.1 の \e \xHH）を解く。
+// ruff 0.15.16 は TOML 1.1 の書き方を受け付ける（PR #352 のレビューの推奨 4）。
+func tomlUnescape(body string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c != '\\' {
+			b.WriteByte(c)
+			continue
+		}
+		if i+1 >= len(body) {
+			return "", errors.New("文字列の終わりに \\ がある")
+		}
+		i++
+		hex := 0
+		switch body[i] {
+		case 'b':
+			b.WriteByte('\b')
+		case 't':
+			b.WriteByte('\t')
+		case 'n':
+			b.WriteByte('\n')
+		case 'f':
+			b.WriteByte('\f')
+		case 'r':
+			b.WriteByte('\r')
+		case 'e':
+			b.WriteByte(0x1b)
+		case '"':
+			b.WriteByte('"')
+		case '\\':
+			b.WriteByte('\\')
+		case 'x':
+			hex = 2
+		case 'u':
+			hex = 4
+		case 'U':
+			hex = 8
+		default:
+			return "", fmt.Errorf("文字列の逃がし \\%c を読めない", body[i])
+		}
+		if hex == 0 {
+			continue
+		}
+		if i+1+hex > len(body) {
+			return "", errors.New("文字列の逃がしの 16 進の桁が足りない")
+		}
+		n, err := strconv.ParseInt(body[i+1:i+1+hex], 16, 32)
+		if err != nil {
+			return "", fmt.Errorf("文字列の逃がし \\%s を読めない", body[i:i+1+hex])
+		}
+		b.WriteRune(rune(n))
+		i += hex
+	}
+	return b.String(), nil
 }
 
 // tomlDate は、日時の値の始まり（1979-05-27 と 07:32:00）である。
@@ -383,19 +438,19 @@ func (p *tomlParser) skipArray() error {
 }
 
 // inlineTable は、インラインの表（{ k = v, ... }）を読み、中の鍵を key の下に入れる。
+// TOML 1.1 の書き方（表の中の改行と注釈、閉じる前のカンマ）も読む（ruff 0.15.16 が受け付ける。PR #352 のレビューの推奨 4）。
 func (p *tomlParser) inlineTable(key string) error {
 	p.i++ // {
-	p.spaces()
-	if p.peek() == '}' {
-		p.i++
-		return nil
-	}
 	for {
-		p.spaces()
+		p.blank()
+		if p.peek() == '}' {
+			p.i++
+			return nil
+		}
 		if err := p.keyValue(key + "."); err != nil {
 			return err
 		}
-		p.spaces()
+		p.blank()
 		switch p.peek() {
 		case ',':
 			p.i++
@@ -415,19 +470,31 @@ func (p *tomlParser) inlineTable(key string) error {
 // その上の鍵の値は otherValue にする。注釈（# の後）、文書の区切り（--- と ...）は読み飛ばす。
 // 真偽は true と false（YAML 1.2 の core schema の True、TRUE を含む）、整数は 10 進だけを読む。
 // 最上位が「鍵: 値」の形でない行（最上位の列 "- a" など）は、prettier の設定の形でないので誤りにする。
+// 文書が流れの形のマッピング（{ useTabs: true, tabWidth: 4 }。複数行でもよい）なら、parseYAMLFlow で読む。
+// 2 つ目より後の最上位の行が { か [ で始まるなど、読めない形は誤りにする（黙って読み飛ばさない。PR #352 のレビューの推奨 5）。
 func parseYAMLTop(src string) (map[string]any, error) {
 	out := map[string]any{}
-	for n, line := range strings.Split(strings.TrimPrefix(src, bom), "\n") {
+	first := true
+	lines := strings.Split(strings.TrimPrefix(src, bom), "\n")
+	for n, line := range lines {
 		line = strings.TrimRight(line, "\r")
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case trimmed == "" || strings.HasPrefix(trimmed, "#"):
 			continue
-		case line[0] == ' ' || line[0] == '\t':
-			continue
 		case trimmed == "---" || trimmed == "...":
 			continue
+		case first && strings.HasPrefix(trimmed, "{"):
+			return parseYAMLFlow(strings.Join(lines[n:], "\n"))
+		case line[0] == ' ' || line[0] == '\t':
+			if first {
+				return nil, fmt.Errorf("%d 行目: 最上位の行が字下げしてある", n+1)
+			}
+			continue
+		case strings.ContainsRune("{[]}", rune(line[0])):
+			return nil, fmt.Errorf("%d 行目: 最上位が「鍵: 値」の形でない: %q", n+1, line)
 		}
+		first = false
 		key, val, err := yamlKeyValue(line)
 		if err != nil {
 			return nil, fmt.Errorf("%d 行目: %w", n+1, err)
@@ -435,6 +502,183 @@ func parseYAMLTop(src string) (map[string]any, error) {
 		out[key] = val
 	}
 	return out, nil
+}
+
+// parseYAMLFlow は、流れの形のマッピング 1 つだけの YAML の文書 src（{ k: v, 'k2': "v2" }。複数行と注釈と閉じる前のカンマを許す）を読む。
+// 値は string、int64、bool、otherValue（入れ子の流れの形）のどれかである。閉じた後に注釈と空白のほかが続けば誤りにする。
+// prettier 3.6.2 は .prettierrc を YAML として読むので、この形（JSON5 に似た、鍵を引用しない形）も使える（PR #352 のレビューの推奨 5）。
+func parseYAMLFlow(src string) (map[string]any, error) {
+	p := &yamlFlow{s: src}
+	p.blank()
+	if p.peek() != '{' {
+		return nil, errors.New("流れの形のマッピングが { で始まっていない")
+	}
+	p.i++
+	out := map[string]any{}
+	for {
+		p.blank()
+		if p.peek() == '}' {
+			p.i++
+			break
+		}
+		key, err := p.scalar(":")
+		if err != nil {
+			return nil, err
+		}
+		if p.peek() != ':' {
+			return nil, fmt.Errorf("鍵 %s の後に : が無い", key)
+		}
+		p.i++
+		p.blank()
+		var v any
+		switch p.peek() {
+		case '{', '[':
+			if err := p.skipNested(); err != nil {
+				return nil, err
+			}
+			v = otherValue{}
+		case '"', '\'':
+			s, err := p.scalar(",}")
+			if err != nil {
+				return nil, err
+			}
+			v = s
+		default:
+			s, err := p.scalar(",}")
+			if err != nil {
+				return nil, err
+			}
+			if v, err = yamlScalar(s); err != nil {
+				return nil, err
+			}
+		}
+		out[key] = v
+		p.blank()
+		switch p.peek() {
+		case ',':
+			p.i++
+		case '}':
+		default:
+			return nil, errors.New("流れの形のマッピングが閉じていない")
+		}
+	}
+	p.blank()
+	if !p.eof() {
+		return nil, fmt.Errorf("流れの形のマッピングの後に %q がある", strings.TrimSpace(p.s[p.i:]))
+	}
+	return out, nil
+}
+
+// yamlFlow は、parseYAMLFlow の読む位置である。
+type yamlFlow struct {
+	s string
+	i int
+}
+
+func (p *yamlFlow) eof() bool { return p.i >= len(p.s) }
+
+func (p *yamlFlow) peek() byte {
+	if p.eof() {
+		return 0
+	}
+	return p.s[p.i]
+}
+
+// blank は、空白、改行、注釈（行の先頭か空白の後の # から行の終わりまで）を読み飛ばす。
+func (p *yamlFlow) blank() {
+	for !p.eof() {
+		switch p.s[p.i] {
+		case ' ', '\t', '\r', '\n':
+			p.i++
+		case '#':
+			for !p.eof() && p.s[p.i] != '\n' {
+				p.i++
+			}
+		default:
+			return
+		}
+	}
+}
+
+// scalar は、引用した文字列か、stops のどれかの文字の手前までの引用しない文字列を読む。引用しない文字列の前後の空白は除く。
+func (p *yamlFlow) scalar(stops string) (string, error) {
+	if q := p.peek(); q == '"' || q == '\'' {
+		start := p.i
+		p.i++
+		for !p.eof() {
+			c := p.s[p.i]
+			if c == '\\' && q == '"' {
+				p.i += 2
+				continue
+			}
+			p.i++
+			if c != q {
+				continue
+			}
+			if q == '\'' && p.peek() == '\'' { // '' は ' 1 つ
+				p.i++
+				continue
+			}
+			lit := p.s[start:p.i]
+			p.blank()
+			if q == '\'' {
+				return strings.ReplaceAll(lit[1:len(lit)-1], "''", "'"), nil
+			}
+			s, err := strconv.Unquote(lit)
+			if err != nil {
+				return "", fmt.Errorf("文字列 %s を読めない", lit)
+			}
+			return s, nil
+		}
+		return "", errors.New("文字列が閉じていない")
+	}
+	start := p.i
+	for !p.eof() && !strings.ContainsRune(stops+"\n{}[]", rune(p.s[p.i])) {
+		if p.s[p.i] == '#' && p.i > start && (p.s[p.i-1] == ' ' || p.s[p.i-1] == '\t') {
+			break
+		}
+		p.i++
+	}
+	s := strings.TrimSpace(p.s[start:p.i])
+	p.blank()
+	if s == "" {
+		return "", fmt.Errorf("流れの形のマッピングに値が無い: %q", p.rest())
+	}
+	return s, nil
+}
+
+// rest は、誤りの知らせに使う、今の位置から 40 バイトまでの文字列である。
+func (p *yamlFlow) rest() string {
+	r := p.s[p.i:]
+	if len(r) > 40 {
+		r = r[:40]
+	}
+	return r
+}
+
+// skipNested は、入れ子の流れの形（{...} と [...]）を、引用した文字列を含めて閉じるまで読み飛ばす。
+func (p *yamlFlow) skipNested() error {
+	depth := 0
+	for !p.eof() {
+		switch c := p.s[p.i]; c {
+		case '{', '[':
+			depth++
+			p.i++
+		case '}', ']':
+			depth--
+			p.i++
+			if depth == 0 {
+				return nil
+			}
+		case '"', '\'':
+			if _, err := p.scalar(""); err != nil {
+				return err
+			}
+		default:
+			p.i++
+		}
+	}
+	return errors.New("流れの形が閉じていない")
 }
 
 // yamlKeyValue は、最上位の「鍵: 値」の行を読む。

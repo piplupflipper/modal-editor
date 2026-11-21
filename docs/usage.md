@@ -1357,6 +1357,7 @@ Go のファイルもスペースにしたいときは、`"fileTypeOptions": { "
 このとき、新しい種類の 3 と 4 が値を持つ項目（go なら `indent.useSpaces` と `indent.width`）だけは `:set` で変えた値よりその値を使い、ほかの項目の `:set` の値は残す（Neovim の ftplugin と同じ）。
 `:e` でファイルを開き直したときも、1 から 6 を当て直す（`.editorconfig` も読み直す）。
 6 の値は、同じ項目に複数の拡張機能が入れたら、宣言ファイルを先に読んだ拡張機能の値を使う。値を入れた拡張機能が異常で終わるか止まると、その値は消える。
+ファイルの種類が変わった後に拡張機能が新しい種類で送った 6 の値は、3 と 4 と同じく、`:set` で変えた値よりその値を使う（変わった後に `:set` で変えた項目を除く）。
 
 #### `.editorconfig`
 
@@ -2333,24 +2334,35 @@ vi-imitation は上のとおり、そのような shim を使わずに `mise exe
 
 ファイルの種類に biome、prettier、ruff を書いたファイルでは、その整形ツールの設定ファイルからインデントの文字（タブかスペースか）と幅を読み、そのバッファの `indent.useSpaces`、`indent.width`、`tab.width` にする。
 `.editorconfig` より勝ち、`:set` には負ける（上の「字下げとタブの幅」の「値の決まり方」の 6）。
+ただし、`:set filetype=` などでファイルの種類が変わったときに新しい種類で読んだ値は、本体のファイルの種類ごとの既定と同じく、`:set` で変えた値にも勝つ（変わった後に `:set` で変えた項目を除く）。
 読むのは、そのファイルの種類に書いた整形ツールの設定だけである（biome で整形する JavaScript のファイルでは、`.prettierrc` を読まない）。
+
+どの整形ツールかは、`name`（省けば `command` のファイル名）、`command` のファイル名、`command` が `npx`、`pnpx`、`bunx`、`uvx`、`pnpm`、`yarn`、`bun`、`uv`、`pipx` のときは `args` の最初の整形ツールの名前（`npx prettier@3.6.2`、`pnpm dlx @biomejs/biome`、`uvx ruff`、`uv tool run ruff`）の順に見て決める。
+これでも分からない起動の仕方（ラッパーのスクリプトなど）では、`"name": "prettier"` のように `name` に整形ツールの名前（`biome`、`prettier`、`ruff`）を書く。
 
 | 整形ツール | 探す設定ファイル（1 つのディレクトリの中の順） | 読む項目 |
 |---|---|---|
-| biome | `biome.json`、`biome.jsonc` | `formatter.indentStyle`（`"tab"` か `"space"`）、`formatter.indentWidth`。ファイルの種類の言語の `javascript.formatter`、`json.formatter`、`css.formatter`、`graphql.formatter`、`html.formatter` に書いた値がそれに勝つ |
-| prettier | `package.json` の `"prettier"`、`.prettierrc`（JSON か YAML）、`.prettierrc.json`、`.prettierrc.yml`、`.prettierrc.yaml`、`.prettierrc.toml` | `useTabs`、`tabWidth` |
+| biome | `biome.json`、`biome.jsonc`、`.biome.json`、`.biome.jsonc` | `formatter.indentStyle`（`"tab"` か `"space"`）、`formatter.indentWidth`。ファイルの種類の言語の `javascript.formatter`、`json.formatter`、`css.formatter`、`graphql.formatter`、`html.formatter` に書いた値がそれに勝つ |
+| prettier | `package.json` の `"prettier"`、`.prettierrc`（JSON か YAML）、`.prettierrc.json`、`.prettierrc.yaml`、`.prettierrc.yml`、`.prettierrc.toml` | `useTabs`、`tabWidth` |
 | ruff | `.ruff.toml`、`ruff.toml`、`pyproject.toml` の `[tool.ruff]` | `indent-width`、`[format]`（`pyproject.toml` では `[tool.ruff.format]`）の `indent-style`（`"space"` か `"tab"`） |
 
-ファイルのディレクトリから上へ（Git の根を越えてファイルシステムの根まで）探し、最初に見つけた設定ファイルだけを使う（どの整形ツールも、近い設定ファイルが上の設定ファイルを引き継がない）。
+ファイルのディレクトリから上へ（Git の根を越えてファイルシステムの根まで）探し、最初に見つけた設定ファイルを使う（近い設定ファイルは上の設定ファイルを引き継がない）。
+例外は biome の `"extends": "//"` で、上の根の設定（`"root": false` でない設定）に近い設定を重ねる（biome と同じ）。
+YAML の形の `.prettierrc` は、`{ useTabs: true, tabWidth: 4 }` のような流れの形でもよい。
 タブにして幅を書かなければ、`indent.width` を 0（`tab.width` と同じ幅）にする。幅は `indent.width` と `tab.width` の両方にする。
 設定ファイルに書いていない項目は変えない（整形ツールの既定値は使わない）。
-biome と prettier の `overrides`、biome の `extends`、ruff の `extend` は読まない。
-prettier の JavaScript と TypeScript の設定ファイル（`prettier.config.js` など）、`.prettierrc.json5`、`package.yaml`、共有の設定の名前（`"prettier": "@company/prettier-config"`）は読めないので、それが見つかったファイルではインデントを変えない。
+
+次の書き方は読めないので、整形ツールと違う字下げにならないように、そのファイルではインデントを変えず、メッセージの行に 1 回だけ知らせる。
+
+- biome と prettier の `overrides` で字下げを変えたもの（prettier の YAML と TOML の形は、`overrides` があれば読めない）
+- biome の `"//"` でない `extends`、ruff の `extend`
+- prettier の JavaScript と TypeScript の設定ファイル（`prettier.config.js` など）、`.prettierrc.json5`、`package.yaml`、共有の設定の名前（`"prettier": "@company/prettier-config"`）
 
 読むのは、ファイルを開いたとき、別名で保存したとき、`:set filetype=` でファイルの種類を変えたとき、`:w` で保存したときである。
 `biome.json` などの設定ファイルをこのエディタで保存すると、開いているすべてのバッファで読み直す。
 エディタの外で設定ファイルを変えたときは、そのファイルを `:w` で保存すると効く。
-読めない設定ファイル（壊れた JSON、`"indentStyle": "tabs"` のような値）は、インデントを変えずに、メッセージの行に `整形ツールの設定 /path/biome.json を読めないので、インデントに使わない: …` と 1 回だけ出す。
+読めない設定ファイル（壊れた JSON、`"indentStyle": "tabs"` のような値、上の読めない書き方）は、メッセージの行に `整形ツールの設定 /path/biome.json を読めないので、インデントに使わない: …` と 1 回だけ出す。
+その設定ファイルから前に読んだ値があれば、その値のまま変えない。ファイルの種類が変わって別の整形ツールの設定を読むようになったときは、前の整形ツールの値を外す。
 
 #### LSP の整形との関係
 
