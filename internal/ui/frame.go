@@ -280,6 +280,9 @@ type Frame struct {
 	// Wrap は、長い行を本文の幅で折り返して描くかである（FR-156。Vim の 'wrap'）。false なら折り返さずに横にスクロールする。
 	// internal/editor が、描くたびに設定の今の値（lineWrap.enabled）を詰める。描き方は wrap.go の doc にある。
 	Wrap bool
+	// Whitespace は、タブ文字、空白、ノーブレークスペース、行末を記号で描くかである（FR-170。Vim の 'list'）。記号は Renderer.Symbols の
+	// "whitespace." で始まる名前で決まる。internal/editor が、描くたびに設定の今の値（whitespace.show）を詰める。描き方は whitespace.go の doc にある。
+	Whitespace bool
 	// TabStop は、Text のタブ文字の表示幅である（FR-161。Vim の 'tabstop'）。0 以下なら DefaultTabStop を使う。
 	// internal/editor が、描くたびに Text のバッファの設定の今の値（tab.width）を詰める。本文、カーソルの位置、折り返し、ルーラーの列は、
 	// どれもこの幅で数える。ステータス行とポップアップの窓の幅など、描画の中のほかのタブ幅もこの値を使う（Renderer.tabStop）。

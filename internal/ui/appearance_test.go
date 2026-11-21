@@ -179,6 +179,19 @@ func TestCheckSymbol(t *testing.T) {
 		{SymbolPopupBorder, "+-+|+-+", false},
 		{SymbolPopupBorder, "+-+|+-+全", false},
 		{"sign.unknown", "x", false},
+		// 空白の記号（FR-170）は、Vim の 'listchars' と同じく幅 1 の文字だけにする。タブ文字の記号は 2 文字か 3 文字、ほかは 1 文字である。
+		{SymbolWhitespaceTab, "", true},
+		{SymbolWhitespaceTab, "→ ", true},
+		{SymbolWhitespaceTab, "<->", true},
+		{SymbolWhitespaceTab, ">", false},
+		{SymbolWhitespaceTab, "<-->", false},
+		{SymbolWhitespaceTab, "全 ", false},
+		{SymbolWhitespaceTrail, "·", true},
+		{SymbolWhitespaceTrail, "", true},
+		{SymbolWhitespaceTrail, "--", false},
+		{SymbolWhitespaceEOL, "↲", true},
+		{SymbolWhitespaceEOL, "全", false},
+		{SymbolWhitespaceSpace, "\t", false},
 	}
 	for _, tt := range tests {
 		err := CheckSymbol(tt.name, tt.value)

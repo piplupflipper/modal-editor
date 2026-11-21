@@ -69,6 +69,9 @@ type Renderer struct {
 	// tabStop は、Render（render）が描いている Frame の TabStop（タブ文字の表示幅。FR-161）である。0 以下なら DefaultTabStop を使う。
 	// Render の始めに入れ、描画の中でタブ幅を使う箇所（本文、ステータス行、ポップアップの幅など）が読む。
 	tabStop int
+	// rule は、render が描いている Frame のバッファの行を並べる規則（タブ文字の幅と、空白の記号。whitespace.go）である。
+	// render の始めに Frame の TabStop と Whitespace から作り、本文、カーソルの位置、折り返し（wrapper）が読む。
+	rule lineRule
 
 	top int // 表示領域の最初の行の番号（0 から数える）
 	// topFill は、見比べている間（Frame.Diff）に、最初の行の上に見せる詰め物の行の数である（diff.go。Vim の w_topfill）。
@@ -236,6 +239,7 @@ func (r *Renderer) render(f *Frame) Screen {
 		theme = DefaultTheme()
 	}
 	r.tabStop = f.TabStop
+	r.rule = newLineRule(f.TabStop, f.Whitespace, r.symbol)
 	text := f.Text
 	if text == nil {
 		text = emptyText{}
@@ -352,6 +356,7 @@ func (r *Renderer) render(f *Frame) Screen {
 // placeCursor は、カーソルの位置をバッファの中に収め、画面上の列を求める。
 //
 // ノーマルモードとビジュアルモードでは、タブの上のカーソルをタブの最後の列に置く。インサートモードでは最初の列に置く（Vim と同じ）。
+// 空白の記号を描くとき（Frame.Whitespace）は、どのモードでも最初の列に置く（Vim の 'list' と同じ。r.rule がタブ文字を glyphTab にしない）。
 // 行末より後ろ（インサートモードで行末に挿入するとき）は、行の表示幅の列に置く。
 // 行を折り返すとき（layout が決めた r.wrap）は、見た目の行と、その行の中の列も求める（wrapper.cursor）。
 // そのときの表示の列（ルーラーに出す列）は、">" の列も数える折り返すときの列（wrapper.vcolAt の doc）にする（Vim と同じ）。
@@ -395,10 +400,9 @@ func (r *Renderer) placeColumn(text Text, f *Frame) cursorPlace {
 	line := min(max(f.Cursor.Line, 0), text.LineCount()-1)
 	s := text.Line(line)
 	b := min(max(f.Cursor.Byte, 0), len(s))
-	tabStop := tabStopOr(r.tabStop)
 	col := 0
 	for off := 0; off < len(s); {
-		gl := nextGlyph(s, off, col, tabStop)
+		gl := r.rule.glyph(s, off, col)
 		if b < gl.off+gl.size {
 			p := cursorPlace{line: line, byte: gl.off, col: gl.col, end: gl.col + 1}
 			switch {
@@ -568,6 +572,8 @@ type drawer struct {
 	hls   [][]span // 表示領域の行ごとの、Frame.Highlights の範囲
 	sel   []span   // 表示領域の行ごとの、選択の範囲（end が 0 なら選択なし）
 	sweep sweep    // 行ごとに使い回す作業の領域
+	// spaces は、描いている行の行頭の空白と行末の空白の範囲である。空白の記号を描くとき（FR-170）だけ、prepare が行ごとに求める（look が読む）。
+	spaces lineSpaces
 }
 
 // collectSpans は、診断、範囲の色（Frame.Highlights）、選択の範囲を、表示領域の行ごとに分ける。
@@ -684,6 +690,9 @@ func (w *sweep) attr(base Attr) Attr {
 // req: FR-35, FR-137, FR-140
 func (d *drawer) prepare(row, line int, s string, visible func() (from, to int)) {
 	ln := len(s)
+	if d.r.rule.list {
+		d.spaces = spacesOf(s)
+	}
 	w := &d.sweep
 	w.reset()
 	w.decos = d.f.Decorations.appendLine(w.decos[:0], line)
@@ -736,7 +745,6 @@ func (d *drawer) drawLine(row, line, k, n int) {
 	}
 	s := d.text.Line(line)
 	left, w, x0 := d.r.left, d.r.textWidth(), d.r.textLeft()
-	tabStop := tabStopOr(d.r.tabStop)
 	idx := line - d.r.top
 	d.prepare(idx, line, s, func() (int, int) { return d.visibleBytes(s) })
 	put := func(x int, c Cell) {
@@ -746,27 +754,20 @@ func (d *drawer) drawLine(row, line, k, n int) {
 	}
 	col := 0
 	for off := 0; off < len(s) && col < left+w; {
-		gl := nextGlyph(s, off, col, tabStop)
+		gl := d.r.rule.glyph(s, off, col)
 		col += gl.width
 		off += gl.size
 		if gl.col+gl.width <= left {
 			d.sweep.advance(gl.off, gl.size)
 			continue
 		}
-		var base Attr
-		if gl.kind == glyphSpecial {
-			base = d.theme.attr(StyleSpecialKey)
-		}
+		gl, base := d.look(gl)
 		a := d.attrAt(idx, line, gl.off, gl.size, base)
 		x := gl.col - left
 		switch gl.kind {
-		case glyphTab:
+		case glyphTab, glyphSpecial, glyphWhitespace:
 			for i := range gl.width {
-				put(x+i, blank(a))
-			}
-		case glyphSpecial:
-			for i := range len(gl.text) {
-				put(x+i, Cell{Text: gl.text[i : i+1], Width: 1, Attr: a})
+				put(x+i, Cell{Text: gl.cell(i), Width: 1, Attr: a})
 			}
 		case glyphText:
 			switch {
@@ -785,8 +786,8 @@ func (d *drawer) drawLine(row, line, k, n int) {
 		}
 	}
 	if col >= left && col < left+w {
-		if a := d.attrAt(idx, line, len(s), 0, Attr{}); a != (Attr{}) {
-			put(col-left, blank(a))
+		if c, ok := d.eolCell(idx, line, len(s)); ok {
+			put(col-left, c)
 		}
 	}
 	d.diffFillRest(row, line, col+1-left)
@@ -825,27 +826,20 @@ func (d *drawer) drawWrapped(row, line, k, n int) {
 			d.sweep.advance(gl.off, gl.size)
 			continue
 		}
-		var base Attr
-		if gl.kind == glyphSpecial {
-			base = d.theme.attr(StyleSpecialKey)
-		}
+		gl, base := d.look(gl)
 		a := d.attrAt(idx, line, gl.off, gl.size, base)
 		if padded {
 			put(pad, Cell{Text: ">", Width: 1, Attr: nonText})
 		}
 		switch gl.kind {
-		case glyphTab, glyphSpecial:
+		case glyphTab, glyphSpecial, glyphWhitespace:
 			// セルごとに、place と同じく右の端で次の見た目の行へ分けて置く。
 			c := start
 			for i := range gl.width {
 				if c.x >= w.width {
 					w.nextRow(&c)
 				}
-				cell := blank(a)
-				if gl.kind == glyphSpecial {
-					cell = Cell{Text: gl.text[i : i+1], Width: 1, Attr: a}
-				}
-				put(c, cell)
+				put(c, Cell{Text: gl.cell(i), Width: 1, Attr: a})
 				c.x++
 			}
 		case glyphText:
@@ -863,8 +857,8 @@ func (d *drawer) drawWrapped(row, line, k, n int) {
 	}
 	if done {
 		e := w.eol(p)
-		if a := d.attrAt(idx, line, len(s), 0, Attr{}); a != (Attr{}) {
-			put(e, blank(a))
+		if c, ok := d.eolCell(idx, line, len(s)); ok {
+			put(e, c)
 		}
 		if i := e.row - k; i >= 0 && i < n {
 			d.diffFillRest(row+i, line, e.x+1)

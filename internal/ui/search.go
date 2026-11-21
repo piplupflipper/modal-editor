@@ -65,11 +65,10 @@ func (d *drawer) searchSpans(dst []span, s string, from, to int) []span {
 // drawLine の文字の走査と同じく、行の先頭から表示の列を数え、右の端に掛かる文字の次で止める。行の全体が右の端より左に収まれば to は len(s) である。
 func (d *drawer) visibleBytes(s string) (from, to int) {
 	left, right := d.r.left, d.r.left+d.r.textWidth()
-	tabStop := tabStopOr(d.r.tabStop)
 	col, off := 0, 0
 	from = -1
 	for off < len(s) && col < right {
-		gl := nextGlyph(s, off, col, tabStop)
+		gl := d.r.rule.glyph(s, off, col)
 		if from < 0 && gl.col+gl.width > left {
 			from = off
 		}

@@ -112,12 +112,15 @@ func (e *Editor) frame() *ui.Frame {
 // / か ? でパターンを打っている間は、打つたびの検索で出す一致を足す（incSearchFrame。FR-153）。
 //
 // 行を折り返すか（ui.Frame.Wrap）も、描くたびに設定の今の値（lineWrap.enabled）から詰める（FR-156）。
+// 空白の記号を描くか（ui.Frame.Whitespace）も、描くたびに設定の今の値（whitespace.show）から詰める（FR-170）。行番号の列と同じく、
+// 描くのは client の画面のバッファの表示領域だけである（ポップアップとプレビューの中には描かない）。
 //
-// req: FR-135, FR-140, FR-153, FR-156
+// req: FR-135, FR-140, FR-153, FR-156, FR-170
 func (e *Editor) bufferFrame() *ui.Frame {
 	f := e.frame()
 	f.LineNumbers = e.uiLineNumbers()
 	f.Wrap = e.lineWrap()
+	f.Whitespace = e.showWhitespace()
 	f.Search = e.uiSearch()
 	f.Highlights = e.flashHighlights(e.tab())
 	e.incSearchFrame(f)
@@ -189,6 +192,12 @@ func (e *Editor) lineWrap() bool {
 	return e.options.Get(option.LineWrapEnabled).Bool()
 }
 
+// showWhitespace は、空白の記号を描くかを、エディタ全体の設定の今の値（whitespace.show）から返す（FR-170）。
+// 描くたびと、カーソルの列を数えるたびに読むので、:set list などで値を変えたときに呼ぶ処理は無い（基本設計 7.3）。
+func (e *Editor) showWhitespace() bool {
+	return e.options.Get(option.WhitespaceShow).Bool()
+}
+
 // screenLines は、行を折り返して描くときの見た目の行の数え方（command.State.ScreenLines。gj と gk、ページ単位のスクロール）を、
 // その State の表示領域（State.Viewport）を描く描画の部品につなぐ口である（FR-157）。
 // client の画面のバッファ（viewport）と、ポップアップのプレビューの中身（previewViewport）は、設定（lineWrap.enabled）が true なら折り返して数える。
@@ -222,7 +231,17 @@ func (s screenLines) lines() (l ui.WrapLines, ok bool) {
 	if r == nil || r.TextWidth() <= 0 {
 		return l, false
 	}
-	return r.WrapLines(s.bs.tabWidth()), true
+	return r.WrapLines(s.bs.tabWidth(), s.whitespace()), true
+}
+
+// whitespace は、State のバッファを空白の記号を描いて描くか（ui.Frame.Whitespace。FR-170）を返す。
+// 描くのは client の画面のバッファの表示領域（viewport）だけなので（bufferFrame）、ポップアップとプレビューの中のバッファは数えない。
+// 空白の記号を描くときは、タブ文字の上のカーソルの列と望みの列が、タブの最初の列になる（ui.Columns の doc）。
+//
+// req: FR-170
+func (s screenLines) whitespace() bool {
+	_, ok := s.st.Viewport.(viewport)
+	return ok && s.e.showWhitespace()
 }
 
 // Wrap は、行を折り返して数えるかを返す。
@@ -258,7 +277,11 @@ type wrapColumns struct {
 
 // plain は、行を折り返さないときの数え方を返す。
 func (c wrapColumns) plain() ui.Columns {
-	return ui.Columns{TabStop: c.sl.bs.tabWidth()}
+	cols := ui.Columns{TabStop: c.sl.bs.tabWidth(), Whitespace: c.sl.whitespace()}
+	if r := c.sl.e.renderer; r != nil {
+		cols.Symbols = r.Symbols
+	}
+	return cols
 }
 
 // Column は、target.Columns の Column である。

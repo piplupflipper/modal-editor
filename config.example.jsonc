@@ -40,6 +40,8 @@
     // 端末の背景を透過させる前提の調整
     // iceberg の NonText（#242940）は透過した背景では見えないので、LineNr の文字の色（#444b71）を使う
     "nontext": { "fg": "#444b71" },
+    // 空白の記号（whitespace.show）も、iceberg の Whitespace（#242940）では見えないので、行末の記号（nontext）と同じ色にする
+    "whitespace": { "fg": "#444b71" },
     // 浮かべる窓、メッセージ、印の列、行番号の列、タブの行のいまのタブには背景の色を付けない
     // （iceberg の背景の色が、透過した背景の上で帯に見えるため）。文字の色は iceberg と同じにする
     "popup": { "fg": "#c6c8d1" },
@@ -89,6 +91,13 @@
     "sign.diagnostic.warning": "▲",
     "sign.diagnostic.info": "ⓘ",
     "sign.diagnostic.hint": "⚑",
+    // 空白の記号（whitespace.show が true のときに描く）。オーナーの nvim の listchars = { tab = "→ ", lead = "·", trail = "·", eol = "↲" } と同じ。
+    // 書かない記号は本体の既定（nbsp は "+"）のままなので、nvim の listchars に無い nbsp は空にして描かない
+    "whitespace.tab": "→ ",
+    "whitespace.lead": "·",
+    "whitespace.trail": "·",
+    "whitespace.eol": "↲",
+    "whitespace.nbsp": "",
   },
 
   // ファジーファインダーとファイラの項目の前に、ファイルの種類のアイコンを付ける（本体の既定も付ける）。
@@ -111,6 +120,9 @@
   // 見た目の行で上下に動くのは gj と gk（操作の ID は display-down と display-up）。j と k を見た目の行で動かすには、
   // keymap の normal に "j": { "action": "display-down" }, "k": { "action": "display-up" } と書く
   "lineWrap": { "enabled": true },
+
+  // タブ文字、空白、行末を記号で描く（:set list に当たる。本体の既定は Vim と同じく描かない）。記号は上の symbols の whitespace.* にある
+  "whitespace": { "show": true },
 
   // 直前の検索のパターンに一致する範囲に色を付ける（:set hlsearch に当たる。本体の既定は Vim と同じく付けない）。
   // 色は :nohlsearch で次の検索まで消せる。<C-l> で消すには、keymap の normal に "<C-l>": { "command": "search.clearHighlight" } と書く

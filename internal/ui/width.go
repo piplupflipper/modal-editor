@@ -24,6 +24,9 @@ const (
 	glyphTab
 	// glyphSpecial は、そのままでは出せない文字を ^A や <80> の形で出す。
 	glyphSpecial
+	// glyphWhitespace は、空白の記号を描くとき（FR-170）の、タブ文字と空白の文字である。text の記号で描く（cell）。
+	// lineRule.glyph がタブ文字を、drawer.look が空白とノーブレークスペースを、この種類にする。
+	glyphWhitespace
 )
 
 // glyph は、行の中の 1 文字（後に続く結合文字を含む）の、画面上の配置である。
@@ -33,8 +36,39 @@ type glyph struct {
 	col   int       // 画面上の開始の列（行の先頭を 0 とする）
 	width int       // 画面上の列数
 	kind  glyphKind // 出し方
-	// text は、出す文字列である。glyphText では文字と結合文字、glyphSpecial では "^A" などの表記、glyphTab では空。
+	// text は、出す文字列である。glyphText では文字と結合文字、glyphSpecial では "^A" などの表記、glyphTab では空、
+	// glyphWhitespace では空白の記号（タブ文字なら 2 文字か 3 文字、空白なら 1 文字。どの文字も幅 1）。
 	text string
+}
+
+// cell は、セルごとに描く種類（glyphTab、glyphSpecial、glyphWhitespace）の文字の、左から i 番目（0 から数える）のセルの文字を返す。
+//
+//   - glyphTab: 空白
+//   - glyphSpecial: 表記の i 文字目（表記は ASCII）
+//   - glyphWhitespace: 記号が 1 文字ならその文字。2 文字（Vim の 'listchars' の tab:xy）なら、最初のセルは x、ほかは y。
+//     3 文字（tab:xyz）なら、最後のセルは z、それより前の最初のセルは x、ほかは y（幅 1 のタブ文字は z だけになる。Vim と同じ）
+func (g glyph) cell(i int) string {
+	switch g.kind {
+	case glyphSpecial:
+		return g.text[i : i+1]
+	case glyphWhitespace:
+		var chars [3]string
+		n := 0
+		for off := 0; off < len(g.text) && n < len(chars); n++ {
+			_, size := utf8.DecodeRuneInString(g.text[off:])
+			chars[n] = g.text[off : off+size]
+			off += size
+		}
+		switch {
+		case n == 3 && i == g.width-1:
+			return chars[2]
+		case n >= 2 && i > 0:
+			return chars[1]
+		}
+		return chars[0]
+	case glyphText, glyphTab:
+	}
+	return " "
 }
 
 // nextGlyph は、行 line の off から始まる 1 文字を、列 col に置いたときの配置を返す。
@@ -217,10 +251,20 @@ func tabStopOr(tabStop int) int {
 // internal/command の State.Columns（target.Columns）に差し込む（Column と ByteAt の 2 つのメソッドを持つ）。
 // internal/command とは同じ層なので、インターフェースを import せずに、同じ形のメソッドを持たせる。
 //
-// ゼロ値は、タブ幅を DefaultTabStop で数える。
+// ゼロ値は、タブ幅を DefaultTabStop で数え、空白の記号を描かないときの数え方である。
 type Columns struct {
 	// TabStop はタブ幅である。0 以下なら DefaultTabStop を使う。
 	TabStop int
+	// Whitespace は、空白の記号を描くとき（Frame.Whitespace。FR-170）の数え方にするかである。
+	// true なら、タブの上の列はタブの最初の列にし、タブ文字の記号（Symbols の SymbolWhitespaceTab）が空ならタブ文字を ^I の 2 列で数える（lineRule）。
+	Whitespace bool
+	// Symbols は、記号の対応（Renderer.Symbols と同じもの）である。Whitespace が true のときだけ読む。
+	Symbols Symbols
+}
+
+// rule は、c の数え方の規則を返す。
+func (c Columns) rule() lineRule {
+	return newLineRule(c.TabStop, c.Whitespace, c.Symbols.value)
 }
 
 // Column は、行 line の byteOff の位置の文字の列を、表示幅で数えて返す。
@@ -228,13 +272,14 @@ type Columns struct {
 // タブの上では、タブが占める最後の列を返す。
 // Vim はノーマルモードでタブの上のカーソルをタブの最後の列に置き、その列を望みの列にするので、これに合わせた
 // （"\tx" の 1 文字目で j を押すと、下の行の 8 列目へ移る）。
+// ただし空白の記号を描くとき（c.Whitespace）は、タブの最初の列を返す（Vim の 'list' と同じ。lineRule の doc）。
 // 全角文字と ^A などの表記は、最初の列を返す。
 // byteOff が文字の途中（結合文字の位置など）を指すときは、その文字の列を返す。行の長さ以上なら行の表示幅を返す。
 func (c Columns) Column(line string, byteOff int) int {
-	tabStop := tabStopOr(c.TabStop)
+	rule := c.rule()
 	col := 0
 	for off := 0; off < len(line); {
-		g := nextGlyph(line, off, col, tabStop)
+		g := rule.glyph(line, off, col)
 		if byteOff < g.off+g.size {
 			if g.kind == glyphTab {
 				return g.col + g.width - 1
@@ -251,11 +296,11 @@ func (c Columns) Column(line string, byteOff int) int {
 // col が行の表示幅以上なら最後の文字の位置を、空の行では 0 を返す。負の col は 0 列として扱う。
 // タブや全角文字の途中の列は、その文字の位置を返す（Vim の coladvance() と同じ）。
 func (c Columns) ByteAt(line string, col int) int {
-	tabStop := tabStopOr(c.TabStop)
+	rule := c.rule()
 	last := 0
 	cur := 0
 	for off := 0; off < len(line); {
-		g := nextGlyph(line, off, cur, tabStop)
+		g := rule.glyph(line, off, cur)
 		if col < g.col+g.width {
 			return g.off
 		}
