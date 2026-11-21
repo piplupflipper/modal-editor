@@ -302,9 +302,16 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 	if err := e.host.DidSave(ext.BufferDidSaveParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Path: path}); err != nil {
 		e.log.Error("buffer/didSave を送れない", "err", err)
 	}
+	// 拡張機能の誤りとアンドゥの履歴を残せなかったことの両方があれば、どちらも 1 行に出す（履歴が残っていないことに気付けるように）。
+	extra := ""
+	if undoNote != "" {
+		extra = "。" + undoNote
+	}
 	switch {
 	case len(notes) > 0 && made != "":
-		e.message = ui.Message{Text: fmt.Sprintf("%s（ディレクトリ \"%s\" を作りました）", notes[0], made), Level: ui.MessageWarning}
+		e.message = ui.Message{Text: fmt.Sprintf("%s（ディレクトリ \"%s\" を作りました%s）", notes[0], made, extra), Level: ui.MessageWarning}
+	case len(notes) > 0 && undoNote != "":
+		e.message = ui.Message{Text: fmt.Sprintf("%s（%s）", notes[0], undoNote), Level: ui.MessageWarning}
 	case len(notes) > 0:
 		e.message = ui.Message{Text: notes[0], Level: ui.MessageWarning}
 	case undoNote != "":

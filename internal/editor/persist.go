@@ -116,18 +116,40 @@ func (e *Editor) restoreCursor(bs *bufferState) bool {
 	return true
 }
 
-// saveCursor は、閉じるファイルのバッファ bs のカーソルの位置を残す（FR-166）。
-// 書けなくても閉じることは止めず、メッセージの行に警告を出してログに記録する（最後のタブを閉じて client が終わるときは、警告は画面に残らない）。
-// 画面に出さないバッファ（FR-109）は、利用者がカーソルを動かしていないので残さない。
+// saveCursor は、閉じるファイルのバッファ bs のカーソルの位置を残す（FR-166）。saveCursors の 1 つの形である。
 //
 // req: FR-166
 func (e *Editor) saveCursor(bs *bufferState) {
-	if !e.cursorRestore() || !persistable(bs) || bs.offscreen {
+	e.saveCursors([]*bufferState{bs})
+}
+
+// saveCursors は、閉じるファイルのバッファ bufs のカーソルの位置を、状態のファイルの 1 回の書き換えでまとめて残す（FR-166）。
+// server が終わるとき（Editor.Close）に、バッファの数だけロックと書き換えを繰り返さないためにまとめる。
+// 画面に出さないバッファ（FR-109）は、利用者がカーソルを動かしていないので残さない。
+//
+// 書けなくても閉じることは止めず、メッセージの行に警告を出してログに記録する（最後のタブを閉じて client が終わるときは、警告は画面に残らない）。
+// 新しい版の本体が書いた項目（persist.ErrNewerItem）で書けないときは、利用者には直せないので、警告を出さずにログだけに残す。
+//
+// req: FR-166
+func (e *Editor) saveCursors(bufs []*bufferState) {
+	if !e.cursorRestore() {
 		return
 	}
-	c := bs.state.Cursor()
-	if err := persist.SaveCursor(e.cfg.StateDir, bs.path, persist.Position{Line: c.Line, Byte: c.Byte}, time.Now()); err != nil {
-		e.log.Warn("カーソルの位置を残せない", "path", bs.path, "err", err)
+	var cs []persist.Cursor
+	for _, bs := range bufs {
+		if !persistable(bs) || bs.offscreen {
+			continue
+		}
+		c := bs.state.Cursor()
+		cs = append(cs, persist.Cursor{Path: bs.path, Pos: persist.Position{Line: c.Line, Byte: c.Byte}})
+	}
+	err := persist.SaveCursors(e.cfg.StateDir, cs, time.Now())
+	switch {
+	case err == nil:
+	case errors.Is(err, persist.ErrNewerItem):
+		e.log.Info("新しい版の本体が書いたカーソルの位置の項目なので、残さない", "err", err)
+	default:
+		e.log.Warn("カーソルの位置を残せない", "err", err)
 		e.message = ui.Message{Text: "カーソルの位置を残せません: " + err.Error(), Level: ui.MessageWarning}
 	}
 }

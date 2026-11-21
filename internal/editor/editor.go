@@ -774,10 +774,8 @@ func (e *Editor) extCommand(id string) (string, bool) {
 // 消せなかったときは記録だけして、拡張機能の終了の結果を返す。
 func (e *Editor) Close(ctx context.Context) error {
 	// タブを閉じずに終わった（端末が無くなった、ctx が終わった）ときも、開いていたファイルのカーソルの位置を残す（FR-166）。
-	// Run が戻った後なので、イベントループと同時には触らない。
-	for _, bs := range e.bufs {
-		e.saveCursor(bs)
-	}
+	// Run が戻った後なので、イベントループと同時には触らない。状態のファイルは、バッファの数によらず 1 回だけ書き換える。
+	e.saveCursors(e.bufs)
 	err := e.host.CloseContext(ctx)
 	if rerr := e.mcpSocket.Remove(); rerr != nil {
 		e.log.Warn("MCP のソケットのディレクトリを消せない", "err", rerr)

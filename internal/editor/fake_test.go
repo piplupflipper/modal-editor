@@ -542,6 +542,10 @@ func runFakeExt(mode string) int {
 			bufLog = append(bufLog, fmt.Sprintf("close %d", ev.Buffer))
 		})
 		s.BufferWillSave(func(_ context.Context, b *server.Buffer, _ *ext.BufferWillSaveParams) (ext.BufferWillSaveResult, error) {
+			if b.LineCount() > 0 && strings.Contains(b.Line(0), "willSaveFail") {
+				// 保存の前の処理が失敗したときのメッセージを確かめるテスト（TestUndoPersistWriteFailsWithExtError）のため。
+				return ext.BufferWillSaveResult{}, errors.New("willSave failed")
+			}
 			for i := range b.LineCount() {
 				if j := strings.Index(b.Line(i), "fmt"); j >= 0 {
 					p := ext.Position{Line: i, Byte: j}

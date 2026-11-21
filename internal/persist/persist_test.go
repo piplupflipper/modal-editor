@@ -193,21 +193,48 @@ func TestCursorSaveLoad(t *testing.T) {
 }
 
 type testState struct {
-	Version int           `json:"version"`
-	Files   []cursorEntry `json:"files"`
+	Version int
+	Files   []cursorEntry
 }
 
+// readTestState は、state.json のカーソルの位置の項目を読む。
 func readTestState(t *testing.T, dir string) testState {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, StateFileName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var st testState
+	var st struct {
+		Cursors struct {
+			Version int           `json:"version"`
+			Data    []cursorEntry `json:"data"`
+		} `json:"cursors"`
+	}
 	if err := json.Unmarshal(data, &st); err != nil {
 		t.Fatal(err)
 	}
-	return st
+	return testState{Version: st.Cursors.Version, Files: st.Cursors.Data}
+}
+
+// Editor.Close のように、まとめて残す位置は 1 回の書き換えで入り、前のものほど新しい記録として並ぶ。
+//
+// req: FR-166
+func TestSaveCursors(t *testing.T) {
+	dir := t.TempDir()
+	if err := SaveCursor(dir, "/a", Position{Line: 1}, time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	cs := []Cursor{{Path: "/b", Pos: Position{Line: 2}}, {Path: "/a", Pos: Position{Line: 3, Byte: 4}}, {Path: "/\xff"}, {Path: "/b", Pos: Position{Line: 9}}}
+	if err := SaveCursors(dir, cs, time.Unix(2, 0)); err != nil {
+		t.Fatal(err)
+	}
+	st := readTestState(t, dir)
+	if len(st.Files) != 2 || st.Files[0].Path != "/b" || st.Files[0].Line != 3 || st.Files[1].Path != "/a" || st.Files[1].Line != 4 || st.Files[1].Col != 4 {
+		t.Errorf("状態のファイル %+v", st)
+	}
+	if err := SaveCursors(t.TempDir(), nil, time.Unix(1, 0)); err != nil {
+		t.Errorf("空の SaveCursors = %v", err)
+	}
 }
 
 // 複数の server が同時に書いても、互いの記録を消さない（ロックの中で読み直して合わせる）。
@@ -238,7 +265,7 @@ func TestCursorConcurrent(t *testing.T) {
 	}
 }
 
-// 知らない項目は書き換えた後も残る。壊れた状態のファイルは捨てて書き直し、新しい版のものは読みも書きもしない。
+// 知らない名前の項目と、記録の知らない項目は、書き換えた後も残る。壊れた状態のファイルと、古い版や壊れた項目は、捨てて書き直す。
 //
 // req: FR-166
 func TestCursorStateFormat(t *testing.T) {
@@ -250,42 +277,112 @@ func TestCursorStateFormat(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(`{"version": 1, "registers": {"a": "x"}, "files": [{"path": "/a", "line": 3, "col": 0, "time": 1, "marks": {"x": 1}}]}`)
+	write(`{"registers": {"version": 1, "data": {"a": "eA=="}}, "cursors": {"version": 1, "data": [{"path": "/a", "line": 3, "col": 0, "time": 1, "marks": {"x": 1}}]}}`)
 	if err := SaveCursor(dir, "/a", Position{Line: 5}, time.Unix(2, 0)); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	for _, want := range []string{`"registers"`, `"marks"`} {
+	for _, want := range []string{`"registers"`, `"eA=="`, `"marks"`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("書き換えた後に %s が消えた: %s", want, data)
 		}
 	}
 
-	write(`not json`)
-	if _, ok, err := LoadCursor(dir, "/a"); ok || err == nil {
-		t.Errorf("壊れたファイルの LoadCursor = %v, %v", ok, err)
-	}
-	if err := SaveCursor(dir, "/a", Position{Line: 1}, time.Unix(3, 0)); err != nil {
-		t.Fatal(err)
-	}
-	if p, ok, _ := LoadCursor(dir, "/a"); !ok || p.Line != 1 {
-		t.Errorf("書き直した後の LoadCursor = %v, %v", p, ok)
-	}
-
-	newer := `{"version": 2, "files": [{"path": "/a", "line": 3, "col": 0, "time": 1}]}`
-	write(newer)
-	if _, ok, err := LoadCursor(dir, "/a"); ok || !errors.Is(err, ErrStateFormat) {
-		t.Errorf("新しい版の LoadCursor = %v, %v", ok, err)
-	}
-	if err := SaveCursor(dir, "/a", Position{Line: 1}, time.Unix(3, 0)); !errors.Is(err, ErrStateFormat) {
-		t.Errorf("新しい版の SaveCursor = %v", err)
-	}
-	if data, _ := os.ReadFile(path); string(data) != newer {
-		t.Errorf("新しい版のファイルを書き換えた: %s", data)
+	for name, s := range map[string]string{
+		"JSON でない":  `not json`,
+		"古い版の項目":    `{"cursors": {"version": 0, "data": [{"path": "/a", "line": 3}]}}`,
+		"中身の形が違う項目": `{"cursors": {"version": 1, "data": {"path": "/a"}}}`,
+	} {
+		write(s)
+		if _, ok, _ := LoadCursor(dir, "/a"); ok {
+			t.Errorf("%s: LoadCursor が記録を返した", name)
+		}
+		if err := SaveCursor(dir, "/a", Position{Line: 1}, time.Unix(3, 0)); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if p, ok, _ := LoadCursor(dir, "/a"); !ok || p.Line != 1 {
+			t.Errorf("%s: 書き直した後の LoadCursor = %v, %v", name, p, ok)
+		}
 	}
 
 	// 正しくない UTF-8 のパスは残さない。
 	if err := SaveCursor(t.TempDir(), "/\xff", Position{}, time.Unix(1, 0)); err != nil {
 		t.Errorf("正しくない UTF-8 のパスの SaveCursor = %v", err)
+	}
+}
+
+// 版の違う本体の server が同じ state.json を交互に書いても、互いの項目を消さない。
+// 古い本体は、新しい版の項目を読まず、書き換えずに残し、ErrNewerItem を返す（呼び出し側は警告にしない）。
+// 新しい本体が足した知らない名前の項目は、古い本体が書いても残る。
+//
+// req: FR-166
+func TestStateMixedVersions(t *testing.T) {
+	dir := t.TempDir()
+	// 新しい本体が、知らない名前の項目 history（版 3）と、版 2 のカーソルの位置の項目を書いた。
+	newer := func() {
+		t.Helper()
+		err := UpdateState(dir, func(st *State) error {
+			if err := st.SetItem("history", 3, []string{"ls", "make"}); err != nil {
+				return err
+			}
+			return st.SetItem(CursorsItem, CursorsFormat+1, map[string]int{"newShape": 1})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for round := range 3 {
+		newer()
+		// 古い本体（この本体）が書く。
+		if err := SaveCursor(dir, "/a", Position{Line: round}, time.Unix(int64(round), 0)); !errors.Is(err, ErrNewerItem) {
+			t.Fatalf("%d 回目: SaveCursor = %v, want ErrNewerItem", round, err)
+		}
+		if _, ok, err := LoadCursor(dir, "/a"); ok || !errors.Is(err, ErrNewerItem) {
+			t.Errorf("%d 回目: LoadCursor = %v, %v, want ErrNewerItem", round, ok, err)
+		}
+		st, err := ReadState(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hist []string
+		if ok, err := st.Item("history", 3, &hist); !ok || err != nil || len(hist) != 2 {
+			t.Errorf("%d 回目: 新しい本体の history が消えた: %v, %v, %v", round, hist, ok, err)
+		}
+		var shape map[string]int
+		if ok, err := st.Item(CursorsItem, CursorsFormat+1, &shape); !ok || err != nil || shape["newShape"] != 1 {
+			t.Errorf("%d 回目: 新しい版のカーソルの位置の項目が書き換わった: %v, %v, %v", round, shape, ok, err)
+		}
+	}
+
+	// 新しい本体が history だけを足し、カーソルの位置の項目は同じ版で書くなら、古い本体と新しい本体が交互に書いても、
+	// どちらの項目も残り、古い本体は誤りを返さない。
+	dir2 := t.TempDir()
+	for round := range 3 {
+		err := UpdateState(dir2, func(st *State) error {
+			var hist []string
+			if _, err := st.Item("history", 3, &hist); err != nil {
+				return err
+			}
+			return st.SetItem("history", 3, append(hist, fmt.Sprint(round)))
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveCursor(dir2, fmt.Sprintf("/f%d", round), Position{Line: round}, time.Unix(int64(round), 0)); err != nil {
+			t.Fatalf("%d 回目: SaveCursor = %v", round, err)
+		}
+	}
+	st, err := ReadState(dir2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hist []string
+	if ok, _ := st.Item("history", 3, &hist); !ok || len(hist) != 3 {
+		t.Errorf("history = %v, want 3 件", hist)
+	}
+	for round := range 3 {
+		if p, ok, err := LoadCursor(dir2, fmt.Sprintf("/f%d", round)); !ok || err != nil || p.Line != round {
+			t.Errorf("/f%d: %v, %v, %v", round, p, ok, err)
+		}
 	}
 }

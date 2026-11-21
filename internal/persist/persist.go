@@ -12,13 +12,34 @@
 //	<dir>/              0700 で作る
 //	  undo/             0700。ファイルごとのアンドゥの履歴（UndoPath）
 //	    %home%u%a.txt   0600
-//	  state.json        0600。ファイルごとのカーソルの位置（Cursors）
+//	  state.json        0600。項目ごとの状態（今はカーソルの位置の項目 cursors だけ。State）
 //	  state.json.lock   0600。state.json を書き換える間に掛ける排他のロック
 //
 // ディレクトリとファイルは、残すときに初めて作る。設定で残さないとき（呼び出し側が呼ばないとき）は何も作らない。
 // ファイルは一時ファイルに書いてから rename で置き換えるので、書く途中で止まっても前の中身が残る。
 //
 // 置き場のファイルは、編集したファイルの中身の一部（アンドゥの履歴）とパスを持つので、ほかの利用者から読めない許可属性で作る。
+//
+// # state.json の項目と版
+//
+// state.json は、項目の名前から項目への JSON のオブジェクトで、項目は {"version": 版, "data": 中身} である。
+// 形式の版は項目ごとに持つ（ファイル全体の版は無い）。後でコマンドラインと検索の履歴、レジスター、ジャンプの一覧（Neovim の shada に
+// 当たるもの）を残すときは、項目を足し、読み書きは UpdateState と ReadState、State.Item と State.SetItem を通す。
+//
+// tmux の window ごとの server は、本体を build し直した後も古い版のまま動き続ける（基本設計 1.2）ので、同じ state.json を
+// 版の違う本体が交互に書く。互いの項目を消さないよう、知らない名前の項目と、知っている名前でも自分より新しい版の項目は、
+// 読まずにそのまま書き戻す（State.Item は ErrNewerItem を返し、State.SetItem は書き換えずに ErrNewerItem を返す）。
+// 呼び出し側は ErrNewerItem を利用者への警告にしない（利用者には直せず、新しい本体の server が書き続ける）。
+// 自分より古い版の項目と、壊れた項目は、捨てて書き直す。
+// 項目の意味を変えるときは、その項目の版を上げる。
+//
+// # 文字列とバイト列
+//
+// state.json は encoding/json で書く。encoding/json は、正しくない UTF-8 を含む Go の文字列を、誤りを返さずに U+FFFD に
+// 置き換えて書く（encoding/json の Marshal の doc）。
+// バッファは正しくない UTF-8 のバイトを持てる（基本設計 4.1）ので、レジスターのようにバッファのテキストを残す項目は、
+// 文字列でなく []byte（JSON では base64）で入れる。
+// パスも正しくない UTF-8 を含みうるので、カーソルの位置の項目は、そのようなパスを残さない（SaveCursors）。
 package persist
 
 import (
@@ -32,7 +53,7 @@ import (
 const (
 	// UndoDirName は、アンドゥの履歴を置くディレクトリの名前である。
 	UndoDirName = "undo"
-	// StateFileName は、カーソルの位置を置くファイルの名前である。
+	// StateFileName は、項目ごとの状態（カーソルの位置など）を置くファイルの名前である（パッケージの doc の「state.json の項目と版」）。
 	// この先、ほかの状態（レジスター、ジャンプの一覧など。Neovim の shada に当たるもの）を足すときも、このファイルの項目に足す。
 	StateFileName = "state.json"
 	// lockSuffix は、StateFileName の書き換えに掛けるロックのファイルの名前の後ろに付ける文字列である。
