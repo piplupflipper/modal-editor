@@ -138,7 +138,7 @@ type State struct {
 	// 表示幅で数える実装（internal/ui）は、呼び出し側が差し込む。
 	Columns target.Columns
 	// ScreenLines は、行を折り返して描くときの見た目の行の数え方である（gj と gk。FR-157）。nil なら折り返さないとして扱い、
-	// gj と gk は j と k と同じに動く。ページ単位のスクロール（<PageUp>、<PageDown>）も、行の高さをこれで数える。
+	// gj と gk は j と k と同じに動く。スクロールの操作（<C-e>、<C-d>、<C-f>、zt など）も、行の高さをこれで数える。
 	// 画面の幅と設定（lineWrap.enabled）で決まるので、呼び出し側（internal/editor）が差し込む。
 	ScreenLines target.ScreenLines
 	// TextWidth は、文字列 s を列 0 から並べたときの表示幅を、タブ文字の幅 tabStop で数える関数である（字下げの幅の数え方。FR-160）。
@@ -152,8 +152,8 @@ type State struct {
 	// マクロの再生（999999999@a など）は、キーやコマンドラインを 1 つ実行するたびにこれを呼び、true なら ErrInterrupted で止める。
 	// 再生は Feed の中で同期に進むので、呼び出し側は別の goroutine で立てた印（atomic.Bool など）を読む関数を渡す。
 	Interrupted func() bool
-	// Viewport は、画面のバッファの表示領域である。ページ単位のスクロール（<PageUp>、<PageDown>）が読み書きする。
-	// nil なら、ページ単位のスクロールは失敗する。
+	// Viewport は、画面のバッファの表示領域である。スクロールの操作（<C-e>、<C-d>、<C-f>、<PageDown>、zt など。FR-173）が読み書きする。
+	// nil なら、スクロールの操作は失敗する。
 	Viewport Viewport
 	// Navigator は、ジャンプリストとバッファの切り替えの口である。nil なら、ジャンプを記録せず、<C-o>、<C-i>、<C-^> は失敗する。
 	Navigator Navigator
@@ -170,6 +170,10 @@ type State struct {
 	cursor buffer.Position
 	want   int
 	mode   Mode
+
+	// scrollAmount は、回数を付けた <C-d> と <C-u> が決めた、送る行数（Vim の 'scroll'）である。0 なら決めていない。
+	// scrollAmountRows は、決めたときの表示領域の行数で、表示領域の行数が変わったら決めていないとして扱う（halfAmount）。
+	scrollAmount, scrollAmountRows int
 
 	parser    KeyParser
 	registers Registers

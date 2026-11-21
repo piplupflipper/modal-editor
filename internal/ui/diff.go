@@ -60,6 +60,7 @@ func (r *Renderer) DiffTop() (line, fill int) { return r.top, r.topFill }
 func (r *Renderer) SetDiffTop(line, fill int) {
 	r.top, r.topFill = max(line, 0), max(fill, 0)
 	r.skip = 0
+	r.valid = topKey{}
 }
 
 // screenRow は、行 line（表示の最初の行より後ろ）の最初の見た目の行を描く、表示領域の中の行の番号を返す。詰め物の行を数に入れる。

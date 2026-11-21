@@ -48,6 +48,7 @@ func (e *Editor) frame() *ui.Frame {
 	f := &ui.Frame{
 		Text:            bs.buf,
 		LineLayout:      e.lineLayout(bs, false), // 空白の記号を描くかは bufferFrame が決め直す
+		Margins:         e.margins(),
 		Name:            bufferTitle(cur),
 		Modified:        cur.buf.Modified(),
 		ReadOnly:        cur.buf.ReadOnly(),
@@ -182,6 +183,19 @@ func (e *Editor) uiLineNumbers() ui.LineNumbers {
 	return ui.LineNumbers{
 		Show:     e.options.Get(option.LineNumberShow).Bool(),
 		MinWidth: e.options.Get(option.LineNumberMinWidth).Int(),
+	}
+}
+
+// margins は、カーソルの上下と左右に残す余白を、エディタ全体の設定の今の値（scroll.margin、scroll.sideMargin）から作る（FR-174）。
+// 描くたびに読むので、:set scrolloff= などで値を変えたときに呼ぶ処理は無い（基本設計 7.3）。
+// client の画面のバッファ（frame）と、ポップアップの中のバッファ（floatFrame）と、プレビューの中身（uiPreview）の Frame に詰める。
+// ファインダーの一覧（fzf に当たる部品）には詰めない。スクロールの操作（internal/command）は、同じ設定を State の設定の口から読む。
+//
+// req: FR-174
+func (e *Editor) margins() ui.Margins {
+	return ui.Margins{
+		Rows:    e.options.Get(option.ScrollMargin).Int(),
+		Columns: e.options.Get(option.ScrollSideMargin).Int(),
 	}
 }
 
@@ -321,19 +335,22 @@ func (e *Editor) hitEnter() bool {
 		strings.Contains(strings.TrimRight(e.message.Text, "\n"), "\n")
 }
 
-// viewport は、描画の表示領域（ui.Renderer の縦のスクロールの位置）を、command.State のページ単位のスクロール
-// （<PageUp>、<PageDown>）へ渡す口である（command.Viewport）。
+// viewport は、描画の表示領域（ui.Renderer の縦のスクロールの位置）を、command.State のスクロールの操作
+// （<C-e>、<C-d>、<C-f>、zt など。FR-173）へ渡す口である（command.Viewport）。
 type viewport struct{ r *ui.Renderer }
 
 // Top は、表示領域の最初の行を返す。
 func (v viewport) Top() int { return v.r.Top() }
 
+// Skip は、最初の行の上に隠している見た目の行の数を返す。
+func (v viewport) Skip() int { return v.r.Skip() }
+
 // Rows は、表示領域の行数を返す。直前の描画で、ステータス行とコマンドラインの行と出力の欄を除いた行数である。
 // 画面の大きさがまだ届いていないとき（0 行）も、1 行として扱う。
 func (v viewport) Rows() int { return max(v.r.TextRows(), 1) }
 
-// SetTop は、表示領域の最初の行を変える。横のスクロールの位置は変えない。
-func (v viewport) SetTop(top int) { v.r.SetScroll(top, v.r.Left()) }
+// SetView は、command.Viewport の SetView である。hold が負なら、次の描画でカーソルに合わせて決め直す（ui.Renderer.SetScrollHeld）。
+func (v viewport) SetView(top, skip, hold int) { v.r.SetScrollHeld(top, skip, hold) }
 
 // render は、繋いでいるすべての client の画面を描いて、それぞれの端末へ出す。
 // 描き終えたら、読み込む client を描く前のものに戻す。

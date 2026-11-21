@@ -219,13 +219,13 @@ func TestDisplayLineEdge(t *testing.T) {
 }
 
 // 折り返すとき、<PageDown> と <PageUp> は行の高さ（見た目の行の数）を数えて動く。
-// 期待値は、2026-11-20 に Vim 9.1（パッチ 2141 まで。-Nu NONE --not-a-term、columns=41、lines=12 で表示領域は 10 行）で、
-// キーの間に :redraw を挟んで打ち、line("w0") と line(".") を読んだ値である（行は 1 から数える）。
+// 期待値は、2026-11-21 に Neovim 0.12.5（--clean --headless、columns=41、lines=12 で表示領域は 10 行）で、
+// キーを 1 つずつ打って :redraw を挟み、line("w0") と line(".") を読んだ値である（行は 1 から数える）。G<PageUp> の値は tmux でも確かめた。
 // 400 文字の 7 行目は 10 行の高さで、重ねて残す行（表示領域の行数から 2 を引いた 8 行まで）に入らない。
-// G の後の <PageUp> だけは Vim と違う。Vim 9.1 の新しいページ送り（パッチ 211 から）はカーソルを表示領域の最後の行（17 行目）へ移すが、
-// 本体は前のページ送り（onepage）と同じく、重ねて残した行（12 行目）へ移す（最初の行の 8 行目は同じ）。
+// #337 で、ページ送りを Neovim の pagescroll（Vim 9.1 のパッチ 211 からの新しいページ送り）にした。それまでの onepage では、
+// G の後の <PageUp> がカーソルを重ねて残した行（12 行目）へ移していた。
 //
-// req: FR-156
+// req: FR-156, FR-173
 func TestPageScrollWrap(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": wrapFile()})
 	term := newFakeTerm()
@@ -246,7 +246,19 @@ func TestPageScrollWrap(t *testing.T) {
 		{"8G", 8, 8},
 		{"<PageUp>", 7, 7},
 		{"G", 11, 20},
-		{"<PageUp>", 8, 12},
+		{"<PageUp>", 8, 17},
+		// #337 の issue のずれ（PR #334 の再レビュー）。#337 より前は、最後の k で最初の行が 4 行目になっていた。
+		{"gj", 9, 18},
+		{"gj", 10, 19},
+		{"8G", 8, 8},
+		{"j", 8, 9},
+		{"j", 8, 10},
+		{"k", 8, 9},
+		// 回数を付けたページ送り。#337 より前は、gg3<PageDown> が 16 行目、G2<PageUp> が 7 行目へ移っていた（docs/vim-differences.md）。
+		{"gg", 1, 1},
+		{"3<PageDown>", 18, 18},
+		{"G", 18, 20},
+		{"2<PageUp>", 8, 17},
 	}
 	for _, tt := range tests {
 		h.keys(tt.keys)

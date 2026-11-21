@@ -212,6 +212,8 @@ func TestActionIDUnique(t *testing.T) {
 		// gc と gcc は、ビジュアルモードとノーマルモードの <C-_> と <C-/> にも載せる。テキストオブジェクトの gc は、
 		// ビジュアルモードでは既定のキーを持たない行（keys が空）で keymap に割り当てられるようにする（FR-169）。
 		"comment": {"gc", "<C-_>", "<C-/>"}, "comment-line": {"gcc", "<C-_>", "<C-/>"}, "commented-lines": {"gc", ""},
+		// <C-f> と <C-b> は、Vim と Neovim と同じく <PageDown> と <PageUp> と同じ操作である（FR-173）。
+		"page-down": {"<PageDown>", "<C-f>"}, "page-up": {"<PageUp>", "<C-b>"},
 	}
 	rows := map[string][]string{}
 	for _, tb := range builtinTables {

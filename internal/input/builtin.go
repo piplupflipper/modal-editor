@@ -214,10 +214,24 @@ var (
 		// バッファの全体を文字単位のビジュアルモードで選ぶ。カーソルも画面も動かさない（FR-130。#263）。
 		// 既定のキーは無く、設定の keymap で割り当てたときだけ使える。
 		{keys: "", id: "select-all", modes: MapNormal | MapVisual, desc: "カーソルを動かさずにバッファの全体を選ぶ"},
-		// ページ単位のスクロール（Vim の <C-f> と <C-b>）。画面の表示領域を動かすので、モーションではなく操作にする。
-		// Vim と同じく、オペレーターの後では使えない（d<PageDown> は誤りになる）。
+		// スクロールの操作（FR-173）。画面の表示領域を動かすので、モーションではなく操作にする。
+		// Vim と同じく、オペレーターの後では使えない（d<PageDown>、d<C-d>、dzt は誤りになる）。
+		// <PageDown> と <C-f>、<PageUp> と <C-b> は、Vim 9.1 と Neovim 0.12.5 と同じく同じ操作である（Neovim の nv_page。#337）。
+		// req: FR-173
 		{keys: "<PageDown>", id: "page-down", modes: MapNormal | MapVisual, desc: "1 画面下へスクロールする"},
+		{keys: "<C-f>", id: "page-down", modes: MapNormal | MapVisual, desc: "1 画面下へスクロールする"},
 		{keys: "<PageUp>", id: "page-up", modes: MapNormal | MapVisual, desc: "1 画面上へスクロールする"},
+		{keys: "<C-b>", id: "page-up", modes: MapNormal | MapVisual, desc: "1 画面上へスクロールする"},
+		{keys: "<C-d>", id: "half-page-down", modes: MapNormal | MapVisual, desc: "半画面（回数があれば回数の行）下へスクロールし、カーソルも同じ行数動かす"},
+		{keys: "<C-u>", id: "half-page-up", modes: MapNormal | MapVisual, desc: "半画面（回数があれば回数の行）上へスクロールし、カーソルも同じ行数動かす"},
+		{keys: "<C-e>", id: "scroll-line-down", modes: MapNormal | MapVisual, desc: "表示領域を 1 行（回数の行）下へスクロールする"},
+		{keys: "<C-y>", id: "scroll-line-up", modes: MapNormal | MapVisual, desc: "表示領域を 1 行（回数の行）上へスクロールする"},
+		{keys: "zt", id: "scroll-cursor-top", modes: MapNormal | MapVisual, desc: "カーソルの行（回数があればその行）を画面の上の端に置く"},
+		{keys: "z<CR>", id: "scroll-cursor-top-first-nonblank", modes: MapNormal | MapVisual, desc: "zt の後に、行の最初の空白でない文字へ移る"},
+		{keys: "zz", id: "scroll-cursor-center", modes: MapNormal | MapVisual, desc: "カーソルの行（回数があればその行）を画面の中ほどに置く"},
+		{keys: "z.", id: "scroll-cursor-center-first-nonblank", modes: MapNormal | MapVisual, desc: "zz の後に、行の最初の空白でない文字へ移る"},
+		{keys: "zb", id: "scroll-cursor-bottom", modes: MapNormal | MapVisual, desc: "カーソルの行（回数があればその行）を画面の下の端に置く"},
+		{keys: "z-", id: "scroll-cursor-bottom-first-nonblank", modes: MapNormal | MapVisual, desc: "zb の後に、行の最初の空白でない文字へ移る"},
 		// 出力の欄（拡張機能の output/append の行）の操作（名前とキーは仮。基本設計 6.7）。欄にカーソルは入らない。
 		// <C-w>P は、閉じていれば開き、開いていれば次の欄へ切り替える（Vim ではプレビューの窓へ移るキー）。
 		// <C-w>z は閉じる（Vim でもプレビューの窓を閉じるキー）。<C-w><PageUp> と <C-w><PageDown> は、欄を半分の高さずつスクロールする。

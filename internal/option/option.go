@@ -168,6 +168,15 @@ const (
 	// Vim の 'list' は窓ごとの設定だが、本体には窓が無く、同じく窓ごとの 'number' と 'wrap' に当たる項目と同じくエディタ全体の範囲にした。
 	// 描画と、カーソルの列の数え方が、使うたびにこの値を読む。
 	WhitespaceShow = "whitespace.show"
+	// ScrollMargin は、カーソルの行の上と下に残す余白の行数である（FR-174。Vim の 'scrolloff'）。範囲はエディタ全体で、
+	// 既定は Vim 9.1 と Neovim 0.12.5 の既定と同じく 0 である（Vim の defaults.vim は 5 にする）。行を折り返すときは見た目の行で数える。
+	// 表示領域の半分以上にすると、カーソルの行を常に中ほどに置く（Vim の 999 と同じ）。範囲は 0 から 9999 である。
+	// 描画と、スクロールの操作と、プレビューのスクロールが、使うたびに読む。Vim の 'scrolloff' は窓ごとにも持てるが、本体には窓が無いので、
+	// 同じく窓ごとの 'wrap' に当たる lineWrap.enabled と同じくエディタ全体の範囲にした。
+	ScrollMargin = "scroll.margin"
+	// ScrollSideMargin は、行を折り返さないときに、カーソルの左と右に残す余白の列数である（FR-174。Vim の 'sidescrolloff'）。
+	// 範囲はエディタ全体で、既定は Vim と Neovim の既定と同じく 0 である。範囲は 0 から 9999 である。描画が、描くたびに読む。
+	ScrollSideMargin = "scroll.sideMargin"
 	// SearchHighlight は、直前の検索のパターンに一致する範囲に色を付けるかである（FR-137。Vim の 'hlsearch'）。
 	// 描画が、描くたびにこの値と直前の検索のパターンを読む。
 	SearchHighlight = "search.highlight"
@@ -248,6 +257,9 @@ var defs = []Def{
 	{Name: LineNumberMinWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}},
 	{Name: LineWrapEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: WhitespaceShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	// 上限は indent.width と同じにした。Vim は上限を持たない（大きな値は表示領域の半分と同じに働く）。
+	{Name: ScrollMargin, Type: Int, Scope: ScopeEditor, Default: IntValue(0), Range: &IntRange{Min: 0, Max: 9999}},
+	{Name: ScrollSideMargin, Type: Int, Scope: ScopeEditor, Default: IntValue(0), Range: &IntRange{Min: 0, Max: 9999}},
 	{Name: SearchHighlight, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	// 下限は、打つたびの検索をしない値（0）を作らないため 1 にした。上限は yank.highlightMs と同じ 10 秒にした。
 	{Name: SearchIncrementalTimeoutMs, Type: Int, Scope: ScopeEditor, Default: IntValue(500), Range: &IntRange{Min: 1, Max: 10000}},

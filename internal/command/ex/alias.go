@@ -210,6 +210,7 @@ func (x *aliasCtx) call(line string, pos int) error {
 // #318 の決めで短い名前（et、sw、ts、ai）も受け付ける。Vim の 'softtabstop'（sts）と 'smarttab'（sta）は、別の設定にしないので受け付けない。
 // アンドゥの履歴を残す設定も、#319 の決めで短い名前（udf）を受け付ける。
 // コメントの形（#327）も、issue の決めで短い名前（cms）を受け付ける。
+// カーソルの上下と左右の余白（#337）も、issue の決めで短い名前（so、siso）を受け付ける。
 var vimOptionNames = map[string]string{
 	"filetype":      option.FileType,
 	"number":        option.LineNumberShow,
@@ -217,6 +218,10 @@ var vimOptionNames = map[string]string{
 	"hlsearch":      option.SearchHighlight,
 	"wrap":          option.LineWrapEnabled,
 	"list":          option.WhitespaceShow,
+	"scrolloff":     option.ScrollMargin,
+	"so":            option.ScrollMargin,
+	"sidescrolloff": option.ScrollSideMargin,
+	"siso":          option.ScrollSideMargin,
 	"expandtab":     option.IndentUseSpaces,
 	"et":            option.IndentUseSpaces,
 	"shiftwidth":    option.IndentWidth,

@@ -317,6 +317,16 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `select-all` | 操作 | `normal`、`visual` | カーソルを動かさずにバッファの全体を選ぶ |
 | `page-down` | 操作 | `normal`、`visual` | 1 画面下へスクロールする |
 | `page-up` | 操作 | `normal`、`visual` | 1 画面上へスクロールする |
+| `half-page-down` | 操作 | `normal`、`visual` | 半画面（回数があれば回数の行）下へスクロールし、カーソルも同じ行数動かす |
+| `half-page-up` | 操作 | `normal`、`visual` | 半画面（回数があれば回数の行）上へスクロールし、カーソルも同じ行数動かす |
+| `scroll-line-down` | 操作 | `normal`、`visual` | 表示領域を 1 行（回数の行）下へスクロールする |
+| `scroll-line-up` | 操作 | `normal`、`visual` | 表示領域を 1 行（回数の行）上へスクロールする |
+| `scroll-cursor-top` | 操作 | `normal`、`visual` | カーソルの行（回数があればその行）を画面の上の端に置く |
+| `scroll-cursor-top-first-nonblank` | 操作 | `normal`、`visual` | zt の後に、行の最初の空白でない文字へ移る |
+| `scroll-cursor-center` | 操作 | `normal`、`visual` | カーソルの行（回数があればその行）を画面の中ほどに置く |
+| `scroll-cursor-center-first-nonblank` | 操作 | `normal`、`visual` | zz の後に、行の最初の空白でない文字へ移る |
+| `scroll-cursor-bottom` | 操作 | `normal`、`visual` | カーソルの行（回数があればその行）を画面の下の端に置く |
+| `scroll-cursor-bottom-first-nonblank` | 操作 | `normal`、`visual` | zb の後に、行の最初の空白でない文字へ移る |
 | `output-next` | 操作 | `normal` | 出力の欄を開く、次の欄へ切り替える |
 | `output-close` | 操作 | `normal` | 出力の欄を閉じる |
 | `output-scroll-up` | 操作 | `normal` | 出力の欄を上へスクロールする |
@@ -876,6 +886,8 @@ Vim の短い名前（`ft`）、`inv` の接頭辞、`+=`、`-=`、`^=`、`&`（
 | `lineNumber.minWidth` | 整数 | エディタ全体 | `numberwidth` | 行番号の列の最小の列数（番号の右の空けた 1 列を含む）。既定は `4`、範囲は 1 から 20。列の幅は、この値と、バッファの最後の行の番号の桁数に 1 を足した数の大きい方になる（Vim の `'numberwidth'` と同じ） |
 | `lineWrap.enabled` | 真偽 | エディタ全体 | `wrap` | 長い行を本文の幅で折り返して描くか（[長い行の折り返し](#長い行の折り返し)）。既定は `false`（折り返さずに横にスクロールする。Vim と Neovim の既定は折り返す）。同梱の `config.example.jsonc` は `true` にしている |
 | `whitespace.show` | 真偽 | エディタ全体 | `list` | タブ文字、空白、ノーブレークスペース、行末を記号で描くか（[空白の記号](#空白の記号)）。既定は `false`（描かない。Vim と同じ）。記号は `symbols` の `whitespace.` で始まる名前で変える（[記号](#記号)）。同梱の `config.example.jsonc` は `true` にしている |
+| `scroll.margin` | 整数 | エディタ全体 | `scrolloff`、`so` | カーソルの行の上と下に残す余白の行数（[スクロール](#スクロール)）。行を折り返すときは見た目の行で数える。既定は `0`（Vim と Neovim と同じ）、範囲は 0 から 9999。表示領域の半分以上にすると、カーソルの行を常に中ほどに置く。同梱の `config.example.jsonc` は `5` にしている |
+| `scroll.sideMargin` | 整数 | エディタ全体 | `sidescrolloff`、`siso` | 行を折り返さないときに、カーソルの左と右に残す余白の列数（[スクロール](#スクロール)）。既定は `0`（Vim と Neovim と同じ）、範囲は 0 から 9999。同梱の `config.example.jsonc` は `8` にしている |
 | `search.highlight` | 真偽 | エディタ全体 | `hlsearch` | 直前の検索のパターンに一致する範囲に色を付けるか（[検索の一致の色付け](#検索の一致の色付け)）。既定は `false`（付けない。Vim と同じ）。色の名前は `search` である（[配色](#配色)） |
 | `search.incrementalTimeoutMs` | 整数 | エディタ全体 | 無し | `/` と `?` でパターンを打っている間の、打つたびの検索（[打つたびの検索](#打つたびの検索)）の時間の上限のミリ秒。超えたらその回は一致を出さない。既定は `500`（Vim の `'incsearch'` が約 0.5 秒で打ち切るのと同じ）、範囲は 1 から 10000。Vim にこの設定は無いので、`:set` では変えられず、`:option.set search.incrementalTimeoutMs 1000` で変える |
 | `search.showCount` | 真偽 | エディタ全体 | 無し | 検索で動いたときに、メッセージの行の右に、一致が何件目かと件数（`[2/5]`）を出すか（[検索の一致の件数](#検索の一致の件数)）。既定は `false`（出さない。Vim と同じ）。同梱の `config.example.jsonc` は `true` にしている。Vim の `'shortmess'` の `S` に当たるが、`:set shortmess` の別名は無いので、`:option.set search.showCount true` か `:option.toggle search.showCount` で変える |

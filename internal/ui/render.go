@@ -82,8 +82,13 @@ type Renderer struct {
 	tabRows int
 	left    int // 表示領域の左の端の列（行の先頭を 0 とする表示の列）
 	// skip は、行を折り返すとき、最初の行（top）を折り返した見た目の行のうち、表示領域より上に隠す行数である
-	// （Vim の w_skipcol を見た目の行で数えたもの）。最初の行が表示領域より高く、カーソルがその行にあるときだけ 0 でない（scrollWrapped）。
+	// （Vim の w_skipcol を見た目の行で数えたもの）。最初の行が表示領域より高く、カーソルがその行にあるときだけ 0 でない（scroll）。
 	skip int
+	// margins は、render が描いている Frame の余白（Frame.Margins。FR-174）である。scroll が読む。
+	margins Margins
+	// valid は、直前に縦の位置をカーソルに合わせて決めたときの入力である。次の描画で同じなら、最初の行を決め直さない（scroll）。
+	// スクロールの位置を変える口（SetScroll など）は、ゼロ値に戻して決め直させる。
+	valid topKey
 
 	// wrap は、直前の layout の Frame.Wrap（行を折り返すか）である。
 	wrap bool
@@ -138,6 +143,7 @@ func (r *Renderer) Left() int { return r.left }
 func (r *Renderer) SetScroll(top, left int) {
 	r.top, r.left = max(top, 0), max(left, 0)
 	r.topFill, r.skip = 0, 0
+	r.valid = topKey{}
 }
 
 // ScrollPos は、Renderer の表示の位置である。縦と横のスクロールの位置に加えて、見比べている間の最初の行の上の詰め物の行の数
@@ -157,6 +163,7 @@ func (r *Renderer) ScrollPos() ScrollPos {
 // 次の Render は、この位置からカーソルが画面に収まるようにスクロールする。
 func (r *Renderer) SetScrollPos(p ScrollPos) {
 	r.top, r.left, r.topFill, r.skip = max(p.top, 0), max(p.left, 0), max(p.topFill, 0), max(p.skip, 0)
+	r.valid = topKey{}
 }
 
 // EnterBuffer は、表示するバッファを替えたときに、スクロールの位置を、替えた先のバッファ（行数 lineCount）のカーソルの行 line に合わせて決め直す。
@@ -169,13 +176,14 @@ func (r *Renderer) SetScrollPos(p ScrollPos) {
 // 値は、tmux の 33 行と 32 行の表示領域で、400 行、40 行、22 行のファイルのカーソルの行を変えて、別のバッファから戻ったときの line("w0") を測って合わせた。
 //
 // 行を折り返して描いていたら（直前の Render の Frame.Wrap）、行の高さはここでは分からないので、次の Render で、
-// 見た目の行の数でカーソルの行を中ほどに置き直す（scrollHalfway。Vim の scroll_cursor_halfway）。
+// 見た目の行の数でカーソルの行を中ほどに置き直す（scroll.View.CursorHalfway。Vim の scroll_cursor_halfway）。
 func (r *Renderer) EnterBuffer(lineCount, line int) {
 	h := r.textRows()
 	r.top = max(min(line-(h-1)/2, lineCount-h), 0)
 	r.left = 0
 	r.topFill, r.skip = 0, 0
 	r.center = r.wrap
+	r.valid = topKey{}
 }
 
 // textRows は、バッファの表示領域の行数を返す。
@@ -215,6 +223,9 @@ type cursorPlace struct {
 	byte int // 行の中のバイト位置
 	col  int // カーソルを置く表示の列
 	end  int // カーソルの文字が占める最後の列の次の列。カーソルを画面に収める判定に使う
+	// start は、行を折り返さないときの、カーソルの文字が占める最初の列である（ノーマルモードのタブの上では col より左）。
+	// カーソルを画面に収める判定に使う（Neovim の curs_columns の startcol）。
+	start int
 	// row と x は、行を折り返すとき（Renderer.wrap）の、カーソルを置く見た目の行（行の中で何番目か）と、その行の左の端からの列である。
 	// 折り返さないときは 0 である。
 	row, x int
@@ -240,6 +251,7 @@ func (r *Renderer) render(f *Frame) Screen {
 	}
 	r.tabStop = f.TabStop
 	r.rule = newLineRule(f.LineLayout, r.symbol)
+	r.margins = f.Margins
 	text := f.Text
 	if text == nil {
 		text = emptyText{}
@@ -258,7 +270,9 @@ func (r *Renderer) render(f *Frame) Screen {
 		// EnterBuffer の後は、見た目の行の数でカーソルの行を中ほどに置き直す（折り返すときだけ。EnterBuffer の doc）。
 		r.center = false
 		if r.wrap && r.textRows() > 0 {
-			r.scrollHalfway(text, cur, r.textRows())
+			v := r.scrollView(text, r.textRows())
+			v.CursorHalfway(cur.line, false, false)
+			r.setView(v)
 		}
 	}
 	r.scroll(text, cur)
@@ -404,7 +418,7 @@ func (r *Renderer) placeColumn(text Text, f *Frame) cursorPlace {
 	for off := 0; off < len(s); {
 		gl := r.rule.glyph(s, off, col)
 		if b < gl.off+gl.size {
-			p := cursorPlace{line: line, byte: gl.off, col: gl.col, end: gl.col + 1}
+			p := cursorPlace{line: line, byte: gl.off, col: gl.col, end: gl.col + 1, start: gl.col}
 			switch {
 			case gl.kind == glyphTab && f.Mode != ModeInsert:
 				p.col = gl.col + gl.width - 1
@@ -417,50 +431,7 @@ func (r *Renderer) placeColumn(text Text, f *Frame) cursorPlace {
 		col += gl.width
 		off += gl.size
 	}
-	return cursorPlace{line: line, byte: len(s), col: col, end: col + 1}
-}
-
-// scroll は、カーソルが表示領域に収まるように、縦と横のスクロールの位置を更新する。
-//
-// 縦は Vim 9.1 の 'scrolloff' が 0、'scrolljump' が 1 の既定に合わせる。
-// カーソルが画面の上か下へ少しだけ出たときは、カーソルが画面の端の行に来るまでスクロールする。
-// 大きく離れたとき（上は max(h/2-1, 2) 行以上、下は (h+1)/2 行より多い。h は表示領域の行数）は、カーソルの行を画面の中ほどに置く。
-// この境目と中ほどの位置は、端末の Vim で高さを変えて測った値に合わせた。ただし Vim は前の画面の状態によって中ほどの位置が 1 行ずれることがあり、それは写していない。
-// 中ほどに置くときは、バッファの最終行より後ろの "~" の行が出ないように最初の行を詰める。
-//
-// 横は 'sidescroll' が 0 の既定に合わせ、カーソルの文字が画面の外に出たら、カーソルを画面の幅の半分の位置に置く。
-//
-// 行を折り返すとき（r.wrap）は、見た目の行で数える scrollWrapped に任せ、横にはスクロールしない。
-func (r *Renderer) scroll(text Text, cur cursorPlace) {
-	if r.wrap {
-		r.scrollWrapped(text, cur, r.textRows())
-		return
-	}
-	r.scrollRows(text.LineCount(), cur, r.textRows())
-	if w := r.textWidth(); w > 0 && (cur.col < r.left || cur.end > r.left+w) {
-		r.left = max(cur.col-w/2, 0)
-	}
-}
-
-// scrollRows は、scroll の縦の部分で、表示領域を h 行として、カーソルの行が収まるように最初の行を更新する。
-func (r *Renderer) scrollRows(lineCount int, cur cursorPlace, h int) {
-	if h > 0 {
-		switch {
-		case cur.line < r.top:
-			if r.top-cur.line >= max(h/2-1, 2) {
-				r.top = cur.line - (h-1)/2
-			} else {
-				r.top = cur.line
-			}
-		case cur.line >= r.top+h:
-			if cur.line-(r.top+h-1) <= (h+1)/2 {
-				r.top = cur.line - h + 1
-			} else {
-				r.top = min(cur.line-h/2, lineCount-h)
-			}
-		}
-		r.top = max(r.top, 0)
-	}
+	return cursorPlace{line: line, byte: len(s), col: col, end: col + 1, start: col}
 }
 
 // fitHeight は、表示領域の行数が直前の Render から変わったとき（出力の欄を開け閉めした、端末の大きさが変わった）に、
@@ -484,12 +455,11 @@ func (r *Renderer) fitHeight(text Text, cur cursorPlace) bool {
 	if !r.rendered || h == prev {
 		return false
 	}
+	r.valid = topKey{}
 	if prev > 0 {
-		if r.wrap {
-			r.scrollWrapped(text, cur, prev)
-		} else {
-			r.scrollRows(text.LineCount(), cur, prev)
-		}
+		v := r.scrollView(text, prev)
+		v.Follow(cur.line, cur.row)
+		r.setView(v)
 		if wrow := r.cursorRow(text, cur); prev > 1 && wrow+1 != r.fracRow {
 			// 最初の行と最後の行のカーソルは、その行の真ん中にあるとして数える（Vim の set_fraction）。
 			r.fraction = (wrow*fractionMult + fractionMult/2) / prev

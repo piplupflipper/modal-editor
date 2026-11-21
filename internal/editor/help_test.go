@@ -318,10 +318,11 @@ func TestKeyList(t *testing.T) {
 	if head, _ = h.listText(); !strings.HasPrefix(head, "キーの一覧（<Space>d で始まるもの。") {
 		t.Errorf(":keys <Leader>d: %q", head)
 	}
-	h.keys(":keys zz<CR>")
+	// zz は #337 で既定のキー（scroll-cursor-center）になったので、割り当ての無い zx で確かめる。
+	h.keys(":keys zx<CR>")
 	h.settle()
-	if msg := h.message(); msg != "zz で始まるキーはありません" {
-		t.Errorf(":keys zz: message %q", msg)
+	if msg := h.message(); msg != "zx で始まるキーはありません" {
+		t.Errorf(":keys zx: message %q", msg)
 	}
 
 	h.keys("x")
