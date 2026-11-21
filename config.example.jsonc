@@ -177,10 +177,29 @@
     "tabnew": { "command": "tab.new" },
   },
 
-  // LSP の言語サーバーを足す例（Python の pyright）。説明は docs/usage.md の「LSP」にある。
-  // 既定の言語サーバーは Go の gopls だけで、ほかの言語は servers と activation の両方に書く
+  // 本体の既定の表に無い拡張子のファイルの種類（下の整形ツールの fileTypes に使う）。名前は nvim の filetype にそろえた
+  "fileTypes": {
+    ".tsx": "typescriptreact",
+    ".jsx": "javascriptreact",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".css": "css",
+    ".graphql": "graphql",
+    ".gql": "graphql",
+    ".lua": "lua",
+    ".bash": "bash",
+    ".fish": "fish",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".hpp": "cpp",
+  },
+
   "extensions": {
+    // 保存の前の整形（下の formatter）の期限。整形ツールの応答をこの時間まで待ち、超えたら整形せずに書き出す（本体の既定は 1000）
+    "willSaveTimeoutMs": 2000,
     "settings": {
+      // LSP の言語サーバーを足す例（Python の pyright）。説明は docs/usage.md の「LSP」にある。
+      // 既定の言語サーバーは Go の gopls だけで、ほかの言語は servers と activation の両方に書く
       "lsp": {
         "servers": {
           "python": {
@@ -190,10 +209,38 @@
             // pyright-langserver が PATH に無いときに案内する mise の道具の ID。
             // 版は、自分の mise の設定（~/.config/mise/config.toml）に書いた版に合わせる
             "mise": "npm:pyright@1.1.410",
+            // Python は下の ruff で整形するので、言語サーバーには保存の前の整形をさせない（nvim の conform.nvim の lsp_format = "never"）
+            "formatOnSave": false,
           },
         },
         // true にすると、PATH に無い言語サーバーを、案内する代わりに mise に入れさせてから起動する
         "autoInstall": false,
+      },
+      // 外部の整形ツールで、保存の前（:w）と gq、:format で整形する。説明は docs/usage.md の「整形ツール」にある。
+      // 引数の {path} はファイルの絶対パスになる。実行ファイルは、ファイルのディレクトリから上へ node_modules/.bin と .venv/bin を探し、
+      // 無ければ PATH から探す。見つからない整形ツールは、そのファイルの種類で保存するたびに知らせ、整形せずに書き出す。
+      // 引数は conform.nvim（016802d）の定義に合わせた
+      "formatter": {
+        "formatters": [
+          {
+            // 整形に加えて、lint の修正と import の並べ替えもする
+            "command": "biome",
+            "args": ["check", "--write", "--stdin-file-path={path}"],
+            "fileTypes": ["json", "jsonc", "typescript", "typescriptreact", "javascript", "javascriptreact", "css", "graphql"],
+          },
+          { "command": "taplo", "args": ["format", "--stdin-filepath", "{path}", "-"], "fileTypes": ["toml"] },
+          { "command": "ruff", "args": ["format", "--force-exclude", "--stdin-filename", "{path}", "-"], "fileTypes": ["python"] },
+          {
+            "command": "stylua",
+            "args": ["--search-parent-directories", "--respect-ignores", "--stdin-filepath", "{path}", "-"],
+            "fileTypes": ["lua"],
+          },
+          { "command": "shfmt", "args": ["-filename", "{path}"], "fileTypes": ["sh", "bash"] },
+          { "command": "fish_indent", "fileTypes": ["fish"] },
+          { "command": "clang-format", "args": ["-assume-filename", "{path}"], "fileTypes": ["c", "cpp"] },
+          // conform.nvim は Cargo.toml の edition を読むが、ここでは 2021 に決めて渡す
+          { "command": "rustfmt", "args": ["--emit=stdout", "--edition=2021"], "fileTypes": ["rust"] },
+        ],
       },
     },
     "activation": { "lsp": [{ "on": "filetype", "pattern": "python" }] },

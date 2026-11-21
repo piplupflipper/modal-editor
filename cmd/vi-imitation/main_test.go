@@ -72,6 +72,9 @@ func TestRunHelp(t *testing.T) {
 }
 
 // TestLoadConfig は、設定ファイルの項目を editor.Config へ写し、誤りのパスを短くすることを確かめる。
+// extensions.willSaveTimeoutMs は、保存の流れの buffer/willSave の期限（exthost.Config.WillSaveTimeout）になる。
+//
+// req: FR-177
 func TestLoadConfig(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(xdg, "config"))
@@ -84,7 +87,7 @@ func TestLoadConfig(t *testing.T) {
   "keymap": { "normal": { "Q": ":q<CR>" } },
   "fixendofline": false,
   "fileTypes": { ".tmpl": "html" },
-  "extensions": { "syncTimeoutMs": 30, "startSyncTimeoutMs": 2500, "memoryLimitMb": 6144 },
+  "extensions": { "syncTimeoutMs": 30, "startSyncTimeoutMs": 2500, "willSaveTimeoutMs": 2000, "memoryLimitMb": 6144 },
   "registers": { "historySize": 7, "maxEntryBytes": 64, "deleteToHistory": false, "clipboard": "off" },
   "typo": 1,
   "commandAliases": { "tabedit": { "command": "edit", "min": 4 }, "tabx": { "command": "nosuch" } },
@@ -101,6 +104,9 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if cfg.Host.MemoryLimitMB != 6144 {
 		t.Errorf("Host.MemoryLimitMB = %d, want 6144", cfg.Host.MemoryLimitMB)
+	}
+	if cfg.Host.WillSaveTimeout != 2*time.Second {
+		t.Errorf("Host.WillSaveTimeout = %v, want 2s", cfg.Host.WillSaveTimeout)
 	}
 	if cfg.FixEndOfLine == nil || *cfg.FixEndOfLine {
 		t.Errorf("FixEndOfLine = %v, want false", cfg.FixEndOfLine)

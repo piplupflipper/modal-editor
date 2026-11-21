@@ -335,6 +335,27 @@ func TestParseSyncTimeoutZero(t *testing.T) {
 	}
 }
 
+// extensions.willSaveTimeoutMs は、保存の流れで buffer/willSave の応答を待つ期限のミリ秒で、0 以上の整数にする。
+// 書かないか 0 なら 0（exthost の既定値を使う）で、負の数と整数でない値は誤りにして既定値のままにする。
+//
+// req: FR-177
+func TestParseWillSaveTimeout(t *testing.T) {
+	cfg, errs := Parse("c", []byte(`{"extensions": {"willSaveTimeoutMs": 2000}}`))
+	if len(errs) != 0 || cfg.WillSaveTimeout != 2*time.Second {
+		t.Errorf("WillSaveTimeout = %v, errs = %v; want 2s", cfg.WillSaveTimeout, errs)
+	}
+	cfg, errs = Parse("c", []byte(`{"extensions": {}}`))
+	if len(errs) != 0 || cfg.WillSaveTimeout != 0 {
+		t.Errorf("WillSaveTimeout = %v, errs = %v; want 0", cfg.WillSaveTimeout, errs)
+	}
+	for _, v := range []string{`-1`, `"2000"`, `1.5`} {
+		cfg, errs = Parse("c", []byte(`{"extensions": {"willSaveTimeoutMs": `+v+`}}`))
+		if len(errs) != 1 || !strings.Contains(errs[0].Error(), "extensions.willSaveTimeoutMs") || cfg.WillSaveTimeout != 0 {
+			t.Errorf("%s: WillSaveTimeout = %v, errs = %v; want 0 と 1 件の誤り", v, cfg.WillSaveTimeout, errs)
+		}
+	}
+}
+
 // 誤りのある項目は既定値のままにし、位置と内容を返す。他の項目は読む。
 //
 // req: FR-40
