@@ -460,12 +460,16 @@ type wireEvent struct {
 	Resize bool    `json:"resize,omitempty"`
 	Width  int     `json:"width,omitempty"`
 	Height int     `json:"height,omitempty"`
+	// MouseRow と MouseCol は、マウスの出来事のキーの位置である（FR-184）。版の古い server は読み飛ばす。
+	MouseRow int `json:"mouseRow,omitempty"`
+	MouseCol int `json:"mouseCol,omitempty"`
 }
 
 func toWireEvent(ev Event) wireEvent {
 	return wireEvent{
 		Key:   wireKey{Code: ev.Key.Code, Rune: ev.Key.Rune, Mod: ev.Key.Mod},
 		Paste: ev.Paste, Resize: ev.Resize, Width: ev.Width, Height: ev.Height,
+		MouseRow: ev.MouseRow, MouseCol: ev.MouseCol,
 	}
 }
 
@@ -473,5 +477,6 @@ func (w wireEvent) event() Event {
 	return Event{
 		Key:   editcmd.Key{Code: w.Key.Code, Rune: w.Key.Rune, Mod: w.Key.Mod},
 		Paste: w.Paste, Resize: w.Resize, Width: w.Width, Height: w.Height,
+		MouseRow: max(w.MouseRow, 0), MouseCol: max(w.MouseCol, 0),
 	}
 }

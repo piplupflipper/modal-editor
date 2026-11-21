@@ -33,6 +33,10 @@ type Screen struct {
 	Grid *Grid
 	// Cursor は、端末のカーソルの位置と形である。
 	Cursor Cursor
+	// Mouse は、端末にマウスの報告を求めるかである（設定の mouse.enabled。FR-180）。
+	// Renderer は値を入れず、画面を端末へ送る側（internal/editor）が入れる。端末の側（internal/term の Painter）は、
+	// 前回の画面と違えば、報告を求める列か止める列を出す。
+	Mouse bool
 }
 
 // Renderer は、Frame から画面の格子を作る。
@@ -127,6 +131,8 @@ type Renderer struct {
 	// posFrom は、ステータス行の範囲の位置（StatusPartPosition）を、この Renderer の代わりに数える Renderer である。
 	// フォーカスのあるポップアップのステータス行を描く間だけ、窓の子の Renderer を入れる。
 	posFrom *Renderer
+	// hits は、直前の Render が描いた部品の場所である。マウスの出来事の位置を解く（HitTest。mouse.go）。
+	hits hitState
 }
 
 // fractionMult は、fraction の単位である（Vim の FRACTION_MULT と同じ値）。
@@ -137,6 +143,11 @@ func (r *Renderer) Top() int { return r.top }
 
 // Left は、表示領域の左の端に当たる表示の列（0 から数える）を返す。
 func (r *Renderer) Left() int { return r.left }
+
+// SetLeft は、横のスクロールの位置（表示領域の左の端の列）を left にする。負の値は 0 にする。縦の位置は変えない。
+// 次の Render は、カーソルが左右の余白を残して表示領域に入っていれば、横の位置を動かさない（scroll）。
+// ホイールの横のスクロール（internal/command の mouse.go。FR-182）が、カーソルを表示領域の中へ移してから使う。
+func (r *Renderer) SetLeft(left int) { r.left = max(left, 0) }
 
 // SetScroll は、スクロールの位置を変える。負の値は 0 にする。
 // 次の Render は、この位置からカーソルが画面に収まるようにスクロールする。
@@ -258,6 +269,8 @@ func (r *Renderer) render(f *Frame) Screen {
 	}
 	g := NewGrid(r.Width, r.Height)
 	r.layout(f)
+	r.hits.reset()
+	r.hits.lines = text.LineCount()
 	if r.heights == nil {
 		r.heights = map[int]int{}
 	}

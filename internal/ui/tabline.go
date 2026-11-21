@@ -224,7 +224,11 @@ func (r *Renderer) drawTabs(g *Grid, theme Theme, tabs []Tab, col0, limit int) {
 			a = theme.attr(StyleTabLineSelected)
 		}
 		want += widths[i]
-		if col = r.drawText(g, 0, col, limit, labels[i], a); col < want {
+		from := col
+		col = r.drawText(g, 0, col, limit, labels[i], a)
+		// タブの行のクリックでタブを移るために、見出しの場所を残す（mouse.go。FR-181）。
+		r.hits.tabs = append(r.hits.tabs, tabSpan{from: from, to: col, index: i})
+		if col < want {
 			break // 収まらずに切れた
 		}
 	}

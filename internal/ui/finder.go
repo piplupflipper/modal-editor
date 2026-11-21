@@ -64,6 +64,8 @@ func (r *Renderer) drawFinder(g *Grid, theme Theme, fl *Float) (Cursor, bool) {
 		r.float, r.floatList = &Renderer{}, &Renderer{}
 		r.floatID = fl.ID
 	}
+	// ファインダーの窓の中は、マウスで操作しない（mouse.go。窓の場所だけを残す）。
+	r.hits.cover(top-b, x0-b, boxH+2*b, outerW+2*b)
 	in, list := r.float, r.floatList
 	in.Width, in.Height = boxW-2-promptW, 1+2
 	list.Width, list.Height = boxW-2, listRows+2

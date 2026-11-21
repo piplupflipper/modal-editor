@@ -40,6 +40,57 @@ const (
 // 端末の解読（internal/term）が読む xterm と VTE の F キーの範囲（F1〜F20）に合わせる。
 const MaxFunctionKey = 20
 
+// マウスの出来事のキーの種類（FR-184）。Vim と Neovim と同じく、マウスの出来事を名前の付いたキーとして扱い（<LeftMouse> など）、
+// 設定の keymap で他のキーと同じく割り当て直せるようにする。
+// 出来事の位置はキーに含めず、キーと一緒に届ける（internal/term の Event の MouseRow と MouseCol）。
+// キーの値を比較とマップのキーに使い続けるためで、Vim もマウスの位置をキーの外（mouse_row と mouse_col）に持つ。
+// 複数回のクリック（<2-LeftMouse>）は、押した回数を修飾キーと同じビット（ModClick2 など）に持つ。
+//
+// 値は F キーの後に置く。ソケットの上ではキーの種類を数で送るので（internal/protocol）、既存の値をずらさない。
+const (
+	// CodeLeftMouse は、左のボタンを押したことである（Vim の <LeftMouse>）。
+	CodeLeftMouse Code = CodeF1 + MaxFunctionKey + iota
+	// CodeLeftDrag は、左のボタンを押したまま動かしたことである（<LeftDrag>）。
+	CodeLeftDrag
+	// CodeLeftRelease は、左のボタンを離したことである（<LeftRelease>）。
+	CodeLeftRelease
+	// CodeMiddleMouse、CodeMiddleDrag、CodeMiddleRelease は、中のボタンの出来事である（<MiddleMouse> など）。
+	CodeMiddleMouse
+	CodeMiddleDrag
+	CodeMiddleRelease
+	// CodeRightMouse、CodeRightDrag、CodeRightRelease は、右のボタンの出来事である（<RightMouse> など）。
+	CodeRightMouse
+	CodeRightDrag
+	CodeRightRelease
+	// CodeScrollWheelUp と CodeScrollWheelDown は、ホイールを上と下へ回したことである（<ScrollWheelUp>、<ScrollWheelDown>）。
+	CodeScrollWheelUp
+	CodeScrollWheelDown
+	// CodeScrollWheelLeft と CodeScrollWheelRight は、ホイールを左と右へ傾けたことである（<ScrollWheelLeft>、<ScrollWheelRight>）。
+	CodeScrollWheelLeft
+	CodeScrollWheelRight
+)
+
+// IsMouse は、k がマウスの出来事のキーかを返す。
+func (k Key) IsMouse() bool { return k.Code >= CodeLeftMouse && k.Code <= CodeScrollWheelRight }
+
+// IsMousePress は、k がボタンを押したことのキー（<LeftMouse>、<MiddleMouse>、<RightMouse>）かを返す。
+// 複数回のクリック（ModClick2 など）は、押したことのキーにだけ付く。
+func (k Key) IsMousePress() bool {
+	return k.Code == CodeLeftMouse || k.Code == CodeMiddleMouse || k.Code == CodeRightMouse
+}
+
+// Clicks は、k が何回目のクリックか（1 から 4）を返す。押したことのキーでなければ 1 である。
+func (k Key) Clicks() int {
+	return int((k.Mod&modClicks)>>modClicksShift) + 1
+}
+
+// WithClicks は、k を n 回目のクリック（1 から 4。範囲の外は寄せる）にしたキーを返す。
+func (k Key) WithClicks(n int) Key {
+	n = min(max(n, 1), 4)
+	k.Mod = k.Mod&^modClicks | Mod(n-1)<<modClicksShift
+	return k
+}
+
 // FunctionKey は、n 番の F キー（F1 なら 1）の種類を返す。n が 1 から MaxFunctionKey の範囲になければ ok は false である。
 func FunctionKey(n int) (c Code, ok bool) {
 	if n < 1 || n > MaxFunctionKey {
@@ -72,6 +123,20 @@ var codeNames = map[Code]string{
 	CodePageUp:    "PageUp",
 	CodePageDown:  "PageDown",
 	CodeInsert:    "Insert",
+	// マウスの出来事の名前は Vim と同じである（:help mouse-overview の <LeftMouse> など）。
+	CodeLeftMouse:        "LeftMouse",
+	CodeLeftDrag:         "LeftDrag",
+	CodeLeftRelease:      "LeftRelease",
+	CodeMiddleMouse:      "MiddleMouse",
+	CodeMiddleDrag:       "MiddleDrag",
+	CodeMiddleRelease:    "MiddleRelease",
+	CodeRightMouse:       "RightMouse",
+	CodeRightDrag:        "RightDrag",
+	CodeRightRelease:     "RightRelease",
+	CodeScrollWheelUp:    "ScrollWheelUp",
+	CodeScrollWheelDown:  "ScrollWheelDown",
+	CodeScrollWheelLeft:  "ScrollWheelLeft",
+	CodeScrollWheelRight: "ScrollWheelRight",
 }
 
 // runeNames は、文字のキーのうち <...> で書く名前である（Vim と同じ）。
@@ -92,6 +157,17 @@ const (
 	ModCtrl Mod = 1 << iota
 	ModAlt
 	ModShift
+)
+
+// 複数回のクリックの回数（Key.Clicks）を入れるビット。修飾キーの上の 2 ビットに、回数から 1 を引いた値（0 から 3）を入れる
+// （Vim の MOD_MASK_2CLICK、MOD_MASK_3CLICK、MOD_MASK_4CLICK に当たる）。表記は <2-LeftMouse> のように数と - を前に付ける。
+const (
+	modClicksShift     = 3
+	modClicks      Mod = 3 << modClicksShift
+	// ModClick2、ModClick3、ModClick4 は、2 回目、3 回目、4 回目のクリックである。
+	ModClick2 Mod = 1 << modClicksShift
+	ModClick3 Mod = 2 << modClicksShift
+	ModClick4 Mod = 3 << modClicksShift
 )
 
 // Key は、1 回のキー入力を表す。
@@ -170,6 +246,9 @@ func (k Key) String() string {
 	if k.Mod&ModShift != 0 {
 		b.WriteString("S-")
 	}
+	if n := k.Clicks(); n > 1 {
+		fmt.Fprintf(&b, "%d-", n)
+	}
 	b.WriteString(name)
 	b.WriteByte('>')
 	return b.String()
@@ -229,7 +308,14 @@ func MustParseKeys(s string) []Key {
 func parseAngle(rs []rune) (k Key, n int, err error) {
 	j := 1
 	var mod Mod
+	clicks := 1
 	for j+2 < len(rs) && rs[j+1] == '-' {
+		if c := rs[j]; c >= '2' && c <= '4' {
+			// 複数回のクリックの回数（<2-LeftMouse>）。押したことのキーにだけ付けられる（下で確かめる）。
+			clicks = int(c - '0')
+			j += 2
+			continue
+		}
 		m, ok := modOf(rs[j])
 		if !ok {
 			break
@@ -257,8 +343,18 @@ func parseAngle(rs []rune) (k Key, n int, err error) {
 	raw := string(rs[:n])
 	for c, cn := range codeNames {
 		if strings.EqualFold(name, cn) {
-			return Key{Code: c, Mod: mod}, n, nil
+			k := Key{Code: c, Mod: mod}
+			if clicks > 1 {
+				if !k.IsMousePress() {
+					return Key{}, 0, fmt.Errorf("クリックの回数は、ボタンを押したことのキーにだけ付けられる: %s", raw)
+				}
+				k = k.WithClicks(clicks)
+			}
+			return k, n, nil
 		}
+	}
+	if clicks > 1 {
+		return Key{}, 0, fmt.Errorf("クリックの回数は、ボタンを押したことのキーにだけ付けられる: %s", raw)
 	}
 	for r, rn := range runeNames {
 		if strings.EqualFold(name, rn) {

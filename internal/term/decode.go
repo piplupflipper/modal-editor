@@ -16,6 +16,9 @@ type Decoded struct {
 	// Paste は、bracketed paste で貼り付けたテキストである。空でなければ、この 1 件は貼り付けである。
 	// 改行は "\n" にそろえてあり、"\n" と "\t" の他の制御文字と、不正な UTF-8 は含まない。中身の無い貼り付けは送らない。
 	Paste string
+	// MouseRow と MouseCol は、Key がマウスの出来事（editcmd.Key.IsMouse）のときの、端末の画面の行と列（0 から数える）である。
+	// それ以外のキーでは 0 である。
+	MouseRow, MouseCol int
 }
 
 // 制御のバイトと、bracketed paste の始まりと終わりの印。
@@ -42,7 +45,8 @@ var pasteEnd = []byte("\x1b[201~")
 //     xterm の metaSendsEscape の Alt のキー（ESC と文字）は Alt にしない。Alt は CSI の修飾キーの引数でだけ付く
 //   - CSI（ESC [）と SS3（ESC O）の列は、矢印、Home、End、PageUp、PageDown、Delete、Shift-Tab、修飾キーの付いたそれらと、
 //     Insert、F1〜F20、CSI u と CSI 27 ; 修飾 ; 文字 ~ の形の文字のキーを解読する。
-//     それ以外の列（マウス、フォーカスの通知など）は捨てる
+//     SGR の形（DECSET 1006）のマウスの報告（CSI < ボタン ; 列 ; 行 M と m）は、マウスの出来事のキー（<LeftMouse> など。FR-184）と
+//     その位置にする（mouseKey）。それ以外の列（ほかの形のマウスの報告、フォーカスの通知など）は捨てる
 //   - bracketed paste（ESC [ 200 ~ から ESC [ 201 ~ まで）の中身は、キーにせず、終わりの印までをまとめて 1 件の Decoded.Paste にする
 //     （#114。Vim と同じく、ノーマルモードで貼った文字列をコマンドとして実行しないため）。
 //     "\r\n"、"\r"、"\n" は "\n" 1 つにし、"\t" は残し、それ以外の制御文字は捨てる（貼り付けた ^C で中断しないため）。
@@ -249,6 +253,12 @@ func parseCSI(b []byte) (Decoded, csiKind, int) {
 	}
 	n := i + 1
 	params := string(b[2:i])
+	if strings.HasPrefix(params, "<") && (final == 'M' || final == 'm') {
+		if dec, ok := mouseKey(params[1:], final == 'm'); ok {
+			return dec, csiKey, n
+		}
+		return Decoded{}, csiIgnored, n
+	}
 	if params != "" && strings.ContainsRune("<=>?", rune(params[0])) {
 		// 私用の引数（マウスの SGR の報告、端末の属性の応答など）は、キーではない。
 		return Decoded{}, csiIgnored, n

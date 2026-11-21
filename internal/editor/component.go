@@ -88,6 +88,8 @@ type component struct {
 	r       *ui.Renderer
 	// size は、部品の client の端末から届いた最新の大きさ（[2]int）である。入力を読む goroutine が置き、イベントループが読む。
 	size atomic.Value
+	// mouseDown は、この部品の client の端末でマウスのボタンを最後に押した位置の部品の種類である（mouse.go）。イベントループだけが使う。
+	mouseDown ui.HitArea
 }
 
 // exit は、部品の client に理由の無い終わりの知らせを送らせる（ClientExiter）。送り終えるのを待たない。
@@ -552,7 +554,9 @@ func (e *Editor) drawComponent(c *component, fr *ui.Frame) {
 	if c.r.Width <= 0 || c.r.Height <= 0 {
 		return
 	}
-	if err := c.term.Draw(c.r.Render(fr)); err != nil {
+	scr := c.r.Render(fr)
+	scr.Mouse = e.mouseEnabled() // 部品の client の端末にも、編集の client と同じくマウスの報告を求める（FR-180、FR-185）
+	if err := c.term.Draw(scr); err != nil {
 		e.log.Error("部品の client の描画に失敗", "err", err)
 	}
 }

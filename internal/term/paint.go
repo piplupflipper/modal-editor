@@ -19,6 +19,7 @@ import (
 //     ui.Cell の約束（続きのセルは左のセルと同じ属性）を守る格子では片側だけが変わることは無いが、守らない格子でも画面を崩さないために行う
 //   - 文字の属性（SGR）は、前に書いたセルと属性が違うときだけ切り替える。切り替えは、0 で戻してから要る属性を並べる 1 つの SGR にする
 //   - 書いている間はカーソルを隠し（DECTCEM）、書き終えたらカーソルを置いて形（DECSCUSR）を変え、表示する
+//   - マウスの報告（ui.Screen.Mouse。FR-180）が前回と違えば、セルより先に、報告を求める列か止める列を書く
 //   - 既定の属性の空白（以下、既定の空白）は、空白の文字を並べずに消す制御シーケンスで書くことがある。
 //     変わったセルから行末までが既定の空白なら、EL（行末まで消す）で消し、その行の残りは書かない。
 //     そうでなくても、変わった既定の空白の並びが、前回の全角文字の右の半分の列を含むなら、ECH（n 文字を消す）で消す。
@@ -46,6 +47,8 @@ type Painter struct {
 	cursorVisible bool
 	cursorRow     int
 	cursorCol     int
+	// mouse は、端末にマウスの報告を求めてあるか（ui.Screen.Mouse）である。
+	mouse bool
 }
 
 // Invalidate は、次の Paint で画面の全体を書き直させる。
@@ -66,6 +69,18 @@ func (p *Painter) Paint(buf *bytes.Buffer, s ui.Screen) {
 			}
 			hidden = true
 		}
+	}
+	// マウスの報告（FR-180）。Invalidate の後は、端末を戻す列（seqLeave）で止めてあるので、求めるなら求め直す。
+	if !p.valid {
+		p.mouse = false
+	}
+	if s.Mouse != p.mouse {
+		if s.Mouse {
+			buf.WriteString(seqMouseOn)
+		} else {
+			buf.WriteString(seqMouseOff)
+		}
+		p.mouse = s.Mouse
 	}
 	if !p.valid || w != p.w || h != p.h {
 		hide()

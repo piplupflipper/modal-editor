@@ -354,6 +354,15 @@ func (v viewport) Rows() int { return max(v.r.TextRows(), 1) }
 // SetView は、command.Viewport の SetView である。hold が負なら、次の描画でカーソルに合わせて決め直す（ui.Renderer.SetScrollHeld）。
 func (v viewport) SetView(top, skip, hold int) { v.r.SetScrollHeld(top, skip, hold) }
 
+// Left は、command.HorizontalViewport の Left である（ホイールの横のスクロール。FR-182）。
+func (v viewport) Left() int { return v.r.Left() }
+
+// Columns は、command.HorizontalViewport の Columns である。直前の描画の本文の列数である。
+func (v viewport) Columns() int { return v.r.TextWidth() }
+
+// SetLeft は、command.HorizontalViewport の SetLeft である。
+func (v viewport) SetLeft(left int) { v.r.SetLeft(left) }
+
 // render は、繋いでいるすべての client の画面を描いて、それぞれの端末へ出す。
 // 描き終えたら、読み込む client を描く前のものに戻す。
 // 見比べている組は、描く前に差分の計算し直しを始め、描いた後に両側のスクロールをそろえる（diff.go）。
@@ -378,6 +387,8 @@ func (e *Editor) renderView() {
 		return
 	}
 	scr := e.renderer.Render(e.bufferFrame())
+	// 端末にマウスの報告を求めるかは、描くたびに設定の今の値で決める（FR-180。:option.set の後の次の描画から効く）。
+	scr.Mouse = e.mouseEnabled()
 	if err := e.term.Draw(scr); err != nil {
 		e.log.Error("描画に失敗", "err", err)
 	}

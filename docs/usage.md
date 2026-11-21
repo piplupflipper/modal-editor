@@ -343,6 +343,15 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `diff-prev` | 操作 | `normal` | 見比べで、前の差分へ |
 | `search-word-forward` | 操作 | `normal`、`visual` | カーソルの単語を前方への検索のパターンにする（移らない） |
 | `search-word-backward` | 操作 | `normal`、`visual` | カーソルの単語を後方への検索のパターンにする（移らない） |
+| `mouse.click` | 操作 | `normal`、`visual`、`insert` | マウスの位置へ移る（タブの行ならそのタブへ移る） |
+| `mouse.drag` | 操作 | `normal`、`visual`、`insert` | ボタンを押した位置からマウスの位置までを選ぶ |
+| `mouse.release` | 操作 | `normal`、`visual`、`insert` | ドラッグを終える |
+| `mouse.select-word` | 操作 | `normal`、`visual`、`insert` | マウスの位置の単語を選ぶ |
+| `mouse.select-line` | 操作 | `normal`、`visual`、`insert` | マウスの位置の行を選ぶ |
+| `mouse.scroll-down` | 操作 | `normal`、`visual`、`insert` | 表示領域を mouse.scrollLines の行だけ下へ送る |
+| `mouse.scroll-up` | 操作 | `normal`、`visual`、`insert` | 表示領域を mouse.scrollLines の行だけ上へ送る |
+| `mouse.scroll-right` | 操作 | `normal`、`visual`、`insert` | 行を折り返さないとき、表示領域を mouse.scrollColumns の列だけ右へ送る |
+| `mouse.scroll-left` | 操作 | `normal`、`visual`、`insert` | 行を折り返さないとき、表示領域を mouse.scrollColumns の列だけ左へ送る |
 | `insert.left` | 操作 | `insert` | 左へ |
 | `insert.right` | 操作 | `insert` | 右へ |
 | `insert.up` | 操作 | `insert` | 上の行へ |

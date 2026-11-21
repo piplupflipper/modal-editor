@@ -5,6 +5,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 )
 
 // decodeAll は、in を 1 回で Feed し、保留が残れば Flush した結果を、キーの表記で返す。
@@ -103,7 +106,8 @@ func TestDecodeSequences(t *testing.T) {
 		{"CSI u: 私用の番号は捨てる", "\x1b[57399u", ""},
 		{"CSI u: 絵文字", "\x1b[127843u", "🍣"},
 
-		{"マウスの SGR の報告は捨てる", "\x1b[<0;10;5Ma", "a"},
+		{"マウスの SGR の報告はマウスの出来事のキー", "\x1b[<0;10;5Ma", "<LeftMouse>a"},
+		{"端末の属性の応答は捨てる", "\x1b[>0;95;0cb", "b"},
 		{"フォーカスの通知は捨てる", "\x1b[I\x1b[Ob", "b"},
 		{"知らない CSI は捨てる", "\x1b[99~\x1b[5xc", "c"},
 		{"CSI の途中の制御文字は壊れた列として捨てる", "\x1b[1\ra", "<CR>a"},
@@ -126,6 +130,98 @@ func TestDecodeSequences(t *testing.T) {
 				t.Errorf("decode(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDecodeMouse は、SGR の形（DECSET 1006）のマウスの報告を、マウスの出来事のキーと位置にすることを確かめる（FR-184）。
+// 列は、xterm の制御シーケンスの文書（ctlseqs の Mouse Tracking と Extended coordinates）の SGR の形のものである。
+//
+// req: FR-184
+func TestDecodeMouse(t *testing.T) {
+	tests := []struct {
+		in       string
+		want     string
+		row, col int
+	}{
+		{"\x1b[<0;10;5M", "<LeftMouse>", 4, 9},
+		{"\x1b[<0;1;1m", "<LeftRelease>", 0, 0},
+		{"\x1b[<32;3;2M", "<LeftDrag>", 1, 2},
+		{"\x1b[<1;3;2M", "<MiddleMouse>", 1, 2},
+		{"\x1b[<33;3;2M", "<MiddleDrag>", 1, 2},
+		{"\x1b[<1;3;2m", "<MiddleRelease>", 1, 2},
+		{"\x1b[<2;300;200M", "<RightMouse>", 199, 299},
+		{"\x1b[<34;3;2M", "<RightDrag>", 1, 2},
+		{"\x1b[<2;3;2m", "<RightRelease>", 1, 2},
+		{"\x1b[<64;5;6M", "<ScrollWheelUp>", 5, 4},
+		{"\x1b[<65;5;6M", "<ScrollWheelDown>", 5, 4},
+		{"\x1b[<66;5;6M", "<ScrollWheelLeft>", 5, 4},
+		{"\x1b[<67;5;6M", "<ScrollWheelRight>", 5, 4},
+		{"\x1b[<4;1;1M", "<S-LeftMouse>", 0, 0},
+		{"\x1b[<8;1;1M", "<A-LeftMouse>", 0, 0},
+		{"\x1b[<16;1;1M", "<C-LeftMouse>", 0, 0},
+		{"\x1b[<84;1;1M", "<C-S-ScrollWheelUp>", 0, 0},
+		// 読まない報告: ボタンを押していない動き（DECSET 1003）、8 番より後のボタン、ホイールを離した報告、壊れた引数。
+		{"\x1b[<35;1;1M", "", 0, 0},
+		{"\x1b[<128;1;1M", "", 0, 0},
+		{"\x1b[<64;1;1m", "", 0, 0},
+		{"\x1b[<0;1M", "", 0, 0},
+		{"\x1b[<0;0;1M", "", 0, 0},
+		{"\x1b[<0;;1M", "", 0, 0},
+		{"\x1b[<0:1;2;1M", "", 0, 0},
+	}
+	for _, tt := range tests {
+		var d Decoder
+		out := d.Feed([]byte(tt.in))
+		if got := decodedString(out); got != tt.want {
+			t.Errorf("decode(%q) = %q, want %q", tt.in, got, tt.want)
+			continue
+		}
+		if len(out) == 1 && (out[0].MouseRow != tt.row || out[0].MouseCol != tt.col) {
+			t.Errorf("decode(%q) の位置 = %d,%d, want %d,%d", tt.in, out[0].MouseRow, out[0].MouseCol, tt.row, tt.col)
+		}
+	}
+}
+
+// TestClickCounter は、同じボタンを同じ位置で続けて押したときに、Neovim 0.12.5 と同じく 2 回目から 4 回目のクリックとして数え、
+// 5 回目は 1 回目に戻ることを確かめる（FR-183）。
+//
+// req: FR-183
+func TestClickCounter(t *testing.T) {
+	press := func(row, col int) Decoded {
+		return Decoded{Key: editcmd.Special(editcmd.CodeLeftMouse), MouseRow: row, MouseCol: col}
+	}
+	var c clickCounter
+	t0 := time.Unix(1000, 0)
+	var got []int
+	at := t0
+	for range 5 {
+		got = append(got, c.count(press(1, 2), at).Key.Clicks())
+		at = at.Add(MultiClickTime / 2)
+	}
+	if want := []int{1, 2, 3, 4, 1}; !slices.Equal(got, want) {
+		t.Errorf("続けて押した回数 = %v, want %v", got, want)
+	}
+	// 離す、動かすは数えるのを止めない。位置、ボタン、時間が違えば 1 回目に戻る。
+	c = clickCounter{}
+	c.count(press(1, 2), t0)
+	if k := c.count(Decoded{Key: editcmd.Special(editcmd.CodeLeftRelease)}, t0).Key; k.Clicks() != 1 || k.Code != editcmd.CodeLeftRelease {
+		t.Errorf("離したキーを変えた: %v", k)
+	}
+	if n := c.count(press(1, 2), t0.Add(time.Millisecond)).Key.Clicks(); n != 2 {
+		t.Errorf("離した後の 2 回目 = %d", n)
+	}
+	if n := c.count(press(1, 3), t0.Add(2*time.Millisecond)).Key.Clicks(); n != 1 {
+		t.Errorf("別の位置 = %d", n)
+	}
+	right := Decoded{Key: editcmd.Special(editcmd.CodeRightMouse), MouseRow: 1, MouseCol: 3}
+	if n := c.count(right, t0.Add(3*time.Millisecond)).Key.Clicks(); n != 1 {
+		t.Errorf("別のボタン = %d", n)
+	}
+	if n := c.count(right, t0.Add(3*time.Millisecond+MultiClickTime)).Key.Clicks(); n != 1 {
+		t.Errorf("間隔が上限を超えた = %d", n)
+	}
+	if k := c.count(Decoded{Key: editcmd.Rune('a')}, t0).Key; k != editcmd.Rune('a') {
+		t.Errorf("キーを変えた: %v", k)
 	}
 }
 

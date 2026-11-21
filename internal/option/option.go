@@ -256,6 +256,19 @@ const (
 	// fidget.nvim の progress.display.done_ttl に当たる）。0 なら終わったらすぐに消す。範囲は 0 から 60000 で、既定は 3000 である
 	// （fidget.nvim の done_ttl の既定の 3 秒）。進み具合が終わるたびに読む。
 	ProgressDoneMs = "progress.doneMs"
+	// MouseEnabled は、マウスを使うかである（FR-180。Vim の 'mouse'）。範囲はエディタ全体で、既定は Vim 9.1 の既定（'mouse' が空）と同じく
+	// 使わない（#317 の既定値の方針。Neovim 0.12.5 の既定は nvi）。true の間は、どの client の端末にもマウスの報告を求め、
+	// マウスの出来事のキー（<LeftMouse> など。FR-184）が届く。false の間は報告を求めず、端末の側でテキストを選べる。
+	// Vim の 'mouse' はモードごとのフラグの文字列だが、本体はどのモードでも使うか使わないかだけを選ぶ（オーナーの nvim は mouse=a）。
+	// フラグの文字列と値の形が合わないので、:set の別名は作らない（:set mouse=a が誤りになり、:set mouse が値を出さずに入れることになるため）。
+	// 描くたびに読む。
+	MouseEnabled = "mouse.enabled"
+	// MouseScrollLines は、ホイールを 1 回回したときに表示領域を送る行数である（FR-182。Neovim 0.12.5 の 'mousescroll' の ver）。
+	// 既定は Neovim の既定と同じく 3 で、0 なら縦に送らない。範囲は 0 から 9999 である（scroll.margin と同じ上限）。
+	MouseScrollLines = "mouse.scrollLines"
+	// MouseScrollColumns は、行を折り返さないときに、ホイールを 1 回傾けたときに表示領域を送る列数である
+	// （FR-182。'mousescroll' の hor）。既定は Neovim の既定と同じく 6 で、0 なら横に送らない。範囲は 0 から 9999 である。
+	MouseScrollColumns = "mouse.scrollColumns"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -294,6 +307,9 @@ var defs = []Def{
 	{Name: ProgressShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(true)},
 	// 上限は cursorHold.delayMs と同じ 1 分にした。
 	{Name: ProgressDoneMs, Type: Int, Scope: ScopeEditor, Default: IntValue(3000), Range: &IntRange{Min: 0, Max: 60000}},
+	{Name: MouseEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: MouseScrollLines, Type: Int, Scope: ScopeEditor, Default: IntValue(3), Range: &IntRange{Min: 0, Max: 9999}},
+	{Name: MouseScrollColumns, Type: Int, Scope: ScopeEditor, Default: IntValue(6), Range: &IntRange{Min: 0, Max: 9999}},
 }
 
 // fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。

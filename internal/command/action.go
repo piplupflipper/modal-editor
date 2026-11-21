@@ -105,6 +105,12 @@ func init() {
 		"search-word-forward":  actSearchWord(false),
 		"search-word-backward": actSearchWord(true),
 	}
+	// マウスの出来事の操作（FR-181〜FR-183。mouse.go）。インサートモードでも同じ ID で引く（insertActions）。
+	for id := range mouseActions {
+		actions[id] = actMouse(id)
+		insertActions[id] = insertMouse(id)
+		keepsTextActions[id] = true
+	}
 }
 
 // actPopupFocus は、<C-w>w で、カーソルの近くのポップアップへフォーカスを入れる（入っていれば元のタブへ戻す。FR-68）。
