@@ -8,6 +8,7 @@ Vim のキーバインドを持つ、ターミナル用のモーダルエディ�
 - 要件ごとの進捗: [docs/progress.md](docs/progress.md)（`make progress` が生成する）
 - Vim との違い（直さないと決めた食い違いと、見つけた未実装の機能）: [docs/vim-differences.md](docs/vim-differences.md)
 - 設定と標準の拡張機能の使い方: [docs/usage.md](docs/usage.md)
+- デバッグの案内（動かないとき、画面が崩れるときに調べる手順と、不具合の報告に添えるもの）: [docs/debugging.md](docs/debugging.md)
 
 詳細設計の文書は作らず、コードと doc コメントを詳細設計として扱う。
 
@@ -32,7 +33,15 @@ bin/vi-imitation [ファイル ...]   # 最初のファイルを表示して起�
 bin/vi-imitation --log ed.log a.go # ログを ed.log に追記する（既定ではログを書かない）
 bin/vi-imitation -R a.go           # 引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）
 bin/vi-imitation --version         # バージョン（ビルドしたコミット）を表示して終わる
+bin/vi-imitation --docs            # 本体に埋め込んだ文書の話題の一覧を出して終わる
+bin/vi-imitation --docs config     # 話題（設定ファイル）の文書を標準出力に出す
 ```
+
+`--docs` は、設定、キーの割り当て、Ex コマンド、拡張機能の宣言ファイルと API の参照と、デバッグの案内を、ソースを取らずに読むための文書を出す（要件定義 FR-172）。
+AI エージェントに設定や拡張機能を書かせるときは、要る話題だけを `vi-imitation --docs <話題>` で読ませる。
+`vi-imitation --docs <話題> <節>` は、見出しが `<節>` の節だけを出す（`vi-imitation --docs usage 'Ex コマンドの一覧'`）。見出しの一覧は `vi-imitation --docs --headings <話題>` で出す。
+端末を使わないので、標準出力をパイプやファイルにしてよい。
+文書は `docs/agent/` と `docs/debugging.md` と `docs/usage.md` にある。
 
 `vi` で起動したいときは、シェルの設定に `alias vi=vi-imitation` を書く。
 
@@ -71,6 +80,8 @@ make check   # 整形の検査、型チェック、リント、テストをま�
 | `make typecheck` | 全パッケージをコンパイルし、`go vet` を実行する |
 | `make lint` | golangci-lint を実行する。設定は [.golangci.yml](.golangci.yml) |
 | `make progress` | 要件ごとの進捗（`docs/progress.md`）を生成する。注釈の書き方は[基本設計](docs/basic-design.md)の「要件との対応」を参照 |
+| `make docs` | 本体に埋め込む文書（`docs/agent/*.md`）の一覧の部分を、コードの表（設定、操作、Ex コマンド、拡張機能 API）から生成する。表を変えたら打つ |
+| `make docs-check` | `docs/agent/*.md` の一覧がコードの表とずれていれば失敗する |
 | `make test` | テストを実行する（データ競合の検出つき） |
 | `make vuln` | 依存ライブラリの既知の脆弱性を調べる |
 | `make build` | 実行ファイルを `bin/` に作る |
@@ -89,7 +100,7 @@ Go はコンパイル言語なので、型チェックはコンパイルの一�
 | `cmd/vi-imitation/` | エディタ本体の実行ファイルの入口 |
 | `cmd/vi-imitation-mcp-bridge/` | MCP の中継コマンド。標準入出力と起動中のエディタの Unix ドメインソケットの間でメッセージを転送する |
 | `cmd/vi-imitation-ext-line/` | 標準の拡張機能（行のテキストオブジェクト）の実行ファイルと宣言ファイル |
-| `cmd/vi-imitation-ext-script/` | スクリプトの拡張機能（利用者が置く Go のソースファイル）を yaegi で実行する実行ファイル。宣言ファイルの `args` でスクリプトのパスを受け取る。スクリプトの書き方と yaegi の制限はパッケージの doc（`go doc ./cmd/vi-imitation-ext-script`）にある |
+| `cmd/vi-imitation-ext-script/` | スクリプトの拡張機能（利用者が置く Go のソースファイル）を yaegi で実行する実行ファイル。宣言ファイルの `args` でスクリプトのパスを受け取る。スクリプトの書き方と yaegi の制限は [docs/usage.md](docs/usage.md) の「スクリプトの拡張機能」にあり、`vi-imitation --docs script` でも読める |
 | `cmd/vi-imitation-ext-treesitter/` | 標準の拡張機能（tree-sitter による構文ハイライト）の実行ファイルと宣言ファイル。cgo を使い、ビルドに C コンパイラが要る |
 | `cmd/vi-imitation-ext-dap/` | 標準の拡張機能（DAP によるデバッグ）の実行ファイルと宣言ファイル。デバッグアダプター（既定は delve の `dlv dap`）を子プロセスとして起動する |
 | `cmd/vi-imitation-ext-lsp/` | 標準の拡張機能（LSP のクライアント。診断、定義へ移動、ホバー、整形）の実行ファイルと宣言ファイル。言語サーバー（既定は Go の gopls）を子プロセスとして起動する |
@@ -97,7 +108,9 @@ Go はコンパイル言語なので、型チェックはコンパイルの一�
 | `cmd/vi-imitation-ext-mcp/` | 標準の拡張機能（MCP のサーバー。バッファの一覧と内容、カーソル位置、選択範囲、診断の取得、編集、ファイルを開く、保存のツール）の実行ファイルと宣言ファイル。中継コマンドからの接続を Unix ドメインソケットで受ける。本体が環境変数 `VI_IMITATION_MCP_SOCKET` のパスで起動時から待ち受け、最初の接続で起動してソケットを引き継ぐ（起動の契機 `socket`）。使い方はパッケージの doc（`go doc ./cmd/vi-imitation-ext-mcp`）にある |
 | `cmd/vi-imitation-ext-git/` | 標準の拡張機能（git 連携。バッファのファイルを git の HEAD の版と見比べる）の実行ファイルと宣言ファイル。PATH の `git` を子プロセスとして起動する |
 | `cmd/reqtrace/` | 要件ごとの進捗を生成するツール |
+| `cmd/docgen/` | 本体に埋め込む文書（`docs/agent/*.md`）の一覧の部分を生成するツール（`make docs`） |
 | `internal/distcheck/` | `make build` と `make dist` の生成物を検査するテスト |
 | `internal/` | このリポジトリの中だけで使うパッケージ |
 | `docs/` | 要件定義などの文書 |
+| `docs/agent/` | 本体に埋め込み、`vi-imitation --docs` で出す AI エージェント向けの文書 |
 | `docs/measurements/` | 計測の手順と結果 |

@@ -1,0 +1,242 @@
+package main
+
+import (
+	"bytes"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// root は、このパッケージのテストから見たリポジトリのルートである。
+const root = "../.."
+
+// docs/agent の文書の印の間が、コードの表から生成したものと同じである。
+// 表（設定、操作、Ex コマンド、拡張機能 API）を変えて make docs を打ち忘れると、ここと make docs-check が落ちる。
+//
+// req: FR-172
+func TestDocsUpToDate(t *testing.T) {
+	gen, err := newGenerator(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := filepath.Glob(filepath.Join(root, agentDir, "*.md"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("文書が無い: %v", err)
+	}
+	used := map[string]bool{}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := fill(string(data), func(name string) (string, error) {
+			used[name] = true
+			return gen.block(name)
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if got != string(data) {
+			t.Errorf("%s の一覧がコードの表とずれている。make docs で生成し直す", p)
+		}
+	}
+	// 生成の関数を足したのに、どの文書にも印を置き忘れたら気づけるようにする。
+	for _, name := range []string{
+		"options", "config-keys", "actions", "ex-commands", "host-commands", "provider-commands",
+		"api-version", "env", "manifest", "methods", "types", "key-names", "keymap-modes", "lifecycle", "ext-package",
+		"script-packages", "script-symbols", "server-api",
+	} {
+		if !used[name] {
+			t.Errorf("印 %s がどの文書にも無い", name)
+		}
+	}
+}
+
+// -check は、一覧がコードの表とずれた文書で失敗し、ファイルを書き換えない。ずれが無ければ成功する。
+//
+// req: FR-172
+func TestCheckDetectsStale(t *testing.T) {
+	dir := linkedRoot(t)
+	path := filepath.Join(dir, agentDir, "a.md")
+	stale := "# 例\n\n<!-- generated:options:begin -->\n| 古い表 |\n<!-- generated:options:end -->\n"
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-root", dir, "-check"}, io.Discard); err == nil || !strings.Contains(err.Error(), "make docs") {
+		t.Fatalf("ずれた文書の -check の誤り = %v, want make docs の案内", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != stale {
+		t.Errorf("-check がファイルを書き換えた:\n%s", data)
+	}
+	if err := run([]string{"-root", dir}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "古い表") || !strings.Contains(string(data), "| `lineNumber.show` |") {
+		t.Errorf("生成し直した文書:\n%s", data)
+	}
+	if err := run([]string{"-root", dir, "-check"}, io.Discard); err != nil {
+		t.Errorf("生成し直した後の -check = %v", err)
+	}
+}
+
+// linkedRoot は、リポジトリの ext、go.mod、docs/usage.md を symlink で置き、空の docs/agent を作った一時のルートを返す。
+// usage.md を書き換えるテストのために、usage を true にすると docs/usage.md を写しにする。
+func linkedRoot(t *testing.T, usage ...bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, agentDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"ext", "go.mod", "docs/usage.md"} {
+		abs, err := filepath.Abs(filepath.Join(root, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p == "docs/usage.md" && len(usage) > 0 && usage[0] {
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, p), data, 0o600); err != nil { //nolint:gosec // テストの一時ディレクトリの中の決まったパスである
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.Symlink(abs, filepath.Join(dir, p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// docs/usage.md の「yaegi の制限」が go.mod の yaegi の版を書いていなければ、生成も -check も失敗する。
+func TestYaegiVersionChecked(t *testing.T) {
+	if err := checkYaegiVersion(root); err != nil {
+		t.Fatalf("リポジトリの docs/usage.md: %v", err)
+	}
+	dir := linkedRoot(t, true)
+	path := filepath.Join(dir, "docs", "usage.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := yaegiModRE.FindSubmatch(mustRead(t, filepath.Join(root, "go.mod")))
+	old := strings.ReplaceAll(string(data), "yaegi "+string(m[1]), "yaegi v0.0.1")
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil { //nolint:gosec // テストの一時ディレクトリの中の決まったパスである
+		t.Fatal(err)
+	}
+	if err := run([]string{"-root", dir, "-check"}, io.Discard); err == nil || !strings.Contains(err.Error(), "yaegi") {
+		t.Errorf("版の違う usage.md の -check = %v, want yaegi の版の誤り", err)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// 印の誤り（知らない名前、終わりの無い始まり、始まりの無い終わり、入れ子）は誤りにする。印の外はそのまま残す。
+func TestFill(t *testing.T) {
+	gen := func(name string) (string, error) {
+		if name != "a" && name != "b" {
+			return (&generator{}).block(name)
+		}
+		return "<" + name + ">\n", nil
+	}
+	got, err := fill("x\n<!-- generated:a:begin -->\nold\n<!-- generated:a:end -->\ny\n<!-- generated:b:begin -->\n<!-- generated:b:end -->\n", gen)
+	if want := "x\n<!-- generated:a:begin -->\n<a>\n<!-- generated:a:end -->\ny\n<!-- generated:b:begin -->\n<b>\n<!-- generated:b:end -->\n"; err != nil || got != want {
+		t.Errorf("fill = %q, %v, want %q", got, err, want)
+	}
+	for _, bad := range []string{
+		"<!-- generated:zzz:begin -->\n<!-- generated:zzz:end -->\n",
+		"<!-- generated:a:begin -->\n",
+		"<!-- generated:a:end -->\n",
+		"<!-- generated:a:begin -->\n<!-- generated:b:begin -->\n<!-- generated:b:end -->\n<!-- generated:a:end -->\n",
+	} {
+		if _, err := fill(bad, gen); err == nil {
+			t.Errorf("fill(%q) が誤りにならない", bad)
+		}
+	}
+}
+
+// 括弧の中の設計の文書と issue と PR への参照を除き、ほかの断片は残す。
+func TestDropRefs(t *testing.T) {
+	for in, want := range map[string]string{
+		"名前である（名前は仮。基本設計 5.1）。":            "名前である（名前は仮）。",
+		"操作の列である（基本設計 5.1、5.5。FR-94）。":     "操作の列である。",
+		"読む（#9 の裁定）":                       "読む",
+		"選ぶ（選び方は Manifest.Provides の doc）": "選ぶ",
+		"選ぶ（選び方は表のとおり）":                    "選ぶ（選び方は表のとおり）",
+		"キー（PR #249 のレビュー。ファインダー）":         "キー（ファインダー）",
+	} {
+		if got := dropRefs(in); got != want {
+			t.Errorf("dropRefs(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// 操作の ID の表の既定のキーは、行のモードの一部だけで効くキーにモードを添える。
+// visual の u は lowercase で、normal の u は undo なので、lowercase の行の u には（visual）が付き、undo の行の u には付かない。
+//
+// req: FR-172
+func TestActionKeysModes(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeActions(&buf); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"| `lowercase` | オペレーター | normal、visual | `gu` `u`（visual） |",
+		"| `delete` | オペレーター | normal、visual | `d` `x`（visual） |",
+		"| `undo` | 操作 | normal | `u` |",
+		// テキストオブジェクトの gc は、オペレーターの後（dgc）だけで効く
+		"| `commented-lines` | テキストオブジェクト | visual | `gc`（オペレーターの後） |",
+		"| `left` | モーション | normal、visual | `h` `<Left>` |",
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("操作の ID の表に %q が無い", want)
+		}
+	}
+}
+
+// ext の doc コメントを写すときに、内部の実装の説明の文を除き、辿れない参照を --docs のコマンドに替え、定数に値を添える。
+func TestExtText(t *testing.T) {
+	api, err := parseExtAPI(filepath.Join(root, "ext"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for in, want := range map[string]string{
+		"読む。JSONC は internal/config が読む。このパッケージは型だけを持つ。":            "読む。",
+		"ファイル記述子 SocketFDStart が待つ":                                 "ファイル記述子 SocketFDStart（3） が待つ",
+		"中身は statusline/set で送る（MethodStatusLineSet）。":              "中身は statusline/set で送る（statusline/set）。",
+		"形は Operation の定数の doc にある。":                                "形は `vi-imitation --docs extensions Operation` にある。",
+		"位置（Transaction の doc）":                                     "位置（`vi-imitation --docs extension-types Transaction`）",
+		"選ぶ（選び方は Foo.Bar の doc）":                                    "選ぶ",
+		"表す（MarshalJSON。形は decoration.go の decorationFields の doc）": "表す（MarshalJSON）",
+		"色の名前（docs/usage.md の「見た目の設定」）":                             "色の名前（`vi-imitation --docs usage 見た目の設定`）",
+		"共通（package の doc の「キー入力ごとの問い合わせ」）":                         "共通（`vi-imitation --docs extensions キー入力ごとの問い合わせ`）",
+	} {
+		if got := api.text(in); got != want {
+			t.Errorf("text(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// メソッドの doc の最初の文から向きと種類を読めなければ、生成を誤りにする（書き方の違うメソッドを黙って落とさない）。
+func TestMethodsRequireDirection(t *testing.T) {
+	api := &extAPI{consts: []constInfo{{name: "MethodX", value: "x/y", doc: "MethodX は、何かである。"}}}
+	if _, err := api.methods(); err == nil {
+		t.Error("向きの無いメソッドが誤りにならない")
+	}
+	api.consts[0].doc = "MethodX は、本体から拡張機能への通知である。params は XParams。"
+	ms, err := api.methods()
+	if err != nil || len(ms) != 1 || !ms[0].fromHost || ms[0].request || ms[0].params != "XParams" {
+		t.Errorf("methods = %+v, %v", ms, err)
+	}
+}
