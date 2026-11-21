@@ -113,7 +113,8 @@ func TestScrollbarThumb(t *testing.T) {
 	waitColumn(h, h.term, "#........")
 }
 
-// scrollbar.currentOnly が真なら、操作中の client（最後にキーを受けた client）の画面にだけ出す。偽ならどちらにも出す。
+// scrollbar.currentOnly が真なら、フォーカスのある client（最後にキーを受けた client か、本体がフォーカスを移した先の client）の
+// 画面にだけ出す。偽ならどちらにも出す。
 //
 // req: FR-186
 func TestScrollbarCurrentOnly(t *testing.T) {
@@ -121,12 +122,18 @@ func TestScrollbarCurrentOnly(t *testing.T) {
 	dir := writeFiles(t, files)
 	term := newFakeTerm()
 	term.w, term.h = 20, 12
-	h := startTerm(t, term, Config{WorkDir: dir, Options: scrollbarOpts(nil)}, "a.txt")
+	moved := make(chan string, 4)
+	cfg := Config{WorkDir: dir, Options: scrollbarOpts(nil), FocusPane: func(_, to string) error {
+		moved <- to
+		return nil
+	}}
+	h := startTerm(t, term, cfg, "a.txt")
 	h.settle()
+	h.e.do(func() { h.e.clients[0].info = ClientInfo{ID: 1, Pane: "%1"} })
 	bt := &exitTerm{fakeTerm: newFakeTerm()}
 	bt.w, bt.h = 20, 12
 	h.peers = append(h.peers, bt.fakeTerm)
-	if err := h.e.Attach(bt, ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt")}}); err != nil {
+	if err := h.e.Attach(bt, ClientInfo{ID: 2, Pane: "%2", WorkDir: dir, Files: []string{filepath.Join(dir, "b.txt")}}); err != nil {
 		t.Fatal(err)
 	}
 	b := &peer{h: h, term: bt}
@@ -147,6 +154,15 @@ func TestScrollbarCurrentOnly(t *testing.T) {
 	h.keys("l")
 	waitColumn(h, h.term, "#........")
 	waitColumn(h, b.term.fakeTerm, ".........")
+
+	// 別の client のタブのファイルを開こうとすると、本体がその client のペインへフォーカスを移す（FR-63）。
+	// キーを打つ前でも、バーはフォーカスを移した先の client の画面へ移る。
+	h.keys(":e b.txt<CR>")
+	if to := <-moved; to != "%2" {
+		t.Fatalf("フォーカスを移した先 = %s, want %%2", to)
+	}
+	waitColumn(h, h.term, ".........")
+	waitColumn(h, b.term.fakeTerm, "#........")
 }
 
 // 印は、診断の範囲の始まりの行と、一致に色を付けている検索のパターンの一致のある行に出す。
@@ -231,27 +247,41 @@ func TestScrollbarSearchCache(t *testing.T) {
 	}
 }
 
-// スクロールバーの列を押してもカーソルは動かず、ホイールはテキストの上と同じく表示領域を送る。
-// スクロールバーを出していなければ、同じ列はテキストで、押した位置へカーソルが移る。
+// スクロールバーのつまみと印のセルを押してもカーソルは動かず、ホイールはテキストの上と同じく表示領域を送る。
+// 同じ列でも、つまみも印も描いていないセルと、スクロールバーを出していないときの同じセルは本文で、押した行の最後の文字へカーソルが移る。
 //
 // req: FR-189
 func TestScrollbarMouse(t *testing.T) {
 	h := startScrollbar(t, map[string]string{"a.txt": scrollbarText()}, scrollbarOpts(nil))
 	waitColumn(h, h.term, "#........")
-	h.click(3, 19)
+	// 画面の 1 行目（表示領域の 0 行目）がつまみである。
+	h.click(1, 19)
 	if got := h.cursor(); got.Line != 0 || got.Byte != 0 {
-		t.Errorf("スクロールバーを押した後のカーソル = %+v", got)
+		t.Errorf("つまみを押した後のカーソル = %+v, want 0:0", got)
 	}
-	h.mouse("<ScrollWheelDown>", 3, 19)
+	// つまみも印も無い 3 行目（"line 2"）は本文で、行の最後の文字へ移る。
+	h.click(3, 19)
+	if got := h.cursor(); got.Line != 2 || got.Byte != 5 {
+		t.Errorf("何も描いていないセルを押した後のカーソル = %+v, want 2:5", got)
+	}
+	h.mouse("<ScrollWheelDown>", 1, 19)
 	if top := h.viewTop(); top != 3 {
-		t.Errorf("スクロールバーの上のホイールの後の最初の行 = %d, want 3", top)
+		t.Errorf("つまみの上のホイールの後の最初の行 = %d, want 3", top)
+	}
+	// 3 行目から 11 行目を見ているので、つまみは 0 行目と 1 行目（12×9÷90 の切り上げの 2 行目の手前まで）である。
+	waitColumn(h, h.term, "##.......")
+	before := h.cursor()
+	h.click(2, 19)
+	if got := h.cursor(); got != before {
+		t.Errorf("ホイールの後につまみを押した後のカーソル = %+v, want %+v のまま", got, before)
 	}
 
+	// スクロールバーを出していなければ、同じセル（画面の 2 行目、"line 4"）は本文である。
 	h.keys(":option.set scrollbar.show false<CR>")
 	waitColumn(h, h.term, ".........")
-	h.click(3, 2)
-	if got := h.cursor(); got.Line != 5 || got.Byte != 2 {
-		t.Errorf("テキストを押した後のカーソル = %+v, want 5:2", got)
+	h.click(2, 19)
+	if got := h.cursor(); got.Line != 4 || got.Byte != 5 {
+		t.Errorf("スクロールバーを出していない同じセルを押した後のカーソル = %+v, want 4:5", got)
 	}
 }
 

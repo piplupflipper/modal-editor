@@ -95,6 +95,8 @@ func (e *Editor) focusOwner(bs *bufferState) bool {
 	e.message = infoMessage(fmt.Sprintf("%s は %s のタブです（そのペインへ移ります）", name, ownerName(bs)))
 	// フォーカスはこの client のペインから離れるので、診断のポップアップを閉じ、カーソルが止まった契機を知らせない（cursorhold.go の leaveFocus）。
 	e.leaveFocus()
+	// スクロールバーを今の client だけに出す設定（scrollbar.currentOnly。FR-186）では、フォーカスを移す先の client にバーを移す。
+	e.focused = o
 	focus, log := e.cfg.FocusPane, e.log
 	go func() {
 		defer e.recoverPanic()

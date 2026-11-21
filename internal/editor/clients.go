@@ -372,7 +372,7 @@ func (e *Editor) switchView(c *clientView) {
 // useClient は、client c のキーを処理する前に、c を読み込んで操作中の client にし、共有する状態を c のカーソルのあるタブの State へ引き継ぐ。
 func (e *Editor) useClient(c *clientView) {
 	e.switchView(c)
-	e.op = c
+	e.op, e.focused = c, c
 	if e.cur != nil {
 		if e.shared != nil && e.shared != e.cur.state {
 			e.cur.state.TakeOverShared(e.shared)
@@ -567,6 +567,9 @@ func (e *Editor) removeClient(c *clientView) {
 	}
 	if e.op == c {
 		e.op = nil
+	}
+	if e.focused == c {
+		e.focused = nil
 	}
 	if e.view == c {
 		e.view = nil

@@ -49,18 +49,19 @@ const (
 
 // diagnosticScrollbar は、診断の重要度ごとの、スクロールバーの印の優先と色と記号の名前である。
 var diagnosticScrollbar = []struct {
-	severity ext.DiagnosticSeverity
-	priority int
-	style    string
+	severity      ext.DiagnosticSeverity
+	priority      int
+	style, symbol string
 }{
-	{ext.SeverityError, scrollbarPriorityError, ui.StyleScrollbarDiagnosticError},
-	{ext.SeverityWarning, scrollbarPriorityWarning, ui.StyleScrollbarDiagnosticWarning},
-	{ext.SeverityInfo, scrollbarPriorityInfo, ui.StyleScrollbarDiagnosticInfo},
-	{ext.SeverityHint, scrollbarPriorityHint, ui.StyleScrollbarDiagnosticHint},
+	{ext.SeverityError, scrollbarPriorityError, ui.StyleScrollbarDiagnosticError, ui.SymbolScrollbarDiagnosticError},
+	{ext.SeverityWarning, scrollbarPriorityWarning, ui.StyleScrollbarDiagnosticWarning, ui.SymbolScrollbarDiagnosticWarning},
+	{ext.SeverityInfo, scrollbarPriorityInfo, ui.StyleScrollbarDiagnosticInfo, ui.SymbolScrollbarDiagnosticInfo},
+	{ext.SeverityHint, scrollbarPriorityHint, ui.StyleScrollbarDiagnosticHint, ui.SymbolScrollbarDiagnosticHint},
 }
 
 // uiScrollbar は、client の画面のバッファ bs の表示領域の右端に描くスクロールバー（ui.Frame.Scrollbar）を、設定の今の値から作る（FR-186、FR-187）。
-// 出さないとき（scrollbar.show が偽、scrollbar.currentOnly が真で操作中の client でない、bs のファイルの種類が scrollbar.excludedFileTypes にある）は nil を返す。
+// 出さないとき（scrollbar.show が偽、scrollbar.currentOnly が真でフォーカスのある client（Editor.focused。最後にキーを受けた client か、
+// 本体がフォーカスを移した先の client）でない、bs のファイルの種類が scrollbar.excludedFileTypes にある）は nil を返す。
 // search は、一致に色を付けるパターン（bufferFrame の ui.Frame.Search）で、検索の一致の印はこのパターンで作る。
 // 描くたびに読むので、:option.set で値を変えたときに呼ぶ処理は無い（基本設計 7.3）。使うのは bufferFrame だけである。
 //
@@ -69,8 +70,14 @@ func (e *Editor) uiScrollbar(bs *bufferState, search *regexp.Regexp) *ui.Scrollb
 	if !e.options.Get(option.ScrollbarShow).Bool() {
 		return nil
 	}
-	if e.options.Get(option.ScrollbarCurrentOnly).Bool() && e.op != nil && e.view != e.op {
-		return nil
+	if e.options.Get(option.ScrollbarCurrentOnly).Bool() {
+		cur := e.focused
+		if cur == nil {
+			cur = e.op
+		}
+		if cur != nil && e.view != cur {
+			return nil
+		}
 	}
 	if slices.Contains(optionList(e.options.Get(option.ScrollbarExcludedFileTypes).String()), bs.fileType()) {
 		return nil
@@ -117,7 +124,7 @@ func (e *Editor) diagnosticScrollbarMarks(bs *bufferState, _ *regexp.Regexp) []u
 			continue
 		}
 		slices.Sort(ls)
-		out = append(out, ui.ScrollbarMarks{Lines: ls, Priority: k.priority, Style: k.style, Symbol: k.style})
+		out = append(out, ui.ScrollbarMarks{Lines: ls, Priority: k.priority, Style: k.style, Symbol: k.symbol})
 	}
 	return out
 }

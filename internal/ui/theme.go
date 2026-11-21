@@ -3,6 +3,8 @@ package ui
 import (
 	"maps"
 	"slices"
+	"strings"
+	"unicode"
 )
 
 // 色の種類の名前（論理名）。名前から属性への対応は Theme が持つ。
@@ -150,9 +152,25 @@ func StyleNames() []string {
 	return slices.Clone(styleNames)
 }
 
-// IsStyleName は、name が本体の色を付ける対象の名前（StyleNames）かを返す。
+// IsStyleName は、name が設定の colors に書ける色の名前かを返す。本体の色を付ける対象の名前（StyleNames）と、
+// スクロールバーの印の種類の名前（IsScrollbarMarkName。後に拡張機能が足す種類の色を、拡張機能が起動する前の設定に書けるように、
+// 決まった表で確かめない）である。
+//
+// req: FR-187
 func IsStyleName(name string) bool {
-	return slices.Contains(styleNames, name)
+	return slices.Contains(styleNames, name) || IsScrollbarMarkName(name)
+}
+
+// scrollbarMarkPrefix は、スクロールバーの印の種類の色と記号の名前の頭である（StyleScrollbarSearch など）。
+const scrollbarMarkPrefix = StyleScrollbar + "."
+
+// IsScrollbarMarkName は、name が、スクロールバーの印の種類の色と記号の名前の形（"scrollbar." の後に、空でなく、
+// コンマと空白を含まない名前が続く）かを返す（FR-187）。後の名前は、設定の scrollbar.marks に書ける種類の名前と同じ規則である
+// （コンマで区切り、前後の空白を除いた空でない名前）。本体の種類（diagnostic.error、search）と、後に拡張機能が足す種類（git など）を
+// 名前の表に頼らずに受け付ける。
+func IsScrollbarMarkName(name string) bool {
+	rest, ok := strings.CutPrefix(name, scrollbarMarkPrefix)
+	return ok && rest != "" && !strings.ContainsFunc(rest, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
 }
 
 // Theme は、色の種類の名前から属性への対応である。
@@ -223,16 +241,19 @@ func DefaultTheme() Theme {
 		// 失敗して終わった進み具合は、印の列の誤りの診断の印（sign.diagnostic.error）と同じ赤にした。fidget.nvim に対応するものは無い。
 		StyleProgressFailed: {Fg: Indexed(9)},
 		// スクロールバーのつまみは、背景の色だけを持ち、下の文字を残す。nvim-scrollview の既定は Visual へのリンクを winblend で透かすが、
-		// 端末のセルでは透かせず、本体の既定の visual は反転で下の文字が読みにくくなるので、浮かべる窓（popup）と同じ暗い灰色の背景にした。
-		StyleScrollbar: {Bg: Indexed(8)},
+		// 端末のセルでは透かせず、本体の既定の visual は反転で下の文字が読みにくくなるので、主張を抑えた暗い灰色の背景にした。
+		// 16 色の 8 番（xterm の既定の色で #7f7f7f）は、上に重ねる 9 番の赤（#ff0000）とのコントラスト比が 1.00 で誤りの印が見えないので、
+		// 256 色の 236 番（#303030）にした。黒の背景との比は 1.59 で、帯として見分けられる（WCAG の相対輝度で計算した。PR #351 のレビューの推奨 5）。
+		StyleScrollbar: {Bg: Indexed(236)},
 		// スクロールバーの診断の印は、印の列の診断の印（sign.diagnostic.*）と同じ番号にした（nvim-scrollview の既定も、印の列の
-		// DiagnosticSign* の色へのリンク）。ただし hint は、sign.diagnostic.hint の 8 番ではつまみの背景と同じ色で見えないので 7 番にした。
-		// 検索の一致の印は、nvim-scrollview の既定の ScrollViewSearch（NonText へのリンク）に合わせ、nontext と同じ番号にした。
+		// DiagnosticSign* の色へのリンク）。ただし hint は、sign.diagnostic.hint の 8 番が灰色の背景で見えにくいので 7 番にした。
+		// 検索の一致の印は、nvim-scrollview の既定の ScrollViewSearch（NonText へのリンク）の nontext の 12 番では、つまみの上の比が 2.78 と
+		// 低いので、診断の印と重ならない 14 番（シアン）にした。つまみの上の比は 10.53、黒の背景の上は 16.75 である（xterm の既定の色で計算した）。
 		StyleScrollbarDiagnosticError:   {Fg: Indexed(9)},
 		StyleScrollbarDiagnosticWarning: {Fg: Indexed(11)},
 		StyleScrollbarDiagnosticInfo:    {Fg: Indexed(12)},
 		StyleScrollbarDiagnosticHint:    {Fg: Indexed(7)},
-		StyleScrollbarSearch:            {Fg: Indexed(12)},
+		StyleScrollbarSearch:            {Fg: Indexed(14)},
 		StyleSignBreakpoint:             {Fg: Indexed(9), Bold: true},
 		StyleSignBreakpointUnverified:   {Fg: Indexed(8)},
 		StyleSignExecutionPoint:         {Fg: Indexed(11), Bold: true},

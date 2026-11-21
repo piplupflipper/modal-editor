@@ -53,9 +53,6 @@
     "sign.diagnostic.info": { "fg": "#89b8c2" },
     "sign.diagnostic.hint": { "fg": "#6b7089" },
     "linenr": { "fg": "#444b71" },
-    // 右端のスクロールバーの検索の一致の印も、iceberg の NonText（#242940。nvim-scrollview の既定の ScrollViewSearch のリンク先）では
-    // 透過した背景で見えないので、nontext と同じ色にする
-    "scrollbar.search": { "fg": "#444b71" },
 
     // ステータス行を lightline の iceberg に近づける。値は iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の
     // autoload/lightline/colorscheme/iceberg.vim の dark の側のパレットから写した。

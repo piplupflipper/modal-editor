@@ -40,7 +40,8 @@ const scrollbarMinTextWidth = 2
 //   - 印は、行の範囲に印を出す行がある種類のうち、Priority の最も大きいものを 1 つだけ出す。印のセルの文字は記号に替え、
 //     色は、つまみの上なら StyleScrollbar の上に Style を、ほかは Style だけを使う
 //   - 本文の幅が scrollbarMinTextWidth より狭いときは描かない
-//   - 描いた列の場所と、つまみの行の範囲を hitState に残す（HitTest が HitScrollbar として解く。FR-189）
+//   - 描いた列の場所と、行ごとのセルに割り付けたもの（scrollbarCell）を hitState に残す。HitTest は、つまみと印のセルだけを
+//     HitScrollbar として解き、ほかのセルは本文として解く（FR-189）
 //
 // req: FR-186, FR-187
 func (r *Renderer) drawScrollbar(g *Grid, theme Theme, sb *Scrollbar, text Text, area textArea) {
@@ -51,16 +52,16 @@ func (r *Renderer) drawScrollbar(g *Grid, theme Theme, sb *Scrollbar, text Text,
 	start, end := r.scrollbarThumb(n, h)
 	thumb := theme.attr(StyleScrollbar)
 	x := area.width - 1
-	// マウスの位置を解く HitTest が、この列を 1 つの場所として引く（FR-189）。
+	// マウスの位置を解く HitTest が、描いたセル（つまみと印）を引く（FR-189）。
 	r.hits.bar, r.hits.barOK = rect{top: area.top, left: x, h: h, w: 1}, true
-	r.hits.barStart, r.hits.barEnd = start, end
+	r.hits.barCells = r.hits.barCells[:0]
 	for i := range h {
-		row := area.top + i
-		in := i >= start && i < end
-		m, ok := r.scrollbarMark(sb, i, n, h)
-		if !ok && !in {
+		cell := r.scrollbarCellAt(sb, i, n, h, start, end)
+		r.hits.barCells = append(r.hits.barCells, cell)
+		if cell.mark < 0 && !cell.thumb {
 			continue
 		}
+		row := area.top + i
 		c := g.At(row, x)
 		if c.Width == 0 {
 			// 全角文字の右半分。左半分ごと空白にする（浮かべた窓の端と同じ）。
@@ -68,9 +69,10 @@ func (r *Renderer) drawScrollbar(g *Grid, theme Theme, sb *Scrollbar, text Text,
 			c = blank(c.Attr)
 		}
 		switch {
-		case ok:
+		case cell.mark >= 0:
+			m := sb.Marks[cell.mark]
 			var base Attr
-			if in {
+			if cell.thumb {
 				base = thumb
 			}
 			c = Cell{Text: r.symbol(m.Symbol), Width: 1, Attr: base.Over(theme.attr(m.Style))}
@@ -79,6 +81,41 @@ func (r *Renderer) drawScrollbar(g *Grid, theme Theme, sb *Scrollbar, text Text,
 		}
 		g.set(row, x, c)
 	}
+}
+
+// scrollbarCell は、スクロールバーの 1 行のセルに割り付けたものと描いたものである。drawScrollbar が行ごとに決めて hitState に残し、
+// HitTest がそのまま返す。描くものと押したものの割り付けと印の選び方を、ここ（scrollbarCellAt）の 1 か所で決める。
+type scrollbarCell struct {
+	// lo と hi は、このセルに割り付けた本文の行の範囲 [lo, hi) である。
+	lo, hi int
+	// thumb は、つまみのセルかである。
+	thumb bool
+	// mark は、このセルに描いた印の種類の、Scrollbar.Marks の添字である。印が無ければ -1 である。
+	mark int
+	// lines は、mark の種類の行（ScrollbarMarks.Lines）のうち、[lo, hi) に入るものである（Lines の部分の列）。
+	lines []int
+}
+
+// scrollbarCellAt は、表示領域の i 行目（h 行のうち。バッファは n 行。つまみは [start, end) 行）のセルに割り付けたものと、出す印を返す。
+// i 行目に当たる行は、floor(l×h÷n) が i になる行 l で、[ceil(i×n÷h), ceil((i+1)×n÷h)) である。
+// 印は、その範囲に行がある種類のうち、Priority の最も大きいもの（同じなら Marks の前のもの）で、記号の表示幅が 1 でない種類は選ばない。
+func (r *Renderer) scrollbarCellAt(sb *Scrollbar, i, n, h, start, end int) scrollbarCell {
+	n = max(n, 1)
+	c := scrollbarCell{lo: min((i*n+h-1)/h, n), hi: min(((i+1)*n+h-1)/h, n), thumb: i >= start && i < end, mark: -1}
+	for idx, k := range sb.Marks {
+		if c.mark >= 0 && k.Priority <= sb.Marks[c.mark].Priority {
+			continue
+		}
+		if StringWidth(r.symbol(k.Symbol), DefaultTabStop) != 1 {
+			continue
+		}
+		j := sort.SearchInts(k.Lines, c.lo)
+		e := j + sort.SearchInts(k.Lines[j:], c.hi)
+		if e > j {
+			c.mark, c.lines = idx, k.Lines[j:e]
+		}
+	}
+	return c
 }
 
 // overflows は、直前の buildView で、バッファの全体が表示領域（rows 行）に収まらなかったかを返す。
@@ -107,23 +144,4 @@ func (r *Renderer) scrollbarThumb(n, h int) (start, end int) {
 	}
 	end = min(max(end, start+1), h)
 	return start, end
-}
-
-// scrollbarMark は、表示領域の i 行目（h 行のうち。バッファは n 行）に出す印を返す。出す印が無ければ ok は false である。
-// i 行目に当たる行は、floor(l×h÷n) が i になる行 l で、[ceil(i×n÷h), ceil((i+1)×n÷h)) である。
-func (r *Renderer) scrollbarMark(sb *Scrollbar, i, n, h int) (m ScrollbarMarks, ok bool) {
-	lo, hi := (i*n+h-1)/h, ((i+1)*n+h-1)/h
-	for _, k := range sb.Marks {
-		if ok && k.Priority <= m.Priority {
-			continue
-		}
-		if StringWidth(r.symbol(k.Symbol), DefaultTabStop) != 1 {
-			continue
-		}
-		j := sort.SearchInts(k.Lines, lo)
-		if j < len(k.Lines) && k.Lines[j] < hi {
-			m, ok = k, true
-		}
-	}
-	return m, ok
 }

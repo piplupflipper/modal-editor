@@ -318,6 +318,10 @@ type Editor struct {
 	view *clientView
 	// op は、操作中の client（最後にキーを受けた編集の client。基本設計 1.2）である。拡張機能の editor/open などはこの client のタブに開く。
 	op *clientView
+	// focused は、本体が知る限りで端末多重化ソフトのフォーカスのある client である。キーを受けた client（useClient）と、
+	// 本体がフォーカスを移した先の client（focusOwner。FR-63）にする。スクロールバーの scrollbar.currentOnly（FR-186）が使う。
+	// nil なら op を使う。
+	focused *clientView
 	// shared は、レジスターなどの client の間で共有する状態（command.State.TakeOverShared）を最後に持った State である。
 	// キーを打つ client が替わったら、その client のカーソルのあるバッファの State へ引き継ぐ（useClient）。
 	shared *command.State

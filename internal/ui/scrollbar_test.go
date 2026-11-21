@@ -104,8 +104,45 @@ func TestRenderScrollbarThumb(t *testing.T) {
 	}
 }
 
-// 描いたスクロールバーの列は、HitTest が HitScrollbar として解き、その行に割り付けた行の範囲とつまみの上かを返す。
-// 描いていないとき（Scrollbar が nil、表示領域に収まる）は、その列もテキストである。
+// スクロールバーの印の色と記号の名前は、本体の種類に加えて、"scrollbar." の後に scrollbar.marks に書ける形の名前が続くものを、
+// 決まった表に頼らずに受け付ける（後に拡張機能が足す種類）。受け付けた名前の色と記号で、その種類の印を描ける。
+//
+// req: FR-187
+func TestScrollbarMarkNames(t *testing.T) {
+	for name, want := range map[string]bool{
+		"scrollbar.git": true, "scrollbar.diagnostic.error": true, "scrollbar": true, "scrollbar.": false,
+		"scrollbar.a,b": false, "scrollbar.a b": false, "scrollbarx": false, "gitsigns.add": false,
+	} {
+		if got := IsStyleName(name); got != want {
+			t.Errorf("IsStyleName(%q) = %v, want %v", name, got, want)
+		}
+	}
+	if err := CheckSymbol("scrollbar.git", "+"); err != nil {
+		t.Errorf("CheckSymbol(scrollbar.git) = %v", err)
+	}
+	if err := CheckSymbol("scrollbar.git", "++"); err == nil {
+		t.Error("2 文字の記号を受け付けた")
+	}
+	if err := CheckSymbol("scrollbar.", "+"); err == nil {
+		t.Error("種類の名前の無い記号を受け付けた")
+	}
+
+	var lines strings.Builder
+	for range 100 {
+		lines.WriteString("0123456789\n")
+	}
+	theme := Theme{"scrollbar.git": {Fg: Indexed(2)}}
+	r := &Renderer{Width: 10, Height: 12, Theme: theme, Symbols: Symbols{"scrollbar.git": "+"}}
+	sb := &Scrollbar{Marks: []ScrollbarMarks{{Lines: []int{95}, Priority: 1, Style: "scrollbar.git", Symbol: "scrollbar.git"}}}
+	s := r.Render(&Frame{Text: buffer.New(lines.String()), Scrollbar: sb})
+	if c := s.Grid.At(9, 9); c.Text != "+" || c.Attr != theme["scrollbar.git"] {
+		t.Errorf("拡張機能の種類の印 = %+v", c)
+	}
+}
+
+// 描いたスクロールバーのつまみと印のセルは、HitTest が HitScrollbar として解き、そのセルに割り付けた行の範囲、つまみの上か、
+// 描いた印の種類（優先で選んだもの）とその種類の範囲の中の行を返す。つまみも印も無いセルと、描いていないとき
+// （Scrollbar が nil、表示領域に収まる）は、その列もテキストである。
 //
 // req: FR-189
 func TestHitTestScrollbar(t *testing.T) {
@@ -114,33 +151,49 @@ func TestHitTestScrollbar(t *testing.T) {
 		lines.WriteString("0123456789\n")
 	}
 	text := buffer.New(lines.String())
+	sb := &Scrollbar{Marks: []ScrollbarMarks{
+		{Lines: []int{5, 52}, Priority: 1, Style: StyleScrollbarSearch, Symbol: SymbolScrollbarSearch},
+		{Lines: []int{3, 7, 12}, Priority: 2, Style: StyleScrollbarDiagnosticError, Symbol: SymbolScrollbarDiagnosticError},
+	}}
 	r := &Renderer{Width: 10, Height: 12}
-	r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 50}, Scrollbar: &Scrollbar{}}) // つまみは 4 行目と 5 行目
-	if h := r.HitTest(5, 9, HitNone); h.Area != HitScrollbar || h.Line != 50 || h.LineEnd != 60 || !h.Thumb {
-		t.Errorf("つまみの上 = %+v", h)
+	r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 50}, Scrollbar: sb}) // つまみは 4 行目と 5 行目
+	h := r.HitTest(5, 9, HitNone)
+	want := Hit{Area: HitScrollbar, Tab: -1, Line: 50, LineEnd: 60, Thumb: true, Mark: 0, MarkFirst: 52, MarkLast: 52}
+	if h != want {
+		t.Errorf("つまみの上の印 = %+v", h)
 	}
-	if h := r.HitTest(0, 9, HitNone); h.Area != HitScrollbar || h.Line != 0 || h.LineEnd != 10 || h.Thumb {
-		t.Errorf("つまみの外 = %+v", h)
+	want = Hit{Area: HitScrollbar, Tab: -1, Line: 40, LineEnd: 50, Thumb: true, Mark: -1, MarkFirst: -1, MarkLast: -1}
+	if h = r.HitTest(4, 9, HitNone); h != want {
+		t.Errorf("印の無いつまみ = %+v", h)
 	}
-	if h := r.HitTest(5, 8, HitNone); h.Area != HitText || h.Line != 51 {
+	// 0 行目は、優先の大きい error の印を描いたセルで、その種類の 0 行目から 9 行目の行を返す。
+	want = Hit{Area: HitScrollbar, Tab: -1, Line: 0, LineEnd: 10, Mark: 1, MarkFirst: 3, MarkLast: 7}
+	if h = r.HitTest(0, 9, HitNone); h != want {
+		t.Errorf("つまみの外の印 = %+v", h)
+	}
+	// つまみも印も無いセルは、本文の最後の列である。
+	if h = r.HitTest(7, 9, HitNone); h.Area != HitText || h.Line != 53 || h.Col != 9 {
+		t.Errorf("何も描いていないセル = %+v", h)
+	}
+	if h = r.HitTest(5, 8, HitNone); h.Area != HitText || h.Line != 51 {
 		t.Errorf("スクロールバーの左の列 = %+v", h)
 	}
 	// ドラッグ（テキストへ寄せて解く）の間は、スクロールバーの列もテキストである。
-	if h := r.HitTest(5, 9, HitText); h.Area != HitText {
+	if h = r.HitTest(5, 9, HitText); h.Area != HitText {
 		t.Errorf("テキストへ寄せたとき = %+v", h)
 	}
 	// ステータス行はスクロールバーにしない。
-	if h := r.HitTest(10, 9, HitNone); h.Area != HitStatusLine {
+	if h = r.HitTest(10, 9, HitNone); h.Area != HitStatusLine {
 		t.Errorf("ステータス行 = %+v", h)
 	}
 
 	r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 50}})
-	if h := r.HitTest(5, 9, HitNone); h.Area != HitText {
+	if h = r.HitTest(5, 9, HitNone); h.Area != HitText {
 		t.Errorf("描いていないとき = %+v", h)
 	}
 	short := &Renderer{Width: 10, Height: 12}
 	short.Render(&Frame{Text: buffer.New("abc\n"), Scrollbar: &Scrollbar{}})
-	if h := short.HitTest(0, 9, HitNone); h.Area != HitText {
+	if h = short.HitTest(0, 9, HitNone); h.Area != HitText {
 		t.Errorf("収まるバッファ = %+v", h)
 	}
 }
