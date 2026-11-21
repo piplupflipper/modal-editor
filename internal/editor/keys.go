@@ -179,6 +179,7 @@ func (e *Editor) afterKey() {
 	if e.quit {
 		// 最後のタブを閉じた client は、この後に外す（reapClients）。
 		e.stopKeyTimer()
+		e.stopHold(e.op)
 		e.extRan, e.fromCmdline = false, false
 		return
 	}
@@ -187,6 +188,8 @@ func (e *Editor) afterKey() {
 	} else {
 		e.stopKeyTimer()
 	}
+	// キーを打ったので、カーソルが止まった契機を待ち直す（cursorhold.go。FR-171）。
+	e.armHold()
 	if e.extRan {
 		// コマンドラインから実行した拡張機能のコマンドの後は、記録した外での変更の問いを出してよい時点である（askNotice）。
 		// ノーマルモードのキーに割り当てたコマンドの後は出さない。続けて打つ l や o を答えに取らないためである（PR #149 の再レビュー）。
