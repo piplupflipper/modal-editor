@@ -71,7 +71,7 @@ func TestFindCommand(t *testing.T) {
 }
 
 // プロジェクトの依存は、Git の根（.git のディレクトリか、worktree の .git のファイルのあるディレクトリ）より上へは探さない。
-// 有効にした Python の仮想環境（VIRTUAL_ENV）の bin は、プロジェクトの依存より先に探す（PR #341 のレビューの推奨 5）。
+// 有効にした Python の仮想環境（VIRTUAL_ENV）の bin は、プロジェクトの依存の後、PATH の前に探す（PR #341 の再レビューの推奨 2）。
 // まだ無いディレクトリのファイルでも、上の在るディレクトリの依存を探す。
 //
 // req: FR-175
@@ -100,14 +100,21 @@ func TestFindCommandGitRootAndVirtualEnv(t *testing.T) {
 		t.Errorf("Git の作業ツリーの外: %q, %v", got, err)
 	}
 
-	venv := writeScript(t, root, "env/bin/inrepo", "cat")
+	// プロジェクトの中の依存は、仮想環境にも同じ名前があっても先に使う。
+	writeScript(t, root, "env/bin/inrepo", "cat")
+	venv := writeScript(t, root, "env/bin/onlyvenv", "cat")
+	writeScript(t, root, "bin/onlyvenv", "cat")
 	t.Setenv("VIRTUAL_ENV", filepath.Join(root, "env"))
-	if got, err := findCommand("inrepo", src, defaultLocalBinDirs); err != nil || got != venv {
+	if got, err := findCommand("inrepo", src, defaultLocalBinDirs); err != nil || got != inRepo {
+		t.Errorf("プロジェクトの依存と VIRTUAL_ENV: %q, %v; want %q", got, err, inRepo)
+	}
+	// プロジェクトに無ければ、PATH より先に仮想環境のものを使う。
+	if got, err := findCommand("onlyvenv", src, defaultLocalBinDirs); err != nil || got != venv {
 		t.Errorf("VIRTUAL_ENV: %q, %v; want %q", got, err, venv)
 	}
 	t.Setenv("VIRTUAL_ENV", "env")
-	if got, err := findCommand("inrepo", src, defaultLocalBinDirs); err != nil || got != inRepo {
-		t.Errorf("相対パスの VIRTUAL_ENV は使わない: %q, %v; want %q", got, err, inRepo)
+	if got, err := findCommand("onlyvenv", src, defaultLocalBinDirs); err != nil || got != filepath.Join(root, "bin/onlyvenv") {
+		t.Errorf("相対パスの VIRTUAL_ENV は使わない: %q, %v", got, err)
 	}
 }
 

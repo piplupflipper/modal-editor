@@ -81,14 +81,15 @@ var errNotFound = errors.New("not found")
 //
 // command が絶対パスか ~/ で始まるパスなら、そのパスを使う。名前なら、次の順に探す。
 //
-//  1. 環境変数 VIRTUAL_ENV（有効にした Python の仮想環境。絶対パスのときだけ）の bin
-//  2. ファイルのディレクトリ fileDir から上へ、各ディレクトリの下の localBinDirs（node_modules/.bin、.venv/bin）。
+//  1. ファイルのディレクトリ fileDir から上へ、各ディレクトリの下の localBinDirs（node_modules/.bin、.venv/bin）。
 //     Git の根（isGitRoot）より上へはたどらない。Git の作業ツリーの外のファイルでは、ファイルシステムの根までたどる
+//  2. 環境変数 VIRTUAL_ENV（有効にした Python の仮想環境。絶対パスのときだけ）の bin
 //  3. PATH
 //
-// 近いプロジェクトの依存を先に使うのは conform.nvim の util.from_node_modules と同じで、1 と 2 の Git の根で止めることは、
+// プロジェクトの中の依存を、整形ツールの種類を問わず、有効にした仮想環境より先に使う（PR #341 の再レビューの推奨 2）。
+// 近いプロジェクトの依存を先に使うのは conform.nvim の util.from_node_modules と同じで、Git の根で止めることと VIRTUAL_ENV を見ることは、
 // オーナーの nvim の conform.nvim の command の解き方に合わせた（PR #341 のレビューの推奨 5）。
-// fileDir が空（ファイルの無いバッファ）なら 2 を飛ばす。見つからなければ errNotFound を返す。
+// fileDir が空（ファイルの無いバッファ）なら 1 を飛ばす。見つからなければ errNotFound を返す。
 //
 // req: FR-175
 func findCommand(command, fileDir string, localBinDirs []string) (string, error) {
@@ -105,17 +106,17 @@ func findCommand(command, fileDir string, localBinDirs []string) (string, error)
 		}
 		return "", errNotFound
 	}
-	if venv := os.Getenv("VIRTUAL_ENV"); filepath.IsAbs(venv) {
-		if p := filepath.Join(venv, "bin", command); isExecutable(p) {
-			return p, nil
-		}
-	}
 	if fileDir != "" && len(localBinDirs) > 0 {
 		rels := make([]string, len(localBinDirs))
 		for i, d := range localBinDirs {
 			rels[i] = filepath.Join(d, command)
 		}
 		if p, ok := findUp(fileDir, rels, isExecutable, isGitRoot); ok {
+			return p, nil
+		}
+	}
+	if venv := os.Getenv("VIRTUAL_ENV"); filepath.IsAbs(venv) {
+		if p := filepath.Join(venv, "bin", command); isExecutable(p) {
 			return p, nil
 		}
 	}
@@ -156,11 +157,11 @@ func runFormatter(ctx context.Context, cfg *config, f formatterConfig, path, inp
 	exe, err := findCommand(f.Command, dir, cfg.localBinDirs)
 	if err != nil {
 		var where []string
-		if filepath.IsAbs(os.Getenv("VIRTUAL_ENV")) {
-			where = append(where, "$VIRTUAL_ENV/bin")
-		}
 		if dir != "" {
 			where = append(where, cfg.localBinDirs...)
+		}
+		if filepath.IsAbs(os.Getenv("VIRTUAL_ENV")) {
+			where = append(where, "$VIRTUAL_ENV/bin")
 		}
 		where = append(where, "PATH")
 		return "", failf("整形ツール %s が見つからない（%s を探した）", f.Name, strings.Join(where, "、"))
