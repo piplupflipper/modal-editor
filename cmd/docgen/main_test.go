@@ -146,6 +146,8 @@ func TestActionKeysModes(t *testing.T) {
 		"| `lowercase` | オペレーター | normal、visual | `gu` `u`（visual） |",
 		"| `delete` | オペレーター | normal、visual | `d` `x`（visual） |",
 		"| `undo` | 操作 | normal | `u` |",
+		// テキストオブジェクトの gc は、オペレーターの後（dgc）だけで効く
+		"| `commented-lines` | テキストオブジェクト | visual | `gc`（オペレーターの後） |",
 		"| `left` | モーション | normal、visual | `h` `<Left>` |",
 	} {
 		if !strings.Contains(buf.String(), want) {

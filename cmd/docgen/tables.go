@@ -107,7 +107,7 @@ func writeActions(w *bytes.Buffer) error {
 			label = "<Leader>" + editcmd.KeysString(rest)
 		}
 		k := actionKey(bd.Ref.ID, bd.Kind)
-		modes := bd.Modes & keymapModes
+		modes := bd.Modes & (keymapModes | input.MapOperatorPending)
 		if j := slices.IndexFunc(keys[k], func(d defaultKey) bool { return d.label == label }); j >= 0 {
 			keys[k][j].modes |= modes
 		} else {
@@ -122,9 +122,14 @@ func writeActions(w *bytes.Buffer) error {
 		var ks []string
 		for _, k := range keys[actionKey(act.ID, act.Kind)] {
 			s := code(k.label)
-			if k.modes != rowModes {
-				// 行のモードの一部だけで効くキー（visual の u は lowercase、normal の u は undo）
-				s += "（" + modeNames(k.modes) + "）"
+			if k.modes&keymapModes != rowModes {
+				// 行のモードの一部だけで効くキー（visual の u は lowercase、normal の u は undo）。
+				// オペレーターの後だけで効くテキストオブジェクトのキー（dgc の gc）は「オペレーターの後」と書く
+				label := modeNames(k.modes)
+				if k.modes&input.MapOperatorPending != 0 {
+					label = strings.TrimPrefix(label+"、オペレーターの後", "、")
+				}
+				s += "（" + label + "）"
 			}
 			ks = append(ks, s)
 		}

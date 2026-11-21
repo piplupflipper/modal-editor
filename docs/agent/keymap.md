@@ -52,6 +52,7 @@
 
 「既定のキー」は、本体の既定のキーマップでその操作に割り当てたキーである。
 キーの後の括弧は、そのキーが効くモードが「モード」の列の一部だけであることを表す（`lowercase` の `u` は `visual` だけで、`normal` の `u` は `undo`）。
+「オペレーターの後」は、オペレーターに続けて打ったとき（`d` の後など）だけ効くことを表す。
 `<Leader>` で始まるキーは、`leader` を変えると、そのキーで始まる。
 LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作を引き受ける拡張機能（LSP、DAP）を読み込んだときだけ働く。
 
@@ -94,6 +95,7 @@ LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作�
 | `toggle-case` | オペレーター | normal、visual | `g~` `~`（visual） | 大文字と小文字を入れ替える |
 | `lowercase` | オペレーター | normal、visual | `gu` `u`（visual） | 小文字にする |
 | `uppercase` | オペレーター | normal、visual | `gU` `U`（visual） | 大文字にする |
+| `comment` | オペレーター | normal、visual | `gc` `<C-_>`（visual） `<C-/>`（visual） | 行のコメントを切り替える |
 | `surround-add` | オペレーター | normal | `sa` | 対象を {文字} で囲む（sa{対象}{文字}） |
 | `indent` | オペレーター | visual | `>` | 選んだ行を右へずらす（選択は残す） |
 | `dedent` | オペレーター | visual | `<lt>` | 選んだ行を左へずらす（選択は残す） |
@@ -116,6 +118,7 @@ LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作�
 | `a-brace` | テキストオブジェクト | visual | `a{` `a}` `aB` | {…} の全体 |
 | `inner-paragraph` | テキストオブジェクト | visual | `ip` | 段落 |
 | `a-paragraph` | テキストオブジェクト | visual | `ap` | 段落と後ろの空行 |
+| `commented-lines` | テキストオブジェクト | visual | `gc`（オペレーターの後） | 続くコメントの行 |
 | `toggle-case-char` | 操作 | normal | `~` | カーソルの文字の大文字と小文字を入れ替える |
 | `put-after` | 操作 | normal | `p` | カーソルの後に貼る |
 | `put-before` | 操作 | normal | `P` | カーソルの前に貼る |
@@ -131,6 +134,7 @@ LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作�
 | `dedent-line` | 操作 | normal | `<lt>` | 行を左へずらす（<<。回数は行数） |
 | `surround-delete` | 操作 | normal | `sd` | {文字} の囲みを消す（sd{文字}） |
 | `surround-replace` | 操作 | normal | `sr` | 囲みを替える（sr{前の文字}{後の文字}） |
+| `comment-line` | 操作 | normal | `gcc` `<C-_>` `<C-/>` | 行のコメントを切り替える（gcc。回数は行数） |
 | `join-lines` | 操作 | normal | `J` | 行をつなげる |
 | `open-below` | 操作 | normal | `o` | 下に行を足して入力する |
 | `open-above` | 操作 | normal | `O` | 上に行を足して入力する |
