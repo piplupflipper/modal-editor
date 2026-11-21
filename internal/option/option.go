@@ -269,6 +269,22 @@ const (
 	// MouseScrollColumns は、行を折り返さないときに、ホイールを 1 回傾けたときに表示領域を送る列数である
 	// （FR-182。'mousescroll' の hor）。既定は Neovim の既定と同じく 6 で、0 なら横に送らない。範囲は 0 から 9999 である。
 	MouseScrollColumns = "mouse.scrollColumns"
+	// ScrollbarShow は、バッファの表示領域の右端の 1 列に、スクロールバー（見えている行の範囲の位置と大きさを表すつまみ）と、
+	// 診断と検索の一致の位置の印を出すかである（FR-186。Neovim の nvim-scrollview に当たる）。範囲はエディタ全体で、描くたびに読む。
+	// 既定は Vim と Neovim と同じく出さない（#317 の方針）。出すのは、表示領域にバッファの全体が収まらないときだけである。
+	ScrollbarShow = "scrollbar.show"
+	// ScrollbarCurrentOnly は、スクロールバーを、操作中の client（最後にキーを受けた編集の client）の画面にだけ出すかである
+	// （FR-186。nvim-scrollview の current_only）。false なら、繋いでいるすべての編集の client の画面に出す。
+	// 既定は nvim-scrollview と同じく false である。描くたびに読む。
+	ScrollbarCurrentOnly = "scrollbar.currentOnly"
+	// ScrollbarMarks は、スクロールバーに出す印の種類の名前を、コンマで区切って並べたものである（FR-187。nvim-scrollview の signs_on_startup）。
+	// 名前は diagnostic（診断。重要度ごとに印と色を分ける）と search（検索の一致）で、知らない名前は読み飛ばす（後に拡張機能が足す種類の名前を、
+	// 拡張機能が起動する前の設定に書けるようにするため）。空なら印を出さない。名前の前後の空白は除く。
+	// 既定は "diagnostic,search" である。描くたびに読む。
+	ScrollbarMarks = "scrollbar.marks"
+	// ScrollbarExcludedFileTypes は、スクロールバーを出さないバッファのファイルの種類（filetype の値）を、コンマで区切って並べたものである
+	// （FR-186。nvim-scrollview の excluded_filetypes）。名前の前後の空白は除く。既定は空（どのファイルの種類にも出す）。描くたびに読む。
+	ScrollbarExcludedFileTypes = "scrollbar.excludedFileTypes"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -310,6 +326,10 @@ var defs = []Def{
 	{Name: MouseEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: MouseScrollLines, Type: Int, Scope: ScopeEditor, Default: IntValue(3), Range: &IntRange{Min: 0, Max: 9999}},
 	{Name: MouseScrollColumns, Type: Int, Scope: ScopeEditor, Default: IntValue(6), Range: &IntRange{Min: 0, Max: 9999}},
+	{Name: ScrollbarShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: ScrollbarCurrentOnly, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: ScrollbarMarks, Type: String, Scope: ScopeEditor, Default: StringValue("diagnostic,search")},
+	{Name: ScrollbarExcludedFileTypes, Type: String, Scope: ScopeEditor, Default: StringValue("")},
 }
 
 // fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。

@@ -97,6 +97,10 @@
 | `mouse.enabled` | 真偽 | エディタ全体 | `false` |  |
 | `mouse.scrollLines` | 整数 | エディタ全体 | `3` | 0 から 9999 |
 | `mouse.scrollColumns` | 整数 | エディタ全体 | `6` | 0 から 9999 |
+| `scrollbar.show` | 真偽 | エディタ全体 | `false` |  |
+| `scrollbar.currentOnly` | 真偽 | エディタ全体 | `false` |  |
+| `scrollbar.marks` | 文字列 | エディタ全体 | `"diagnostic,search"` |  |
+| `scrollbar.excludedFileTypes` | 文字列 | エディタ全体 | `""` |  |
 <!-- generated:options:end -->
 
 各項目の説明と、`:set` で使える Vim の名前は `vi-imitation --docs usage 設定の名前の一覧` にある。

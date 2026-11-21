@@ -603,6 +603,10 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 | `progress` | 画面の右下に重ねる拡張機能の進み具合（[拡張機能の進み具合](#拡張機能の進み具合)）の本文と百分率 | なし（端末の既定の文字の色） |
 | `progress.title`、`progress.done` | 進み具合の表題と印の、続いている間と終わった後 | 順に端末の 16 色の 11、13（fidget.nvim の既定の `WarningMsg` と `Constant` に当てた本体の `message.warning` と `constant` と同じ番号） |
 | `progress.failed` | 失敗して終わった進み具合の表題と印 | 端末の 16 色の 9（`sign.diagnostic.error` と同じ） |
+| `scrollbar` | 右端のスクロールバー（[スクロールバー](#スクロールバー)）のつまみ。つまみのセルの文字と色の上に重ねるので、背景の色だけを書くと下の文字が残る | 反転（下の文字と背景の色を入れ替える。本体の既定の `visual` と同じで、端末の背景が暗くても明るくても読める）。同梱の iceberg では iceberg.vim の `Visual` の背景（nvim-scrollview の既定の `ScrollView` のリンク先。暗い背景の配色） |
+| `scrollbar.diagnostic.error`、`scrollbar.diagnostic.warning`、`scrollbar.diagnostic.info`、`scrollbar.diagnostic.hint` | スクロールバーの診断の印。つまみの上では `scrollbar` の上に重ねる（既定では反転で、印の色の地に記号が出る） | 印の列の `sign.diagnostic.*` と同じ、端末の 16 色の 9、11、12、8 |
+| `scrollbar.search` | スクロールバーの検索の一致の印 | 端末の 16 色の 14（情報の印の 12 と色で見分けられるようにした）。同梱の iceberg では iceberg.vim の `Normal` の文字の色 |
+| `scrollbar.<種類>` | 拡張機能が後から足すスクロールバーの印の種類の色。`scrollbar.` の後に、`scrollbar.marks` に書ける形の名前（空でなく、コンマと空白を含まない）を書く。本体の表に無い名前でも誤りにしない。ただし、本体の種類（`diagnostic`、`search`）と同じか似た名前（`scrollbar.diagnostics.error`、`scrollbar.serch` など。点までの部分の編集距離が 2 以下）で本体の表に無いものは、書き間違いとして設定の誤りにする | なし |
 | `sign.executionPoint`、`sign.breakpoint`、`sign.breakpointUnverified` | 印の列のデバッガーの印 | 順に黄色、赤、灰色 |
 | `sign.diagnostic.error`、`sign.diagnostic.warning`、`sign.diagnostic.info`、`sign.diagnostic.hint` | 印の列の診断の印 | 順に赤、黄色、青、灰色 |
 | `tabline`、`tabline.selected`、`tabline.fill` | タブの行の、ほかのタブ、いまのタブ、タブの右の空いた列 | 順に灰色の背景と下線、太字、反転 |
@@ -631,6 +635,9 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 | `whitespace.nbsp` | ノーブレークスペース（U+00A0 と U+202F）の記号（`nbsp`）。色は `whitespace` | `+` | 同上 |
 | `whitespace.eol` | 行末の記号（`eol`）。色は `nontext` | 空（描かない） | 同上 |
 | `progress.running`、`progress.done`、`progress.failed` | 画面の右下の進み具合（[拡張機能の進み具合](#拡張機能の進み具合)）の行の右の端に付ける、続いている印、成り立って終わった印、失敗して終わった印。色は `progress.title`、`progress.done`、`progress.failed` | `...`、`done`、`failed` | 任意の文字列。空なら付けない |
+| `scrollbar.diagnostic.error`、`scrollbar.diagnostic.warning`、`scrollbar.diagnostic.info`、`scrollbar.diagnostic.hint` | 右端のスクロールバー（[スクロールバー](#スクロールバー)）の診断の印。色は同じ名前の色 | `E`、`W`、`I`、`H` | 空か、表示幅が 1 の文字を 1 つ。空ならその印を描かない |
+| `scrollbar.search` | スクロールバーの検索の一致の印。色は `scrollbar.search` | `=` | 同上 |
+| `scrollbar.<種類>` | 拡張機能が後から足すスクロールバーの印の種類の記号。名前の規則（本体の種類の書き間違いを誤りにすることを含む）は色の `scrollbar.<種類>` と同じで、本体の表に無い名前でも誤りにしない | 空（描かない） | 同上 |
 
 どの記号にも、タブと制御文字は書けない。
 印の列は 2 列なので、表示幅が 1 の印は右に空白を置いて描く。
@@ -926,6 +933,10 @@ Vim の短い名前（`ft`）、`inv` の接頭辞、`+=`、`-=`、`^=`、`&`（
 | `mouse.enabled` | 真偽 | エディタ全体 | 無し | マウスを使うか（[マウス](#マウス)）。既定は `false`（使わない。Vim と同じ）。同梱の `config.example.jsonc` は `true`（Neovim の `mouse=a` に当たる）にしている。Vim の `'mouse'` はモードの文字の並びなので、`:set mouse` の別名は無い。`:option.toggle mouse.enabled` で切り替える |
 | `mouse.scrollLines` | 整数 | エディタ全体 | 無し | ホイールを 1 回回したときに送る行数（[マウス](#マウス)）。既定は `3`（Neovim の `'mousescroll'` の `ver:3`）、範囲は 0 から 9999。`0` なら送らない |
 | `mouse.scrollColumns` | 整数 | エディタ全体 | 無し | 行を折り返さないときに、ホイールを 1 回傾けたときに横に送る列数（[マウス](#マウス)）。既定は `6`（`'mousescroll'` の `hor:6`）、範囲は 0 から 9999。`0` なら送らない |
+| `scrollbar.show` | 真偽 | エディタ全体 | 無し | 画面の右端の列に、スクロールバーと、診断と検索の一致の位置の印を出すか（[スクロールバー](#スクロールバー)）。既定は `false`（出さない。Vim と Neovim と同じ）。同梱の `config.example.jsonc` は `true` にしている |
+| `scrollbar.currentOnly` | 真偽 | エディタ全体 | 無し | スクロールバーを、最後にキーを打った client の画面にだけ出すか。既定は `false`（どの client の画面にも出す。nvim-scrollview の `current_only` の既定と同じ）。同梱の `config.example.jsonc` は `true` にしている |
+| `scrollbar.marks` | 文字列 | エディタ全体 | 無し | スクロールバーに出す印の種類を、コンマで区切って並べたもの。`diagnostic`（診断）と `search`（検索の一致）を書ける。知らない名前は読み飛ばし、空なら印を出さない。既定は `diagnostic,search` |
+| `scrollbar.excludedFileTypes` | 文字列 | エディタ全体 | 無し | スクロールバーを出さないバッファのファイルの種類（`filetype` の値）を、コンマで区切って並べたもの。既定は空（どのファイルの種類にも出す） |
 
 設定ファイルには、`filetype` のほかの項目を、点で区切った名前を入れ子のキーにして書ける（名前が `a.b` の項目なら `"a": { "b": 値 }`）。
 範囲がエディタ全体の項目はエディタの初めの値に、範囲がバッファごとの項目はバッファを開くときの初めの値になる。
@@ -1148,6 +1159,30 @@ Vim のスクロールのキーは、次のとおりである。
   },
 }
 ```
+
+### スクロールバー
+
+画面の右端の 1 列に、今見ている範囲の位置と大きさを表すつまみと、診断と検索の一致の位置の印を出せる（Neovim の nvim-scrollview に当たる）。
+本体の既定は Vim と Neovim と同じく出さない。
+同梱の `config.example.jsonc` は次の値にしている。
+
+```jsonc
+{
+  "scrollbar": { "show": true, "currentOnly": true },
+}
+```
+
+- 出すのは、ファイルが画面に収まらない（スクロールできる）ときだけである。出す場所は、編集の画面のバッファの表示領域だけで、ポップアップ（ヘルプ、キーの一覧、ホバーなど）、プレビュー、出力の欄、ファイラとファインダーのポップアップとペインには出さない。nvim-scrollview の `excluded_filetypes` に書くことの多い窓（ファイラ、ヘルプ）は、本体ではどれもこの「出さない場所」に当たる
+- つまみと印は、本文の最後の列の上に重ねて描く。本文の幅は変わらない。つまみのセルは下の文字を残して `scrollbar` の色を重ねる。nvim-scrollview の `winblend` の透かしは端末のセルでは出せないので、代わりに下の文字を残す。本体の既定は反転なので、端末の背景の明暗を問わずに読める。主張を抑えたいときは、`colors` の `scrollbar` に背景の色だけを書く（同梱の iceberg は暗い背景向けの背景の色にしてある）。印のセルは下の文字を印の記号に替える
+- 位置は、見た目の行でなく本文の行で数える。長い行を折り返していても、1 行は 1 行として数える
+- 印は、診断の範囲の始まりの行と、検索の一致のある行に出す。同じセルに重なったら、誤り、警告、検索の一致、情報、ヒントの順に優先して 1 つだけ出す。記号は `symbols` の `scrollbar.` で始まる名前で、色は `colors` の同じ名前で変える（[配色](#配色)、[記号](#記号)）
+- 検索の一致の印は、一致に色を付けている間（`search.highlight` が `true` で、`:nohlsearch` で消していない間。[検索の一致の色付け](#検索の一致の色付け)）だけ出す。一致のある行は、画面を描くのと別に集め、集め終えたら印を出す。バッファの全体から集めるのに 2 秒を超えたら、そのパターンでは印を出さない（パターンを替えるか、バッファを編集すると集め直す）
+- `scrollbar.currentOnly` を `true` にすると、同じ window に複数の client を開いたとき（[同じ window の複数の client](#同じ-window-の複数の-client)）に、最後にキーを打った client の画面にだけ出す。本体がフォーカスを別のペインへ移したとき（別のペインのタブのファイルを `:e` で開いたとき）は、移した先の client の画面へバーも移る。端末多重化ソフトの操作でペインを移っただけ（キーを打っていない）では移らない
+- `scrollbar.excludedFileTypes` に書いたファイルの種類のバッファには出さない
+- マウスを使うとき（[マウス](#マウス)）、つまみと印のセルを押してもカーソルは動かない。同じ列でも、つまみも印も描いていないセルは本文で、押すとその行の最後の文字へカーソルが移る（nvim-scrollview と同じ）。ホイールは、本文の上と同じく画面を送る。つまみを動かしたり印を押してその行へ移ったりする操作は、まだ無い
+
+実行中は `:option.toggle scrollbar.show` で出し入れできる。
+出す印は `:option.set scrollbar.marks search` のように変える。
 
 ### 検索の一致の色付け
 

@@ -21,6 +21,9 @@ const (
 	HitStatusLine
 	// HitCommandLine は、コマンドラインの行（メッセージの行）である（ホイールで今の表示領域を送る。FR-182）。
 	HitCommandLine
+	// HitScrollbar は、表示領域の右端のスクロールバー（Frame.Scrollbar。FR-186、FR-189）の、つまみか印を描いたセルである。
+	// 同じ列でも、つまみも印も描いていないセルと、スクロールバーを描いていない（表示領域に収まる、設定で出さない）ときは HitText である。
+	HitScrollbar
 )
 
 // Hit は、画面の位置にあるもの（Renderer.HitTest の結果）である。
@@ -28,7 +31,22 @@ type Hit struct {
 	Area HitArea
 	// Line は、Area が HitText か HitFloat のときの、バッファの行（0 から数える）である。
 	// 最後の行より下の "~" の行は最後の行に、見比べの詰め物の行はその下の行（無ければ上の行）にする。
+	// Area が HitScrollbar のときは、その行のセルに割り付けたバッファの行の範囲の最初の行である（drawScrollbar の割り付け。
+	// 範囲は [Line, LineEnd)）。
 	Line int
+	// LineEnd は、Area が HitScrollbar のときの、その行のセルに割り付けたバッファの行の範囲の終わり（含まない）である。
+	// バッファの行の数が表示領域の行数より少ない（長い行を折り返している）ときは、どの行も割り付けていないセルがあり、
+	// そのセルでは Line と LineEnd が同じになる。
+	LineEnd int
+	// Thumb は、Area が HitScrollbar のときに、その行のセルがつまみの上かである。
+	Thumb bool
+	// Mark は、Area が HitScrollbar のときに、そのセルに描いた印の種類の、Frame.Scrollbar.Marks の添字である。印が無ければ -1 である。
+	// 描くときと同じ選び方（優先の最も大きい種類）で決めたもので、画面に出ている印と同じである。
+	Mark int
+	// MarkFirst と MarkLast は、Mark の種類の行（ScrollbarMarks.Lines）のうち、そのセルに割り付けた範囲 [Line, LineEnd) に入る
+	// 最初の行と最後の行である（印を押して、その行へ移るときに使う）。印が無ければどちらも -1 である。
+	// Hit を == で比べられるように、行の一覧そのものは持たない。
+	MarkFirst, MarkLast int
 	// Col は、Area が HitText か HitFloat のときの、行の表示の列（0 から数える）である。
 	// 行を折り返さないときは行の先頭からの列（横のスクロールの位置を足したもの）、折り返すときは WrapLines の列
 	// （見た目の行の番号 × 本文の幅 + 見た目の行の中の列）で、どちらも望みの列（internal/command の State の want）と同じ数え方である。
@@ -63,11 +81,16 @@ type hitState struct {
 	covers []rect
 	// tabs は、タブの行に描いたタブの見出しの場所である。
 	tabs []tabSpan
+	// bar は、描いたスクロールバーの列の場所（幅は 1 列）である。barOK が false なら描いていない。
+	// barCells は、bar の行ごとのセルに割り付けたものと描いたもの（drawScrollbar が残す）である。
+	bar      rect
+	barOK    bool
+	barCells []scrollbarCell
 }
 
 // reset は、h を空にする。
 func (h *hitState) reset() {
-	h.lines, h.floatOK = 0, false
+	h.lines, h.floatOK, h.barOK = 0, false, false
 	h.covers, h.tabs = h.covers[:0], h.tabs[:0]
 }
 
@@ -84,8 +107,10 @@ func (h *hitState) cover(row, x, n, w int) {
 // 寄せる前に、位置を画面の中へ寄せる。端末が画面の外の位置を報告しても、Neovim 0.12.5 と同じく画面の端の行として数える
 // （PR #346 のレビューの推奨 2）。その部品を描いていなければ HitNone を返す。clamp が HitNone なら寄せずに、位置にある部品を返す。
 // まだ描いていなければ HitNone を返す。
+// 直前の Render が右端のスクロールバー（FR-186）のつまみか印を描いたセルは、浮かべた窓の下でなければ HitScrollbar にする（FR-189）。
+// clamp が HitScrollbar のときは寄せない（スクロールバーのドラッグは、まだ無い）。
 //
-// req: FR-181, FR-182, FR-185
+// req: FR-181, FR-182, FR-185, FR-189
 func (r *Renderer) HitTest(row, col int, clamp HitArea) Hit {
 	none := Hit{Area: HitNone, Tab: -1}
 	if !r.rendered || r.Width <= 0 || r.Height <= 0 {
@@ -106,7 +131,7 @@ func (r *Renderer) HitTest(row, col int, clamp HitArea) Hit {
 			return h
 		}
 		return none
-	case HitNone, HitTabLine, HitStatusLine, HitCommandLine:
+	case HitNone, HitTabLine, HitStatusLine, HitCommandLine, HitScrollbar:
 	}
 	if h, ok := r.hitFloat(row, col, false); ok {
 		return h
@@ -114,6 +139,11 @@ func (r *Renderer) HitTest(row, col int, clamp HitArea) Hit {
 	for _, b := range r.hits.covers {
 		if b.contains(row, col) {
 			return none
+		}
+	}
+	if b := r.hits.bar; r.hits.barOK && b.contains(row, col) {
+		if h, ok := r.hitScrollbar(row - b.top); ok {
+			return h
 		}
 	}
 	if col >= 0 && col < r.Width {
@@ -127,6 +157,26 @@ func (r *Renderer) HitTest(row, col int, clamp HitArea) Hit {
 		}
 	}
 	return r.hitText(row, col, false)
+}
+
+// hitScrollbar は、直前の Render が描いたスクロールバーの i 行目（表示領域の行）のセルが、つまみか印のセルなら、
+// そのセルに割り付けたもの（drawScrollbar が描いたときに決めた scrollbarCell）を ok を true にして返す。
+// つまみも印も描いていないセルは、ok を false にして本文に渡す（nvim-scrollview も、つまみと印の窓の上だけを自分で扱う）。
+//
+// req: FR-189
+func (r *Renderer) hitScrollbar(i int) (Hit, bool) {
+	if i < 0 || i >= len(r.hits.barCells) {
+		return Hit{}, false
+	}
+	c := r.hits.barCells[i]
+	if !c.thumb && c.mark < 0 {
+		return Hit{}, false
+	}
+	h := Hit{Area: HitScrollbar, Tab: -1, Line: c.lo, LineEnd: c.hi, Thumb: c.thumb, Mark: c.mark, MarkFirst: -1, MarkLast: -1}
+	if len(c.lines) > 0 {
+		h.MarkFirst, h.MarkLast = c.lines[0], c.lines[len(c.lines)-1]
+	}
+	return h, true
 }
 
 // hitTab は、タブの行の col 列目にあるタブの見出しを返す。

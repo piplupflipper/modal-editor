@@ -51,6 +51,14 @@ const (
 	SymbolProgressRunning = "progress.running"
 	SymbolProgressDone    = "progress.done"
 	SymbolProgressFailed  = "progress.failed"
+	// SymbolScrollbarDiagnosticError などは、バッファの表示領域の右端のスクロールバー（Frame.Scrollbar。FR-187）の印である。
+	// 名前は、印の色の名前（StyleScrollbar...）と同じにした。空か、表示幅が 1 の文字 1 つで、空ならその種類の印を描かない。
+	// 既定は、nvim-scrollview の既定（診断は印の列の記号がなければ E、W、I、H。検索は一致の行が 1 つのときの "="）に合わせた。
+	SymbolScrollbarDiagnosticError   = StyleScrollbarDiagnosticError
+	SymbolScrollbarDiagnosticWarning = StyleScrollbarDiagnosticWarning
+	SymbolScrollbarDiagnosticInfo    = StyleScrollbarDiagnosticInfo
+	SymbolScrollbarDiagnosticHint    = StyleScrollbarDiagnosticHint
+	SymbolScrollbarSearch            = StyleScrollbarSearch
 )
 
 // borderChars は、SymbolPopupBorder の文字の数である。
@@ -62,26 +70,31 @@ type Symbols map[string]string
 
 // defaultSymbols は、既定の記号である。段階 2 までと同じく ASCII にする（基本設計 6.7、7.1。端末の文字幅の設定で列がずれないようにするため）。
 var defaultSymbols = Symbols{
-	SymbolSignExecutionPoint:       "=>",
-	SymbolSignBreakpoint:           "B",
-	SymbolSignBreakpointUnverified: "b",
-	SymbolSignDiagnosticError:      "E",
-	SymbolSignDiagnosticWarning:    "W",
-	SymbolSignDiagnosticInfo:       "I",
-	SymbolSignDiagnosticHint:       "H",
-	SymbolReadOnly:                 "[RO]",
-	SymbolModified:                 "[+]",
-	SymbolPopupBorder:              "",
-	SymbolShowBreak:                "",
-	SymbolWhitespaceTab:            "> ",
-	SymbolWhitespaceSpace:          "",
-	SymbolWhitespaceLead:           "",
-	SymbolWhitespaceTrail:          "-",
-	SymbolWhitespaceNbsp:           "+",
-	SymbolWhitespaceEOL:            "",
-	SymbolProgressRunning:          "...",
-	SymbolProgressDone:             "done",
-	SymbolProgressFailed:           "failed",
+	SymbolSignExecutionPoint:         "=>",
+	SymbolSignBreakpoint:             "B",
+	SymbolSignBreakpointUnverified:   "b",
+	SymbolSignDiagnosticError:        "E",
+	SymbolSignDiagnosticWarning:      "W",
+	SymbolSignDiagnosticInfo:         "I",
+	SymbolSignDiagnosticHint:         "H",
+	SymbolReadOnly:                   "[RO]",
+	SymbolModified:                   "[+]",
+	SymbolPopupBorder:                "",
+	SymbolShowBreak:                  "",
+	SymbolWhitespaceTab:              "> ",
+	SymbolWhitespaceSpace:            "",
+	SymbolWhitespaceLead:             "",
+	SymbolWhitespaceTrail:            "-",
+	SymbolWhitespaceNbsp:             "+",
+	SymbolWhitespaceEOL:              "",
+	SymbolProgressRunning:            "...",
+	SymbolProgressDone:               "done",
+	SymbolProgressFailed:             "failed",
+	SymbolScrollbarDiagnosticError:   "E",
+	SymbolScrollbarDiagnosticWarning: "W",
+	SymbolScrollbarDiagnosticInfo:    "I",
+	SymbolScrollbarDiagnosticHint:    "H",
+	SymbolScrollbarSearch:            "=",
 }
 
 // DefaultSymbols は、既定の記号の対応を返す。返す対応は呼び出しごとに作り直す。
@@ -100,14 +113,17 @@ func SymbolNames() []string {
 //   - 枠線（SymbolPopupBorder）: 空か、表示幅が 1 の文字をちょうど 8 つ並べた文字列
 //   - タブ文字の記号（SymbolWhitespaceTab）: 空か、表示幅が 1 の文字を 2 つか 3 つ並べた文字列（Vim の 'listchars' の tab と同じ）
 //   - ほかの空白の記号（"whitespace." で始まる名前）: 空か、表示幅が 1 の文字 1 つ（Vim の 'listchars' と同じ。空白 1 つのセルに描くため）
+//   - スクロールバーの印（"scrollbar." で始まる名前。FR-187）: 空か、表示幅が 1 の文字 1 つ（右端の 1 列のセルに描くため）。
+//     名前は、既定の表に無くても IsScrollbarMarkName の形なら受け付ける（後に拡張機能が足す種類の記号を書けるようにするため）
 //   - それ以外（SymbolReadOnly、SymbolModified、SymbolShowBreak、SymbolProgressRunning、SymbolProgressDone、SymbolProgressFailed）: 任意の文字列。
 //     空ならその部品（続きの行の記号、進み具合の印）を出さない
 //
 // どれも、タブと制御文字を含めない（描くと ^I の形になり、幅が変わるため）。
 //
-// req: FR-93, FR-170
+// req: FR-93, FR-170, FR-187
 func CheckSymbol(name, value string) error {
-	if _, ok := defaultSymbols[name]; !ok {
+	// スクロールバーの印の記号は、後に拡張機能が足す種類の名前も、決まった表で確かめずに受け付ける（IsScrollbarMarkName）。
+	if _, ok := defaultSymbols[name]; !ok && !IsScrollbarMarkName(name) {
 		return fmt.Errorf("未知の記号の名前 %s", name)
 	}
 	n, w := 0, 0
@@ -121,6 +137,9 @@ func CheckSymbol(name, value string) error {
 		}
 		if isWhitespaceSymbol(name) && gl.width != 1 {
 			return fmt.Errorf("空白の記号の文字 %q の表示幅が 1 でない", gl.text)
+		}
+		if isScrollbarSymbol(name) && gl.width != 1 {
+			return fmt.Errorf("スクロールバーの印の文字 %q の表示幅が 1 でない", gl.text)
 		}
 		n++
 		w += gl.width
@@ -143,8 +162,17 @@ func CheckSymbol(name, value string) error {
 		if n > 1 {
 			return fmt.Errorf("空白の記号は空か 1 文字にする（%d 文字ある）", n)
 		}
+	case isScrollbarSymbol(name):
+		if n > 1 {
+			return fmt.Errorf("スクロールバーの印は空か 1 文字にする（%d 文字ある）", n)
+		}
 	}
 	return nil
+}
+
+// isScrollbarSymbol は、name がスクロールバーの印の記号（FR-187）かを返す。
+func isScrollbarSymbol(name string) bool {
+	return strings.HasPrefix(name, "scrollbar.")
 }
 
 // isSignSymbol は、name が印の列の印の記号かを返す。

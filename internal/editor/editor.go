@@ -318,6 +318,10 @@ type Editor struct {
 	view *clientView
 	// op は、操作中の client（最後にキーを受けた編集の client。基本設計 1.2）である。拡張機能の editor/open などはこの client のタブに開く。
 	op *clientView
+	// focused は、本体が知る限りで端末多重化ソフトのフォーカスのある client である。キーを受けた client（useClient）と、
+	// 本体がフォーカスを移した先の client（focusOwner。FR-63）にする。スクロールバーの scrollbar.currentOnly（FR-186）が使う。
+	// nil なら op を使う。
+	focused *clientView
 	// shared は、レジスターなどの client の間で共有する状態（command.State.TakeOverShared）を最後に持った State である。
 	// キーを打つ client が替わったら、その client のカーソルのあるバッファの State へ引き継ぐ（useClient）。
 	shared *command.State
@@ -497,6 +501,8 @@ type bufferState struct {
 	sent uint64
 	// incLines は、打つたびの検索（incsearch.go。FR-153）のために最後に写した、このバッファの行である。
 	incLines lineSnapshot
+	// scrollSearch は、スクロールバーの検索の一致の印（scrollbar.go。FR-188）のために集めた、一致のある行と、集めている検索である。
+	scrollSearch scrollSearch
 	// replacedInReplay は、マクロの再生の途中の :e で、この bufferState の buf と state を作り直した（replaceBuffer）ことを表す。
 	// 作り直す前の State が返す結果は捨てたバッファのものなので、handleResult はその変更を exthost へ送らず、
 	// 再生の残りを作り直した State で続ける（PR #173 のレビュー）。handleResult が読んで下ろす。
