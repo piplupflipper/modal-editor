@@ -68,6 +68,8 @@ func splitName(arg string, pos int) (name string, rest string, restPos int) {
 // 知らない名前は E518、真偽でない値は E474、整数でない値は E521 にする（Vim 9.1 の :set と同じ番号）。名前が無ければ E471 にする。
 // 整数の項目の範囲（option.Def.Range）の外の値は、下限より小さければ E487、上限より大きければ E474 にする
 // （Vim 9.1 の :set numberwidth=0 と :set numberwidth=21 と同じ番号。項目の名前では分けない）。
+// 文字列の項目の、含まなければならない文字列（option.Def.Contains）を含まない空でない値は E537 にする
+// （Vim 9.1 と Neovim 0.12.5 の :set commentstring=// と同じ番号）。
 //
 // req: FR-131, FR-132, FR-136
 func runOptionSet(c *execCtx, inv *invocation) error {
@@ -94,6 +96,8 @@ func runOptionSet(c *execCtx, inv *invocation) error {
 		return errAt(textPos, codeNotPositive, "%s は %d 以上にします: %s", d.Name, d.Range.Min, text)
 	case errors.Is(err, option.ErrAboveMax) && d.Range != nil:
 		return errAt(textPos, codeInvalidArg, "%s は %d 以下にします: %s", d.Name, d.Range.Max, text)
+	case errors.Is(err, option.ErrMissingContains):
+		return errAt(textPos, codeMissingContains, "%s は空にするか %s を含めます: %s", d.Name, d.Contains, text)
 	case err != nil:
 		return errAt(textPos, codeInvalidArg, "%s の値を読めません: %s", d.Name, text)
 	}

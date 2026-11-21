@@ -209,22 +209,25 @@ func (x *aliasCtx) call(line string, pos int) error {
 // 短い名前（Vim の ft など）は受け付けない。ただし字下げの 4 項目は、:set et sw=4 ts=4 の形で書くことが多いので、
 // #318 の決めで短い名前（et、sw、ts、ai）も受け付ける。Vim の 'softtabstop'（sts）と 'smarttab'（sta）は、別の設定にしないので受け付けない。
 // アンドゥの履歴を残す設定も、#319 の決めで短い名前（udf）を受け付ける。
+// コメントの形（#327）も、issue の決めで短い名前（cms）を受け付ける。
 var vimOptionNames = map[string]string{
-	"filetype":    option.FileType,
-	"number":      option.LineNumberShow,
-	"numberwidth": option.LineNumberMinWidth,
-	"hlsearch":    option.SearchHighlight,
-	"wrap":        option.LineWrapEnabled,
-	"expandtab":   option.IndentUseSpaces,
-	"et":          option.IndentUseSpaces,
-	"shiftwidth":  option.IndentWidth,
-	"sw":          option.IndentWidth,
-	"tabstop":     option.TabWidth,
-	"ts":          option.TabWidth,
-	"autoindent":  option.IndentAuto,
-	"ai":          option.IndentAuto,
-	"undofile":    option.UndoPersist,
-	"udf":         option.UndoPersist,
+	"filetype":      option.FileType,
+	"number":        option.LineNumberShow,
+	"numberwidth":   option.LineNumberMinWidth,
+	"hlsearch":      option.SearchHighlight,
+	"wrap":          option.LineWrapEnabled,
+	"expandtab":     option.IndentUseSpaces,
+	"et":            option.IndentUseSpaces,
+	"shiftwidth":    option.IndentWidth,
+	"sw":            option.IndentWidth,
+	"tabstop":       option.TabWidth,
+	"ts":            option.TabWidth,
+	"autoindent":    option.IndentAuto,
+	"ai":            option.IndentAuto,
+	"undofile":      option.UndoPersist,
+	"udf":           option.UndoPersist,
+	"commentstring": option.CommentString,
+	"cms":           option.CommentString,
 }
 
 // vimOption は、:set の Vim の名前 name の項目を返す。無ければ ok は false である。
@@ -247,6 +250,10 @@ func vimOption(name string) (option.Def, bool) {
 // 知らない名前（inv の接頭辞、+=、-=、^=、&、短い名前を含む）は E518 にし、引数が無ければ E471 にする。
 // 途中の引数が誤りなら、そこで止め、前の引数の設定は残す（Vim 9.1 の :set ts=4 foo ts=8 と同じ）。
 //
+// 引数の中の \ は、次の 1 文字をそのまま値に入れ、\ を除く（:set cms=//\ %s は "// %s"、\\ は \）。
+// \ の後の空白は引数を区切らない。Vim 9.1 と Neovim 0.12.5 の :set の文字列の値と同じである（2026-11-21 に確かめた）。
+// ただし値の末尾の空白は、:option.set が除くので残らない（:set cms=%s\  は "%s"。Vim は "%s " にする）。
+//
 // req: FR-133, FR-155
 func expandSet(x *aliasCtx, inv *invocation) error {
 	s := &scanner{src: inv.arg, base: inv.argPos}
@@ -257,6 +264,12 @@ func expandSet(x *aliasCtx, inv *invocation) error {
 	for !s.eof() {
 		pos, start := s.pos(), s.i
 		for !s.eof() && s.peek() != ' ' && s.peek() != '\t' {
+			if s.peek() == '\\' {
+				s.next()
+				if s.eof() {
+					break
+				}
+			}
 			s.next()
 		}
 		line, err := setCall(inv.arg[start:s.i], pos)
@@ -269,6 +282,24 @@ func expandSet(x *aliasCtx, inv *invocation) error {
 		s.skipBlanks()
 	}
 	return nil
+}
+
+// unescapeSetValue は、:set の値の \ を除き、\ の次の 1 文字をそのまま残す（expandSet の doc）。末尾の \ は除く。
+func unescapeSetValue(value string) string {
+	if !strings.Contains(value, `\`) {
+		return value
+	}
+	var sb strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] == '\\' {
+			i++
+			if i == len(value) {
+				break
+			}
+		}
+		sb.WriteByte(value[i])
+	}
+	return sb.String()
 }
 
 // setCall は、:set の引数 1 つ arg を、正規のコマンドの呼び出しの文字列に変換する。pos は arg の位置である。
@@ -297,7 +328,7 @@ func setCall(arg string, pos int) (string, error) {
 		if !ok {
 			return unknown()
 		}
-		return set(d, value), nil
+		return set(d, unescapeSetValue(value)), nil
 	}
 	if d, ok := vimOption(arg); ok {
 		if d.Type != option.Bool {

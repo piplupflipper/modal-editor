@@ -214,5 +214,7 @@ func (s *State) request(cmd editcmd.Command, op target.Operator) target.Request 
 		Search:     target.Search{Pattern: cmp.Or(cmd.Target.Pattern, s.Ex.LastPattern), Backward: s.searchBackward},
 		// / と ? を <CR> で決めたときだけ 0 でない（finishSearch）。
 		SearchSteps: s.searchSteps,
+		// コメントのまとまりのテキストオブジェクト（gc）だけが呼ぶ（FR-169）。
+		CommentString: s.commentString,
 	}
 }

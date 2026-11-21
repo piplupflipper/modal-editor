@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"maps"
 	"strconv"
+	"strings"
 )
 
 // Type は、項目の値の型である。
@@ -134,6 +135,10 @@ type Def struct {
 	// Range は、整数の項目が取れる値の範囲である。nil なら範囲を限らない。整数でない項目では nil にする。
 	// 範囲は Check で確かめるので、値を項目に入れるどの経路（設定ファイル、:option.set、:set）にも効く。
 	Range *IntRange
+	// Contains は、文字列の項目の値が空でなければ含まなければならない文字列である。空なら制約を置かない。文字列でない項目では空にする。
+	// 値は Check で確かめるので、値を項目に入れるどの経路（設定ファイル、:option.set、:set）にも効く。
+	// comment.string の %s に使う（Vim 9.1 と Neovim 0.12.5 の 'commentstring' の E537 と同じ制約）。
+	Contains string
 	// Detected は、範囲がバッファごとの項目のうち、初めの値をバッファを開くときにファイルから判定して決める項目であることを表す（filetype）。
 	// この項目は、設定ファイル（最上位と fileTypeOptions）にも .editorconfig にも書けず、初めの値の段（パッケージの doc）を当てない。
 	// 範囲がエディタ全体の項目では false にする。
@@ -213,6 +218,13 @@ const (
 	// 既定は Vim の既定（defaults.vim を読まない）と同じく残さない（#319 のオーナーの決め）。false の間は、読みも書きもしない。
 	// ファイルを閉じるときと開くときに読む。
 	CursorRestore = "cursor.restore"
+	// CommentString は、行のコメントの形である（FR-169。Vim の 'commentstring'）。範囲はバッファごとで、%s の前がコメントの前に、
+	// 後ろがコメントの後ろに付く（"// %s"、"/* %s */"）。値は空か、%s を含む（Def.Contains。Vim の E537）。
+	// 既定は Neovim 0.12.5 と同じく空で、ファイルの種類ごとの値は fileTypeDefaults にある。
+	// Vim 9.1 の既定は "/* %s */" だが、Vim 9.1 に既定の gc は無く、本体の gc は Neovim の gc に合わせるので、既定も Neovim に合わせた
+	// （空なら gc はコメントを付けずに知らせる。種類の分からないファイルに C のコメントを付けない）。
+	// gc とコメントのテキストオブジェクトが、使うたびにバッファの今の値を読む（internal/command の State.commentString）。
+	CommentString = "comment.string"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -241,15 +253,39 @@ var defs = []Def{
 	{Name: EditorConfigEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(true)},
 	{Name: UndoPersist, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: CursorRestore, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: CommentString, Type: String, Scope: ScopeBuffer, Default: StringValue(""), Contains: "%s"},
 }
 
 // fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。
-// Vim 9.1 と Neovim 0.12.5 の runtime の ftplugin/make.vim と ftplugin/go.vim は、どちらも
+//
+// 字下げ: Vim 9.1 と Neovim 0.12.5 の runtime の ftplugin/make.vim と ftplugin/go.vim は、どちらも
 // setlocal noexpandtab softtabstop=0 shiftwidth=0 とする（Makefile のレシピはタブ文字で始める。Go は gofmt がタブ文字で字下げする）。
 // 2026-11-21 に読んで写した。タブ文字の表示幅（tab.width）は ftplugin が変えないので、ここでも変えない。
+//
+// コメントの形（comment.string。FR-169）: 本体のファイルの種類の判定（internal/editor の defaultFileTypes）が決める種類と lua について、
+// Vim 9.1 と Neovim 0.12.5 の runtime の ftplugin/<種類>.vim（Neovim は <種類>.lua も）が setlocal commentstring で決める値を写した
+// （2026-11-21。setf <種類> の後の &commentstring を両方で読んで確かめた）。
+// lua は本体が判定しないが、設定の fileTypes で足すことの多い種類（ui のアイコンの表と同じ）で、#327 の受入条件にあるので入れた。
+// Vim と Neovim で値が違うのは c だけで、Vim 9.1 の ftplugin/c.vim は "/* %s */"、Neovim 0.12.5 は ftplugin/c.vim の後に読む
+// ftplugin/c.lua が "// %s" にする。本体の gc は Neovim に合わせるので、Neovim の値を写した。
+// json の ftplugin（Vim 9.1 と Neovim 0.12.5 の ftplugin/json.vim）は setlocal commentstring= で空にするので、空を入れた
+// （設定ファイルの最上位に書いた値も、json では空になる。Neovim の ftplugin と同じ）。
 var fileTypeDefaults = map[string]map[string]Value{
-	"make": {IndentUseSpaces: BoolValue(false), IndentWidth: IntValue(0)},
-	"go":   {IndentUseSpaces: BoolValue(false), IndentWidth: IntValue(0)},
+	"make":       {IndentUseSpaces: BoolValue(false), IndentWidth: IntValue(0), CommentString: StringValue("# %s")},
+	"go":         {IndentUseSpaces: BoolValue(false), IndentWidth: IntValue(0), CommentString: StringValue("// %s")},
+	"gomod":      {CommentString: StringValue("// %s")},
+	"markdown":   {CommentString: StringValue("<!-- %s -->")},
+	"json":       {CommentString: StringValue("")},
+	"jsonc":      {CommentString: StringValue("// %s")},
+	"python":     {CommentString: StringValue("# %s")},
+	"c":          {CommentString: StringValue("// %s")},
+	"javascript": {CommentString: StringValue("// %s")},
+	"typescript": {CommentString: StringValue("// %s")},
+	"rust":       {CommentString: StringValue("// %s")},
+	"sh":         {CommentString: StringValue("# %s")},
+	"yaml":       {CommentString: StringValue("# %s")},
+	"toml":       {CommentString: StringValue("# %s")},
+	"lua":        {CommentString: StringValue("-- %s")},
 }
 
 // FileTypeDefaults は、本体のファイルの種類 fileType の既定の値（正規の名前から値への対応）の写しを返す。無ければ nil を返す。
@@ -290,17 +326,24 @@ var (
 	ErrBelowMin = fmt.Errorf("%w: below the minimum", ErrOutOfRange)
 	// ErrAboveMax は、整数の項目の値が範囲の上限より大きいことを表す（Vim の 'numberwidth' の 21 以上と同じく E474 に当たる）。
 	ErrAboveMax = fmt.Errorf("%w: above the maximum", ErrOutOfRange)
+	// ErrMissingContains は、文字列の項目の空でない値が、含まなければならない文字列（Def.Contains）を含まないことを表す
+	// （comment.string では、Vim 9.1 と Neovim 0.12.5 の 'commentstring' の E537 に当たる）。
+	ErrMissingContains = errors.New("option: value must be empty or contain the required text")
 )
 
 // Check は、値 v が項目 d に入れられる値かを確かめる。型が項目の型と違えば ErrTypeMismatch を返す。
 // 整数の項目に範囲（d.Range）があれば、下限より小さい値に ErrBelowMin を、上限より大きい値に ErrAboveMax を返す（FR-136）。
+// 文字列の項目に含まなければならない文字列（d.Contains）があれば、それを含まない空でない値に ErrMissingContains を返す（FR-169）。
 // 値を項目に入れる経路（コマンドラインの文字列から読む Parse、設定ファイルの JSON の値から読む internal/config、Values.Set）は、
 // どれも型の変換の後にこれを通る（FR-131）。項目ごとの値の制約を表に足すときは、項目の名前で分けず、表の欄にしてここで確かめる。
 //
-// req: FR-131, FR-136
+// req: FR-131, FR-136, FR-169
 func (d Def) Check(v Value) error {
 	if v.Type() != d.Type {
 		return ErrTypeMismatch
+	}
+	if d.Contains != "" && v.Type() == String && v.String() != "" && !strings.Contains(v.String(), d.Contains) {
+		return ErrMissingContains
 	}
 	if r := d.Range; r != nil && v.Type() == Int {
 		switch {

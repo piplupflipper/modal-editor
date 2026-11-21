@@ -273,3 +273,70 @@ func TestValues(t *testing.T) {
 		t.Errorf("表に無い名前の Get = %+v", got)
 	}
 }
+
+// comment.string は、範囲がバッファごとの文字列で、既定は空（Neovim 0.12.5 と同じ）である。
+// 空でない値は %s を含まなければならず（Vim 9.1 と Neovim 0.12.5 の E537）、含まなければ Check、Parse、Values.Set が断る。
+//
+// req: FR-169
+func TestCommentStringDef(t *testing.T) {
+	d, ok := Lookup(CommentString)
+	if !ok || d.Type != String || d.Scope != ScopeBuffer || d.Default != StringValue("") || d.Contains != "%s" || d.Detected {
+		t.Fatalf("Lookup(CommentString) = %+v, %v", d, ok)
+	}
+	for _, tt := range []struct {
+		text string
+		want error
+	}{
+		{"", nil},
+		{"// %s", nil},
+		{"%s", nil},
+		{"/*%s*/", nil},
+		{"# %s %s", nil},
+		{"//", ErrMissingContains},
+		{"% s", ErrMissingContains},
+		{" ", ErrMissingContains},
+	} {
+		if _, err := d.Parse(tt.text); !errors.Is(err, tt.want) {
+			t.Errorf("Parse(%q) = %v, want %v", tt.text, err, tt.want)
+		}
+		var vs Values
+		if err := vs.Set(d, StringValue(tt.text)); !errors.Is(err, tt.want) {
+			t.Errorf("Set(%q) = %v, want %v", tt.text, err, tt.want)
+		}
+	}
+}
+
+// 本体のファイルの種類ごとの既定は、範囲がバッファごとの項目の、検査を通る値だけを持つ。コメントの形は Neovim 0.12.5 の ftplugin の値である。
+// FileTypeDefaults は写しを返すので、呼び出し側が変えても表は変わらない。
+//
+// req: FR-163, FR-169
+func TestFileTypeDefaults(t *testing.T) {
+	for ft, vals := range fileTypeDefaults {
+		for name, v := range vals {
+			d, ok := Lookup(name)
+			if !ok || d.Scope != ScopeBuffer || d.Detected {
+				t.Errorf("%s: %s は範囲がバッファごとの項目でない", ft, name)
+				continue
+			}
+			if err := d.Check(v); err != nil {
+				t.Errorf("%s: %s = %q: %v", ft, name, v, err)
+			}
+		}
+	}
+	for ft, want := range map[string]string{
+		"go": "// %s", "python": "# %s", "lua": "-- %s", "sh": "# %s", "c": "// %s", "markdown": "<!-- %s -->", "json": "",
+	} {
+		got, ok := FileTypeDefaults(ft)[CommentString]
+		if !ok || got != StringValue(want) {
+			t.Errorf("FileTypeDefaults(%q)[comment.string] = %q, %v; want %q", ft, got, ok, want)
+		}
+	}
+	if _, ok := FileTypeDefaults("text")[CommentString]; ok {
+		t.Error("text に comment.string の既定がある")
+	}
+	m := FileTypeDefaults("go")
+	m[CommentString] = StringValue("x %s")
+	if got := FileTypeDefaults("go")[CommentString]; got != StringValue("// %s") {
+		t.Errorf("写しを変えると表が変わった: %q", got)
+	}
+}

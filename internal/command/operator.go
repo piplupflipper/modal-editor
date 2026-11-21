@@ -57,6 +57,7 @@ var operators = map[string]operatorFunc{
 	"lowercase":    opCase(unicode.ToLower),
 	"uppercase":    opCase(unicode.ToUpper),
 	"surround-add": opSurroundAdd,
+	"comment":      opComment,
 }
 
 // moveMotion は、モーションだけの移動を実行する。

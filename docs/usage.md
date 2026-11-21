@@ -250,6 +250,7 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `toggle-case` | オペレーター | `normal`、`visual` | 大文字と小文字を入れ替える |
 | `lowercase` | オペレーター | `normal`、`visual` | 小文字にする |
 | `uppercase` | オペレーター | `normal`、`visual` | 大文字にする |
+| `comment` | オペレーター | `normal`、`visual` | 行のコメントを切り替える |
 | `surround-add` | オペレーター | `normal` | 対象を {文字} で囲む（sa{対象}{文字}） |
 | `indent` | オペレーター | `visual` | 選んだ行を右へずらす（選択は残す） |
 | `dedent` | オペレーター | `visual` | 選んだ行を左へずらす（選択は残す） |
@@ -272,6 +273,7 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `a-brace` | テキストオブジェクト | `visual` | {…} の全体 |
 | `inner-paragraph` | テキストオブジェクト | `visual` | 段落 |
 | `a-paragraph` | テキストオブジェクト | `visual` | 段落と後ろの空行 |
+| `commented-lines` | テキストオブジェクト | `visual` | 続くコメントの行 |
 | `toggle-case-char` | 操作 | `normal` | カーソルの文字の大文字と小文字を入れ替える |
 | `put-after` | 操作 | `normal` | カーソルの後に貼る |
 | `put-before` | 操作 | `normal` | カーソルの前に貼る |
@@ -287,6 +289,7 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `dedent-line` | 操作 | `normal` | 行を左へずらす（<<。回数は行数） |
 | `surround-delete` | 操作 | `normal` | {文字} の囲みを消す（sd{文字}） |
 | `surround-replace` | 操作 | `normal` | 囲みを替える（sr{前の文字}{後の文字}） |
+| `comment-line` | 操作 | `normal` | 行のコメントを切り替える（gcc。回数は行数） |
 | `join-lines` | 操作 | `normal` | 行をつなげる |
 | `open-below` | 操作 | `normal` | 下に行を足して入力する |
 | `open-above` | 操作 | `normal` | 上に行を足して入力する |

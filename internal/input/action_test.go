@@ -209,6 +209,9 @@ func TestActionIDUnique(t *testing.T) {
 		"inner-paren": {"i(", "i)", "ib"}, "a-paren": {"a(", "a)", "ab"}, "inner-bracket": {"i[", "i]"}, "a-bracket": {"a[", "a]"},
 		"inner-brace": {"i{", "i}", "iB"}, "a-brace": {"a{", "a}", "aB"},
 		"hover": {"<Leader>lh", "K"}, "definition": {"<Leader>lD", "<C-]>"},
+		// gc と gcc は、ビジュアルモードとノーマルモードの <C-_> と <C-/> にも載せる。テキストオブジェクトの gc は、
+		// ビジュアルモードでは既定のキーを持たない行（keys が空）で keymap に割り当てられるようにする（FR-169）。
+		"comment": {"gc", "<C-_>", "<C-/>"}, "comment-line": {"gcc", "<C-_>", "<C-/>"}, "commented-lines": {"gc", ""},
 	}
 	rows := map[string][]string{}
 	for _, tb := range builtinTables {
