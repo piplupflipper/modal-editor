@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -325,6 +326,69 @@ func TestCommentStringDef(t *testing.T) {
 		if err := vs.Set(d, StringValue(tt.text)); !errors.Is(err, tt.want) {
 			t.Errorf("Set(%q) = %v, want %v", tt.text, err, tt.want)
 		}
+	}
+}
+
+// コマンドラインの補い方は、Vim の 'wildmode' と同じ書き方の語の列で、既定は full である。読めない値（知らない語、空の語、
+// 5 つ目の部分）は、Check、Parse、Values.Set が断る。読めた値は部分ごとの語の列になる。
+// 大文字と小文字の区別と、候補の一覧の高さの既定は、Vim と Neovim の既定（区別する、0）である。
+//
+// req: FR-196
+func TestCompletionDefs(t *testing.T) {
+	d, ok := Lookup(CommandLineCompleteMode)
+	if !ok || d.Type != String || d.Scope != ScopeEditor || d.Default != StringValue("full") || d.Words != CompleteModeWords {
+		t.Fatalf("Lookup(CommandLineCompleteMode) = %+v, %v", d, ok)
+	}
+	for _, tt := range []struct {
+		text string
+		want error
+		got  string
+	}{
+		{"", nil, "[]"},
+		{"full", nil, "[[full]]"},
+		{"longest:full,full", nil, "[[longest full] [full]]"},
+		{"noselect:full,full,longest,full", nil, "[[noselect full] [full] [longest] [full]]"},
+		{"full:", nil, "[[full]]"},
+		{"longest:full,", nil, "[[longest full] []]"},
+		{"full:full", nil, "[[full full]]"},
+		{":full", ErrInvalidWords, ""},
+		{"full,,full", ErrInvalidWords, ""},
+		{",full", ErrInvalidWords, ""},
+		{"full,full,full,full,", ErrInvalidWords, ""},
+		{"full,full,full,full,full", ErrInvalidWords, ""},
+		{"list:full", ErrInvalidWords, ""},
+		{"lastused", ErrInvalidWords, ""},
+		{"Full", ErrInvalidWords, ""},
+		{"full ", ErrInvalidWords, ""},
+	} {
+		if _, err := d.Parse(tt.text); !errors.Is(err, tt.want) {
+			t.Errorf("Parse(%q) = %v, want %v", tt.text, err, tt.want)
+		}
+		var vs Values
+		if err := vs.Set(d, StringValue(tt.text)); !errors.Is(err, tt.want) {
+			t.Errorf("Set(%q) = %v, want %v", tt.text, err, tt.want)
+		}
+		if tt.want != nil {
+			continue
+		}
+		parts, _ := d.Words.Parse(tt.text)
+		got := "["
+		for i, p := range parts {
+			if i > 0 {
+				got += " "
+			}
+			got += "[" + strings.Join(p, " ") + "]"
+		}
+		if got += "]"; got != tt.got {
+			t.Errorf("Words.Parse(%q) = %s, want %s", tt.text, got, tt.got)
+		}
+	}
+	if ic, found := Lookup(CommandLineCompleteIgnoreCase); !found || ic.Type != Bool || ic.Scope != ScopeEditor || ic.Default != BoolValue(false) {
+		t.Errorf("Lookup(CommandLineCompleteIgnoreCase) = %+v, %v", ic, found)
+	}
+	d, ok = Lookup(CompletionMenuHeight)
+	if !ok || d.Type != Int || d.Scope != ScopeEditor || d.Default != IntValue(0) || d.Range == nil || *d.Range != (IntRange{Min: 0, Max: 9999}) {
+		t.Errorf("Lookup(CompletionMenuHeight) = %+v, %v", d, ok)
 	}
 }
 

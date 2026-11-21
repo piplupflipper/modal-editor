@@ -409,6 +409,12 @@ type Editor struct {
 	extRan bool
 	// fromCmdline は、直前に処理した利用者のキーを、コマンドラインモードで打ったかである（handleKey）。
 	fromCmdline bool
+	// wildMenuID は、コマンドラインの補完の候補の一覧を出すたびに進める番号である（cmdcomplete.go の wildShowMenu）。
+	wildMenuID uint64
+	// helpWordCache は、:help の語の補完の候補（cmdcomplete.go の helpWords）である。最初に補うときに作る。
+	helpWordCache []string
+	// wildCollect は、ファイルの補完の候補を集める関数である。nil なら collectFiles を使う。テストが、集め終えない関数に差し替える。
+	wildCollect func(ctx context.Context, q fileQuery) (items, shown []string, err error)
 	// statFn は、外での変更の確認で使う stat である。テストが、戻らない stat に差し替える。
 	statFn func(string) (fileStamp, error)
 	// checkStart は、外での変更の確認を別の goroutine で始めた時刻、checkWarned はその確認が長引いていると知らせたかである。
@@ -910,6 +916,7 @@ func (e *Editor) Run(ctx context.Context) error {
 			// <C-c> のキーそのものは列から届くので、ここでは外部のコマンドと再生中の拡張機能の待ちの中断だけをする。
 			e.interruptShell()
 			e.interruptReplay()
+			e.interruptCompletion()
 		case o := <-e.shellDone:
 			e.shellFinished(o)
 		case r := <-e.termCh:
@@ -1045,6 +1052,7 @@ func (e *Editor) initState(bs *bufferState) {
 	bs.state.Ex.ExtCommand = e.extCommand
 	bs.state.Ex.Options = optionAccess{e: e, bs: bs}
 	bs.state.Ex.Aliases = e.aliases
+	bs.state.Ex.FileEnv = editorFileEnv{e: e}
 	bs.state.Interrupted = e.interrupt.Load
 	bs.state.KeyHook = func(k editcmd.Key, insert bool) (bool, []editcmd.Key, error) { return e.popupStateKey(bs, k, insert) }
 	if err := e.host.OpenBuffer(exthost.BufferSnapshot{

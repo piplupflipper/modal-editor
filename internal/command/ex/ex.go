@@ -268,7 +268,8 @@ const (
 type Action struct {
 	Kind ActionKind
 	// File は、コマンドの引数に書かれたファイル名である。空なら編集中のファイルを指す。
-	// 先頭と末尾の空白を除き、"\ " を空白に、"\|" を "|" に戻す以外の展開（%、~、ワイルドカード）はしない。
+	// 先頭と末尾の空白を除き、"\" を付けた文字を戻し、先頭の "~" と環境変数を State.FileEnv で展開したものである（ExpandFileArg）。
+	// %、#、ワイルドカードは展開しない。
 	File string
 	// Force は、コマンドに "!" が付いていたかどうかである。
 	// ActionWrite では既存のファイルや読み取り専用のファイルへの上書き、ActionQuit と ActionEdit では未保存の変更の破棄を表す。
@@ -353,6 +354,8 @@ type State struct {
 	// Aliases は、Ex コマンドの別名の表である（本体の行に、設定ファイルの別名を足したもの。FR-150）。
 	// nil なら、本体の行（:set、:nohlsearch）だけを使う。
 	Aliases *Aliases
+	// FileEnv は、ファイルの引数の先頭の "~" と環境変数を展開する口である（ExpandFileArg。FR-200）。nil なら展開しない。
+	FileEnv FileEnv
 }
 
 // Notice は、Ex コマンドが利用者に知らせる 1 行の通知である（"3 行をフィルターしました" など）。

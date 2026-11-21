@@ -133,6 +133,8 @@ type Renderer struct {
 	posFrom *Renderer
 	// hits は、直前の Render が描いた部品の場所である。マウスの出来事の位置を解く（HitTest。mouse.go）。
 	hits hitState
+	// pum は、補完の候補の一覧（Frame.Completion。FR-197）の、描画をまたいで保つスクロールの位置である（completion.go）。
+	pum pumState
 }
 
 // fractionMult は、fraction の単位である（Vim の FRACTION_MULT と同じ値）。
@@ -959,15 +961,30 @@ func (r *Renderer) drawCommandLine(g *Grid, theme Theme, f *Frame) (Cursor, bool
 		if f.CommandLineType != 0 {
 			prefix = f.CommandLineType
 		}
-		s := string(prefix) + f.CommandLine
+		full := string(prefix) + f.CommandLine
+		s := full
 		tabStop := tabStopOr(r.tabStop)
 		// 末尾の後ろのカーソルの 1 列を残して収まるまで、先頭の文字を落とす。
 		for s != "" && StringWidth(s, tabStop)+1 > r.Width {
 			s = s[nextGlyph(s, 0, 0, tabStop).size:]
 		}
 		end := r.drawText(g, row, 0, r.Width, s, Attr{})
+		if m := f.Completion; m != nil && m.Start >= 0 && m.Start <= len(f.CommandLine) {
+			// 補完の候補の一覧は、項目を並べ始める位置の文字の列（落とした先頭の文字の分だけ左へずらした列）に合わせる（FR-197）。
+			// req: FR-197
+			dropped := len(full) - len(s)
+			at := len(string(prefix)) + m.Start
+			col := 0
+			if at > dropped {
+				col = StringWidth(full[dropped:at], tabStop)
+			}
+			r.drawCompletion(g, theme, m, row, col)
+		} else {
+			r.pum.valid = false
+		}
 		return Cursor{Row: row, Col: min(end, max(r.Width-1, 0)), Shape: CursorBar, Visible: r.Width > 0}, true
 	}
+	r.pum.valid = false
 	lines := textLines(f.Message.Text)
 	if len(lines) == 0 {
 		return Cursor{}, false

@@ -14,6 +14,7 @@ package ui
 //	6    ステータス行                                                   drawStatus
 //	7    出力の欄                                                       drawOutput
 //	8    コマンドラインの行（メッセージ、上へ広げた複数の行のメッセージ、選択肢の問い） drawCommandLine
+//	8.1  補完の候補の一覧（Frame.Completion。FR-197。コマンドラインの行の真上）   drawCommandLine の中の drawCompletion
 //	9    タブの行（画面の一番上の 1 行。ほかの部品を 1 行下へずらす）        renderWithTabLine
 //
 // 進み具合を浮かべる窓より下に置くのは、fidget.nvim の窓の zindex の既定（45）が、Neovim の浮かべた窓の既定（50）より下にあるのと

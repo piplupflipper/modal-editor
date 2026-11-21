@@ -44,6 +44,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -147,6 +148,11 @@ type Def struct {
 	// 値は Check で確かめるので、値を項目に入れるどの経路（設定ファイル、:option.set、:set）にも効く。
 	// comment.string の %s に使う（Vim 9.1 と Neovim 0.12.5 の 'commentstring' の E537 と同じ制約）。
 	Contains string
+	// Words は、文字列の項目の値を、語の列（WordList の書き方）として読むときの語の候補である。nil なら制約を置かない。
+	// 文字列でない項目では nil にする。値は Check で確かめるので、値を項目に入れるどの経路（設定ファイル、:option.set、:set）にも効く。
+	// commandLine.completeMode に使う（Vim 9.1 と Neovim 0.12.5 の 'wildmode' の書き方と E474）。
+	// コマンドラインの補完（internal/command/ex の Complete）は、この語を値の候補にする。
+	Words *WordList
 	// Detected は、範囲がバッファごとの項目のうち、初めの値をバッファを開くときにファイルから判定して決める項目であることを表す（filetype）。
 	// この項目は、設定ファイル（最上位と fileTypeOptions）にも .editorconfig にも書けず、初めの値の段（パッケージの doc）を当てない。
 	// 範囲がエディタ全体の項目では false にする。
@@ -156,6 +162,54 @@ type Def struct {
 // IntRange は、整数の項目が取れる値の範囲 [Min, Max] である（両端を含む）。
 type IntRange struct {
 	Min, Max int
+}
+
+// WordList は、文字列の値を、コンマで区切った部分の列とし、各部分をコロンで区切った語の列として読むときの規則である
+// （Vim 9.1 と Neovim 0.12.5 の 'wildmode' の書き方。Def.Words）。
+//
+// 空の値は、部分が 1 つも無い値として受け付ける。部分は MaxParts 個までで、どの語も Words のどれかでなければならない。
+// 値の末尾のコンマとコロンは受け付けるが、空の語（先頭の区切り、続けた区切り）と、MaxParts 個目の後のコンマは受け付けない
+// （Neovim 0.12.5 の :set wildmode=full: と :set wildmode=longest:full, は通り、:set wildmode=:full、:set wildmode=full,,full、
+// :set wildmode=full,full,full,full, は E474 になる。2026-11-22 に確かめた。Vim 9.1 の check_opt_wim と同じ読み方である）。
+type WordList struct {
+	// Words は、語の候補である。並びは、コマンドラインの補完で候補を出す順である。
+	Words []string
+	// MaxParts は、部分の数の上限である。
+	MaxParts int
+}
+
+// Parse は、値 s を部分ごとの語の列に分けて返す。s の末尾のコンマで終わった部分は、空の部分として返す。
+// 読めなければ ErrInvalidWords を返す。
+func (l WordList) Parse(s string) ([][]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	parts := [][]string{nil}
+	for i := 0; i < len(s); {
+		j := i
+		for j < len(s) && s[j] != ',' && s[j] != ':' {
+			j++
+		}
+		if !slices.Contains(l.Words, s[i:j]) {
+			return nil, ErrInvalidWords
+		}
+		last := len(parts) - 1
+		parts[last] = append(parts[last], s[i:j])
+		if j == len(s) {
+			break
+		}
+		if s[j] == ',' {
+			if len(parts) == l.MaxParts {
+				return nil, ErrInvalidWords
+			}
+			parts = append(parts, nil)
+		}
+		i = j + 1
+		if i == len(s) {
+			break
+		}
+	}
+	return parts, nil
 }
 
 // 項目の正規の名前。値を読む側は、名前を文字列で書かずにこの定数を使う。
@@ -293,7 +347,22 @@ const (
 	// ScrollbarExcludedFileTypes は、スクロールバーを出さないバッファのファイルの種類（filetype の値）を、コンマで区切って並べたものである
 	// （FR-186。nvim-scrollview の excluded_filetypes）。名前の前後の空白は除く。既定は空（どのファイルの種類にも出す）。描くたびに読む。
 	ScrollbarExcludedFileTypes = "scrollbar.excludedFileTypes"
+	// CommandLineCompleteMode は、コマンドラインの <Tab> の補い方である（FR-196。Vim の 'wildmode'）。範囲はエディタ全体で、
+	// 値は Vim と同じ書き方（WordList）で、語は full、longest、noselect である。既定は Vim 9.1 と Neovim 0.12.5 の既定と同じく full である。
+	// Vim の list と lastused は持たない（候補は常にポップアップの一覧に出し、バッファの候補はバッファの番号の順に出す）。
+	// <Tab> を打つたびに読む。
+	CommandLineCompleteMode = "commandLine.completeMode"
+	// CommandLineCompleteIgnoreCase は、コマンドラインの補完で、ファイルとディレクトリの名前の大文字と小文字を区別しないかである
+	// （FR-196。Vim の 'wildignorecase'）。既定は Vim と同じく区別する。補う候補を集めるたびに読む。
+	CommandLineCompleteIgnoreCase = "commandLine.completeIgnoreCase"
+	// CompletionMenuHeight は、補完の候補の一覧（ポップアップの一覧）に出す行の数の上限である（FR-197。Vim の 'pumheight'）。
+	// 0 なら画面に収まるだけ出す（Vim と同じ）。範囲は 0 から 9999 である（scroll.margin と同じ上限）。描くたびに読む。
+	// 名前をコマンドラインの下に置かないのは、後に作るインサートモードの補完の一覧も同じ上限を使うためである（Vim の 'pumheight' と同じ）。
+	CompletionMenuHeight = "completionMenu.height"
 )
+
+// CompleteModeWords は、commandLine.completeMode の語の候補である（Def.Words）。
+var CompleteModeWords = &WordList{Words: []string{"full", "longest", "noselect"}, MaxParts: 4}
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
 // 順は、Defs が返す一覧の順である。
@@ -338,6 +407,9 @@ var defs = []Def{
 	{Name: ScrollbarCurrentOnly, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: ScrollbarMarks, Type: String, Scope: ScopeEditor, Default: StringValue("diagnostic,search")},
 	{Name: ScrollbarExcludedFileTypes, Type: String, Scope: ScopeEditor, Default: StringValue("")},
+	{Name: CommandLineCompleteMode, Type: String, Scope: ScopeEditor, Default: StringValue("full"), Words: CompleteModeWords},
+	{Name: CommandLineCompleteIgnoreCase, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: CompletionMenuHeight, Type: Int, Scope: ScopeEditor, Default: IntValue(0), Range: &IntRange{Min: 0, Max: 9999}},
 }
 
 // fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。
@@ -378,7 +450,7 @@ func FileTypeDefaults(fileType string) map[string]Value {
 	return maps.Clone(fileTypeDefaults[fileType])
 }
 
-// Defs は、設定の表の写しを表の順に返す（設定ファイルの読み込みと、後に作るコマンドラインの補完の一覧）。
+// Defs は、設定の表の写しを表の順に返す（設定ファイルの読み込みと、コマンドラインの補完の候補。FR-195）。
 func Defs() []Def {
 	out := make([]Def, len(defs))
 	copy(out, defs)
@@ -415,21 +487,30 @@ var (
 	ErrMissingContains = errors.New("option: value must be empty or contain the required text")
 	// ErrStringRequired は、文字列の項目の JSON の値が文字列でないことを表す（Def.ParseJSON）。
 	ErrStringRequired = errors.New("option: value must be a string")
+	// ErrInvalidWords は、文字列の項目の値が、語の列（Def.Words）として読めないことを表す
+	// （commandLine.completeMode では、Vim 9.1 と Neovim 0.12.5 の 'wildmode' の E474 に当たる）。
+	ErrInvalidWords = errors.New("option: value must be a list of known words")
 )
 
 // Check は、値 v が項目 d に入れられる値かを確かめる。型が項目の型と違えば ErrTypeMismatch を返す。
 // 整数の項目に範囲（d.Range）があれば、下限より小さい値に ErrBelowMin を、上限より大きい値に ErrAboveMax を返す（FR-136）。
 // 文字列の項目に含まなければならない文字列（d.Contains）があれば、それを含まない空でない値に ErrMissingContains を返す（FR-169）。
+// 文字列の項目に語の候補（d.Words）があれば、語の列として読めない値に ErrInvalidWords を返す（FR-196）。
 // 値を項目に入れる経路（コマンドラインの文字列から読む Parse、設定ファイルの JSON の値から読む internal/config、Values.Set）は、
 // どれも型の変換の後にこれを通る（FR-131）。項目ごとの値の制約を表に足すときは、項目の名前で分けず、表の欄にしてここで確かめる。
 //
-// req: FR-131, FR-136, FR-169
+// req: FR-131, FR-136, FR-169, FR-196
 func (d Def) Check(v Value) error {
 	if v.Type() != d.Type {
 		return ErrTypeMismatch
 	}
 	if d.Contains != "" && v.Type() == String && v.String() != "" && !strings.Contains(v.String(), d.Contains) {
 		return ErrMissingContains
+	}
+	if d.Words != nil && v.Type() == String {
+		if _, err := d.Words.Parse(v.String()); err != nil {
+			return err
+		}
 	}
 	if r := d.Range; r != nil && v.Type() == Int {
 		switch {

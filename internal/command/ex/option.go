@@ -70,6 +70,7 @@ func splitName(arg string, pos int) (name string, rest string, restPos int) {
 // （Vim 9.1 の :set numberwidth=0 と :set numberwidth=21 と同じ番号。項目の名前では分けない）。
 // 文字列の項目の、含まなければならない文字列（option.Def.Contains）を含まない空でない値は E537 にする
 // （Vim 9.1 と Neovim 0.12.5 の :set commentstring=// と同じ番号）。
+// 語の列として読む文字列の項目（option.Def.Words）の、読めない値は E474 にする（Neovim 0.12.5 の :set wildmode=foo と同じ番号）。
 //
 // req: FR-131, FR-132, FR-136
 func runOptionSet(c *execCtx, inv *invocation) error {
@@ -98,6 +99,9 @@ func runOptionSet(c *execCtx, inv *invocation) error {
 		return errAt(textPos, codeInvalidArg, "%s は %d 以下にします: %s", d.Name, d.Range.Max, text)
 	case errors.Is(err, option.ErrMissingContains):
 		return errAt(textPos, codeMissingContains, "%s は空にするか %s を含めます: %s", d.Name, d.Contains, text)
+	case errors.Is(err, option.ErrInvalidWords) && d.Words != nil:
+		// req: FR-196
+		return errAt(textPos, codeInvalidArg, "%s は %s の語をコロンとコンマで区切って書きます: %s", d.Name, strings.Join(d.Words.Words, "、"), text)
 	case err != nil:
 		return errAt(textPos, codeInvalidArg, "%s の値を読めません: %s", d.Name, text)
 	}

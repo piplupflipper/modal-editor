@@ -113,6 +113,8 @@ type viewFields struct {
 	outView *outputView
 	// inc は、/ か ? でパターンを打っている間の、打つたびの検索の状態である（incsearch.go。FR-153）。打っていなければ nil。
 	inc *incSearch
+	// wild は、コマンドラインの補完の状態である（cmdcomplete.go。FR-195）。補っていなければ nil。
+	wild *wildMenu
 	// quit は、client の最後のタブを閉じたので、この client を終えることを表す（reapClients が外す）。
 	quit bool
 }
@@ -145,6 +147,9 @@ type clientView struct {
 	focusAway bool
 	// replay は、この client のマクロかドットリピートの再生が待っている拡張機能の問い合わせである。無ければ nil（replaywait.go）。
 	replay *replayWait
+	// completionJob は、この client の補完の候補をイベントループの外で集めている仕事である。無ければ nil（completion.go）。
+	// ある間は、この client のキーを処理しない（keyAllowed）。
+	completionJob *completionJob
 	// mouseDown は、この client の端末でマウスのボタンを最後に押した位置の部品の種類である。ドラッグの位置をその部品へ寄せる（mouse.go）。
 	mouseDown ui.HitArea
 	// mouse は、この client（とその部品の client）が最後に受けたマウスの出来事の位置である（mouse.go）。
@@ -632,6 +637,7 @@ func (e *Editor) showsQuestion() bool {
 // 問いの間は問いを出した client のキーだけを、外部のコマンドの実行中はそれを打った client 以外のキーを処理する（パッケージの doc）。
 // ただし、外部のコマンドの子孫が起動した待つだけの client のタブをその client に開いている間（reclaimed。FR-117）は、その client のキーも処理する。
 // 再生中の拡張機能の結果を待っている client のキーも、続け終えるまで処理しない（replayWait）。
+// 補完の候補を集めている client のキーも、集め終えて補うまで処理しない（completionJob。FR-199）。
 func (e *Editor) keyAllowed(c *clientView) bool {
 	if c.detached {
 		return true // 外した client のキーは、取り出して捨てる
@@ -639,5 +645,5 @@ func (e *Editor) keyAllowed(c *clientView) bool {
 	if q := e.asker; q != nil && q != c {
 		return false
 	}
-	return (e.shell == nil || e.shell.client != c || e.shell.reclaimed) && c.replay == nil
+	return (e.shell == nil || e.shell.client != c || e.shell.reclaimed) && c.replay == nil && c.completionJob == nil
 }
