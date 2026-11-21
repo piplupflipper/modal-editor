@@ -478,7 +478,7 @@ func (e *Editor) uiPreview(f *floatState) *ui.Preview {
 	if p.line >= 0 && n > 0 {
 		out.Line = min(p.line, n-1)
 	}
-	view := &ui.Frame{Text: bs.buf, LineLayout: ui.LineLayout{TabStop: bs.tabWidth()}, Decorations: bs.decoView}
+	view := &ui.Frame{Text: bs.buf, LineLayout: e.lineLayout(bs, false), Decorations: bs.decoView}
 	switch {
 	case p.owned:
 		st := bs.state

@@ -1447,7 +1447,7 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 	st := f.bs.state
 	view := &ui.Frame{
 		Text:        f.bs.buf,
-		LineLayout:  e.lineLayout(f.bs, st),
+		LineLayout:  e.lineLayout(f.bs, false),
 		Cursor:      st.Cursor(),
 		Decorations: f.bs.decoView,
 		Diagnostics: f.bs.uiDiagnostics(),
@@ -1466,7 +1466,7 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 		Wide:       f.kind == floatInput || f.kind == floatFinder,
 	}
 	if f.kind == floatFinder {
-		fl.List = &ui.Frame{Text: f.list.buf, LineLayout: e.lineLayout(f.list, f.list.state), Cursor: f.list.state.Cursor(), Decorations: f.list.decoView}
+		fl.List = &ui.Frame{Text: f.list.buf, LineLayout: e.lineLayout(f.list, false), Cursor: f.list.state.Cursor(), Decorations: f.list.decoView}
 		fl.ListCount = len(f.rows)
 	}
 	if e.previewShown(f) {

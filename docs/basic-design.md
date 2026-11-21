@@ -3147,11 +3147,11 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 | 行末 | 行末の 1 セル（選択と検索の一致が行の区切りに色を付けるセル）に `whitespace.eol` を描く。色は `nontext`。行を折り返すときは、このセルも見た目の行の数に数える（ちょうど本文の幅で終わる行は、行末の記号だけの見た目の行を 1 行足す。Vim の `plines_win_nofold` と同じ）。折り返さずに横にスクロールしたとき、画面の左の端より短い行（空の行を含む）の行末のセルは画面の 0 列目に描く。行末に掛かる選択の色も同じで、記号を描かないときも 0 列目に出す（2026-11-21 に nvim と Vim で、`'list'` の有無の両方で確かめた。PR #334 のレビューの必須 2） |
 | カーソル | ノーマルモードとビジュアルモードでも、タブ文字の上のカーソルはタブの最初の列に置き、望みの列（`j` と `k` の列）とルーラーの表示の列もその列にする（Vim 9.1 の `getvcol` の `'list'` の扱い。nvim と Vim の両方で、`"\tabc"` の 1 文字目から `j` で下の行の 1 文字目へ移った） |
 | 色 | 行末以外の記号の色の名前は `whitespace`（Neovim の `Whitespace`。7.1）。記号の色は `^A` などの表記（`specialkey`）と同じ「文字の表記の色」の層で、構文の色の上、診断、検索の一致、範囲の色、選択の色の下に重ねる（`internal/ui` の `layers.go` の `glyphOrder`）。コメントや文字列の中の記号も、構文の色でなく記号の色で描く（2026-11-21 に nvim と Vim で、Go のファイルの行末の空白、生の文字列とブロックコメントの中の行頭の空白とタブ文字を確かめた。PR #334 のレビューの必須 1）。空白の記号のためだけの重ね方は作らず、層の表の 1 行として足した |
-| 描く場所 | client の画面のバッファの表示領域だけ（`Editor.lineLayout` が、State の表示領域が client の画面のもの（`viewport`）のときだけ `ui.LineLayout.Whitespace` を真にする）。ポップアップ、プレビュー、出力の欄には描かない。望みの列も、client の画面のバッファの State だけをタブの最初の列で数える |
+| 描く場所 | client の画面のバッファの表示領域だけ（`Editor.lineLayout` が、描く先が client の画面のバッファの表示領域のときだけ `ui.LineLayout.Whitespace` を真にする。列を数えるときは、State の表示領域が client の画面のもの（`viewport`）かで決める）。ポップアップ、プレビュー、出力の欄には描かない。望みの列も、client の画面のバッファの State だけをタブの最初の列で数える |
 
 描き方は、`internal/ui` の行を列に並べる規則 `lineRule`（`whitespace.go`）の 1 か所で決める。
 `lineRule` の入力は公開の値 `ui.LineLayout`（タブ文字の幅 `TabStop` と、空白の記号を描くか `Whitespace`）で、描画（`ui.Frame` に埋め込む）、望みの列（`ui.Columns` に埋め込む）、折り返したときの数え方（`ui.Renderer.WrapLines` の引数）が同じ値を受け取る。
-`internal/editor` では `Editor.lineLayout` の 1 か所でこの値を作る。並べ方に項目を足すときは `ui.LineLayout` と `Editor.lineLayout` に足せば、描画と列の数え方に同時に届く（PR #334 のレビューの推奨 3）。
+`internal/editor` では `Editor.lineLayout` の 1 か所でこの値を作る（client の画面、ポップアップ、プレビューの中身の `Frame` も同じ関数を通す）。並べ方に項目を足すときは `ui.LineLayout` と `Editor.lineLayout` に足せば、描画と列の数え方に同時に届く（PR #334 のレビューの推奨 3）。
 `lineRule` は `ui.LineLayout` と記号の対応から作り、本文の描画（折り返す `drawWrapped` と折り返さない `drawLine`）、カーソルの位置、折り返しの分け方（`wrapper`）、検索の一致を集める範囲、望みの列（`ui.Columns`、`ui.WrapLines`）が、どれもこの規則で文字を並べる。
 `lineRule` は空白の記号を描くときに、タブ文字をセルごとに記号を描く種類（`glyphWhitespace`）か `^I` の種類にする。どちらもタブ文字の種類（`glyphTab`）でないので、タブの最後の列にカーソルを置く分岐を通らず、カーソルと望みの列がタブの最初の列になる。
 空白とノーブレークスペースは、行頭と行末の位置で記号が変わるので、本文を描く 2 つの関数が共通に呼ぶ `drawer.look` で記号に替える。
