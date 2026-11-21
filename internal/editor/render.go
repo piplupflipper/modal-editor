@@ -30,12 +30,13 @@ func uiMode(m command.Mode) ui.Mode {
 // コマンドラインの行には、確認の問い、選択肢の問い、メッセージの順に、最初にあるものを出す。
 // 問いが無ければ、ポップアップを浮かべる。問いもポップアップもメッセージも無く、ノーマルモードで
 // キーの列の途中でなければ、カーソルの行の診断の本文をメッセージの行に出す（cursorDiagnostic）。
+// ただし、診断をポップアップに出す設定（diagnostic.popup）なら出さない（diagpopup.go。FR-171）。
 //
 // フォーカスのあるポップアップがあれば、バッファの表示領域には開いたときのタブ（tab）を描き、
 // ステータス行、モード、コマンドラインは、キーを受けるポップアップのバッファ（cur）のものを出す。
 // タブ文字の幅（ui.Frame.TabStop）は、描くたびに、表示領域に描くバッファの設定の今の値（tab.width）を読む（FR-161）。
 //
-// req: FR-161
+// req: FR-161, FR-171
 //
 // 行番号の列（ui.Frame.LineNumbers）は詰めない。出すのは client の画面のバッファの表示領域だけなので、
 // その画面を描く renderView の 1 か所で詰める（bufferFrame）。frame を元に作る部品の client の画面（popupComponentFrame）には、
@@ -95,8 +96,9 @@ func (e *Editor) frame() *ui.Frame {
 			// 部品の client が描くポップアップ（端末多重化ソフトのポップアップの中。component.go）は、この画面には描かない。
 			f.Float = e.floatFrame(e.float)
 		}
-	case f.Message.Text == "" && st.Mode() == command.ModeNormal && !st.Pending():
+	case f.Message.Text == "" && st.Mode() == command.ModeNormal && !st.Pending() && !e.wantsDiagnosticPopup():
 		// 他に出すものが無ければ、カーソルの行の診断の本文を出す。
+		// 診断をポップアップに出す設定（diagnostic.popup）なら、Neovim の open_float と同じく、メッセージの行には出さない（FR-171）。
 		if m, ok := bs.cursorDiagnostic(toExtPos(st.Cursor())); ok {
 			f.Message = m
 		}

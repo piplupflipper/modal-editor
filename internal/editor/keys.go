@@ -152,6 +152,10 @@ func (e *Editor) handleKeys() {
 	// この client の前の選択への editor/execute は、次のキーを打った時点で無効にする（list.go の revokeExecute）。
 	// 部品の client（端末多重化ソフトのポップアップとペイン）で打ったキーも、元の client（in.c）のキーとして数える。
 	e.revokeExecute(in.c)
+	if in.comp == nil {
+		// この client の端末でキーを受けたので、フォーカスはこの client のペインに戻っている（cursorhold.go の leaveFocus）。
+		in.c.focusAway = false
+	}
 	if in.comp != nil {
 		e.componentInput(in)
 		return
@@ -179,6 +183,7 @@ func (e *Editor) afterKey() {
 	if e.quit {
 		// 最後のタブを閉じた client は、この後に外す（reapClients）。
 		e.stopKeyTimer()
+		e.stopHold(e.op)
 		e.extRan, e.fromCmdline = false, false
 		return
 	}
@@ -186,6 +191,13 @@ func (e *Editor) afterKey() {
 		e.armKeyTimer()
 	} else {
 		e.stopKeyTimer()
+	}
+	// キーを打ったので、カーソルが止まった契機を待ち直す（cursorhold.go。FR-171）。
+	// ペインの部品の client のキー（paneInput の途中）では待ち直さず、元の client のタイマーを止める（利用者はペインを見ている）。
+	if e.paneActive != nil {
+		e.stopHold(e.view)
+	} else {
+		e.armHold()
 	}
 	if e.extRan {
 		// コマンドラインから実行した拡張機能のコマンドの後は、記録した外での変更の問いを出してよい時点である（askNotice）。

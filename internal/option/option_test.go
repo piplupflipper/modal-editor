@@ -117,6 +117,28 @@ func TestPreviewDefs(t *testing.T) {
 	}
 }
 
+// カーソルが止まった契機の時間と診断のポップアップの項目は、範囲がエディタ全体で、既定は Vim と Neovim と同じく
+// 4000 ミリ秒と出さないである。時間の範囲は 0 から 60000 で、外の値は範囲の検査で断る。
+func TestCursorHoldDefs(t *testing.T) {
+	d, ok := Lookup(CursorHoldDelayMs)
+	if !ok || d.Type != Int || d.Scope != ScopeEditor || d.Default != IntValue(4000) || d.Range == nil || *d.Range != (IntRange{Min: 0, Max: 60000}) {
+		t.Fatalf("Lookup(CursorHoldDelayMs) = %+v, %v", d, ok)
+	}
+	for _, tt := range []struct {
+		text string
+		want error
+	}{
+		{"0", nil}, {"100", nil}, {"60000", nil}, {"-1", ErrBelowMin}, {"60001", ErrAboveMax},
+	} {
+		if _, err := d.Parse(tt.text); !errors.Is(err, tt.want) {
+			t.Errorf("Parse(%q) = %v, want %v", tt.text, err, tt.want)
+		}
+	}
+	if d, ok := Lookup(DiagnosticPopup); !ok || d.Type != Bool || d.Scope != ScopeEditor || d.Default != BoolValue(false) || d.Range != nil {
+		t.Errorf("Lookup(DiagnosticPopup) = %+v, %v", d, ok)
+	}
+}
+
 // Revision は、項目ごとに Set で値を入れた回数で、同じ値を入れ直しても増え、誤りで入れなかった Set と他の項目の Set では増えない。
 //
 // req: FR-138

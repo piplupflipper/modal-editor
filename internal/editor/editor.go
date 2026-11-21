@@ -375,6 +375,9 @@ type Editor struct {
 	// afterFunc は、時間が来たら f を別の goroutine で呼ぶタイマーを掛け、止める関数を返す（flash.go）。既定は time.AfterFunc で、
 	// テストが時間を待たずに確かめるために差し替える。
 	afterFunc func(d time.Duration, f func()) (stop func() bool)
+	// holdListeners は、カーソルが止まった契機を待つものの一覧である（cursorhold.go）。初めの値は defaultHoldListeners で、
+	// テストが、インサートモードで受けるものなどを差し込むために足す。
+	holdListeners []holdListener
 	// flash は、決まった時間が過ぎたら消える色付け（ヤンクした範囲の色。FR-140）である。本体の全体で 1 つだけ持つ（flash.go）。
 	// 無ければ nil。
 	flash *flash
@@ -560,32 +563,34 @@ func New(term Terminal, cfg Config) (*Editor, error) {
 		return nil, err
 	}
 	e := &Editor{
-		cfg:         cfg,
-		log:         lg,
-		host:        host,
-		mcpSocket:   sock,
-		keys:        newKeyQueue(),
-		intrCh:      make(chan struct{}, 1),
-		shellDone:   make(chan shellOutcome, 1),
-		termCh:      make(chan termResult),
-		waitCh:      make(chan waitRequest),
-		waitGoneCh:  make(chan *waiter),
-		resizeCh:    make(chan struct{}, 1),
-		inspect:     make(chan func()),
-		afterFunc:   afterFunc,
-		findMatch:   target.FindMatch,
-		decoDone:    make(chan decoBuilt),
-		checkDone:   make(chan []fileResult),
-		attachCh:    make(chan attachRequest),
-		goneCh:      make(chan *clientView),
-		keyFireCh:   make(chan keyFire),
-		extClient:   map[string]*clientView{},
-		extFromPane: map[string]paneMark{},
-		finished:    make(chan struct{}),
-		diff:        newDiffState(),
-		outputs:     map[outputKey][]string{},
-		nextID:      1,
-		extParts:    map[string]ui.ExtPart{},
+		cfg:        cfg,
+		log:        lg,
+		host:       host,
+		mcpSocket:  sock,
+		keys:       newKeyQueue(),
+		intrCh:     make(chan struct{}, 1),
+		shellDone:  make(chan shellOutcome, 1),
+		termCh:     make(chan termResult),
+		waitCh:     make(chan waitRequest),
+		waitGoneCh: make(chan *waiter),
+		resizeCh:   make(chan struct{}, 1),
+		inspect:    make(chan func()),
+		afterFunc:  afterFunc,
+		// holdListeners は、フィールドの初期化子で入れる。パッケージの変数にすると初期化の循環になる（defaultHoldListeners）。
+		holdListeners: defaultHoldListeners(),
+		findMatch:     target.FindMatch,
+		decoDone:      make(chan decoBuilt),
+		checkDone:     make(chan []fileResult),
+		attachCh:      make(chan attachRequest),
+		goneCh:        make(chan *clientView),
+		keyFireCh:     make(chan keyFire),
+		extClient:     map[string]*clientView{},
+		extFromPane:   map[string]paneMark{},
+		finished:      make(chan struct{}),
+		diff:          newDiffState(),
+		outputs:       map[outputKey][]string{},
+		nextID:        1,
+		extParts:      map[string]ui.ExtPart{},
 	}
 	e.statusOwners = buildStatusOwners(cfg.Extensions)
 	e.fileType = defaultFileTypes()

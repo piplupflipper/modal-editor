@@ -135,6 +135,14 @@ type clientView struct {
 	// keyTimer と keyGen は、曖昧なキーの列を確定させるタイマーと、その世代である（armKeyTimer）。
 	keyTimer *time.Timer
 	keyGen   uint64
+	// holdStop と holdGen は、カーソルが止まった契機のタイマーを止める関数と、その世代である（cursorhold.go の armHold）。
+	// 掛けていなければ holdStop は nil である。
+	holdStop func() bool
+	holdGen  uint64
+	// focusAway は、端末多重化ソフトのフォーカスがこの client のペインから離れた（フォーカスを入れたペインの部品を開いた、
+	// 別の client のペインへ移した）ことを表す（cursorhold.go の leaveFocus）。この client の端末で次のキーを受けたら下ろす（handleKeys）。
+	// 立っている間は、カーソルが止まった契機を知らせない（holdReady）。
+	focusAway bool
 	// replay は、この client のマクロかドットリピートの再生が待っている拡張機能の問い合わせである。無ければ nil（replaywait.go）。
 	replay *replayWait
 }
@@ -504,6 +512,7 @@ func (e *Editor) removeClient(c *clientView) {
 		c.keyTimer.Stop()
 	}
 	c.keyGen++
+	e.stopHold(c)
 	if c == e.view {
 		c.v = e.viewFields
 	}

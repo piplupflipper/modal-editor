@@ -225,6 +225,14 @@ const (
 	// （空なら gc はコメントを付けずに知らせる。種類の分からないファイルに C のコメントを付けない）。
 	// gc とコメントのテキストオブジェクトが、使うたびにバッファの今の値を読む（internal/command の State.commentString）。
 	CommentString = "comment.string"
+	// CursorHoldDelayMs は、利用者がキーを打たずにこのミリ秒が経ったら、カーソルが止まったとする時間である
+	// （FR-171 のカーソルが止まった契機。Vim の 'updatetime' の CursorHold の時間）。範囲はエディタ全体で、既定は Vim と Neovim と同じく 4000 である。
+	// 範囲は 0 から 60000 である（下限は Neovim 0.12.5 の :set ut=0 が通るのと同じ。上限は 1 分にした）。キーを打つたびに読む。
+	CursorHoldDelayMs = "cursorHold.delayMs"
+	// DiagnosticPopup は、カーソルが止まったときに、カーソルの行の診断をカーソルの近くの浮かべた窓に出すかである（FR-171。
+	// Neovim の CursorHold の自動コマンドで vim.diagnostic.open_float を開く設定に当たる）。範囲はエディタ全体で、既定は出さない
+	// （Vim と Neovim の既定は出さない）。出すときは、メッセージの行に 1 行で出す診断の本文（FR-30）を出さない。カーソルが止まるたびに読む。
+	DiagnosticPopup = "diagnostic.popup"
 )
 
 // defs は、設定の表である。項目を足すときは、この表に行を足す。
@@ -254,6 +262,8 @@ var defs = []Def{
 	{Name: UndoPersist, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: CursorRestore, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: CommentString, Type: String, Scope: ScopeBuffer, Default: StringValue(""), Contains: "%s"},
+	{Name: CursorHoldDelayMs, Type: Int, Scope: ScopeEditor, Default: IntValue(4000), Range: &IntRange{Min: 0, Max: 60000}},
+	{Name: DiagnosticPopup, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 }
 
 // fileTypeDefaults は、本体のファイルの種類ごとの既定（パッケージの doc の 3 の段）である。

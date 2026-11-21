@@ -598,6 +598,7 @@ var severityRank = map[ext.DiagnosticSeverity]int{
 // 診断の本文（diagnostic/set の message）は、下線と印だけでは読めないので、カーソルをその行へ動かしたときに
 // メッセージの行へ出す（Vim の ALE や Neovim の vim.diagnostic.open_float に当たる表示。名前は仮。#132）。
 // 行に複数の診断があれば、カーソルの位置を範囲に含むものを先に、その中で重いものを選ぶ。
+// 行に掛かるかは、ポップアップ（FR-171）と同じ diagnosticSpanOf で決める（行の先頭で終わる範囲は、終わりの行に掛からない）。
 // 本文は "E gopls: 本文" の形で、先頭の文字は印の列の表記と同じ重要度の頭文字である。
 //
 // req: FR-30
@@ -607,11 +608,9 @@ func (bs *bufferState) cursorDiagnostic(cur ext.Position) (ui.Message, bool) {
 	for _, id := range slices.Sorted(maps.Keys(bs.diagnostics)) {
 		for i := range bs.diagnostics[id] {
 			d := &bs.diagnostics[id][i]
-			s, e := d.Range.Start, d.Range.End
-			if e.Line < s.Line || (e.Line == s.Line && e.Byte < s.Byte) {
-				s, e = e, s
-			}
-			if cur.Line < s.Line || cur.Line > e.Line {
+			span := diagnosticSpanOf(d.Range)
+			s, e := span.r.Start, span.r.End
+			if cur.Line < span.first || cur.Line > span.last {
 				continue
 			}
 			covers := 0

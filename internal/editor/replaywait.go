@@ -245,4 +245,8 @@ func (e *Editor) resumeInput(in heldInput) {
 	if in.paste != "" {
 		e.handlePaste(in.paste)
 	}
+	if e.suspension() == nil {
+		// 待ちの間に時間が来た契機は知らせていない（holdReady）ので、入力を続け終えた時点から待ち直す（cursorhold.go。FR-171）。
+		e.armHold()
+	}
 }

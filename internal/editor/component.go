@@ -239,6 +239,8 @@ func (e *Editor) feedInput(in keyInput) {
 //
 // req: FR-115
 func (e *Editor) paneInput(p *floatState, in keyInput) {
+	// 利用者はペインを見ているので、元の client の画面の診断のポップアップを閉じ、カーソルが止まった契機を知らせない（cursorhold.go）。
+	e.leaveFocus()
 	e.paneSaved, e.paneActive = e.float, p
 	p.base = e.cur
 	p.focused = false
@@ -464,6 +466,11 @@ func (e *Editor) paneOpenRequest(ev *exthost.PaneOpenRequest) {
 
 	open, dir, c := e.cfg.OpenPane, e.workDir(), e.view
 	opts := PaneOptions{Down: p.Direction == ext.PaneDown, Size: p.Size, Focus: p.Focus}
+	if p.Focus {
+		// フォーカスは新しいペインへ移るので、元の client の画面の診断のポップアップを閉じ、カーソルが止まった契機を知らせない
+		// （cursorhold.go の leaveFocus。PR #333 の再レビューの推奨 1）。開けなかったら、中央のポップアップが元の client のフォーカスを取る。
+		e.leaveFocus()
+	}
 	go func() {
 		defer e.recoverPanic()
 		err := open(pane, f.id, dir, opts)

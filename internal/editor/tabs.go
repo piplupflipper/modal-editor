@@ -93,6 +93,8 @@ func (e *Editor) focusOwner(bs *bufferState) bool {
 		return switched
 	}
 	e.message = infoMessage(fmt.Sprintf("%s は %s のタブです（そのペインへ移ります）", name, ownerName(bs)))
+	// フォーカスはこの client のペインから離れるので、診断のポップアップを閉じ、カーソルが止まった契機を知らせない（cursorhold.go の leaveFocus）。
+	e.leaveFocus()
 	focus, log := e.cfg.FocusPane, e.log
 	go func() {
 		defer e.recoverPanic()
