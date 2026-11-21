@@ -593,6 +593,7 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 | `preview.line` | 項目のプレビュー（[項目のプレビュー](#項目のプレビュー)）の、項目の指す行（検索の一致した行など）。行の全体に付け、構文の色をその上に重ねる | 背景が端末の 16 色の 0。同梱の iceberg では iceberg.vim の `CursorLine` の背景 |
 | `progress` | 画面の右下に重ねる拡張機能の進み具合（[拡張機能の進み具合](#拡張機能の進み具合)）の本文と百分率 | なし（端末の既定の文字の色） |
 | `progress.title`、`progress.done` | 進み具合の表題と印の、続いている間と終わった後 | 順に端末の 16 色の 11、13（fidget.nvim の既定の `WarningMsg` と `Constant` に当てた本体の `message.warning` と `constant` と同じ番号） |
+| `progress.failed` | 失敗して終わった進み具合の表題と印 | 端末の 16 色の 9（`sign.diagnostic.error` と同じ） |
 | `sign.executionPoint`、`sign.breakpoint`、`sign.breakpointUnverified` | 印の列のデバッガーの印 | 順に黄色、赤、灰色 |
 | `sign.diagnostic.error`、`sign.diagnostic.warning`、`sign.diagnostic.info`、`sign.diagnostic.hint` | 印の列の診断の印 | 順に赤、黄色、青、灰色 |
 | `tabline`、`tabline.selected`、`tabline.fill` | タブの行の、ほかのタブ、いまのタブ、タブの右の空いた列 | 順に灰色の背景と下線、太字、反転 |
@@ -620,7 +621,7 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 | `whitespace.trail` | 行末の空白の記号（`trail`）。空なら `whitespace.space` を使う。色は `whitespace` | `-` | 同上 |
 | `whitespace.nbsp` | ノーブレークスペース（U+00A0 と U+202F）の記号（`nbsp`）。色は `whitespace` | `+` | 同上 |
 | `whitespace.eol` | 行末の記号（`eol`）。色は `nontext` | 空（描かない） | 同上 |
-| `progress.running`、`progress.done` | 画面の右下の進み具合（[拡張機能の進み具合](#拡張機能の進み具合)）の行の右の端に付ける、続いている印と終わった印。色は `progress.title` と `progress.done` | `...`、`done` | 任意の文字列。空なら付けない |
+| `progress.running`、`progress.done`、`progress.failed` | 画面の右下の進み具合（[拡張機能の進み具合](#拡張機能の進み具合)）の行の右の端に付ける、続いている印、成り立って終わった印、失敗して終わった印。色は `progress.title`、`progress.done`、`progress.failed` | `...`、`done`、`failed` | 任意の文字列。空なら付けない |
 
 どの記号にも、タブと制御文字は書けない。
 印の列は 2 列なので、表示幅が 1 の印は右に空白を置いて描く。
@@ -1441,10 +1442,12 @@ LSP と DAP の操作（定義へ移動、ホバー、ブレークポイント�
 ```
 
 - 1 つの処理を 1 行にし、「本文 (百分率%) 表題 印」の形で右に寄せる。いくつも続いていれば、新しいものを下にして積む
-- 続いている間は表題と印を `progress.title` の色で描き、印は `progress.running`（既定は `...`）である。終わったら `progress.done` の色と印（既定は `done`）に替わり、`progress.doneMs`（既定は 3000）ミリ秒の後に消える
-- 出すのは、バッファの表示領域の半分の行までである。それより多ければ古いものを出さない。幅に収まらなければ本文から削る
+- 続いている間は表題と印を `progress.title` の色で描き、印は `progress.running`（既定は `...`）である。終わったら `progress.done` の色と印（既定は `done`）に替わり、`progress.doneMs`（既定は 3000）ミリ秒の後に消える。失敗して終わったもの（パーサを用意できなかった、mise で入れられなかった、言語サーバーが終了した）は、`progress.failed` の色と印（既定は `failed`）になる
+- 端末多重化ソフトの同じ window に複数の編集の client があるときは、その拡張機能を最後に使った client（使っていなければ、最後にキーを打った client）の画面にだけ出る
+- 保存の前の整形の間のように、本体が拡張機能の応答を待っている間も出る
+- 出すのは、バッファの表示領域の半分の行までである。それより多ければ古いものを出さない。幅に収まらなければ本文から削り、次に表題を削る。印は残す
 - ポップアップ（ホバー、ファインダーなど）と、複数の行に広がったメッセージは、進み具合の上に出る。端末多重化ソフトのペインとポップアップの中の画面（ファイラ、ファインダー）には出ない
-- 処理を知らせた拡張機能が異常で終わるか止まったら、その拡張機能の進み具合は消える
+- 処理を知らせた拡張機能が異常で終わるか止まったら、その拡張機能の進み具合は消える。終わりを知らせない処理の進み具合は、拡張機能が止まるまで残る。消す操作は無いので、`:option.toggle progress.show` で表示ごと切る
 - 進み具合は `:messages` には残らない。失敗の理由は、今までどおりメッセージの行に出る
 
 出さないときは、設定ファイルに `"progress": { "show": false }` と書くか、実行中に `:option.set progress.show false` と打つ。

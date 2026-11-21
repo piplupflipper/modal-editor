@@ -549,6 +549,19 @@ func runFakeExt(mode string) int {
 				// 保存の前の処理が失敗したときのメッセージを確かめるテスト（TestUndoPersistWriteFailsWithExtError）のため。
 				return ext.BufferWillSaveResult{}, errors.New("willSave failed")
 			}
+			if b.LineCount() > 0 && strings.Contains(b.Line(0), "willSaveProgress") {
+				// 保存の前の整形の待ちの間に進み具合が出ることを確かめるテスト（TestProgressDuringWillSave）のため。
+				// begin を送り、ファイルの隣の release ができるまで待ってから end を送る。
+				_ = s.ReportProgress(ext.ProgressReportParams{Token: "fmt", Kind: ext.ProgressBegin, Title: "fake", Message: "formatting"})
+				release := filepath.Join(filepath.Dir(b.Path()), "release")
+				for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+					if _, err := os.Stat(release); err == nil {
+						break
+					}
+				}
+				_ = s.ReportProgress(ext.ProgressReportParams{Token: "fmt", Kind: ext.ProgressEnd, Message: "formatted"})
+				return ext.BufferWillSaveResult{}, nil
+			}
 			for i := range b.LineCount() {
 				if j := strings.Index(b.Line(i), "fmt"); j >= 0 {
 					p := ext.Position{Line: i, Byte: j}

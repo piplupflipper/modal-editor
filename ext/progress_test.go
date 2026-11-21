@@ -14,6 +14,13 @@ func TestProgressReportParams(t *testing.T) {
 	if got, want := string(b), `{"token":"1","kind":"begin","title":"Loading","percentage":0}`; got != want {
 		t.Errorf("params = %s, want %s", got, want)
 	}
+	b, err = json.Marshal(ProgressReportParams{Token: "1", Kind: ProgressEnd, Failed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(b), `{"token":"1","kind":"end","failed":true}`; got != want {
+		t.Errorf("failed end = %s, want %s", got, want)
+	}
 	var p ProgressReportParams
 	if err := json.Unmarshal([]byte(`{"token":"t","kind":"report","message":"3/10"}`), &p); err != nil {
 		t.Fatal(err)

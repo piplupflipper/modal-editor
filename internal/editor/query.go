@@ -188,7 +188,10 @@ func (e *Editor) wait(q *exthost.Query, tag queryTag) *exthost.QueryResult {
 			if r, ok := ev.(*exthost.QueryResult); ok && r.Tag == tag {
 				return r
 			}
-			e.hold(ev)
+			if e.hold(ev) {
+				// 待ちの間も、進み具合はその場で描き直す（hold の doc。FR-178）。
+				e.render()
+			}
 		case <-e.resizeCh:
 			e.applySize()
 			e.render()
@@ -208,10 +211,13 @@ func (e *Editor) wait(q *exthost.Query, tag queryTag) *exthost.QueryResult {
 // 本体は部品ごとに最後の中身だけを使い、拡張機能は変わったときだけ送るので、最後の更新を捨てると古い中身が出続けるためである
 // （PR #239 のレビューの推奨 5）。まとめるので、取っておく数は宣言ファイルの部品の数を超えない。
 //
-// 進み具合の report（ProgressReport の ext.ProgressReport）は、取っておいた同じ拡張機能の同じ識別子の report を、
-// 本文と百分率を引き継いで後のもので置き換え、上限を超えたら他の通知と同じく捨ててよい。begin と end は捨てない。
-// 捨てると、続いているように見える進み具合が消えずに残るか、表題の無い進み具合が出るためである（FR-178）。
-func (e *Editor) hold(ev exthost.Event) {
+// 例外として、進み具合（ProgressReport）は取っておかず、その場で進み具合の並びに当て（reportProgress）、描き直しが要ることを
+// true で返す（基本設計 5.3。FR-178。PR #345 のレビューの必須 1）。進み具合は画面の表示だけを変え、バッファもカーソルも変えないので、
+// 実行中の操作の途中で当てても操作に響かない。保存の前の整形（buffer/willSave の待ち）のように、待っている間にこそ出したい知らせだからである。
+// 取っておかないので、取っておく列の上限にも数えない（同じレビューの必須 2）。
+// 進み具合をその場で当てるので、拡張機能が止まったことを表す状態の変化（StateChange）を取っておくときは、その拡張機能の進み具合を
+// その場で消す（clearProgressNow）。取っておいた状態の変化を後で処理するときに消すと、待ちの間に起動し直した後の進み具合まで消えるためである。
+func (e *Editor) hold(ev exthost.Event) (redraw bool) {
 	switch s := ev.(type) {
 	case *exthost.StatusLineSet:
 		e.held = slices.DeleteFunc(e.held, func(h exthost.Event) bool {
@@ -219,9 +225,10 @@ func (e *Editor) hold(ev exthost.Event) {
 			return ok && p.Extension == s.Extension && p.Params.Part == s.Params.Part
 		})
 	case *exthost.ProgressReport:
-		if s.Params.Kind == ext.ProgressReport {
-			ev = e.mergeHeldProgress(s)
-		}
+		e.reportProgress(s.Extension, s.Params)
+		return true
+	case *exthost.StateChange:
+		redraw = e.clearProgressNow(s)
 	}
 	e.held = append(e.held, ev)
 	limit := e.cfg.Host.MaxQueuedEvents
@@ -229,18 +236,14 @@ func (e *Editor) hold(ev exthost.Event) {
 		limit = exthost.DefaultMaxQueuedEvents
 	}
 	if len(e.held) <= limit {
-		return
+		return redraw
 	}
 	drop := -1
 	for i, h := range e.held {
-		switch h := h.(type) {
+		switch h.(type) {
 		case *exthost.DecorationSet, *exthost.MessageShow, *exthost.DiagnosticSet, *exthost.SignSet,
 			*exthost.PopupShow, *exthost.OutputAppend, *exthost.ViewUpdate:
 			drop = i
-		case *exthost.ProgressReport:
-			if h.Params.Kind == ext.ProgressReport {
-				drop = i
-			}
 		}
 		if drop >= 0 {
 			break
@@ -256,37 +259,11 @@ func (e *Editor) hold(ev exthost.Event) {
 		}
 	}
 	if drop < 0 {
-		return
+		return redraw
 	}
 	e.log.Warn("取っておくイベントが上限を超えたので捨てる", "type", fmt.Sprintf("%T", e.held[drop]))
 	e.held = append(e.held[:drop], e.held[drop+1:]...)
-}
-
-// mergeHeldProgress は、進み具合の report s を、取っておいた同じ拡張機能の同じ識別子の最後の知らせが report なら、それと 1 つにまとめる。
-// まとめたものは、s の本文と百分率を、s が省いたものだけ前の report から引き継ぐ（hold の doc）。前の report は取っておく列から外す。
-// 最後の知らせが begin か end なら、まとめずに s を返す（始め直しをまたいでまとめない）。
-//
-// req: FR-178
-func (e *Editor) mergeHeldProgress(s *exthost.ProgressReport) *exthost.ProgressReport {
-	for i := len(e.held) - 1; i >= 0; i-- {
-		p, ok := e.held[i].(*exthost.ProgressReport)
-		if !ok || p.Extension != s.Extension || p.Params.Token != s.Params.Token {
-			continue
-		}
-		if p.Params.Kind != ext.ProgressReport {
-			return s
-		}
-		merged := *s
-		if merged.Params.Message == "" {
-			merged.Params.Message = p.Params.Message
-		}
-		if merged.Params.Percentage == nil {
-			merged.Params.Percentage = p.Params.Percentage
-		}
-		e.held = slices.Delete(e.held, i, i+1)
-		return &merged
-	}
-	return s
+	return redraw
 }
 
 // trackDeferred は、Feed などが保留した操作 d を、送った問い合わせと結びつける。

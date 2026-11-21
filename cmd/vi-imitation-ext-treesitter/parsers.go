@@ -212,8 +212,10 @@ func (p *preparer) prepare(ctx context.Context, spec parserSpec) (*language, err
 		Token: token, Kind: ext.ProgressBegin, Title: progressTitle,
 		Message: fmt.Sprintf("パーサ %s を取得している（%s %s）", spec.name, spec.repo, spec.version),
 	})
-	endMessage := fmt.Sprintf("パーサ %s を用意できない", spec.name)
-	defer func() { p.progress(ext.ProgressReportParams{Token: token, Kind: ext.ProgressEnd, Message: endMessage}) }()
+	endMessage, failed := fmt.Sprintf("パーサ %s を用意できない", spec.name), true
+	defer func() {
+		p.progress(ext.ProgressReportParams{Token: token, Kind: ext.ProgressEnd, Message: endMessage, Failed: failed})
+	}()
 	src := filepath.Join(p.env.dataDir, "src", spec.name)
 	fctx, cancel := context.WithTimeout(ctx, p.env.fetchTimeout)
 	commit, err := extmgr.Checkout(fctx, src, spec.repo, spec.version, pinned, extmgr.CheckoutOptions{Git: p.env.git, Env: p.env.env})
@@ -243,7 +245,7 @@ func (p *preparer) prepare(ctx context.Context, spec parserSpec) (*language, err
 	if err != nil {
 		return nil, err
 	}
-	endMessage = fmt.Sprintf("パーサ %s を用意した（%s）", spec.name, commit[:12])
+	endMessage, failed = fmt.Sprintf("パーサ %s を用意した（%s）", spec.name, commit[:12]), false
 	return lang, nil
 }
 

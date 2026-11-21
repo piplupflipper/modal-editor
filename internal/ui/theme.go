@@ -84,6 +84,9 @@ const (
 	StyleProgressTitle = "progress.title"
 	// StyleProgressDone は、終わった進み具合の表題と記号（progress.done）である（fidget.nvim の done_style の既定の Constant）。
 	StyleProgressDone = "progress.done"
+	// StyleProgressFailed は、失敗して終わった進み具合（progress/report の end の failed）の表題と記号（progress.failed）である。
+	// fidget.nvim の end には成否の区別が無いので、対応するグループは無い。
+	StyleProgressFailed = "progress.failed"
 	// StyleStatusLineMode などは、ステータス行の部品ごとの色である。名前は "statusline." と部品の ID（StatusPart...）をつないだもの。
 	// 部品は StyleStatusLine の上に重ねて描く（Attr.Over）ので、文字の色だけを変えることもできる。既定の対応には無い。
 	StyleStatusLineMode      = "statusline.mode"
@@ -118,7 +121,7 @@ var styleNames = []string{
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
 	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch, StylePreviewLine,
-	StyleProgress, StyleProgressTitle, StyleProgressDone,
+	StyleProgress, StyleProgressTitle, StyleProgressDone, StyleProgressFailed,
 	StyleSignBreakpoint, StyleSignBreakpointUnverified, StyleSignExecutionPoint,
 	StyleSignDiagnosticError, StyleSignDiagnosticWarning, StyleSignDiagnosticInfo, StyleSignDiagnosticHint,
 	StyleStatusLineMode, StyleStatusLineName, StyleStatusLineModified, StyleStatusLineReadOnly, StyleStatusLineFileType,
@@ -202,8 +205,10 @@ func DefaultTheme() Theme {
 		StylePreviewLine: {Bg: Indexed(0)},
 		// 進み具合の表題は、fidget.nvim の既定（続いている間は WarningMsg、終わったら Constant）に合わせ、本体の既定の
 		// message.warning と constant と同じ番号にした。
-		StyleProgressTitle:            {Fg: Indexed(11)},
-		StyleProgressDone:             {Fg: Indexed(13)},
+		StyleProgressTitle: {Fg: Indexed(11)},
+		StyleProgressDone:  {Fg: Indexed(13)},
+		// 失敗して終わった進み具合は、印の列の誤りの診断の印（sign.diagnostic.error）と同じ赤にした。fidget.nvim に対応するものは無い。
+		StyleProgressFailed:           {Fg: Indexed(9)},
 		StyleSignBreakpoint:           {Fg: Indexed(9), Bold: true},
 		StyleSignBreakpointUnverified: {Fg: Indexed(8)},
 		StyleSignExecutionPoint:       {Fg: Indexed(11), Bold: true},

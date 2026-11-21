@@ -2,6 +2,8 @@ package editor
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -45,7 +47,9 @@ func waitProgress(h *harness, want ...string) {
 	h.eventually(fmt.Sprintf("進み具合 %q", want), func() bool {
 		rows := progressRows(h)
 		if len(want) == 0 {
-			return !slices.ContainsFunc(rows, func(r string) bool { return strings.Contains(r, "...") || strings.Contains(r, "done") })
+			return !slices.ContainsFunc(rows, func(r string) bool {
+				return strings.Contains(r, "...") || strings.Contains(r, "done") || strings.Contains(r, "failed")
+			})
 		}
 		if len(rows) < len(want) {
 			return false
@@ -119,8 +123,9 @@ func TestProgressDisplay(t *testing.T) {
 
 	// 拡張機能が異常で終わったら、その拡張機能の進み具合を消す。終えて時間を待っているもののタイマーも止める。
 	report("lsp", begin("2", "gopls", "", nil))
-	report("lsp", ext.ProgressReportParams{Token: "2", Kind: ext.ProgressEnd})
-	waitProgress(h, " parser ...", " gopls done")
+	// 失敗して終えたものは、失敗の印で出す（PR #345 のレビューの推奨 2）。
+	report("lsp", ext.ProgressReportParams{Token: "2", Kind: ext.ProgressEnd, Failed: true})
+	waitProgress(h, " parser ...", " gopls failed")
 	h.e.do(func() {
 		h.e.stateChange(&exthost.StateChange{Extension: "ts", State: exthost.StateRestartWait})
 		h.e.stateChange(&exthost.StateChange{Extension: "lsp", State: exthost.StateDisabled})
@@ -171,45 +176,105 @@ func TestProgressRestartAndLimit(t *testing.T) {
 	}
 }
 
-// 入れ子の待ちの間に届いた進み具合の report は、同じ識別子の前の report と、省いた本文と百分率を引き継いでまとめ、
-// 上限を超えたら捨ててよい。begin と end は捨てない。begin と end をまたいではまとめない。
+// 入れ子の待ちの間と確認の問いの間に届いた進み具合は、取っておかずにその場で並びに当てる。取っておく列には入らないので、
+// begin と end を送り続けても列は増えない（PR #345 のレビューの必須 2）。
+// 拡張機能が止まったことを表す状態の変化は、取っておくときにその拡張機能の進み具合を消し、後で処理するときには消し直さない
+// （待ちの間に起動し直した後の進み具合を残す）。
 //
 // req: FR-178
 func TestHoldProgress(t *testing.T) {
-	h := start(t, Config{Host: exthost.Config{MaxQueuedEvents: 4}})
+	h := start(t, Config{Host: exthost.Config{MaxQueuedEvents: 16}})
 	h.e.do(func() {
 		e := h.e
 		pr := func(p ext.ProgressReportParams) *exthost.ProgressReport {
 			return &exthost.ProgressReport{Extension: "lsp", Params: p}
 		}
-		e.hold(pr(begin("t", "gopls", "", nil)))
-		e.hold(pr(ext.ProgressReportParams{Token: "t", Kind: ext.ProgressReport, Message: "a", Percentage: ext.Percent(1)}))
-		e.hold(pr(ext.ProgressReportParams{Token: "t", Kind: ext.ProgressReport, Percentage: ext.Percent(2)}))
-		e.hold(pr(ext.ProgressReportParams{Token: "t", Kind: ext.ProgressEnd}))
-		e.hold(pr(ext.ProgressReportParams{Token: "t", Kind: ext.ProgressReport, Message: "after end"}))
-		var got []string
-		for _, ev := range e.held {
-			p := ev.(*exthost.ProgressReport).Params
-			s := string(p.Kind) + ":" + p.Message
-			if p.Percentage != nil {
-				s += fmt.Sprint(":", *p.Percentage)
-			}
-			got = append(got, s)
+		if !e.hold(pr(begin("t", "gopls", "a", nil))) || len(e.held) != 0 || len(e.progress) != 1 || e.progress[0].ui.Message != "a" {
+			t.Fatalf("その場で当てていない: held %d, progress %d", len(e.held), len(e.progress))
 		}
-		if want := []string{"begin:", "report:a:2", "end:", "report:after end"}; !slices.Equal(got, want) {
-			t.Errorf("held = %q, want %q", got, want)
+		for i := range 10000 {
+			tok := fmt.Sprint("u", i)
+			e.hold(pr(begin(tok, "x", "", nil)))
+			e.hold(pr(ext.ProgressReportParams{Token: tok, Kind: ext.ProgressEnd}))
 		}
-		// 上限を超えたら、report を捨て、begin と end は残す。
-		for range 3 {
-			e.hold(pr(begin("u", "x", "", nil)))
+		if len(e.held) != 0 {
+			t.Errorf("held = %d, want 0", len(e.held))
 		}
-		got = got[:0]
-		for _, ev := range e.held {
-			got = append(got, string(ev.(*exthost.ProgressReport).Params.Kind))
+		if n := len(e.progress); n > maxProgressPerExtension {
+			t.Errorf("progress = %d, want <= %d", n, maxProgressPerExtension)
 		}
-		if want := []string{"begin", "end", "begin", "begin", "begin"}; !slices.Equal(got, want) {
-			t.Errorf("上限を超えた後の held = %q, want %q", got, want)
+
+		// 待ちの間に lsp が異常終了して起動し直し、新しい進み具合を送った。
+		e.progress = nil
+		e.hold(pr(begin("old", "gopls", "", nil)))
+		crash := &exthost.StateChange{Extension: "lsp", State: exthost.StateRestartWait}
+		if !e.hold(crash) || len(e.progress) != 0 {
+			t.Errorf("止まった拡張機能の進み具合を、取っておくときに消していない: %d", len(e.progress))
 		}
+		e.hold(pr(begin("new", "gopls", "", nil)))
+		held := e.held
 		e.held = nil
+		for _, ev := range held {
+			e.handleEvent(ev)
+		}
+		if len(e.progress) != 1 || e.progress[0].token != "new" {
+			t.Errorf("後で処理した状態の変化が、起動し直した後の進み具合を消した: %+v", e.progress)
+		}
+		// 取っておかずに処理した状態の変化は、今までどおり消す。
+		e.stateChange(&exthost.StateChange{Extension: "lsp", State: exthost.StateDisabled})
+		if len(e.progress) != 0 || len(e.progressCleared) != 0 {
+			t.Errorf("状態の変化で消していない: %d, %d", len(e.progress), len(e.progressCleared))
+		}
+	})
+}
+
+// 保存の前の整形（buffer/willSave の応答の入れ子の待ち）の間に拡張機能が送った進み具合は、待ちが明ける前に画面に出る
+// （PR #345 のレビューの必須 1）。待ちの間はイベントループが inspect を処理しないので、画面は端末の偽物から直に読む。
+//
+// req: FR-178
+func TestProgressDuringWillSave(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "willSaveProgress\n"})
+	term := newFakeTerm()
+	term.w, term.h = 60, 12
+	h := startTerm(t, term, Config{WorkDir: dir, Extensions: fakeSpecs(t), Host: exthost.Config{WillSaveTimeout: 10 * time.Second}}, "a.txt")
+	h.keys(`\d`) // fake.dump で拡張機能を起動する（TestUndoPersistWriteFailsWithExtError と同じ）
+	h.eventually("拡張機能の稼働", func() bool { return h.state("fake") == exthost.StateRunning })
+	h.settle()
+	h.keys(":w<CR>")
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(h.term.screen(), "formatting fake ...") {
+		if time.Now().After(deadline) {
+			t.Fatalf("待ちの間に進み具合が出ない:\n%s", h.term.screen())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "release"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.eventually("終わった進み具合", func() bool { return strings.Contains(h.term.screen(), "formatted fake done") })
+}
+
+// 進み具合は、その拡張機能が後から届けるものを出す client（その拡張機能へ最後に問い合わせを始めた client。無ければ操作中の client）の
+// 画面にだけ出し、分割したペインのもう 1 つの client の画面には出さない（PR #345 のレビューの推奨 1）。
+//
+// req: FR-178
+func TestProgressClient(t *testing.T) {
+	dir := writeFiles(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n"})
+	term := newFakeTerm()
+	term.w, term.h = 40, 12
+	h := startTerm(t, term, Config{WorkDir: dir}, "a.txt")
+	b := h.attach(ClientInfo{ID: 2, Files: []string{filepath.Join(dir, "b.txt")}})
+	b.keys("l") // 2 つ目の client を操作中にする
+	h.settle()
+	h.e.do(func() { h.e.reportProgress("lsp", begin("1", "gopls", "", nil)) })
+	h.eventually("操作中の client に出す", func() bool {
+		return strings.Contains(b.term.screen(), "gopls ...") && !strings.Contains(h.term.screen(), "gopls ...")
+	})
+	// 拡張機能へ問い合わせを始めた client があれば、そちらに出す。
+	h.e.do(func() { h.e.extClient["lsp"] = h.e.clients[0] })
+	h.keys("l")
+	b.keys("h")
+	h.eventually("問い合わせを始めた client に出す", func() bool {
+		return strings.Contains(h.term.screen(), "gopls ...") && !strings.Contains(b.term.screen(), "gopls ...")
 	})
 }

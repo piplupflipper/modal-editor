@@ -47,8 +47,10 @@ const (
 	// SymbolProgressRunning と SymbolProgressDone は、画面の右下に重ねる進み具合（Frame.Progress。FR-178）の行の右の端に付ける、
 	// 続いている印と終わった印である（fidget.nvim の progress_icon と done_icon）。空なら付けない。
 	// fidget.nvim の既定（点の回る印と "✔"）は ASCII でなく、回る印は時間ごとに描き直す必要があるので、既定は ASCII の文字列にした。
+	// SymbolProgressFailed は、失敗して終わった（progress/report の end の failed）ものの印である。
 	SymbolProgressRunning = "progress.running"
 	SymbolProgressDone    = "progress.done"
+	SymbolProgressFailed  = "progress.failed"
 )
 
 // borderChars は、SymbolPopupBorder の文字の数である。
@@ -79,6 +81,7 @@ var defaultSymbols = Symbols{
 	SymbolWhitespaceEOL:            "",
 	SymbolProgressRunning:          "...",
 	SymbolProgressDone:             "done",
+	SymbolProgressFailed:           "failed",
 }
 
 // DefaultSymbols は、既定の記号の対応を返す。返す対応は呼び出しごとに作り直す。
@@ -97,7 +100,7 @@ func SymbolNames() []string {
 //   - 枠線（SymbolPopupBorder）: 空か、表示幅が 1 の文字をちょうど 8 つ並べた文字列
 //   - タブ文字の記号（SymbolWhitespaceTab）: 空か、表示幅が 1 の文字を 2 つか 3 つ並べた文字列（Vim の 'listchars' の tab と同じ）
 //   - ほかの空白の記号（"whitespace." で始まる名前）: 空か、表示幅が 1 の文字 1 つ（Vim の 'listchars' と同じ。空白 1 つのセルに描くため）
-//   - それ以外（SymbolReadOnly、SymbolModified、SymbolShowBreak、SymbolProgressRunning、SymbolProgressDone）: 任意の文字列。
+//   - それ以外（SymbolReadOnly、SymbolModified、SymbolShowBreak、SymbolProgressRunning、SymbolProgressDone、SymbolProgressFailed）: 任意の文字列。
 //     空ならその部品（続きの行の記号、進み具合の印）を出さない
 //
 // どれも、タブと制御文字を含めない（描くと ^I の形になり、幅が変わるため）。

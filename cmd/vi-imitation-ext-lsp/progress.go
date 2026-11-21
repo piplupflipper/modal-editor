@@ -82,13 +82,16 @@ func (c *client) progress(p *proc, params progressParams) {
 	c.x.reportProgress(out)
 }
 
-// endProgress は、c.mu を持った状態で、言語サーバー p の終わっていない進み具合をすべて end で終える。
+// endProgress は、c.mu を持った状態で、言語サーバー p の終わっていない進み具合をすべて、失敗の end（failed）で終える。
+// 本文は言語サーバーが終わったことにする（読み込み中の本文のまま終わった印が付かないように。PR #345 のレビューの推奨 2）。
 // 言語サーバーが終わった（異常終了、止めた）ときに呼ぶ（client.watch）。
 //
 // req: FR-179
 func (c *client) endProgress(p *proc) {
 	for token := range p.progress {
-		c.x.reportProgress(ext.ProgressReportParams{Token: token, Kind: ext.ProgressEnd})
+		c.x.reportProgress(ext.ProgressReportParams{
+			Token: token, Kind: ext.ProgressEnd, Failed: true, Message: "言語サーバー " + c.name() + " が終了した",
+		})
 	}
 	clear(p.progress)
 }

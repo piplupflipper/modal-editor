@@ -51,8 +51,8 @@ func TestWorkDoneProgress(t *testing.T) {
 	// 言語サーバーが異常終了したら、終わっていない識別子 7 の進み具合を終える。
 	h.change(1, edit(0, 0, 0, 0, "CRASH "))
 	p := receive(t, h.prog, "progress/report after crash")
-	if p.Kind != ext.ProgressEnd || p.Token != tokens[3] {
-		t.Errorf("after crash = %+v, want end of %s", p, tokens[3])
+	if p.Kind != ext.ProgressEnd || p.Token != tokens[3] || !p.Failed || !strings.Contains(p.Message, "終了した") {
+		t.Errorf("after crash = %+v, want the failed end of %s", p, tokens[3])
 	}
 	// 再起動した言語サーバーの識別子は、前のものと重ならない。
 	if p := receive(t, h.prog, "progress/report after restart"); p.Kind != ext.ProgressBegin || p.Token == tokens[0] {

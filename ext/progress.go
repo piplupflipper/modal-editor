@@ -11,12 +11,17 @@ import (
 // 中身は LSP 3.17 の WorkDoneProgress の begin、report、end に対応させた。1 つの処理を、拡張機能が決めた識別子（Token）で表し、
 // begin で始め、report で中身を変え、end で終える。本体は、続いている進み具合と、終わってから設定 progress.doneMs のミリ秒が
 // 過ぎていないものを、編集の client の画面の右下に重ねて出す（設定 progress.show が false なら出さない）。
+// 本体が入れ子の待ち（保存の前の整形の buffer/willSave の応答など）をしている間も、取っておかずにその場で出す。
 //
 // 識別子は拡張機能ごとに分けて扱うので、他の拡張機能の識別子と重なってもよい。
 // 続いている識別子の begin は、その進み具合を始め直す（表題と本文と百分率を置き換える）。
 // begin の無い（終えた後を含む）識別子の report と end は捨てる。
 // 拡張機能が異常で終わるか止まったら、本体はその拡張機能の進み具合をすべて消す（他の表示のデータと同じ。基本設計 6.7）。
-// 拡張機能は、終えずに止まる処理（取り消し、失敗）も end で終える。失敗の理由は message/show で知らせる。
+// 拡張機能は、終えずに止まる処理（取り消し、失敗）も、Failed を true にした end で終える。失敗の理由は message/show で知らせる。
+//
+// 本体は、その拡張機能が後から届けるもの（editor/open、message/show、choice/ask）を出す client と同じ client の画面にだけ出す
+// （その拡張機能へ最後に問い合わせを始めた client。問い合わせていなければ操作中の client）。分割したペインのどの client にも出すと、
+// 同じ進み具合が 2 回出るためである。
 //
 // 古い本体（0.13.0 まで）は、知らない通知として捨てる（ログに残すだけ）。
 const MethodProgressReport = "progress/report"
@@ -47,6 +52,9 @@ type ProgressReportParams struct {
 	// Percentage は、0 から 100 の百分率である。省くと（nil）、begin では出さず、report では前の値のままにする。end では読まない。
 	// 範囲の外の値は、本体が 0 か 100 に寄せる。
 	Percentage *int `json:"percentage,omitempty"`
+	// Failed は、end で、処理が成り立たずに終わった（失敗した、取り消した、処理していたプロセスが終わった）ことを表す。
+	// 本体は、終わった印の代わりに失敗の印（symbols の progress.failed）と色（progress.failed）で描く。begin と report では読まない。
+	Failed bool `json:"failed,omitempty"`
 }
 
 // Percent は、ProgressReportParams.Percentage に入れる値を作る。

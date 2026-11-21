@@ -1116,6 +1116,8 @@ progress/report の params である。
 - `message`（`string`、省ける）: 本文（"3/10 files" など）である。report と end で空なら、前の本文のままにする（LSP と同じ）。
 - `percentage`（`*int`、省ける）: 0 から 100 の百分率である。省くと（nil）、begin では出さず、report では前の値のままにする。end では読まない。
   範囲の外の値は、本体が 0 か 100 に寄せる。
+- `failed`（`bool`、省ける）: end で、処理が成り立たずに終わった（失敗した、取り消した、処理していたプロセスが終わった）ことを表す。
+  本体は、終わった印の代わりに失敗の印（symbols の progress.failed）と色（progress.failed）で描く。begin と report では読まない。
 
 #### `ProgressKind`
 

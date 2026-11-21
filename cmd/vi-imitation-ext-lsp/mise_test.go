@@ -286,7 +286,7 @@ func TestMiseAutoInstall(t *testing.T) {
 			t.Errorf("progress of another token = %+v", p)
 		}
 		if p.Kind == ext.ProgressEnd {
-			if !strings.Contains(p.Message, "を入れた") {
+			if !strings.Contains(p.Message, "を入れた") || p.Failed {
 				t.Errorf("end = %+v", p)
 			}
 			break
@@ -370,6 +370,9 @@ func TestMiseInstallFails(t *testing.T) {
 	// 失敗しても、始めた進み具合は終える（FR-178）。
 	for {
 		if p := receive(t, h.prog, "progress/report end"); p.Kind == ext.ProgressEnd {
+			if !p.Failed {
+				t.Errorf("end of the failed install = %+v, want failed", p)
+			}
 			break
 		}
 	}

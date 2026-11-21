@@ -14,7 +14,10 @@ import (
 // req: FR-178
 func TestRenderProgress(t *testing.T) {
 	text := buffer.New(strings.Repeat(strings.Repeat("x", 30)+"\n", 8))
-	theme := Theme{StyleProgress: {Fg: Indexed(2)}, StyleProgressTitle: {Fg: Indexed(3)}, StyleProgressDone: {Fg: Indexed(4)}}
+	theme := Theme{
+		StyleProgress: {Fg: Indexed(2)}, StyleProgressTitle: {Fg: Indexed(3)}, StyleProgressDone: {Fg: Indexed(4)},
+		StyleProgressFailed: {Fg: Indexed(5)},
+	}
 	render := func(width, height int, f *Frame) Screen {
 		r := &Renderer{Width: width, Height: height, Theme: theme}
 		f.Text = text
@@ -59,13 +62,40 @@ func TestRenderProgress(t *testing.T) {
 		t.Errorf("1 行の表示領域 = %q", row)
 	}
 
-	// 狭い画面では本文から削り、それでも収まらなければ表題と印を右で切る。
+	// 狭い画面では本文から削り、それでも収まらなければ表題を削る。印は残し、印だけでも収まらなければ右で切る。
 	long := []Progress{{Title: "gopls", Message: "Loading packages", Percentage: 50}}
-	if row := rowTexts(render(20, 8, &Frame{Progress: long}), 6)[5]; row != "x Loading gopls ...x" {
+	if row := rowTexts(render(20, 8, &Frame{Progress: long}), 6)[5]; row != "Loading p gopls ...x" {
 		t.Errorf("狭い画面 = %q", row)
 	}
-	if row := rowTexts(render(8, 8, &Frame{Progress: long}), 6)[5]; row != "gopls .x" {
+	if row := rowTexts(render(8, 8, &Frame{Progress: long}), 6)[5]; row != "gop ...x" {
 		t.Errorf("とても狭い画面 = %q", row)
+	}
+	wide := []Progress{{Title: strings.Repeat("あ", 30), Percentage: -1}}
+	if row := rowTexts(render(20, 8, &Frame{Progress: wide}), 6)[5]; row != " "+strings.Repeat("あ", 7)+" ...x" {
+		t.Errorf("全角の長い表題 = %q", row)
+	}
+	if row := rowTexts(render(3, 8, &Frame{Progress: long}), 6)[5]; row != "..x" {
+		t.Errorf("印だけも収まらない画面 = %q", row)
+	}
+
+	// 失敗して終わったものは、失敗の色と印で描く。
+	s = render(30, 8, &Frame{Progress: []Progress{{Title: "mise", Message: "入れられない", Percentage: -1, Done: true, Failed: true}}})
+	if row := rowTexts(s, 6)[5]; !strings.HasSuffix(row, " 入れられない mise failedx") {
+		t.Errorf("失敗 = %q", row)
+	}
+	if a := s.Grid.At(5, 28).Attr; a != theme[StyleProgressFailed] {
+		t.Errorf("失敗の印の色 = %+v", a)
+	}
+
+	// 表示領域の位置は引数で受け取る（上に帯を足しても、表示領域の最後の行に描く）。
+	r0 := &Renderer{Width: 20, Height: 10}
+	g := NewGrid(20, 10)
+	r0.drawProgress(g, theme, long, textArea{top: 2, rows: 4, width: 15})
+	if row := strings.TrimRight(g.RowText(5), " "); row != "Load gopls ..." {
+		t.Errorf("表示領域の最後の行 = %q", row)
+	}
+	if strings.TrimSpace(g.RowText(6)) != "" {
+		t.Errorf("表示領域の外に描いた: %q", g.RowText(6))
 	}
 
 	// 記号は設定の symbols で変えられ、空なら付けない。

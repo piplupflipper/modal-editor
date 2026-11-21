@@ -399,7 +399,7 @@ func TestUserParserFetchBuildAndReuse(t *testing.T) {
 	}
 	if len(seen) != 3 || seen[0].Kind != ext.ProgressBegin || seen[0].Title != progressTitle || !strings.Contains(seen[0].Message, "パーサ myjson を取得している") ||
 		seen[1].Kind != ext.ProgressReport || !strings.Contains(seen[1].Message, "パーサ myjson をビルドしている") ||
-		seen[2].Kind != ext.ProgressEnd || seen[0].Token != seen[1].Token || seen[1].Token != seen[2].Token {
+		seen[2].Kind != ext.ProgressEnd || seen[2].Failed || seen[0].Token != seen[1].Token || seen[1].Token != seen[2].Token {
 		t.Errorf("progress = %q", kinds)
 	}
 	if ms := drainMessages(msgs); len(ms) != 0 {
@@ -511,7 +511,7 @@ func TestUserParserFailureIsolated(t *testing.T) {
 
 	openBuffer(t, conn, 1, "broken", `{"a": 1}`)
 	// 用意できなくても、始めた進み具合は終える（FR-178）。
-	if seen := waitProgress(t, progress, "パーサ broken を用意できない"); seen[len(seen)-1].Kind != ext.ProgressEnd {
+	if seen := waitProgress(t, progress, "パーサ broken を用意できない"); seen[len(seen)-1].Kind != ext.ProgressEnd || !seen[len(seen)-1].Failed {
 		t.Errorf("progress = %+v", seen)
 	}
 	seen := waitMessage(t, msgs, "パーサ broken を使えない")

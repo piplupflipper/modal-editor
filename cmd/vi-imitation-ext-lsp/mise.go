@@ -211,7 +211,7 @@ var errStopped = errors.New("the extension is stopping")
 
 // miseInstall は、mise install で Mise の道具を入れる。起動の goroutine から呼ぶ。
 // 入れている間の進み具合を、progress/report で知らせる（FR-143、FR-178）。始めたときに begin、mise の出力の行
-// （miseLineInterval ごとに 1 行まで）を report の本文、終えたとき（失敗と取り消しを含む）に end を送る。
+// （miseLineInterval ごとに 1 行まで）を report の本文、終えたときに end を送る。失敗と取り消しの end は failed にする。
 // 失敗したら、mise の出力の原因の行と末尾の行（miseDetail）を含めて message/show で知らせ、errReported を返す。
 // 拡張機能が止まるとき（ctx の取り消し）は、mise を終わらせ（runMise）、message/show で知らせずに誤りを返す。
 //
@@ -224,9 +224,9 @@ func (c *client) miseInstall(ctx context.Context, mise, root string) error {
 		Token: token, Kind: ext.ProgressBegin, Title: "mise",
 		Message: fmt.Sprintf("言語サーバー %s が見つからないので、%s を入れている", c.name(), c.cfg.Mise),
 	})
-	endMessage := ""
+	endMessage, failed := "", true
 	defer func() {
-		c.x.reportProgress(ext.ProgressReportParams{Token: token, Kind: ext.ProgressEnd, Message: endMessage})
+		c.x.reportProgress(ext.ProgressReportParams{Token: token, Kind: ext.ProgressEnd, Message: endMessage, Failed: failed})
 	}()
 	cmd := exec.Command(mise, "install", c.cfg.Mise) //nolint:gosec // 起動するのは mise で、道具の ID は利用者の設定である
 	cmd.Dir = root
@@ -238,7 +238,7 @@ func (c *client) miseInstall(ctx context.Context, mise, root string) error {
 	switch {
 	case err == nil:
 		c.x.logf("%s: mise install %s: done", c.name(), c.cfg.Mise)
-		endMessage = fmt.Sprintf("%s を入れた。言語サーバー %s を起動する", c.cfg.Mise, c.name())
+		endMessage, failed = fmt.Sprintf("%s を入れた。言語サーバー %s を起動する", c.cfg.Mise, c.name()), false
 		return nil
 	case errors.Is(err, errStopped) || errors.Is(ctx.Err(), context.Canceled):
 		endMessage = "取り消した"
