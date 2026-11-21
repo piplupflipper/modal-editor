@@ -298,9 +298,10 @@ func (r *Renderer) drawSegmentAt(g *Grid, row, x0, width int, s string, or outpu
 		gl := nextGlyph(s, off, col, tabStop)
 		x := gl.col - or.col
 		switch gl.kind {
-		case glyphTab:
+		case glyphTab, glyphWhitespace:
+			// 出力の欄の行は nextGlyph で並べるので glyphWhitespace にはならない（空白の記号はバッファの表示領域にだけ描く）。
 			for i := range gl.width {
-				put(x+i, blank(base))
+				put(x+i, Cell{Text: gl.cell(i), Width: 1, Attr: base})
 			}
 		case glyphSpecial:
 			for i := range len(gl.text) {

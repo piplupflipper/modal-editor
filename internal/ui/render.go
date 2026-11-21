@@ -909,13 +909,9 @@ func (r *Renderer) drawText(g *Grid, row, col, limit int, s string, a Attr) int 
 			break
 		}
 		switch gl.kind {
-		case glyphTab:
+		case glyphTab, glyphSpecial, glyphWhitespace:
 			for i := range gl.width {
-				g.set(row, gl.col+i, blank(a))
-			}
-		case glyphSpecial:
-			for i := range len(gl.text) {
-				g.set(row, gl.col+i, Cell{Text: gl.text[i : i+1], Width: 1, Attr: a})
+				g.set(row, gl.col+i, Cell{Text: gl.cell(i), Width: 1, Attr: a})
 			}
 		case glyphText:
 			g.set(row, gl.col, Cell{Text: gl.text, Width: gl.width, Attr: a})
