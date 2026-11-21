@@ -271,7 +271,7 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 			r := e.wait(q, tag)
 			var res ext.BufferWillSaveResult
 			if err := r.Decode(&res); err != nil {
-				notes = append(notes, fmt.Sprintf("拡張機能 %s の保存の前の処理が失敗しました: %v", id, err))
+				notes = append(notes, e.willSaveNote(id, err))
 				continue
 			}
 			if res.Transaction == nil {
@@ -320,6 +320,22 @@ func (e *Editor) save(bs *bufferState, path string, skipHooks bool) error {
 		e.message = infoMessage(writtenText(path, made))
 	}
 	return nil
+}
+
+// willSaveNote は、拡張機能 id の buffer/willSave の応答が誤り err だったときに、メッセージの行へ出す 1 行を返す。
+//
+// 期限（exthost.ErrTimeout）を超えたときは、内部の誤りの文字列を出さずに、どの拡張機能の整形を待たずに保存したかと、
+// 期限の値と、期限を変える設定（extensions.willSaveTimeoutMs。FR-177）を出す（#342）。
+// それ以外の誤り（拡張機能が誤りを応答した、終わったなど）は、原因が分かるように誤りの文字列を付ける。
+func (e *Editor) willSaveNote(id string, err error) string {
+	if errors.Is(err, exthost.ErrTimeout) {
+		timeout := e.cfg.Host.WillSaveTimeout
+		if timeout <= 0 {
+			timeout = exthost.DefaultWillSaveTimeout
+		}
+		return fmt.Sprintf("拡張機能 %s の整形が期限（%d ms）を超えたので、整形を待たずに保存しました（期限は extensions.willSaveTimeoutMs）", id, timeout.Milliseconds())
+	}
+	return fmt.Sprintf("拡張機能 %s の保存の前の処理が失敗しました: %v", id, err)
 }
 
 // makeParentDir は、書き出す先 path の親のディレクトリが無ければ、利用者に聞かずに作る（FR-78。基本設計 4.7）。

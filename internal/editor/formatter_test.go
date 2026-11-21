@@ -2,6 +2,8 @@ package editor
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -141,10 +143,12 @@ func TestStandardFormatterNewDirectory(t *testing.T) {
 }
 
 // 保存の流れで buffer/willSave の応答を待つ期限（extensions.willSaveTimeoutMs を写した exthost.Config.WillSaveTimeout）を超えた整形は、
-// 待たずに整形せずに書き出し、そのことを知らせる。期限が整形にかかる時間より長ければ、整形してから書き出す。
+// 待たずに整形せずに書き出し、どの拡張機能の整形を待たなかったかと期限の値と設定の名前を知らせる（#342）。
+// 期限が整形にかかる時間より長ければ、整形してから書き出す。
 //
 // req: FR-177
 func TestStandardFormatterWillSaveTimeout(t *testing.T) {
+	const timedOut = "拡張機能 formatter の整形が期限（100 ms）を超えたので、整形を待たずに保存しました（期限は extensions.willSaveTimeoutMs）"
 	dir := t.TempDir()
 	slow := formatterScript(t, dir, "slow", "sleep 0.5; tr -s ' '")
 	spec := formatterSpec(t, []map[string]any{{"command": slow, "fileTypes": []string{"python"}}})
@@ -163,7 +167,7 @@ func TestStandardFormatterWillSaveTimeout(t *testing.T) {
 		h.eventually("整形ツールの拡張機能の起動", func() bool { return h.state("formatter") == exthost.StateRunning })
 		h.keys(":w<CR>")
 		h.eventually("書き出し", func() bool {
-			return strings.Contains(h.e.message.Text, "を書き込みました") || strings.Contains(h.e.message.Text, "保存の前の処理が失敗しました")
+			return strings.Contains(h.e.message.Text, "を書き込みました") || strings.Contains(h.e.message.Text, "整形を待たずに保存しました")
 		})
 		h.settle()
 		got, err := os.ReadFile(py)
@@ -173,8 +177,28 @@ func TestStandardFormatterWillSaveTimeout(t *testing.T) {
 		if string(got) != c.want {
 			t.Errorf("期限 %v: ファイル = %q, want %q（message=%q）", c.timeout, got, c.want, h.message())
 		}
-		if c.want == "x  =  1\n" && !strings.Contains(h.message(), "拡張機能 formatter の保存の前の処理が失敗しました") {
-			t.Errorf("期限 %v: message = %q, want 期限を超えた知らせ", c.timeout, h.message())
+		if c.want == "x  =  1\n" && h.e.message.Text != timedOut {
+			t.Errorf("期限 %v: message = %q, want %q", c.timeout, h.e.message.Text, timedOut)
+		}
+	}
+}
+
+// 期限を超えた知らせは、期限を設定しないとき（0）に exthost の既定値を出す。
+// 期限を超えた以外の誤りは、原因が分かるように誤りの文字列を付ける（#342）。
+func TestWillSaveNote(t *testing.T) {
+	timeout := fmt.Errorf("exthost: call buffer/willSave on %q: %w", "lsp", exthost.ErrTimeout)
+	for _, c := range []struct {
+		cfg  time.Duration
+		err  error
+		want string
+	}{
+		{0, timeout, "拡張機能 lsp の整形が期限（1000 ms）を超えたので、整形を待たずに保存しました（期限は extensions.willSaveTimeoutMs）"},
+		{2500 * time.Millisecond, timeout, "拡張機能 lsp の整形が期限（2500 ms）を超えたので、整形を待たずに保存しました（期限は extensions.willSaveTimeoutMs）"},
+		{0, errors.New("willSave failed"), "拡張機能 lsp の保存の前の処理が失敗しました: willSave failed"},
+	} {
+		e := &Editor{cfg: Config{Host: exthost.Config{WillSaveTimeout: c.cfg}}}
+		if got := e.willSaveNote("lsp", c.err); got != c.want {
+			t.Errorf("willSaveNote(%v, %v) = %q, want %q", c.cfg, c.err, got, c.want)
 		}
 	}
 }

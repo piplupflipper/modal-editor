@@ -2194,7 +2194,7 @@ vi-imitation は上のとおり、そのような shim を使わずに `mise exe
 | `gqq`、`gqip` など | 整形ツールは範囲を受け取らないので、全体を整形し、範囲の行と重なる差分の塊だけを書き換える。離れた行の整形は書き換えない。コマンドラインの `:format` は全体を書き換える |
 | 整形ツールが失敗した | 書き換えずに書き出し、メッセージの行に `整形ツール biome が失敗した（終了コード 1）: × Code formatting aborted due to parsing errors. …` のように、標準エラー出力の `error` を含む最初の行（無ければ最初の行）を出す |
 | 整形ツールが見つからない | 書き換えずに書き出し、`整形ツール clang-format が見つからない（node_modules/.bin、.venv/bin、PATH を探した）` と出す。そのファイルの種類を保存するたびに出る |
-| `willSaveTimeoutMs` を超えた | 待たずに書き換えずに書き出し、`拡張機能 formatter の保存の前の処理が失敗しました: …` と出す |
+| `willSaveTimeoutMs` を超えた | 待たずに書き換えずに書き出し、`拡張機能 formatter の整形が期限（1000 ms）を超えたので、整形を待たずに保存しました（期限は extensions.willSaveTimeoutMs）` と出す。括弧の中の値は設定した期限 |
 
 2026-11-21 に、同梱の `config.example.jsonc` の設定で、biome 2.4.15、taplo 0.10.0、ruff 0.15.16、stylua 2.5.2、shfmt v3.12.0、fish_indent 4.9.3、rustfmt 1.9.0 を tmux の中で使い、`:w` で整形されることを確かめた。
 
