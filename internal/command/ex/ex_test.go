@@ -597,6 +597,16 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":w | q", modified: true, cmdline: "w foo | q!", want: []Action{{Kind: ActionWrite, File: "foo"}, {Kind: ActionQuit, Force: true}}},
 		{name: ":e foo|q", cmdline: "e foo|q", want: []Action{{Kind: ActionEdit, File: "foo"}, {Kind: ActionQuit}}},
 		{name: "ファイル名の \\|", cmdline: `w a\|b`, want: []Action{{Kind: ActionWrite, File: "a|b"}}},
+		// ファイル名の末尾の "\ " は名前の空白で、除かない（#354）。期待値は、Vim 9.1 と Neovim 0.12.5 の :e と :w が
+		// 開いたバッファと書いたファイルの名前で確かめた（2026-11-22。両者は同じ結果だった）。
+		{name: ":e ファイル名の末尾の \\ ", cmdline: `e tail\ `, want: []Action{{Kind: ActionEdit, File: "tail "}}},
+		{name: ":e! ファイル名の前後の空白", cmdline: "e!   tail\\ \t ", want: []Action{{Kind: ActionEdit, File: "tail ", Force: true}}},
+		{name: ":e ファイル名の末尾の \\ を 2 つ", cmdline: `e tail\ \ `, want: []Action{{Kind: ActionEdit, File: "tail  "}}},
+		{name: ":e ファイル名の末尾の \\\\ と空白", cmdline: `e tail\\ `, want: []Action{{Kind: ActionEdit, File: `tail\ `}}},
+		{name: ":w ファイル名の末尾の \\ ", cmdline: `w new\ `, want: []Action{{Kind: ActionWrite, File: "new "}}},
+		{name: ":w ファイル名の末尾の \\  の後の空白", cmdline: `w new\  `, want: []Action{{Kind: ActionWrite, File: "new "}}},
+		{name: ":w ファイル名の末尾の \\ の後の |", cmdline: `w new\ |q`, want: []Action{{Kind: ActionWrite, File: "new "}, {Kind: ActionQuit}}},
+		{name: ":x ファイル名の末尾の \\ ", cmdline: `x new\ `, want: []Action{{Kind: ActionWrite, File: "new "}, {Kind: ActionQuit}}},
 		{name: ":q|q の余分な文字", cmdline: "q x|q", wantCode: "E488"},
 		{name: ":output", cmdline: "output", want: []Action{{Kind: ActionOutput, Output: OutputOpen}}},
 		{name: ":out acp", cmdline: "out  acp ", want: []Action{{Kind: ActionOutput, Output: OutputOpen, Text: "acp"}}},

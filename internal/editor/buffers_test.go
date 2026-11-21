@@ -277,6 +277,60 @@ func TestBufferArgEscapedSpace(t *testing.T) {
 	}
 }
 
+// :e と :w のファイルの名前の末尾の "\ " も名前の空白で、除かない（#354）。"\ " の後に続けて打った空白は除く。
+// 補ったファイルの名前（末尾が空白の "tail " は "tail\ " と入る）を <CR> で開くと、そのファイルを開く。
+// :w は打った名前のファイルだけを作り、"\" で終わる名前のファイルを作らない。
+// 期待値は、同じファイルを置いた Vim 9.1 と Neovim 0.12.5 で同じコマンドを打って得た（2026-11-22。両者は同じ結果だった）。
+//
+// req: FR-195, FR-200
+func TestFileArgEscapedSpace(t *testing.T) {
+	tail := "tail " // 名前の末尾が空白のファイル
+	h := startCompletion(t, map[string]string{tail: "tail\n", "other.txt": "other\n"}, nil)
+	var dir string
+	h.e.do(func() { dir = h.e.workDir() })
+	files := func() string {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var s []string
+		for _, ent := range ents {
+			data, _ := os.ReadFile(filepath.Join(dir, ent.Name()))
+			s = append(s, fmt.Sprintf("[%s]=%q", ent.Name(), data))
+		}
+		return strings.Join(s, ",")
+	}
+	for _, st := range []struct {
+		keys  string
+		cur   string // 開いているバッファの中身
+		files string // 空なら、最初の 2 つのファイルのまま
+	}{
+		{keys: `:e tail\ <CR>`, cur: "tail"},
+		{keys: `:e   tail\  <CR>`, cur: "tail"},
+		{keys: `:e tai<Tab><CR>`, cur: "tail"},
+		{keys: `:w new\ <CR>`, cur: "other", files: `[new ]="other\n",[other.txt]="other\n",[tail ]="tail\n"`},
+		{keys: `:w! new\  <CR>`, cur: "other", files: `[new ]="other\n",[other.txt]="other\n",[tail ]="tail\n"`},
+	} {
+		h.keys(`<Esc>:e other.txt<CR>`)
+		h.settle()
+		h.e.do(func() { h.e.message = infoMessage("") })
+		h.keys(st.keys)
+		h.settle()
+		if got := h.text(); got != st.cur {
+			t.Errorf("%s: バッファ = %q, want %q", st.keys, got, st.cur)
+		}
+		var msg ui.Message
+		h.e.do(func() { msg = h.e.message })
+		if msg.Level == ui.MessageError {
+			t.Errorf("%s: 誤りのメッセージ %q", st.keys, msg.Text)
+		}
+		want := cmp.Or(st.files, `[other.txt]="other\n",[tail ]="tail\n"`)
+		if got := files(); got != want {
+			t.Errorf("%s: ファイル = %s, want %s", st.keys, got, want)
+		}
+	}
+}
+
 // <C-o> と <C-i> は、バッファをまたいで戻り、進む。<Tab> はタブの移動なので（FR-98）、<C-i> で進む。
 func TestJumpAcrossBuffers(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.txt": numberedLines("line", 30, " foo"), "b.txt": numberedLines("bline", 10, "")})
