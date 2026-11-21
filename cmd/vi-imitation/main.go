@@ -506,6 +506,9 @@ func clientUntil(ctx context.Context, conn protocol.ClientConn, run func() error
 // 誤り（位置と内容）は editor.Config.Problems に入れ、エディタが起動後に最初の 1 件を知らせる（基本設計 8 章）。
 // 誤りのある項目は config が既定値のままにするので、誤りがあっても起動する。
 // 設定の extensions.memoryLimitMb（FR-20）は、exthost.Config.MemoryLimitMB にそのまま写す（#107）。
+// 設定の extensions.willSaveTimeoutMs（FR-177）は、exthost.Config.WillSaveTimeout にそのまま写す（#339）。
+//
+// req: FR-177
 func loadConfig(logger *slog.Logger) editor.Config {
 	var problems []error
 	var cfg config.Config
@@ -545,7 +548,7 @@ func loadConfig(logger *slog.Logger) editor.Config {
 	for i, p := range problems {
 		problems[i] = shortProblem(p)
 	}
-	host := exthost.Config{Logger: logger, MemoryLimitMB: cfg.MemoryLimitMB}
+	host := exthost.Config{Logger: logger, MemoryLimitMB: cfg.MemoryLimitMB, WillSaveTimeout: cfg.WillSaveTimeout}
 	// 設定ファイルの checkIntervalMs の 0 は「定期的に確かめない」で、editor.Config.CheckInterval では負の値に当たる。
 	var interval time.Duration
 	if d := cfg.CheckInterval; d != nil {

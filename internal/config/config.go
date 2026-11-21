@@ -56,6 +56,7 @@ import (
 //	  "extensions": {
 //	    "syncTimeoutMs": 50,
 //	    "startSyncTimeoutMs": 1000,
+//	    "willSaveTimeoutMs": 1000,
 //	    "memoryLimitMb": 0,
 //	    "settings": { "lsp": { "servers": [] } },
 //	    "activation": { "lsp": [{ "on": "filetype", "pattern": "python" }] }
@@ -102,6 +103,10 @@ type Config struct {
 	// 起動を含む問い合わせ（拡張機能が未起動か起動中のときの問い合わせ）の期限である（基本設計 5.2、5.4）。
 	// 項目が無いか誤りか 0 なら 0 で、editor の既定値（editor.DefaultStartSyncTimeout。仮に 1 秒）を使う。
 	StartSyncTimeout time.Duration
+	// WillSaveTimeout は extensions.willSaveTimeoutMs の値で、保存の流れで拡張機能ごとに buffer/willSave の応答を待つ期限である
+	// （基本設計 6.7 の保存の流れ。FR-177）。呼び出し側（cmd/vi-imitation）が exthost.Config.WillSaveTimeout にそのまま写す。
+	// 項目が無いか誤りか 0 なら 0 で、exthost の既定値（exthost.DefaultWillSaveTimeout。仮に 1 秒）を使う。
+	WillSaveTimeout time.Duration
 	// FixEndOfLine は fixendofline の値で、書き出すときに末尾の改行を補うかどうかである（基本設計 4.1。Vim の 'fixendofline'）。
 	// 項目が無いか誤りなら nil で、既定の有効（true）として扱う。
 	// editor.Config にはまだ対応する項目が無いので、呼び出し側が buffer.Buffer.SetFixEndOfLine へ写す。
@@ -570,6 +575,11 @@ func (s *source) extensions(v *hujson.Value, cfg *Config) {
 		case "startSyncTimeoutMs":
 			if n, ok := s.nonNegInt(m.value, path, maxSyncTimeoutMs); ok {
 				cfg.StartSyncTimeout = time.Duration(n) * time.Millisecond
+			}
+		case "willSaveTimeoutMs":
+			// req: FR-177
+			if n, ok := s.nonNegInt(m.value, path, maxSyncTimeoutMs); ok {
+				cfg.WillSaveTimeout = time.Duration(n) * time.Millisecond
 			}
 		case "memoryLimitMb":
 			if n, ok := s.nonNegInt(m.value, path, math.MaxInt64>>20); ok {

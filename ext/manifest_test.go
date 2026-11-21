@@ -274,6 +274,34 @@ func TestKnownActivation(t *testing.T) {
 	}
 }
 
+// ファイルの種類の契機を持たない拡張機能は、どのファイルの種類でも提供者の候補になる。
+// 設定のファイルの種類の契機を持つ拡張機能は、展開したファイルの種類の契機と一致するときだけ候補になり、
+// 設定に何も書いていなければ（展開したものが無ければ）、どのファイルの種類でも候補にならない（#339）。
+//
+// req: FR-176
+func TestHandlesFileType(t *testing.T) {
+	settings := ActivationSettingsFileType
+	for _, c := range []struct {
+		name string
+		acts []Activation
+		ft   string
+		want bool
+	}{
+		{"契機なし", nil, "go", true},
+		{"操作の契機だけ", []Activation{{On: ActivationCommand, ID: "x"}}, "go", true},
+		{"一致するファイルの種類", []Activation{{On: ActivationFileType, Pattern: "go"}}, "go", true},
+		{"一致しないファイルの種類", []Activation{{On: ActivationFileType, Pattern: "go"}}, "python", false},
+		{"展開していない設定の契機", []Activation{{On: settings, Pattern: "/formatters/*/fileTypes"}}, "go", false},
+		{"展開した設定の契機", []Activation{{On: settings, Pattern: "/p"}, {On: ActivationFileType, Pattern: "python"}}, "python", true},
+		{"展開した設定の契機に無い種類", []Activation{{On: settings, Pattern: "/p"}, {On: ActivationFileType, Pattern: "python"}}, "go", false},
+	} {
+		m := Manifest{Activation: c.acts}
+		if got := m.HandlesFileType(c.ft); got != c.want {
+			t.Errorf("%s: HandlesFileType(%q) = %v, want %v", c.name, c.ft, got, c.want)
+		}
+	}
+}
+
 // req: FR-13
 func TestValidateManifests(t *testing.T) {
 	a := validManifest()

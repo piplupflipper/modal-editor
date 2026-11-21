@@ -37,8 +37,9 @@ type Manifest struct {
 	//
 	// 選び方は次のとおりである（仮。基本設計 5.5）。
 	//
-	//   - その操作を名乗った拡張機能のうち、ファイルの種類の契機（ActivationFileType。設定で足したものを含む）を持たないか、
-	//     その Pattern のどれかがバッファのファイルの種類と一致するものを候補にする
+	//   - その操作を名乗った拡張機能のうち、ファイルの種類の契機（ActivationFileType。設定で足したものを含む）と
+	//     設定のファイルの種類の契機（ActivationSettingsFileType）のどちらも持たないか、
+	//     ファイルの種類の契機の Pattern のどれかがバッファのファイルの種類と一致するものを候補にする（HandlesFileType）
 	//   - 候補のうち、未起動か起動中か稼働中のものを、本体が宣言ファイルを読んだ順に探し、最初のものを使う。
 	//     同じ操作を複数の拡張機能が名乗ったときの選び方は未決（基本設計 10 章）で、それまでは先に読んだものを使う
 	//   - 未起動なら、問い合わせで起動する。provides だけを持つ拡張機能は、Activation を空にしてよい
@@ -197,15 +198,23 @@ func (m *Manifest) ProvidesOp(op Operation) bool {
 }
 
 // HandlesFileType は、拡張機能が、ファイルの種類 ft のバッファの操作の提供者の候補になるかを返す（Provides の doc）。
-// ファイルの種類の契機を持たない拡張機能は、どのファイルの種類でも候補になる。
+// ファイルの種類の契機（ActivationFileType）も、設定のファイルの種類の契機（ActivationSettingsFileType）も持たない拡張機能は、
+// どのファイルの種類でも候補になる。
+//
+// 設定のファイルの種類の契機を持つ拡張機能は、それを展開したファイルの種類の契機（internal/config の LoadExtensions が足す）の
+// どれかと一致するファイルの種類でだけ候補になる。設定に何も書いていなければ、どのファイルの種類でも候補にならない。
+// 整形ツールの拡張機能（基本設計 6.10）が、設定に書いていないファイルの種類（Go など）で、
+// LSP の拡張機能より先に format の提供者に選ばれないためである（#339）。
+//
+// req: FR-176
 func (m *Manifest) HandlesFileType(ft string) bool {
 	has := false
 	for _, a := range m.Activation {
-		if a.On != ActivationFileType {
+		if a.On != ActivationFileType && a.On != ActivationSettingsFileType {
 			continue
 		}
 		has = true
-		if a.Pattern == ft {
+		if a.On == ActivationFileType && a.Pattern == ft {
 			return true
 		}
 	}
