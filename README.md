@@ -39,7 +39,7 @@ bin/vi-imitation --docs config     # 話題（設定ファイル）の文書を�
 
 `--docs` は、設定、キーの割り当て、Ex コマンド、拡張機能の宣言ファイルと API の参照と、デバッグの案内を、ソースを取らずに読むための文書を出す（要件定義 FR-172）。
 AI エージェントに設定や拡張機能を書かせるときは、要る話題だけを `vi-imitation --docs <話題>` で読ませる。
-`vi-imitation --docs <話題> <節>` は、見出しが `<節>` の節だけを出す（`vi-imitation --docs usage 'Ex コマンドの一覧'`）。
+`vi-imitation --docs <話題> <節>` は、見出しが `<節>` の節だけを出す（`vi-imitation --docs usage 'Ex コマンドの一覧'`）。見出しの一覧は `vi-imitation --docs --headings <話題>` で出す。
 端末を使わないので、標準出力をパイプやファイルにしてよい。
 文書は `docs/agent/` と `docs/debugging.md` と `docs/usage.md` にある。
 
@@ -100,7 +100,7 @@ Go はコンパイル言語なので、型チェックはコンパイルの一�
 | `cmd/vi-imitation/` | エディタ本体の実行ファイルの入口 |
 | `cmd/vi-imitation-mcp-bridge/` | MCP の中継コマンド。標準入出力と起動中のエディタの Unix ドメインソケットの間でメッセージを転送する |
 | `cmd/vi-imitation-ext-line/` | 標準の拡張機能（行のテキストオブジェクト）の実行ファイルと宣言ファイル |
-| `cmd/vi-imitation-ext-script/` | スクリプトの拡張機能（利用者が置く Go のソースファイル）を yaegi で実行する実行ファイル。宣言ファイルの `args` でスクリプトのパスを受け取る。スクリプトの書き方と yaegi の制限はパッケージの doc（`go doc ./cmd/vi-imitation-ext-script`）にある |
+| `cmd/vi-imitation-ext-script/` | スクリプトの拡張機能（利用者が置く Go のソースファイル）を yaegi で実行する実行ファイル。宣言ファイルの `args` でスクリプトのパスを受け取る。スクリプトの書き方と yaegi の制限は [docs/usage.md](docs/usage.md) の「スクリプトの拡張機能」にあり、`vi-imitation --docs script` でも読める |
 | `cmd/vi-imitation-ext-treesitter/` | 標準の拡張機能（tree-sitter による構文ハイライト）の実行ファイルと宣言ファイル。cgo を使い、ビルドに C コンパイラが要る |
 | `cmd/vi-imitation-ext-dap/` | 標準の拡張機能（DAP によるデバッグ）の実行ファイルと宣言ファイル。デバッグアダプター（既定は delve の `dlv dap`）を子プロセスとして起動する |
 | `cmd/vi-imitation-ext-lsp/` | 標準の拡張機能（LSP のクライアント。診断、定義へ移動、ホバー、整形）の実行ファイルと宣言ファイル。言語サーバー（既定は Go の gopls）を子プロセスとして起動する |

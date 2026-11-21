@@ -2,8 +2,10 @@
 # キーの割り当て
 
 設定ファイル（`vi-imitation --docs config`）の `keymap` に、モードの名前ごとに、左辺のキーの列から右辺への対応を書く。
+
+<!-- generated:keymap-modes:begin -->
 モードの名前は `normal`、`visual`、`insert`、`commandLine` である。
-利用者の割り当ては、本体の既定のキーより勝つ。
+<!-- generated:keymap-modes:end -->
 
 ```jsonc
 {
@@ -11,7 +13,7 @@
     "normal": {
       // キーの列に展開する（Vim の nnoremap）
       "<Leader>w": ":w<CR>",
-      // 本体の操作を ID で割り当てる
+      // 本体の操作を ID で割り当てる（下の表の ID）
       "Y": { "action": "yank-line" },
       // Ex コマンドを、コマンドラインを出さずに実行する。args は省ける
       "<C-l>": { "command": "search.clearHighlight" },
@@ -25,41 +27,31 @@
 }
 ```
 
-## 右辺の 3 つの形
+書き方の説明は、次の節にある。
 
-| 右辺 | 動き |
+| 知りたいこと | 読む節 |
 |---|---|
-| 文字列 | キーの列に展開する。展開した列は `keymap` の文字列の項目でもう一度展開しない（Vim の `noremap`）が、`action` で割り当てたキーは効く |
-| `{ "action": "<ID>" }` | 本体の操作を割り当てる。ID は下の一覧にあるものだけで、一覧の「モード」の列のモードにだけ書ける |
-| `{ "command": "<名前>", "args": "<引数>" }` | Ex コマンドを 1 つ、コマンドラインを出さずに、モードを変えずに実行する（Vim の `<Cmd>`）。`args` は省ける |
+| 右辺の 3 つの形（キーの列、`action`、`command`）と展開の規則 | `vi-imitation --docs usage keymap の書き方` |
+| `action` の左辺とモードの規則、Ctrl-H、誤りの扱い | `vi-imitation --docs usage 操作の ID` |
+| `command` に書ける名前、`args`、モードごとの動き | `vi-imitation --docs usage keymap から Ex コマンドを呼ぶ` |
+| `<Leader>` と `leader` | `vi-imitation --docs usage <Leader> と leader` |
+| ID の名前の付け方 | `vi-imitation --docs usage ID の書き方` |
+| インサートモードの操作（`insert.` で始まる ID）の補足 | `vi-imitation --docs usage インサートモードの操作` |
+| `select-all` の補足 | `vi-imitation --docs usage select-all` |
 
-`command` に書けるのは、本体の Ex コマンドの正規の名前のうち点を含むもの（`option.set`、`option.toggle`、`search.clearHighlight`、`tab.new`、`terminal.popup` など）と、拡張機能のコマンドの ID（`finder.files`）と、LSP と DAP の操作の名前（`hover`）である。
-`:w` や `:q` のような点を含まない名前、省略形、別名（`set`、`nohlsearch`、`commandAliases` の名前）は書けないので、キーの列（`":w<CR>"`）で割り当てる。
-名前の一覧は `vi-imitation --docs commands` にある。
-
-## 左辺とモードの規則
-
-- `commandLine` には文字列の右辺だけを書ける（`action` と `command` は書けない）
-- `insert` の `action` と `command` の左辺は 1 つのキーにする。修飾キーの付かない文字、`<Esc>`、`<CR>`、`<Tab>` は書けない。`jk` のようなキーの列は文字列の右辺で書く
-- `normal` に割り当てたモーションは、オペレーターの後（`d` の後など）には効かない（Vim の `nmap` と同じ）
-- 回数、レジスター、マクロ、ドットリピート（`3`、`"a`、`q`、`@`、`.`）には ID が無く、割り当てられない
-- 拡張機能のコマンドは `action` に書けない。`command` で割り当てる
-- 誤りのある項目（知らない ID、そのモードで使えない操作、書けない左辺）は、起動後に位置と内容を知らせ、その項目だけを使わない
+`command` に書ける Ex コマンドの名前の一覧は `vi-imitation --docs commands` にある。
 
 ## キーの表記
 
-Vim と同じ表記で書く。
-`<` と `>` で囲む名前は、`<Esc>`、`<CR>`、`<Tab>`、`<BS>`、`<Del>`、`<Up>`、`<Down>`、`<Left>`、`<Right>`、`<Home>`、`<End>`、`<PageUp>`、`<PageDown>`、`<Insert>`、`<F1>`〜`<F20>`、`<Space>`、`<lt>`（`<` そのもの）、`<Bar>`、`<Bslash>` である。
-修飾キーは `C-`（Ctrl）、`A-` か `M-`（Alt）、`S-`（Shift）を名前の前に付ける（`<C-w>`、`<A-x>`、`<S-Tab>`）。
-名前と修飾キーの大文字と小文字は区別しない。
-`<Leader>` は設定の `leader`（既定は `<Space>`）に置き換わる（`vi-imitation --docs usage <Leader> と leader`）。
-
-Ctrl-H は端末から `<BS>` として届くので、`<C-h>` の割り当ては効かない。
-tmux の prefix のキー（既定は `C-b`）は tmux が受け取るので、本体に届かない。
+<!-- generated:key-names:begin -->
+`<` と `>` で囲む名前: `<Esc>`、`<CR>`、`<Tab>`、`<BS>`、`<Del>`、`<Up>`、`<Down>`、`<Left>`、`<Right>`、`<Home>`、`<End>`、`<PageUp>`、`<PageDown>`、`<Insert>`、`<F1>`〜`<F20>`、`<Space>`、`<lt>`、`<Bar>`、`<Bslash>`（`<lt>` は `<` そのもの）。
+修飾キー: `C-`（Ctrl）、`A-` か `M-`（Alt）、`S-`（Shift）を名前の前に付ける（`<C-w>`、`<A-x>`、`<S-Tab>`）。名前と修飾キーの大文字と小文字は区別しない。
+<!-- generated:key-names:end -->
 
 ## 操作の ID の一覧
 
 「既定のキー」は、本体の既定のキーマップでその操作に割り当てたキーである。
+キーの後の括弧は、そのキーが効くモードが「モード」の列の一部だけであることを表す（`lowercase` の `u` は `visual` だけで、`normal` の `u` は `undo`）。
 `<Leader>` で始まるキーは、`leader` を変えると、そのキーで始まる。
 LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作を引き受ける拡張機能（LSP、DAP）を読み込んだときだけ働く。
 
@@ -96,12 +88,12 @@ LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作�
 | `search-backward` | モーション | normal、visual | `?` | 後方へ検索する |
 | `search-next` | モーション | normal、visual | `n` | 直前の検索を同じ向きに繰り返す |
 | `search-prev` | モーション | normal、visual | `N` | 直前の検索を逆向きに繰り返す |
-| `delete` | オペレーター | normal、visual | `d` `x` | 消す |
-| `change` | オペレーター | normal、visual | `c` `s` | 消して入力する |
+| `delete` | オペレーター | normal、visual | `d` `x`（visual） | 消す |
+| `change` | オペレーター | normal、visual | `c` `s`（visual） | 消して入力する |
 | `yank` | オペレーター | normal、visual | `y` | ヤンクする |
-| `toggle-case` | オペレーター | normal、visual | `g~` `~` | 大文字と小文字を入れ替える |
-| `lowercase` | オペレーター | normal、visual | `gu` `u` | 小文字にする |
-| `uppercase` | オペレーター | normal、visual | `gU` `U` | 大文字にする |
+| `toggle-case` | オペレーター | normal、visual | `g~` `~`（visual） | 大文字と小文字を入れ替える |
+| `lowercase` | オペレーター | normal、visual | `gu` `u`（visual） | 小文字にする |
+| `uppercase` | オペレーター | normal、visual | `gU` `U`（visual） | 大文字にする |
 | `surround-add` | オペレーター | normal | `sa` | 対象を {文字} で囲む（sa{対象}{文字}） |
 | `indent` | オペレーター | visual | `>` | 選んだ行を右へずらす（選択は残す） |
 | `dedent` | オペレーター | visual | `<lt>` | 選んだ行を左へずらす（選択は残す） |
@@ -218,6 +210,3 @@ LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作�
 | `preview.down` | 操作 | normal、insert | `<A-S-Down>` | プレビューを 1 行下へスクロールする |
 | `preview.up` | 操作 | normal、insert | `<A-S-Up>` | プレビューを 1 行上へスクロールする |
 <!-- generated:actions:end -->
-
-`select-all` などの個々の操作の補足は `vi-imitation --docs usage 操作の ID の一覧` にある。
-キーの一覧はエディタの中で `:keys` で、接頭辞で絞った一覧は `<Leader>l?` のように接頭辞の後に `?` を打って出す。

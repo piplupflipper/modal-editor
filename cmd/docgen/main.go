@@ -12,7 +12,8 @@
 //	<!-- generated:<名前>:end -->
 //
 // 一覧は、設定の表（option.Defs）、設定ファイルの最上位の項目（config.TopLevelNames）、操作の表（input.Actions）と既定のキー、
-// Ex コマンドの表（ex.Names と editor.HostCommandNames）、拡張機能 API（ext パッケージのソース）から作る。
+// キーの表記（editcmd）、Ex コマンドの表（ex.Names と editor.HostCommandNames）、拡張機能の期限の既定値（exthost の Default で始まる定数）、
+// 拡張機能 API（ext と ext/server のソース）、スクリプトの拡張機能が yaegi に渡す標準ライブラリの記号の表（yaegi の stdlib と unrestricted）から作る。
 // 機能を足す PR がこれらの表を変えて文書を生成し直し忘れると、make check（docs-check と、このパッケージのテスト）が失敗する。
 package main
 
@@ -128,7 +129,8 @@ func fill(text string, gen func(name string) (string, error)) (string, error) {
 
 // generator は、印の名前ごとに一覧を作る。
 type generator struct {
-	api *extAPI
+	api  *extAPI
+	root string
 }
 
 func newGenerator(root string) (*generator, error) {
@@ -136,21 +138,34 @@ func newGenerator(root string) (*generator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &generator{api: api}, nil
+	return &generator{api: api, root: root}, nil
 }
 
 // block は、印の名前 name の一覧を作る。出力は空でなければ改行で終わる。
 func (g *generator) block(name string) (string, error) {
 	var buf bytes.Buffer
+	var err error
 	switch name {
+	case "key-names":
+		err = writeKeyNames(&buf)
+	case "keymap-modes":
+		err = writeKeymapModes(&buf)
+	case "lifecycle":
+		writeLifecycle(&buf)
+	case "ext-package":
+		err = g.api.writePackageDoc(&buf)
+	case "script-packages":
+		writeScriptPackages(&buf)
+	case "script-symbols":
+		writeScriptSymbols(&buf)
+	case "server-api":
+		err = writeServerAPI(&buf, g.api, filepath.Join(g.root, "ext", "server"))
 	case "options":
 		writeOptions(&buf)
 	case "config-keys":
 		writeConfigKeys(&buf)
 	case "actions":
-		if err := writeActions(&buf); err != nil {
-			return "", err
-		}
+		err = writeActions(&buf)
 	case "ex-commands":
 		writeExCommands(&buf)
 	case "host-commands":
@@ -164,15 +179,14 @@ func (g *generator) block(name string) (string, error) {
 	case "manifest":
 		g.api.writeManifest(&buf)
 	case "methods":
-		if err := g.api.writeMethods(&buf); err != nil {
-			return "", err
-		}
+		err = g.api.writeMethods(&buf)
 	case "types":
-		if err := g.api.writeMessageTypes(&buf); err != nil {
-			return "", err
-		}
+		err = g.api.writeMessageTypes(&buf)
 	default:
 		return "", fmt.Errorf("知らない印の名前 %q", name)
+	}
+	if err != nil {
+		return "", err
 	}
 	return buf.String(), nil
 }

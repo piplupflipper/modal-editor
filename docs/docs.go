@@ -31,6 +31,10 @@ var (
 	agentExtensions string
 	//go:embed agent/extension-types.md
 	agentExtensionTypes string
+	//go:embed agent/script.md
+	agentScript string
+	//go:embed agent/script-symbols.md
+	agentScriptSymbols string
 	//go:embed debugging.md
 	debugging string
 )
@@ -59,6 +63,8 @@ func Topics() []Topic {
 		{"commands", "agent/commands.md", "Ex コマンドの名前と省略形の一覧と、keymap と commandAliases から Ex コマンドを呼ぶ書き方", strip(agentCommands)},
 		{"extensions", "agent/extensions.md", "拡張機能の作り方、宣言ファイルの項目、起動の契機、環境変数、メソッドの一覧", strip(agentExtensions)},
 		{"extension-types", "agent/extension-types.md", "拡張機能 API のメソッドの params と result の型の項目（型の名前を節に書いて 1 つずつ読む）", strip(agentExtensionTypes)},
+		{"script", "agent/script.md", "スクリプトの拡張機能の例、import できるパッケージ、ext/server の API", strip(agentScript)},
+		{"script-symbols", "agent/script-symbols.md", "スクリプトから使える標準ライブラリの記号（import のパスを節に書いて 1 つずつ読む）", strip(agentScriptSymbols)},
 		{"debugging", "debugging.md", "動かないとき、画面が崩れるときに調べる手順と、不具合の報告に添えるもの", strip(debugging)},
 		{"usage", "usage.md", ":help の文書の全体（大きいので、節の名前を書いて 1 節ずつ読む）", strip(Usage)},
 	}

@@ -51,6 +51,8 @@ printf 'hoge\nあいう\n' | vi-imitation -R -
 ファイルが無ければ、すべての項目が既定値になる。
 設定を変えたら、本体を起動し直す。
 
+### keymap の書き方
+
 次の例は、F キーの代わりに使うキーを LSP と DAP の操作に割り当て、ACP のエージェントに opencode を使う設定である。
 LSP と DAP の操作には既定のキー（[LSP と DAP の既定のキー](#lsp-と-dap-の既定のキー)）があり、この例のキーは足したものである。
 
@@ -161,6 +163,8 @@ tmux の prefix が既定の `C-b` のままなら、Ctrl-B は tmux が受け�
 ID は一意で、1 つの ID は 1 つの操作を指す（`0` と `<Home>` のように、同じ操作を複数のキーに載せているものはある）。
 「モード」は、`keymap` のどのモードに割り当てられるかである。
 
+#### ID の書き方
+
 ID の書き方は、今は次のとおりである。
 
 - 本体の操作は、小文字の英単語を `-` でつなぐ（`line-start`、`page-down`）
@@ -169,6 +173,9 @@ ID の書き方は、今は次のとおりである。
 - `preview.` で始まる ID は、ノーマルモードとインサートモードの両方に割り当てられる（ファインダーの入力の行はインサートモード、ファイラの木はノーマルモードのため）
 - `insert.` で始まる ID はインサートモードの操作である。ID `insert`（`.` が無いもの）は、ノーマルモードの `i`（カーソルの前から入力を始める）で、インサートモードの操作ではない
 - ノーマルモードの `~`（カーソルの文字を入れ替える）は `toggle-case-char`、オペレーターの `g~` は `toggle-case` である
+
+#### インサートモードの操作
+
 インサートモードの操作（`insert.` で始まるもの）の既定のキーは、一覧の順に `<Left>`、`<Right>`、`<Up>`、`<Down>`、`<Home>`、`<End>`、`<PageUp>`、`<PageDown>`、`<BS>`、`<Del>` である。
 `insert.delete-to-line-end` は既定のキーが無く、行末の位置で使うと次の行をつなげる（Emacs の `C-k`）。
 `insert.delete-prev-word` と `insert.delete-to-line-start` も既定のキーが無い（同梱の `config.example.jsonc` では `<C-w>` と `<C-u>` に割り当てている）。
@@ -177,6 +184,8 @@ ID の書き方は、今は次のとおりである。
 `insert.delete-to-line-start` は、カーソルから行の先頭までを、字下げも含めて消す。行の先頭では何もしない。
 どちらも、このインサートで入力した文字より前の文字も消す（Vim の `<C-w>` と `<C-u>` との違いは [vim-differences.md](vim-differences.md) にある）。
 インサートモードで消した文字は、`<BS>` と同じくレジスターにも履歴にも入らない。
+
+#### select-all
 
 `select-all` は、文字単位のビジュアルモードでバッファの全体（最初の行の最初の文字から、最後の行の最後の文字まで）を選ぶ。
 既定のキーは無い。次のように割り当てる。
@@ -210,6 +219,8 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 
 `select-all` の後に拡張機能がバッファを書き換えたとき（MCP の `edit_buffer`、ACP の書き込みなど）は、選択の両端がそれぞれ編集に合わせてずれる。
 バッファの先頭に足した行は選択の外になり、途中に足した行は選択の中になる。
+
+#### 操作の ID の表
 
 <!-- action-ids:begin -->
 | ID | 種類 | モード | 説明 |
@@ -369,6 +380,8 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `preview.down` | 操作 | `normal`、`insert` | プレビューを 1 行下へスクロールする |
 | `preview.up` | 操作 | `normal`、`insert` | プレビューを 1 行上へスクロールする |
 <!-- action-ids:end -->
+
+### 拡張機能の設定と設定の誤り
 
 `extensions.settings` は、拡張機能の ID から、その拡張機能に渡す設定への対応である。
 中身は拡張機能ごとに違い、それぞれの設定の型の doc にある（[標準の拡張機能](#標準の拡張機能)の各節）。
@@ -1784,19 +1797,12 @@ vi-imitation --docs                                  # 話題の一覧（名前�
 vi-imitation --docs config                           # 話題の文書の全体
 vi-imitation --docs usage 'Ex コマンドの一覧'          # 見出しが「Ex コマンドの一覧」の節だけ
 vi-imitation --docs extension-types BufferOpenParams # 拡張機能 API の型を 1 つだけ
+vi-imitation --docs --headings usage                 # 話題の文書の見出しの一覧（コードの囲みの中の # の行は含まない）
 ```
 
-| 話題 | 内容 |
-|---|---|
-| `config` | 設定ファイルの置き場所と書き方、最上位の項目と設定の項目の一覧 |
-| `keymap` | `keymap` の書き方と、操作の ID の一覧（既定のキーを含む） |
-| `commands` | Ex コマンドの名前と省略形の一覧 |
-| `extensions` | 拡張機能の作り方、宣言ファイルの項目、起動の契機、環境変数、メソッドの一覧 |
-| `extension-types` | 拡張機能 API のメソッドの params と result の型 |
-| `debugging` | 動かないとき、画面が崩れるときに調べる手順と、不具合の報告に添えるもの（`docs/debugging.md`） |
-| `usage` | この文書（`:help` の文書）の全体 |
-
-`<節>` は、見出しの `#` の後の文字列で、`` ` `` は省いてよい。見出しの一覧は `vi-imitation --docs <話題> | grep '^#'` で出す。
+話題は、設定（`config`）、キーの割り当て（`keymap`）、Ex コマンド（`commands`）、拡張機能（`extensions`、`extension-types`）、スクリプトの拡張機能（`script`、`script-symbols`）、デバッグの案内（`debugging`。[docs/debugging.md](debugging.md)）、この文書（`usage`）に分けてある。
+話題ごとの内容と大きさは `vi-imitation --docs` の一覧にある。
+`<節>` は、見出しの `#` の後の文字列で、`` ` `` は省いてよい。
 知らない話題と節は、誤りを出して終了コード 1 で終わる。
 一覧の部分（設定の項目、操作の ID、Ex コマンド、拡張機能 API）は、本体の表から生成したもので、その本体の表と食い違わない。
 
@@ -2367,4 +2373,32 @@ func insert(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams) (e
 `command` には、配布物の `vi-imitation-ext-script` の絶対パスを書く。
 配布物の場所を書かずに指す方法は未決である（基本設計 10 章）。
 `args` の相対パスは、宣言ファイルのディレクトリから解決される。
-モーション、テキストオブジェクト、オペレーターの足し方と、yaegi の制限は `go doc ./cmd/vi-imitation-ext-script` にある。
+
+### スクリプトから使えるもの
+
+スクリプトが import できるのは、標準ライブラリのうち yaegi が記号の表を持つパッケージと、`github.com/piplupflipper/vi-imitation/ext` と `github.com/piplupflipper/vi-imitation/ext/server` だけである。
+外部のモジュールは import できない。
+`os.Getenv`、`os/exec`、`os.Exit`、`log.Fatal` は、コンパイルした Go と同じく動く。
+
+ハンドラーは、`server.New` で作った `Server` に、`Command`、`Motion`、`TextObject`、`Operator`（とその `Async` の版）で操作の ID ごとに登録し、`Run` を呼ぶ。
+拡張機能から本体へ送るもの（メッセージ、編集、ポップアップ、診断など）は `Server` のメソッド（`ShowMessage`、`Edit`、`OpenPopup`、`SetDiagnostics` など）で送る。
+`ext/server` の関数とメソッドの一覧は `vi-imitation --docs script` に、使える標準ライブラリのパッケージと記号は `vi-imitation --docs script-symbols <import のパス>`（`vi-imitation --docs script-symbols strings`）にある。
+
+### yaegi の制限
+
+同じソースは `go build` でも通るが、yaegi v0.16.3 では次の点が Go と違う（2026-11-16 に確かめた）。
+
+- 組み込み関数の `max`、`min`、`clear` が無い（`undefined` の誤りになる）。`if a > b` で書く
+- 標準ライブラリの、型の引数を取る関数（`slices.Sort`、`slices.Sorted`、`slices.Contains` など）は記号の表に無く、`undefined selector` の誤りになる。`sort.Strings`、`sort.Slice`、`for` の繰り返しで書く。使える記号は `vi-imitation --docs script-symbols <import のパス>` で確かめる
+- ハンドラーに渡す関数リテラルの引数に名前を付けず、本体で変数を宣言すると、呼ばれたときに「reflect.Set: value of type context.Context is not assignable to type int」のような panic になる。使わない引数も `_` と名前を付ける（`func(_ context.Context, _ *server.Buffer, p *ext.CommandExecuteParams)`）
+
+### スクリプトの出力と誤り
+
+スクリプトの `os.Stdout` と `fmt.Print` などへの出力は、標準エラー出力へ書かれ、本体の記録（`--log`）に `extension stderr` の行として残る（[デバッグの案内](debugging.md)）。
+`os.Stdin` は空で、読むとすぐ EOF になる。
+本体との通信は `Run` が行うので、`Serve` に `os.Stdin` と `os.Stdout` を渡さない。
+
+スクリプトを読み込めない（ファイルが無い、構文の誤り、`package main` でない、`func main` が無い、import できない、`max` のような使えない記号）ときは、理由を記録に書いて終わる。
+構文の誤りは `パス:行:列: 内容` の形で書く。
+本体はこれを拡張機能の異常として扱い、メッセージの行に「拡張機能 <ID> が異常終了しました」と出して起動し直し、失敗が続けば無効にする。
+ハンドラーの中の panic は、そのリクエストの誤りの応答になり、スクリプトは動き続ける。

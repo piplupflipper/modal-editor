@@ -24,7 +24,7 @@ func TestDocsTopics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"config", "keymap", "commands", "extensions", "extension-types", "debugging", "usage"} {
+	for _, name := range []string{"config", "keymap", "commands", "extensions", "extension-types", "script", "script-symbols", "debugging", "usage"} {
 		tp, ok := docs.LookupTopic(name)
 		if !ok {
 			t.Fatalf("話題 %s が無い", name)
@@ -44,6 +44,36 @@ func TestDocsTopics(t *testing.T) {
 	}
 	if got, err := runDocsArgs(t, "extension-types", "BufferOpenParams"); err != nil || !strings.Contains(got, "`text`") {
 		t.Errorf("--docs extension-types BufferOpenParams = %q, %v", got, err)
+	}
+}
+
+// --headings は、話題の文書の見出しだけを出す。コードの囲みの中の # で始まる行（usage の # ~/.tmux.conf）は出さない。
+// 出した見出しは、どれも --docs <話題> <節> で節を引ける。
+//
+// req: FR-172
+func TestDocsHeadings(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := run([]string{"--docs", "--headings", "usage"}, strings.NewReader(""), &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) < 10 || !strings.HasPrefix(lines[0], "# ") {
+		t.Fatalf("見出しの一覧 = %q", out.String())
+	}
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "#") || strings.Contains(l, "~/.tmux.conf") {
+			t.Errorf("見出しでない行 %q", l)
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimLeft(l, "#"))
+		if _, err := runDocsArgs(t, "usage", title); err != nil {
+			t.Errorf("見出し %q の節を引けない: %v", title, err)
+		}
+	}
+	for _, args := range [][]string{{"--docs", "--headings"}, {"--docs", "--headings", "usage", "x"}, {"--headings", "usage"}} {
+		if err := run(args, strings.NewReader(""), &out, &errOut); err == nil {
+			t.Errorf("%q が誤りにならない", args)
+		}
 	}
 }
 

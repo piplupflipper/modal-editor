@@ -41,6 +41,16 @@ func TestTopicsCoverFiles(t *testing.T) {
 	for f := range files {
 		t.Errorf("%s が話題に無い", f)
 	}
+	// usage.md の --docs の節は、話題の名前を並べる。話題を足したら、そこにも書く。
+	sec, ok := Section(Usage, "本体に埋め込んだ文書（--docs）")
+	if !ok {
+		t.Fatal("usage.md に --docs の節が無い")
+	}
+	for _, tp := range Topics() {
+		if !strings.Contains(sec, "`"+tp.Name+"`") {
+			t.Errorf("usage.md の --docs の節に話題 %s が無い", tp.Name)
+		}
+	}
 	if _, ok := LookupTopic("nope"); ok {
 		t.Error("知らない話題が見つかった")
 	}
@@ -58,7 +68,7 @@ func TestDocsReferences(t *testing.T) {
 				continue
 			}
 			sec := strings.Trim(m[2], "'")
-			if sec == "" || strings.HasPrefix(sec, "<") && strings.HasSuffix(sec, ">") && !strings.Contains(sec, " ") {
+			if sec == "" || strings.HasPrefix(sec, "<") && strings.HasSuffix(sec, ">") {
 				continue // 節の無い案内と、<型の名前> のような置き場所
 			}
 			if _, ok := Section(target.Text, sec); !ok {

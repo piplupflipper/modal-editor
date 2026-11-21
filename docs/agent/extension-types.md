@@ -14,7 +14,7 @@ $/cancel の params である。
 本体は、期限を超えたリクエストについて送る。
 拡張機能が取り消しに応じなくても、本体は後から届いた結果を破棄する。
 
-- `id`（`json.RawMessage`）: 取り消すリクエストの JSON-RPC の id である。
+- `id`（Go では `ID`、`json.RawMessage`）: 取り消すリクエストの JSON-RPC の id である。
   id は数値と文字列のどちらでもよいので、受け取った形のまま持つ。
 
 #### `BufferChangeParams`
@@ -36,14 +36,18 @@ ToVersion は FromVersion より大きい。拡張機能は差が 1 であるこ
 - `toVersion`（`Version`）: Edits を適用した後のバージョン番号である。
 - `edits`（`[]Edit`）: 適用した編集の列である。位置は逐次の数え方で書く。
 
-#### `BufferID`（`uint64`）
+#### `BufferID`
+
+JSON の整数である。
 
 本体が開いているバッファを識別する番号である。
 本体がバッファを開くときに割り当て、閉じるまで変えない。
 閉じたバッファの番号を、別のバッファに使い回すかどうかは保証しない。
 
 
-#### `Version`（`uint64`）
+#### `Version`
+
+JSON の整数である。
 
 バッファのバージョン番号である。
 バッファが変更されるたびに 1 増える。
@@ -173,12 +177,12 @@ command/execute の params である。
 
 - `buffer`（`BufferID`）
 - `version`（`Version`）: 問い合わせた時点のバージョン番号である。
-- `id`（`string`）: 宣言ファイルの contributes.commands に書いたコマンドの ID である。
+- `id`（Go では `ID`、`string`）: 宣言ファイルの contributes.commands に書いたコマンドの ID である。
 - `cursor`（`Position`）: 問い合わせた時点のカーソル位置である。
 - `count`（`int`）: 回数である。0 は省略を表す。
 - `args`（`json.RawMessage`、省ける）: コマンドの引数である。無ければ省く。
   コマンドラインから引数を付けて呼んだとき（:acp.prompt 説明して）は {"text":"説明して"}、
-  キーで呼んで後に 1 文字を取ったときは {"char":"x"} である（package の doc の「キー入力ごとの問い合わせ」）。
+  キーで呼んで後に 1 文字を取ったときは {"char":"x"} である（`vi-imitation --docs extensions キー入力ごとの問い合わせ`）。
 - `sync`（`bool`、省ける）: 本体がマクロかドットリピートを再生していることを表す。
   true なら、拡張機能は結果がそろうまで応答を返さず、編集を応答の Transaction で、カーソルの移動を応答の Open で返す。
   後から buffer/edit で届けた編集は、再生の次の操作でバージョン番号が進んだ後に届いて破棄されるためである。
@@ -192,7 +196,7 @@ command/execute の params である。
 
 command/execute の result である。
 
-- `ok`（`bool`）: コマンドが成り立ったかどうかである。false なら操作は失敗し、本体はバッファを変えない。
+- `ok`（Go では `OK`、`bool`）: コマンドが成り立ったかどうかである。false なら操作は失敗し、本体はバッファを変えない。
 - `transaction`（`*Transaction`、省ける）: コマンドの編集である。編集しないコマンドでは省く。
   本体は、BaseVersion が現在のバージョン番号と一致した場合だけ適用する。
   編集を buffer/edit でなく応答で返すのは、本体が応答を待っている間に buffer/edit を処理できないからである。
@@ -229,7 +233,7 @@ ext/server の WaitBuffer で、応答のバージョン番号以降の複製が
 
 initialize の params である。
 
-- `apiVersion`（`string`）: 本体が実装している拡張機能 API のバージョンである。
+- `apiVersion`（Go では `APIVersion`、`string`）: 本体が実装している拡張機能 API のバージョンである。
 - `settings`（`json.RawMessage`、省ける）: 利用者の設定ファイルのうち、この拡張機能に向けた部分である。
   形は拡張機能ごとに決まるので、本体は解釈せずに JSON のまま渡す。設定が無ければ省く。
 
@@ -237,7 +241,7 @@ initialize の params である。
 
 initialize の result である。
 
-- `apiVersion`（`string`）: 拡張機能が前提にした拡張機能 API のバージョンである。
+- `apiVersion`（Go では `APIVersion`、`string`）: 拡張機能が前提にした拡張機能 API のバージョンである。
   本体のバージョンと食い違った場合の扱いは未決である。
 
 #### `InputChangeParams`
@@ -247,10 +251,12 @@ input/change の params である。
 - `view`（`ViewID`）
 - `text`（`string`）: 変わった後の入力の行の中身である。
 - `seq`（`uint64`、省ける）: そのポップアップの入力の行が変わるたびに 1 から 1 ずつ増やす番号である（API 0.9.0 で足した）。
-  ViewFinder の拡張機能は、この入力への一覧を view/update の Seq に同じ値を入れて返す。
+  ViewFinder（finder） の拡張機能は、この入力への一覧を view/update の Seq に同じ値を入れて返す。
   本体は、前の入力への一覧が届いていなくても次の input/change を送るので、拡張機能は古い入力への計算を捨ててよい。
 
-#### `ViewID`（`uint64`）
+#### `ViewID`
+
+JSON の整数である。
 
 本体が開いたポップアップに付けた番号である。本体の中で一意で、使い回さない。0 は使わない。
 
@@ -262,7 +268,7 @@ motion/resolve の params である。
 
 - `buffer`（`BufferID`）
 - `version`（`Version`）: 問い合わせた時点のバージョン番号である。
-- `id`（`string`）: 宣言ファイルの contributes.motions に書いたモーションの ID である。
+- `id`（Go では `ID`、`string`）: 宣言ファイルの contributes.motions に書いたモーションの ID である。
 - `cursor`（`Position`）: 問い合わせた時点のカーソル位置である。
 - `count`（`int`）: 回数である。0 は省略を表す。
 - `args`（`json.RawMessage`、省ける）: 操作の引数である。無ければ省く。
@@ -271,7 +277,7 @@ motion/resolve の params である。
 
 motion/resolve の result である。
 
-- `ok`（`bool`）: 移動先が見つかったかどうかである。false なら操作は失敗する。
+- `ok`（Go では `OK`、`bool`）: 移動先が見つかったかどうかである。false なら操作は失敗する。
 - `version`（`Version`）: 計算のもとにしたバージョン番号である。
   本体は、現在のバージョン番号と一致しなければ結果を破棄する。
 - `position`（`Position`）: 移動先の位置である。
@@ -287,7 +293,7 @@ operator/apply の params である。
 
 - `buffer`（`BufferID`）
 - `version`（`Version`）: 問い合わせた時点のバージョン番号である。
-- `id`（`string`）: 宣言ファイルの contributes.operators に書いたオペレーターの ID である。
+- `id`（Go では `ID`、`string`）: 宣言ファイルの contributes.operators に書いたオペレーターの ID である。
 - `range`（`Range`）: オペレーターを適用する範囲である。
 - `count`（`int`）: 回数である。0 は省略を表す。
 - `args`（`json.RawMessage`、省ける）: 操作の引数である。無ければ省く。
@@ -296,7 +302,7 @@ operator/apply の params である。
 
 operator/apply の result である。
 
-- `ok`（`bool`）: オペレーターが編集を返したかどうかである。false なら操作は失敗し、本体はバッファを変えない。
+- `ok`（Go では `OK`、`bool`）: オペレーターが編集を返したかどうかである。false なら操作は失敗し、本体はバッファを変えない。
 - `transaction`（`Transaction`）: オペレーターの編集である。
   本体は、BaseVersion が現在のバージョン番号と一致した場合だけ適用する。
 
@@ -321,14 +327,16 @@ provider/invoke の params である。
 - `buffer`（`BufferID`）
 - `version`（`Version`）: 問い合わせた時点のバージョン番号である。
 - `cursor`（`Position`）: 問い合わせた時点のカーソル位置である。
-- `range`（`*Range`、省ける）: 範囲を取る操作（gq{モーション} の OpFormat）の範囲である。範囲の無い呼び出しでは省く。
+- `range`（`*Range`、省ける）: 範囲を取る操作（gq{モーション} の OpFormat（format））の範囲である。範囲の無い呼び出しでは省く。
 - `count`（`int`）: 回数である。0 は省略を表す。
-- `args`（`json.RawMessage`、省ける）: 操作の引数である。無ければ省く。形は Operation の定数の doc にある（{"peek":true}、{"text":"..."}）。
+- `args`（`json.RawMessage`、省ける）: 操作の引数である。無ければ省く。形は `vi-imitation --docs extensions Operation` にある（{"peek":true}、{"text":"..."}）。
 - `sync`（`bool`、省ける）: CommandExecuteParams.Sync と同じく、本体がマクロかドットリピートを再生していることを表す。
 - `withheld`（`bool`、省ける）: CommandExecuteParams.Withheld と同じく、本体が Buffer を拡張機能へ送っていないことを表す。
   デバッグの続行のように、バッファを使わない操作はそのまま行える。
 
-#### `ProviderInvokeResult`（`CommandExecuteResult`）
+#### `ProviderInvokeResult`
+
+Go の型は `CommandExecuteResult` である。
 
 provider/invoke の result である。形と扱いは command/execute の result と同じである。
 
@@ -353,7 +361,7 @@ textObject/resolve の params である。
 
 - `buffer`（`BufferID`）
 - `version`（`Version`）: 問い合わせた時点のバージョン番号である。
-- `id`（`string`）: 宣言ファイルの contributes.textObjects に書いたテキストオブジェクトの ID である。
+- `id`（Go では `ID`、`string`）: 宣言ファイルの contributes.textObjects に書いたテキストオブジェクトの ID である。
 - `cursor`（`Position`）: 問い合わせた時点のカーソル位置である。
 - `count`（`int`）: 回数である。0 は省略を表す。
 - `args`（`json.RawMessage`、省ける）: 操作の引数である。無ければ省く。
@@ -362,7 +370,7 @@ textObject/resolve の params である。
 
 textObject/resolve の result である。
 
-- `ok`（`bool`）: 範囲が見つかったかどうかである。false なら操作は失敗する。
+- `ok`（Go では `OK`、`bool`）: 範囲が見つかったかどうかである。false なら操作は失敗する。
 - `version`（`Version`）: 計算のもとにしたバージョン番号である。
   本体は、現在のバージョン番号と一致しなければ結果を破棄する。
 - `range`（`Range`）: テキストオブジェクトの範囲である。
@@ -388,21 +396,21 @@ view/expand の params である。
 view/key の params である。
 
 - `view`（`ViewID`）
-- `id`（`string`）: 打ったキーの contributes.popupKeys の項目の ID である。
-- `item`（`string`、省ける）: 一覧、木、ViewFinder ではカーソルの行の項目の ID、入力の行では中身、テキストでは空である。
-- `input`（`string`、省ける）: ViewFinder の入力の行の中身である。他の部品では省く。
+- `id`（Go では `ID`、`string`）: 打ったキーの contributes.popupKeys の項目の ID である。
+- `item`（`string`、省ける）: 一覧、木、ViewFinder（finder） ではカーソルの行の項目の ID、入力の行では中身、テキストでは空である。
+- `input`（`string`、省ける）: ViewFinder（finder） の入力の行の中身である。他の部品では省く。
 
 #### `ViewSelectParams`
 
 view/select の params である。
 
 - `view`（`ViewID`）
-- `item`（`string`）: 選んだ項目の ID（ViewList、ViewTree、ViewFinder）か、入力の行の中身（ViewInput）である。
-  ViewFinder で一覧が空なら空である。
-- `input`（`string`、省ける）: ViewFinder の入力の行の中身である。他の部品では省く。
-- `selection`（`uint64`、省ける）: ViewList、ViewTree、ViewFinder の項目の選択に本体が付ける番号である（1 から。API 0.9.0 で足した）。
+- `item`（`string`）: 選んだ項目の ID（ViewList（list）、ViewTree（tree）、ViewFinder（finder））か、入力の行の中身（ViewInput（input））である。
+  ViewFinder（finder） で一覧が空なら空である。
+- `input`（`string`、省ける）: ViewFinder（finder） の入力の行の中身である。他の部品では省く。
+- `selection`（`uint64`、省ける）: ViewList（list）、ViewTree（tree）、ViewFinder（finder） の項目の選択に本体が付ける番号である（1 から。API 0.9.0 で足した）。
   拡張機能は、この選択への応答として、同じ番号を付けた editor/execute（EditorExecuteParams.Selection）を 1 回だけ送れる。
-  ViewInput では省く。
+  ViewInput（input） では省く。
 
 #### `ViewTabChangeParams`
 
@@ -473,7 +481,7 @@ Edits が空でも反映する。そのときバージョン番号は変わら�
 #### `BufferEditResult`
 
 buffer/edit の result である。
-編集を禁止したバッファへの要求では result を返さず、ErrorCodeReadOnly の誤りの応答を返す。
+編集を禁止したバッファへの要求では result を返さず、ErrorCodeReadOnly（-32001） の誤りの応答を返す。
 
 - `applied`（`bool`）: 本体がトランザクションを適用したかどうかである。
   BaseVersion が現在のバージョン番号と一致しなければ false。
@@ -532,7 +540,7 @@ choice/ask の params である。
 
 choice/ask の 1 つの選択肢である。
 
-- `id`（`string`）: 選択肢の ID である。問いの中で一意にする。
+- `id`（Go では `ID`、`string`）: 選択肢の ID である。問いの中で一意にする。
 - `label`（`string`）: 利用者に示す文である。
 
 #### `ChoiceAskResult`
@@ -552,12 +560,12 @@ decoration/set の params である。
 他の拡張機能が同じバッファに付けた一覧は変えない。
 空の一覧を送ると、その拡張機能がそのバッファに付けた色を消す。
 
-JSON では、範囲の一覧を範囲ごとのオブジェクトではなく、整数の列と色の種類の名前の表で表す（MarshalJSON。形は decoration.go の decorationFields の doc）。
+JSON では、範囲の一覧を範囲ごとのオブジェクトではなく、整数の列と色の種類の名前の表で表す（MarshalJSON）。
 大きなファイルでも本体の受信の上限に収めるためである。Go の値としては Decorations の一覧のまま扱える。
 
 JSON の形は、下の項目の並びではなく、この説明のとおりである（MarshalJSON か UnmarshalJSON を持つ）。
 
-JSON の形（decorationFields）:
+JSON の形:
 
 decoration/set の JSON の形。
 
@@ -590,7 +598,7 @@ data の i 番目の範囲（0 から数える）は data[5i:5i+5] の次の 5 �
 - `style`（`string`）: 色の種類の名前（"keyword" など）である。
   名前から色への対応は本体が持ち、利用者は設定の colors で名前ごとに変えられる。
   構文の色の名前は comment、keyword、string、number、constant、function、type、variable、operator、punctuation の 10 個で、
-  前に "syntax." を付けない。構文の色の他に、本体の色の名前（docs/usage.md の「見た目の設定」の表。診断の diagnostic.error、
+  前に "syntax." を付けない。構文の色の他に、本体の色の名前（`vi-imitation --docs usage 見た目の設定`の表。診断の diagnostic.error、
   画面の部品の statusline など）のどれを使ってもよい。本体が知らない名前の範囲には色を付けない。
 
 #### `DiagnosticListParams`
@@ -625,9 +633,13 @@ diagnostic/list の result である。
 - `source`（`string`、省ける）: 出どころ（"gopls" など）である。無ければ省く。
 - `code`（`string`、省ける）: 診断の種類を表す文字列である。無ければ省く。
 
-#### `DiagnosticSeverity`（`string`）
+#### `DiagnosticSeverity`
+
+JSON の文字列である。
 
 診断の重要度である。
+
+診断の重要度。
 
 - `"error"`（SeverityError）
 - `"warning"`（SeverityWarning）
@@ -712,9 +724,13 @@ editor/list の params である。
 
 - `list`（`EditorListKind`）
 
-#### `EditorListKind`（`string`）
+#### `EditorListKind`
+
+JSON の文字列である。
 
 editor/list で問い合わせる一覧の種類である。
+
+editor/list で問い合わせられる一覧。
 
 - `"tabs"`（ListTabs）: すべての編集の client のタブである（EditorListResult.Tabs）。
 - `"commands"`（ListCommands）: コマンドラインから呼べるコマンド（本体の Ex コマンドと拡張機能のコマンド）である（EditorListResult.Commands）。
@@ -795,9 +811,9 @@ editor/list の result である。問い合わせた List の欄だけを埋め
 
 - `word`（`string`）: :help に渡す語（"w"、"<C-o>"、":write"、"lineNumber.show"、"page-down"）である。
   editor/execute の help に渡すと、その語の :help を開く。
-- `kind`（`string`）: 語の種類である。HelpKindKey（キー）、HelpKindCommand（Ex コマンドと拡張機能のコマンド。Word は : で始まる）、
-  HelpKindOption（:option.set で変える設定の名前と、設定ファイルの最上位の項目の名前）、HelpKindAction（設定の keymap に書く操作の ID）、
-  HelpKindOperation（拡張機能のオペレーター、モーション、テキストオブジェクトの ID）のどれかである。
+- `kind`（`string`）: 語の種類である。HelpKindKey（key）（キー）、HelpKindCommand（command）（Ex コマンドと拡張機能のコマンド。Word は : で始まる）、
+  HelpKindOption（option）（:option.set で変える設定の名前と、設定ファイルの最上位の項目の名前）、HelpKindAction（action）（設定の keymap に書く操作の ID）、
+  HelpKindOperation（operation）（拡張機能のオペレーター、モーション、テキストオブジェクトの ID）のどれかである。
 - `description`（`string`、省ける）: 語の 1 行の説明である。キー、操作の ID、拡張機能のコマンドと操作は、それを定めた所の説明文
   （キーの一覧、操作の表、宣言ファイルの description。description の無い拡張機能の操作は「拡張機能 <ID> の<種類>」）で、
   それが無い語（本体の Ex コマンド、設定の名前）は、:help でその語を引いたときの説明の行から
@@ -826,9 +842,9 @@ editor/state の result である。
 - `cursor`（`Position`）: カーソル位置である。
 - `mode`（`Mode`）: モードである。
 - `selections`（`[]Range`、省ける）: ビジュアルモードの選択範囲である。ビジュアルモードでなければ省く。
-  ModeVisual では範囲 1 つ。
-  ModeVisualLine では範囲 1 つで、最初の行の先頭から最後の行の終わりまでを指す。
-  ModeVisualBlock では行ごとに 1 つの範囲を、上の行から順に並べる。
+  ModeVisual（visual） では範囲 1 つ。
+  ModeVisualLine（visualLine） では範囲 1 つで、最初の行の先頭から最後の行の終わりまでを指す。
+  ModeVisualBlock（visualBlock） では行ごとに 1 つの範囲を、上の行から順に並べる。
 - `buffers`（`[]BufferInfo`）: 開いているバッファの一覧である。
 - `canSplit`（`bool`、省ける）: カーソルのあるタブの client のペインを、端末多重化ソフトの層で分割できるかである（diff/start）。
   端末多重化ソフトの外では false で、省く。
@@ -836,9 +852,13 @@ editor/state の result である。
   段階 3 では client ごとに作業ディレクトリが違いうるので、拡張機能のプロセスの作業ディレクトリと一致するとは限らない。
   ファジーファインダーがファイルと検索の場所に使う。
 
-#### `Mode`（`string`）
+#### `Mode`
+
+JSON の文字列である。
 
 本体のモードの名前である。
+
+モードの名前。
 
 - `"normal"`（ModeNormal）
 - `"insert"`（ModeInsert）
@@ -867,9 +887,13 @@ message/show の params である。
 - `level`（`MessageLevel`）
 - `text`（`string`）: 表示するメッセージである。
 
-#### `MessageLevel`（`string`）
+#### `MessageLevel`
+
+JSON の文字列である。
 
 利用者へのメッセージの重要度である。
+
+メッセージの重要度。
 
 - `"info"`（MessageInfo）
 - `"warning"`（MessageWarning）
@@ -894,19 +918,19 @@ pane/open の params である。
 ペインの中の <Esc> はペインを閉じない（ポップアップと違う）。利用者が端末多重化ソフトでペインを閉じるか、ペインの中で :q を打つと閉じ、
 view/closed を送る。
 
-Placement が PaneCenter のときと、端末多重化ソフトの外と、ペインを開けなかったとき（herdr のプラグインを登録していないなど）は、
-ペインに代えて元の client の画面の中央のポップアップに出す。このときは PopupCenter のポップアップと同じく <Esc> で閉じる。
+Placement が PaneCenter（center） のときと、端末多重化ソフトの外と、ペインを開けなかったとき（herdr のプラグインを登録していないなど）は、
+ペインに代えて元の client の画面の中央のポップアップに出す。このときは PopupCenter（center） のポップアップと同じく <Esc> で閉じる。
 どちらでも応答の View は同じ扱いで、拡張機能は違いを知らずに view/update と view/close を送れる。
 分割したペインに出したときは、元の client のカーソルのあるタブが替わるたびに view/tabChange を送る（ViewTabChangeParams）。
 
 - `component`（`ViewComponent`）
-- `placement`（`PanePlacement`、省ける）: 出す場所である。省くと PaneSplit である（API 0.10.0 で足した。古い本体は読まずに分割したペインに出す）。
-- `closeOnSelect`（`bool`、省ける）: 中央のポップアップに出したとき（Placement が PaneCenter か、ペインに代えて中央のポップアップに出したとき）に、
+- `placement`（`PanePlacement`、省ける）: 出す場所である。省くと PaneSplit（split） である（API 0.10.0 で足した。古い本体は読まずに分割したペインに出す）。
+- `closeOnSelect`（`bool`、省ける）: 中央のポップアップに出したとき（Placement が PaneCenter（center） か、ペインに代えて中央のポップアップに出したとき）に、
   一覧と木の項目を選んだら（view/select を送った後に）本体がポップアップを閉じることを表す（API 0.10.0 で足した）。
   閉じたら view/closed を送る。木の子を持つ項目の <CR> は開閉なので閉じない。
   分割したペインは選んでも閉じない（ファイラのように、出しっぱなしにしたペインから選び続けるため）。
   閉じるのは選んだキーの処理の中なので、マクロの再生でも、選んだ後のキーは元の client のタブで続く。
-- `direction`（`PaneDirection`、省ける）: 分割の向きである。省くと PaneRight である。
+- `direction`（`PaneDirection`、省ける）: 分割の向きである。省くと PaneRight（right） である。
 - `size`（`int`、省ける）: 新しいペインの大きさを、元のペインの分割の向きの大きさに対する百分率（1〜99）で表す。0 なら端末多重化ソフトの既定である。
   herdr 0.9.0 は分割の大きさを受け付けないので、herdr では使わない。
 - `focus`（`bool`、省ける）: 開いた新しいペインへフォーカスを移すかである。
@@ -917,25 +941,29 @@ Placement が PaneCenter のときと、端末多重化ソフトの外と、ペ�
 
 - `kind`（`ViewKind`）
 - `title`（`string`、省ける）: ポップアップの枠の上に出す見出しである。空なら出さない。
-- `text`（`string`、省ける）: ViewText の本文と、ViewInput と ViewFinder の入力の行の最初の中身である。ViewInput と ViewFinder では改行を含めない。
-- `format`（`PopupFormat`、省ける）: ViewText の本文の形式である。PopupMarkdown なら、本体はコードの囲みの行を除いて出す（popup/show と同じ）。
-- `highlights`（`[]Decoration`、省ける）: ViewText の本文に色を付ける範囲である。位置は Format の整形の前の Text を指す（4.1 の位置）。
+- `text`（`string`、省ける）: ViewText（text） の本文と、ViewInput（input） と ViewFinder（finder） の入力の行の最初の中身である。ViewInput（input） と ViewFinder（finder） では改行を含めない。
+- `format`（`PopupFormat`、省ける）: ViewText（text） の本文の形式である。PopupMarkdown（markdown） なら、本体はコードの囲みの行を除いて出す（popup/show と同じ）。
+- `highlights`（`[]Decoration`、省ける）: ViewText（text） の本文に色を付ける範囲である。位置は Format の整形の前の Text を指す（4.1 の位置）。
   Markdown で本体が除くコードの囲みの行の中の範囲（始まりか終わりがその行にあるもの）は捨てる。
   Style は 7.1 の色の名前（"keyword"、"diagnostic.error" など）で、知らない名前には色を付けない。
-- `items`（`[]ViewItem`、省ける）: ViewList、ViewTree、ViewFinder の項目である。ViewTree では Children で木にする。
-- `cursor`（`string`、省ける）: ViewList と ViewTree で、カーソルを置く項目の ID である（API 0.10.0 で足した）。
+- `items`（`[]ViewItem`、省ける）: ViewList（list）、ViewTree（tree）、ViewFinder（finder） の項目である。ViewTree（tree） では Children で木にする。
+- `cursor`（`string`、省ける）: ViewList（list） と ViewTree（tree） で、カーソルを置く項目の ID である（API 0.10.0 で足した）。
   開いたとき（popup/open、pane/open）と view/update で、その項目の行へカーソルを置く。
   空のときと、その項目が画面に出ていない（ID が無いか、閉じた木の項目の子にある）ときは、カーソルを置く行を変えない
   （view/update では、前にカーソルのあった項目を追う）。
   ファイラの「今のファイルの場所まで開いてカーソルを置く」と、h で親の項目へ移るのに使う。他の種類では読まない。
-- `preview`（`bool`、省ける）: ViewList、ViewTree、ViewFinder で、項目のプレビュー（ViewItem.Preview）を出す欄を持つことを表す
+- `preview`（`bool`、省ける）: ViewList（list）、ViewTree（tree）、ViewFinder（finder） で、項目のプレビュー（ViewItem.Preview）を出す欄を持つことを表す
   （API 0.11.0 で足した）。省いても、項目のどれかが Preview を持てば欄を持つ。
   項目が後から届く部品（ファインダー）は、開いたときから true にしておくと、最初の項目が届いたときに窓の幅が変わらない。
   欄を持つ部品の窓は、幅が設定の境目を超えるときだけ広げて右にプレビューを出す。
 
-#### `ViewKind`（`string`）
+#### `ViewKind`
+
+JSON の文字列である。
 
 表示の部品の種類である。
+
+表示の部品の種類。
 
 - `"text"`（ViewText）: テキストのバッファである。本体は、編集を禁止したファイルでないバッファとして出し、通常のノーマルモードのキー
   （移動、検索、ヤンク）が効く。
@@ -951,25 +979,29 @@ Placement が PaneCenter のときと、端末多重化ソフトの外と、ペ�
   一覧の中のカーソルは <C-n>、<C-p>、<C-j>、<C-k>、<Down>、<Up> で動かし、<CR> で view/select（Item は一覧の項目の ID、
   Input は入力の行の中身）を送る。<Esc> はインサートモードでも閉じる。
 
-#### `PopupFormat`（`string`）
+#### `PopupFormat`
+
+JSON の文字列である。
 
 popup/show の本文の形式である。
 
+本文の形式。
+
 - `"plaintext"`（PopupPlainText）
-- `"markdown"`（PopupMarkdown）: Markdown である。本体が整形して表示するかどうかは internal/ui が決め、整形しなければそのまま表示する。
+- `"markdown"`（PopupMarkdown）: Markdown である。
 
 #### `ViewItem`
 
 一覧か木の項目 1 つである。
 
-- `id`（`string`）: 選んだときに view/select で返す値である。部品の中で一意にする。
+- `id`（Go では `ID`、`string`）: 選んだときに view/select で返す値である。部品の中で一意にする。
 - `label`（`string`）: 表示の文字列である。改行を含めない。
 - `highlights`（`[]ViewSpan`、省ける）: Label の中の色を付ける範囲である。
-- `children`（`[]ViewItem`、省ける）: ViewTree の子の項目である。ViewList では使わない。
-- `hasChildren`（`bool`、省ける）: ViewTree で、Children が空でも子を持つ項目（子を後から読む項目）であることを表す。
+- `children`（`[]ViewItem`、省ける）: ViewTree（tree） の子の項目である。ViewList（list） では使わない。
+- `hasChildren`（`bool`、省ける）: ViewTree（tree） で、Children が空でも子を持つ項目（子を後から読む項目）であることを表す。
   本体は開閉の印を付け、<CR> で開くと view/expand で知らせる。拡張機能は子を読んで view/update で送る
-  （ファイラのディレクトリ、DAP の変数の variablesReference）。ViewList では使わない。
-- `expanded`（`*bool`、省ける）: ViewTree で子を開いて出すかの指定である。開閉は本体が項目の ID ごとに持つ。
+  （ファイラのディレクトリ、DAP の変数の variablesReference）。ViewList（list） では使わない。
+- `expanded`（`*bool`、省ける）: ViewTree（tree） で子を開いて出すかの指定である。開閉は本体が項目の ID ごとに持つ。
   省くと、前の木にあった ID の項目は利用者が開閉した状態を保ち、新しく現れた ID の項目は閉じて出す。
   書くと、前の木にあった項目もその状態にする（ファイラの「今のファイルの場所まで開く」、DAP の止まった位置のスコープを開く）。
 - `preview`（`*ViewPreview`、省ける）: この項目にカーソルがあるときにプレビューに出すものである（API 0.11.0 で足した）。
@@ -1018,18 +1050,26 @@ ViewItem.Preview（カーソルがあるときに何を見せるか）とは別�
   本体はパスの先を調べないので、相対パスでも、無いファイルでもよい。
 - `dir`（`bool`、省ける）: ディレクトリなら true である。木では、開いたディレクトリと閉じたディレクトリでアイコンを分ける。
 
-#### `PanePlacement`（`string`）
+#### `PanePlacement`
+
+JSON の文字列である。
 
 pane/open で部品を出す場所である（API 0.10.0 で足した）。
 
+pane/open で部品を出す場所。
+
 - `"split"`（PaneSplit）: 元の client のペインを端末多重化ソフトで分割したペインである（既定）。
   端末多重化ソフトの外と、ペインを開けなかったときは、中央のポップアップに出す。
-- `"center"`（PaneCenter）: 中央のポップアップである。popup/open の PopupCenter と同じく、tmux と herdr の中では端末多重化ソフトの
+- `"center"`（PaneCenter）: 中央のポップアップである。popup/open の PopupCenter（center） と同じく、tmux と herdr の中では端末多重化ソフトの
   ポップアップの中の部品の client が描き、外では元の client の画面の中央に描く。開いている間はそれだけを操作し、<Esc> で閉じる。
 
-#### `PaneDirection`（`string`）
+#### `PaneDirection`
+
+JSON の文字列である。
 
 pane/open でペインを分割する向きである。
+
+ペインを分割する向き。新しいペインは、元の client のペインの右か下に開く。
 
 - `"right"`（PaneRight）: 元の client のペインの右に開く（既定）。
 - `"down"`（PaneDown）: 元の client のペインの下に開く。
@@ -1047,12 +1087,16 @@ popup/open の params である。
 1 つの client に出すポップアップは 1 つで、新しいポップアップは前のものを置き換える（前のものの持ち主へ view/closed を送る）。
 
 - `component`（`ViewComponent`）
-- `placement`（`PopupPlacement`、省ける）: 置き場所である。省くと PopupAtCursor である。
-- `focus`（`bool`、省ける）: PopupAtCursor のポップアップに、開いた時点でフォーカスを入れるかである。PopupCenter では常に入れる。
+- `placement`（`PopupPlacement`、省ける）: 置き場所である。省くと PopupAtCursor（cursor） である。
+- `focus`（`bool`、省ける）: PopupAtCursor（cursor） のポップアップに、開いた時点でフォーカスを入れるかである。PopupCenter（center） では常に入れる。
 
-#### `PopupPlacement`（`string`）
+#### `PopupPlacement`
+
+JSON の文字列である。
 
 ポップアップの置き場所である。
+
+ポップアップの置き場所。
 
 - `"cursor"`（PopupAtCursor）: 編集の client の画面の中の、カーソルの近くに浮かべる窓である（既定）。
   Focus が false なら、ホバーと同じく次のキーかカーソルの移動で閉じ、<C-w>w でフォーカスを入れられる。
@@ -1097,9 +1141,13 @@ sign/set の params である。
 - `line`（`int`）: 0 から数えた行の番号である。
 - `kind`（`SignKind`）
 
-#### `SignKind`（`string`）
+#### `SignKind`
+
+JSON の文字列である。
 
 行に付ける印の種類である。名前は仮である。
+
+印の種類。
 
 - `"breakpoint"`（SignBreakpoint）: ブレークポイントである。
 - `"breakpointUnverified"`（SignBreakpointUnverified）: デバッグアダプターが検証できなかったブレークポイントである。
@@ -1112,7 +1160,7 @@ statusline/set の params である。
 - `part`（`string`）: 部品の ID である。宣言ファイルの contributes.statusline で足した ID を書く。
 - `text`（`string`）: 部品の中身の文字列である。空なら部品を出さない（lualine の cond が偽の部品と同じ）。
   本体は 1 行で描くので、改行とタブなどの制御文字は空白 1 つに置き換える（StatusLineText）。
-- `style`（`string`、省ける）: 部品を描く色の名前（本体の色の名前のどれか。docs/usage.md の「見た目の設定」）である。
+- `style`（`string`、省ける）: 部品を描く色の名前（本体の色の名前のどれか。`vi-imitation --docs usage 見た目の設定`）である。
   本体は、ステータス行の色の上に、この名前の色を重ねる（本体の部品の色と同じ規則）。
   空なら、利用者の設定の statusline.ext の色を使う。本体の知らない名前なら、色を重ねない。
   状態に応じて色を変える部品（lualine の mrreview の drift の警告）は、送るたびに名前を変える。
@@ -1131,12 +1179,12 @@ view/update の params である。
 テキストと入力の行では、行の番号を保つ。ただしテキストでカーソルが最後の行にあれば、新しい中身の最後の行へ置く
 （書き足した出力の末尾を追う）。木の開閉の状態は、項目の ID ごとに保つ（ViewItem.Expanded）。
 
-ViewFinder では、一覧（Items）と見出し（Title）だけを置き換え、Component.Text は読まない。
+ViewFinder（finder） では、一覧（Items）と見出し（Title）だけを置き換え、Component.Text は読まない。
 Seq は、この一覧がどの入力に答えたものかを、input/change の Seq（開いたときの中身なら 0）で表す。
 本体は、最後に送った input/change の Seq より小さい Seq の view/update を捨てる（古い入力への一覧を出さない）。
 同じ Seq の view/update は何度送ってもよい（候補を読みながら一覧を送り直すとき）。
 前の view/update より大きい Seq の一覧では、カーソルを先頭の項目へ置き、同じ Seq なら項目の ID で保つ。
-ViewFinder 以外では Seq を読まない。
+ViewFinder（finder） 以外では Seq を読まない。
 
 - `view`（`ViewID`）
 - `component`（`ViewComponent`）
@@ -1148,10 +1196,10 @@ ViewFinder 以外では Seq を読まない。
 - `command`（HelpKindCommand）
 - `option`（HelpKindOption）
 - `action`（HelpKindAction）
-- `operation`（HelpKindOperation）: HelpKindOperation は、読み込んだ拡張機能のオペレーター、モーション、テキストオブジェクトの ID である（宣言ファイルの contributes）。
-- `3`（SocketFDStart）: SocketFDStart は、EnvSocketFDs で引き継ぐ最初のファイル記述子の番号である。
+- `operation`（HelpKindOperation）: 読み込んだ拡張機能のオペレーター、モーション、テキストオブジェクトの ID である（宣言ファイルの contributes）。
+- `3`（SocketFDStart）: EnvSocketFDs（VI_IMITATION_SOCKET_FDS） で引き継ぐ最初のファイル記述子の番号である。
   0〜2 は標準入出力で、本体との通信に使う。
-- `-32001`（ErrorCodeReadOnly）: ErrorCodeReadOnly は、編集を禁止したバッファへの buffer/edit を本体が断るときの、誤りの応答の code である。
+- `-32001`（ErrorCodeReadOnly）: 編集を禁止したバッファへの buffer/edit を本体が断るときの、誤りの応答の code である。
   JSON-RPC 2.0 で実装が定める誤りの範囲（-32000〜-32099）の値である。message は画面に出すものと同じ E21 の文言である。
   編集の無い（NoLines と EndOfLine だけの）要求も断る。
   版の不一致（BufferEditResult の Applied が false）と違い、新しい版で作り直しても通らないので、拡張機能は繰り返さない。

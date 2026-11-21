@@ -1,22 +1,8 @@
 <!-- AI エージェント向けの文書（vi-imitation --docs config）。印の間は make docs が生成する。印の間を手で編集しない。 -->
 # 設定ファイル
 
-設定ファイルは `$XDG_CONFIG_HOME/vi-imitation/config.jsonc` に置く。
-`XDG_CONFIG_HOME` が空なら `~/.config/vi-imitation/config.jsonc` である。
-JSONC（コメントと末尾のカンマを許す JSON）で書く。
-ファイルが無ければ、すべての項目が既定値になる。
-設定を変えたら、本体を起動し直す。
-
-誤りのある項目は、起動後にメッセージの行へ `config.jsonc:2:19: fixendofline は true か false にする` の形で出し、その項目だけを使わない。
-誤りが複数あれば、行には最初の 1 件と件数を出す。
-`:messages` で全部を読める。
-知らない項目も誤りにする。
-
-配布物の `config.example.jsonc` は、キーの割り当て、配色、ステータス行、字下げの例である。
-
-## 例
-
 ```jsonc
+// $XDG_CONFIG_HOME/vi-imitation/config.jsonc（XDG_CONFIG_HOME が空なら ~/.config/vi-imitation/config.jsonc）。JSONC で書く
 {
   // 設定の項目は、点で区切った名前を入れ子のキーにして書く（lineNumber.show）
   "lineNumber": { "show": true },
@@ -48,8 +34,8 @@ JSONC（コメントと末尾のカンマを許す JSON）で書く。
 }
 ```
 
-`keymap` の書き方は `vi-imitation --docs keymap` にある。
-`extensions` の書き方は `vi-imitation --docs extensions` と、標準の拡張機能ごとの節（`vi-imitation --docs usage 標準の拡張機能`）にある。
+配布物の `config.example.jsonc` も例である。
+`keymap` は `vi-imitation --docs keymap` に、設定の誤りの知らせ方は `vi-imitation --docs usage 拡張機能の設定と設定の誤り` にある。
 
 ## 最上位の項目
 
@@ -59,18 +45,23 @@ JSONC（コメントと末尾のカンマを許す JSON）で書く。
 `keymap`、`leader`、`fixendofline`、`autoread`、`checkIntervalMs`、`fileTypes`、`extensions`、`registers`、`readonlyPaths`、`colors`、`colorscheme`、`symbols`、`icons`、`statusline`、`tabline`、`elevateCommand`、`commandAliases`、`fileTypeOptions`
 <!-- generated:config-keys:end -->
 
-それぞれの値の形と既定値は `vi-imitation --docs usage 設定ファイルの項目` にある。
-見た目の項目（`colorscheme`、`colors`、`symbols`、`icons`、`statusline`、`tabline`）は `vi-imitation --docs usage 見た目の設定` に、`registers` は `vi-imitation --docs usage レジスターと履歴` に、`readonlyPaths` は `vi-imitation --docs usage 編集の禁止` に、`commandAliases` は `vi-imitation --docs commands` にある。
+| 知りたいこと | 読む節 |
+|---|---|
+| 各項目の値の形と既定値 | `vi-imitation --docs usage 設定ファイルの項目` |
+| `extensions.settings` と設定の誤り | `vi-imitation --docs usage 拡張機能の設定と設定の誤り` |
+| `colorscheme`、`colors`、`symbols`、`icons`、`statusline`、`tabline` | `vi-imitation --docs usage 配色の選択`、`配色`、`記号`、`アイコン`、`ステータス行の並び`、`タブの行` |
+| `registers` | `vi-imitation --docs usage レジスターと履歴` |
+| `readonlyPaths` | `vi-imitation --docs usage 編集の禁止` |
+| `elevateCommand` | `vi-imitation --docs usage 権限の足りないファイルの保存` |
+| `commandAliases` | `vi-imitation --docs usage Ex コマンドの別名を足す` |
+| `fileTypeOptions` と値の決まり方 | `vi-imitation --docs usage 値の決まり方` |
+| `extensions.install` | `vi-imitation --docs usage 拡張機能の取得（:ext sync）` |
+
+標準の拡張機能の `extensions.settings` は、拡張機能ごとの節（`vi-imitation --docs usage LSP`、`DAP によるデバッグ`、`ACP のエージェント`、`MCP のサーバー`、`tree-sitter による構文ハイライト`、`git の HEAD の版と見比べる`、`ファジーファインダー`、`ファイラ`）にある。
 
 ## 設定の項目
 
-設定の項目は、名前を点で区切った入れ子のキーにして書く（`lineNumber.show` は `"lineNumber": { "show": true }`）。
-範囲が「エディタ全体」の項目は、エディタの初めの値になる。
-範囲が「バッファごと」の項目は、バッファを開くときの初めの値になり、`fileTypeOptions` でファイルの種類ごとにも書ける。
-バッファごとの値は、本体の既定、最上位の値、本体のファイルの種類ごとの既定（`go` と `make` はタブ文字で字下げする）、`fileTypeOptions` の値、`.editorconfig` の値の順に当て、後の値が勝つ（`vi-imitation --docs usage 値の決まり方`）。
-
-実行中は、`:option.set 名前 値`、`:option.get 名前`、`:option.toggle 名前`（真偽の項目を反転する）で変える、読む。
-Vim の `:set` の書き方の一部も使える（`:set number`、`:set et sw=4`）。
+実行中は、`:option.set 名前 値`、`:option.get 名前`、`:option.toggle 名前` で変える、読む（`vi-imitation --docs usage 実行中に設定を変える`）。
 
 <!-- generated:options:begin -->
 | 名前 | 型 | 範囲 | 既定値 | 取れる値と注意 |
@@ -94,4 +85,4 @@ Vim の `:set` の書き方の一部も使える（`:set number`、`:set et sw=4
 | `editorConfig.enabled` | 真偽 | エディタ全体 | `true` |  |
 <!-- generated:options:end -->
 
-各項目の説明と `:set` で使える Vim の名前は `vi-imitation --docs usage 設定の名前の一覧` にある。
+各項目の説明と、`:set` で使える Vim の名前は `vi-imitation --docs usage 設定の名前の一覧` にある。

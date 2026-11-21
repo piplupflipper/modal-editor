@@ -25,6 +25,25 @@ type extAPI struct {
 	// hidden は、公開していない定数の名前から doc コメントへの対応である。
 	// 公開している型の doc が JSON の形の説明をそこへ譲っているとき（DecorationSetParams の decorationFields）に写す。
 	hidden map[string]string
+	// pkgDoc は、ext のパッケージの doc コメントである（writePackageDoc）。
+	pkgDoc string
+}
+
+// writePackageDoc は、ext のパッケージの doc コメントのうち、見出し（# 位置の数え方 など）の付いた節を、### の見出しの節にして書く。
+// 見出しの前の段落（パッケージの構成の説明）は、拡張機能を書く人に要らないので書かない。
+func (api *extAPI) writePackageDoc(w *bytes.Buffer) error {
+	_, rest, ok := strings.Cut("\n"+api.pkgDoc, "\n# ")
+	if !ok {
+		return fmt.Errorf("ext のパッケージの doc に見出しの節が無い")
+	}
+	for i, sec := range strings.Split(rest, "\n# ") {
+		title, body, _ := strings.Cut(sec, "\n")
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "### %s\n\n%s\n", title, api.text(strings.TrimSpace(body)))
+	}
+	return nil
 }
 
 // typeInfo は、ext の 1 つの型の宣言である。
@@ -42,6 +61,7 @@ type constInfo struct {
 	typ   string // 型の名前。型を書かない定数では空
 	value string // 文字列の定数は引用符を外した値、数の定数は 10 進の表記
 	doc   string
+	group string // 複数の定数をまとめた const の宣言の doc コメント（ActivationKind の定数の説明）。まとめていなければ空
 }
 
 // methodInfo は、拡張機能 API の 1 つのメソッド（ext の Method で始まる定数）である。
@@ -75,6 +95,9 @@ func parseExtAPI(dir string) (*extAPI, error) {
 		f, err := parser.ParseFile(fset, p, src, parser.ParseComments)
 		if err != nil {
 			return nil, err
+		}
+		if f.Doc != nil && strings.HasPrefix(f.Doc.Text(), "Package ") {
+			api.pkgDoc = f.Doc.Text()
 		}
 		for _, d := range f.Decls {
 			switch d := d.(type) {
@@ -149,7 +172,11 @@ func (api *extAPI) addDecl(d *ast.GenDecl) error {
 					}
 					value = v
 				}
-				api.consts = append(api.consts, constInfo{name: n.Name, typ: typ, value: value, doc: doc})
+				group := ""
+				if len(d.Specs) > 1 {
+					group = commentText(d.Doc)
+				}
+				api.consts = append(api.consts, constInfo{name: n.Name, typ: typ, value: value, doc: doc, group: group})
 			}
 		}
 	}
@@ -183,18 +210,19 @@ func commentText(c *ast.CommentGroup) string {
 		}
 		lines = append(lines, l)
 	}
-	return dropRefs(strings.TrimSpace(strings.Join(lines, "\n")))
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // parenRE は、入れ子でない全角の括弧の組である。
 var parenRE = regexp.MustCompile(`（[^（）]*）`)
 
-// refRE は、リポジトリの中の文書と issue と PR への参照で始まる文の断片である（基本設計 5.1、FR-94、#9 の裁定、PR #249 のレビュー）。
-var refRE = regexp.MustCompile(`^(基本設計|要件定義|FR-|NFR-|#\d|PR #)`)
+// refRE は、配布物の利用者が辿れない参照の、括弧の中の断片である。
+// 設計の文書と issue と PR（基本設計 5.1、FR-94、#9 の裁定、PR #249 のレビュー）と、Go のソースの doc とファイル（APIVersion の doc、decoration.go）である。
+var refRE = regexp.MustCompile(`^(基本設計|要件定義|FR-|NFR-|#\d|PR #)|の doc( ?を参照)?$|\.go\b`)
 
-// dropRefs は、doc コメントの括弧の中の、設計の文書と issue と PR への参照を除く。
+// dropRefs は、doc コメントの括弧の中の、配布物の利用者が辿れない参照（refRE）を除く。
 // 配布物だけを持つ利用者はそれらを読めず、文書のトークンを減らすためである。
-// 括弧の中を「。」で分け、参照で始まる断片を除き、残りが無ければ括弧ごと除く（「（名前は仮。基本設計 5.1）」は「（名前は仮）」）。
+// 括弧の中を「。」で分け、参照の断片を除き、残りが無ければ括弧ごと除く（「（名前は仮。基本設計 5.1）」は「（名前は仮）」）。
 func dropRefs(doc string) string {
 	return parenRE.ReplaceAllStringFunc(doc, func(p string) string {
 		inner := strings.TrimSuffix(strings.TrimPrefix(p, "（"), "）")
@@ -209,6 +237,76 @@ func dropRefs(doc string) string {
 		}
 		return "（" + strings.Join(keep, "。") + "）"
 	})
+}
+
+var (
+	// internalRE は、本体の内部の実装の説明の文である（JSONC は internal/config が…、このパッケージは…）。配布物の利用者には要らない。
+	internalRE = regexp.MustCompile(`internal/|このパッケージ`)
+	// usageRefRE は、docs/usage.md の節への参照である。
+	usageRefRE = regexp.MustCompile(`docs/usage\.md の「([^」]+)」`)
+	// packageDocRefRE は、ext のパッケージの doc の節への参照である。
+	packageDocRefRE = regexp.MustCompile(`package の doc の「([^」]+)」`)
+	// typeDocRefRE は、ext の型の doc への参照である（Manifest.Provides の doc、Operation の定数の doc）。
+	typeDocRefRE = regexp.MustCompile(`\b([A-Z][A-Za-z]*)(?:\.[A-Z][A-Za-z]*)? の(?:定数の)? doc`)
+	// identRE は、Go の識別子である。
+	identRE = regexp.MustCompile(`\b[A-Z][A-Za-z0-9]*\b`)
+)
+
+// text は、ext の doc コメント doc を、配布物の利用者が読める形にする。
+//
+//   - 本体の内部の実装の説明の文（internalRE）を除く
+//   - docs/usage.md の節、ext のパッケージの doc の節、ext の型の doc への参照を、その節を出す vi-imitation --docs のコマンドに置き換える
+//   - 括弧の中の辿れない参照を除く（dropRefs）
+//   - 定数の名前に値を添える。メソッドの名前（MethodStatusLineSet）は値（statusline/set）に、ほかの定数（SocketFDStart）は「名前（値）」にする
+func (api *extAPI) text(doc string) string {
+	var lines []string
+	for _, l := range strings.Split(doc, "\n") {
+		indent := l[:len(l)-len(strings.TrimLeft(l, " \t"))]
+		var keep []string
+		for _, s := range strings.SplitAfter(strings.TrimLeft(l, " \t"), "。") {
+			if !internalRE.MatchString(s) {
+				keep = append(keep, s)
+			}
+		}
+		if s := strings.Join(keep, ""); s != "" || strings.TrimSpace(l) == "" {
+			lines = append(lines, indent+s)
+		}
+	}
+	doc = strings.Join(lines, "\n")
+	doc = usageRefRE.ReplaceAllString(doc, "`vi-imitation --docs usage $1`")
+	doc = packageDocRefRE.ReplaceAllString(doc, "`vi-imitation --docs extensions $1`")
+	doc = typeDocRefRE.ReplaceAllStringFunc(doc, func(m string) string {
+		name := typeDocRefRE.FindStringSubmatch(m)[1]
+		if api.types[name] == nil {
+			return m
+		}
+		return "`vi-imitation --docs " + api.topicOf(name) + " " + name + "`"
+	})
+	doc = dropRefs(doc)
+	return identRE.ReplaceAllStringFunc(doc, func(id string) string {
+		c := api.constant(id)
+		switch {
+		case c == nil:
+			return id
+		case strings.HasPrefix(id, "Method"):
+			return c.value
+		default:
+			return id + "（" + c.value + "）"
+		}
+	})
+}
+
+// topicOf は、型 name を書く話題（宣言ファイルから辿れる型は extensions、ほかは extension-types）を返す。
+func (api *extAPI) topicOf(name string) string {
+	if slices.Contains(api.reachable([]string{"Manifest"}, nil), name) {
+		return "extensions"
+	}
+	return "extension-types"
+}
+
+// item は、doc を text で読める形にしてから、箇条書きの 1 項目を書く。
+func (api *extAPI) item(w *bytes.Buffer, head, doc string) {
+	writeItem(w, head, api.text(doc))
 }
 
 // constant は、名前が name の定数を返す。無ければ nil を返す。
@@ -234,7 +332,7 @@ func (api *extAPI) writeVersion(w *bytes.Buffer) {
 func (api *extAPI) writeEnv(w *bytes.Buffer) {
 	for _, c := range api.consts {
 		if strings.HasPrefix(c.name, "Env") {
-			writeItem(w, code(c.value), dropSubject(c.doc, c.name))
+			api.item(w, code(c.value), dropSubject(c.doc, c.name))
 		}
 	}
 }
@@ -367,7 +465,7 @@ func (api *extAPI) writeMethods(w *bytes.Buffer) error {
 		if len(parts) > 0 {
 			head += "。" + strings.Join(parts, "、")
 		}
-		writeItem(w, code(m.value), head+"。"+strings.Join(m.notes, ""))
+		api.item(w, code(m.value), head+"。"+strings.Join(m.notes, ""))
 	}
 	return nil
 }
@@ -409,7 +507,7 @@ func (api *extAPI) writeMessageTypes(w *bytes.Buffer) error {
 		fmt.Fprintln(w, "#### その他の定数")
 		fmt.Fprintln(w)
 		for _, c := range others {
-			writeItem(w, code(c.value)+"（"+c.name+"）", c.doc)
+			api.item(w, code(c.value)+"（"+c.name+"）", dropSubject(c.doc, c.name))
 		}
 	}
 	return nil
@@ -456,12 +554,20 @@ func (api *extAPI) reachable(roots []string, skip map[string]bool) []string {
 func (api *extAPI) writeType(w *bytes.Buffer, name string) {
 	t := api.types[name]
 	st, isStruct := t.expr.(*ast.StructType)
-	if isStruct {
-		fmt.Fprintf(w, "#### `%s`\n\n", name)
-	} else {
-		fmt.Fprintf(w, "#### `%s`（`%s`）\n\n", name, types.ExprString(t.expr))
+	// 見出しは型の名前だけにする（vi-imitation --docs <話題> <型の名前> で節を引けるように）
+	fmt.Fprintf(w, "#### `%s`\n\n", name)
+	if !isStruct {
+		switch u := types.ExprString(t.expr); {
+		case u == "string":
+			fmt.Fprintln(w, "JSON の文字列である。")
+		case strings.HasPrefix(u, "int") || strings.HasPrefix(u, "uint"):
+			fmt.Fprintln(w, "JSON の整数である。")
+		default:
+			fmt.Fprintf(w, "Go の型は `%s` である。\n", u)
+		}
+		fmt.Fprintln(w)
 	}
-	if doc := dropSubject(t.doc, name); doc != "" {
+	if doc := api.text(dropSubject(t.doc, name)); doc != "" {
 		fmt.Fprintln(w, doc)
 		fmt.Fprintln(w)
 	}
@@ -475,7 +581,7 @@ func (api *extAPI) writeType(w *bytes.Buffer, name string) {
 		slices.Sort(names)
 		for _, n := range names {
 			if api.hidden[n] != "" && regexp.MustCompile(`\b`+n+`\b`).MatchString(t.doc) {
-				fmt.Fprintf(w, "JSON の形（%s）:\n\n%s\n\n", n, api.hidden[n])
+				fmt.Fprintf(w, "JSON の形:\n\n%s\n\n", api.text(api.hidden[n]))
 			}
 		}
 	}
@@ -488,10 +594,17 @@ func (api *extAPI) writeType(w *bytes.Buffer, name string) {
 			fmt.Fprintln(w, "項目は無い（`{}`）。")
 		}
 	} else {
+		group := ""
 		for _, c := range api.consts {
-			if c.typ == name {
-				writeItem(w, code(strconv.Quote(c.value))+"（"+c.name+"）", dropSubject(c.doc, c.name))
+			if c.typ != name {
+				continue
 			}
+			if c.group != "" && c.group != group {
+				// 定数をまとめた宣言の説明（起動の契機の種類ごとの意味など）を、その定数の並びの前に書く
+				group = c.group
+				fmt.Fprintf(w, "%s\n\n", api.text(group))
+			}
+			api.item(w, code(strconv.Quote(c.value))+"（"+c.name+"）", dropSubject(c.doc, c.name))
 		}
 	}
 	fmt.Fprintln(w)
@@ -513,7 +626,7 @@ func (api *extAPI) writeField(w *bytes.Buffer, f *ast.Field) int {
 	typ := types.ExprString(f.Type)
 	doc := commentText(f.Doc)
 	if len(f.Names) == 0 {
-		writeItem(w, "（埋め込み "+code(typ)+"）", "この型の項目を同じ階層に並べる。"+joinLines(doc))
+		api.item(w, "（埋め込み "+code(typ)+"）", "この型の項目を同じ階層に並べる。"+joinLines(doc))
 		return 1
 	}
 	n := 0
@@ -526,10 +639,14 @@ func (api *extAPI) writeField(w *bytes.Buffer, f *ast.Field) int {
 			jn = name.Name
 		}
 		attr := code(typ)
+		if name.Name != strings.ToUpper(jn[:1])+jn[1:] {
+			// Go で書く拡張機能（スクリプト）のために、JSON の名前の頭を大文字にしただけでない Go の名前を添える（ok は OK）
+			attr = "Go では " + code(name.Name) + "、" + attr
+		}
 		if strings.Contains(opts, "omitempty") {
 			attr += "、省ける"
 		}
-		writeItem(w, code(jn)+"（"+attr+"）", dropSubject(doc, name.Name))
+		api.item(w, code(jn)+"（"+attr+"）", dropSubject(doc, name.Name))
 		n++
 	}
 	return n
