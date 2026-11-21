@@ -298,6 +298,108 @@ func TestOverrideMatch(t *testing.T) {
 	}
 }
 
+// biome の重ね方: 重ねる設定（extends の先と近い設定）はトップと言語ごとに分けて後のものが勝ち、重ねた後で言語ごとの値がトップの値より
+// 強い。overrides は、そうして決めた値の上に、overrides ごとに言語ごとの値をトップより強くした値を順に重ねる（biomeLayer の doc）。
+// 期待値は、2026-11-22 に同じ設定で biome 2.4.15 の format --stdin-file-path=<絶対パス> が src/a.js を整形した結果である
+// （PR #352 の 3 回目のレビューの必須）。
+//
+// req: FR-193
+func TestBiomeMergeOrder(t *testing.T) {
+	c := indentCfg(t)
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		want  string // 実物の結果（スペース 3 なら "true 3 3"、タブなら useSpaces が false）
+	}{
+		{"根の javascript.formatter のスペース 3 は、近い設定のトップのタブに勝つ（実物: スペース 3）", map[string]string{
+			"biome.json":     `{"javascript":{"formatter":{"indentStyle":"space","indentWidth":3}}}`,
+			"src/biome.json": `{"root":false,"extends":"//","formatter":{"indentStyle":"tab"}}`,
+		}, "true 3 3"},
+		{"根のトップのスペース 3 と、近い設定の言語ごとの幅 5（実物: スペース 5）", map[string]string{
+			"biome.json":     `{"formatter":{"indentStyle":"space","indentWidth":3}}`,
+			"src/biome.json": `{"root":false,"extends":"//","javascript":{"formatter":{"indentWidth":5}}}`,
+		}, "true 5 5"},
+		{"根の言語ごとのタブと、近い設定の言語ごとの幅 5 とトップのスペース（実物: タブ）", map[string]string{
+			"biome.json":     `{"javascript":{"formatter":{"indentStyle":"tab"}}}`,
+			"src/biome.json": `{"root":false,"extends":"//","javascript":{"formatter":{"indentWidth":5}},"formatter":{"indentStyle":"space"}}`,
+		}, "false 5 5"},
+		{"言語ごとのスペース 3 の上に、overrides のトップのタブ（実物: タブ）", map[string]string{
+			"biome.json": `{"javascript":{"formatter":{"indentStyle":"space","indentWidth":3}},"overrides":[{"includes":["**/*.js"],"formatter":{"indentStyle":"tab"}}]}`,
+		}, "false 3 3"},
+		{"overrides の言語ごとのスペース 5 の後に、overrides のトップの幅 2（実物: スペース 2）", map[string]string{
+			"biome.json": `{"formatter":{"indentStyle":"tab"},"overrides":[{"includes":["**/*.js"],"javascript":{"formatter":{"indentWidth":5,"indentStyle":"space"}}},{"includes":["**/*.js"],"formatter":{"indentWidth":2}}]}`,
+		}, "true 2 2"},
+		{"extends の先の言語ごとのスペース 3 は、自分のトップのタブに勝つ（実物: スペース 3）", map[string]string{
+			"base.json":  `{"javascript":{"formatter":{"indentStyle":"space","indentWidth":3}}}`,
+			"biome.json": `{"extends":["./base.json"],"formatter":{"indentStyle":"tab"}}`,
+		}, "true 3 3"},
+		{"1 つの overrides の中では、言語ごとの値がトップに勝つ（実物: スペース 3）", map[string]string{
+			"biome.json": `{"overrides":[{"includes":["**/*.js"],"formatter":{"indentStyle":"tab"},"javascript":{"formatter":{"indentStyle":"space","indentWidth":3}}}]}`,
+		}, "true 3 3"},
+		{"トップのスペース 3 の上に、overrides の言語ごとのタブ（実物: タブ）", map[string]string{
+			"biome.json": `{"formatter":{"indentWidth":3,"indentStyle":"space"},"overrides":[{"includes":["**/*.js"],"javascript":{"formatter":{"indentStyle":"tab"}}}]}`,
+		}, "false 3 3"},
+		{"言語ごとの幅 3 の上に、overrides のトップの幅 5（実物: スペース 5）", map[string]string{
+			"biome.json": `{"javascript":{"formatter":{"indentWidth":3}},"formatter":{"indentStyle":"space"},"overrides":[{"includes":["**/*.js"],"formatter":{"indentWidth":5}}]}`,
+		}, "true 5 5"},
+		{"根のスペース 3 の上に、近い設定の overrides の幅 5（実物: スペース 5）", map[string]string{
+			"biome.json":     `{"formatter":{"indentStyle":"space","indentWidth":3}}`,
+			"src/biome.json": `{"root":false,"extends":"//","overrides":[{"includes":["**/*.js"],"formatter":{"indentWidth":5}}]}`,
+		}, "true 5 5"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTree(t, root, tc.files)
+			ic, _, err := c.projectIndent(filepath.Join(root, "src/a.js"), "javascript")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := optionsString(ic); got != tc.want {
+				t.Errorf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// prettier の overrides の中かっこ（*.{js,jsx}）を展開して当てる。期待値は、2026-11-22 に同じ設定で prettier 3.6.2 が
+// sub/a.js を整形した結果である（PR #352 の 3 回目のレビューの推奨）。
+//
+// req: FR-193
+func TestPrettierBraceOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name, config, want string
+	}{
+		{"実物: *.{js,jsx} は a.js に当たる（スペース 2）", `{"tabWidth":4,"overrides":[{"files":"*.{js,jsx}","options":{"tabWidth":2}}]}`, "null 2 2"},
+		{"実物: *.{ts,jsx} は a.js に当たらない（スペース 4）", `{"tabWidth":4,"overrides":[{"files":["*.{ts,jsx}"],"options":{"tabWidth":2}}]}`, "null 4 4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{".prettierrc.json": tc.config})
+			ic, _, err := prettierIndent(filepath.Join(root, "sub/a.js"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := optionsString(ic); got != tc.want {
+				t.Errorf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
+	for in, want := range map[string]string{
+		"*.{js,jsx}":     "*.js *.jsx",
+		"**/*.{a,{b,c}}": "**/*.a **/*.b **/*.c",
+		"{x,y}.{js,ts}":  "x.js x.ts y.js y.ts",
+		"*.{js}":         "*.{js}",
+		"*.{js,jsx":      "*.{js,jsx",
+	} {
+		if got := strings.Join(expandBraces([]string{in}), " "); got != want {
+			t.Errorf("expandBraces(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if n := len(expandBraces([]string{"*.{a,b}{c,d}{e,f}"})); n != 8 {
+		t.Errorf("3 つの中かっこの展開は %d 個, want 8", n)
+	}
+}
+
 // 整形ツールの見分けは、name、command のファイル名、npx などの後の最初の引数の順に見る（PR #352 のレビューの推奨 8）。
 func TestToolKind(t *testing.T) {
 	for _, tc := range []struct {

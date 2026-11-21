@@ -258,7 +258,7 @@ func biomeIndent(file, ft string) (indentConfig, []string, error) {
 	if err != nil {
 		return indentConfig{}, nil, err
 	}
-	own, err := biomeDocIndent(path, doc, file, ft, true)
+	own, overrides, err := biomeDocIndent(path, doc, file, ft, true)
 	if err != nil {
 		return indentConfig{}, nil, err
 	}
@@ -266,7 +266,35 @@ func biomeIndent(file, ft string) (indentConfig, []string, error) {
 	if err != nil {
 		return indentConfig{}, nil, err
 	}
-	return base.merge(own), append([]string{path}, srcs...), nil
+	ic := base.merge(own).resolve()
+	for _, o := range overrides {
+		ic = ic.merge(o)
+	}
+	return ic, append([]string{path}, srcs...), nil
+}
+
+// biomeLayer は、biome の設定の 1 つの部分（設定ファイルの最上位か、overrides の 1 つ）の、トップの formatter と、
+// ファイルの種類の言語の formatter（javascript.formatter など）のインデントである。
+//
+// biome は、extends の先と近い設定のように重ねる設定を、トップと言語ごとに分けて後のものが前を上書きするように重ね、
+// 重ねた後で、言語ごとの値をトップの値より強くする（resolve）。overrides は、そうして決めた値の上に、overrides ごとに
+// 言語ごとの値をトップの値より強くした値を、順に重ねる。
+// 2026-11-22 に biome 2.4.15 の format --stdin-file-path=<絶対パス> で、根の javascript.formatter のスペース 3 と、
+// "extends": "//" の近い設定のトップのタブを重ねるとスペース 3 になること、根のトップのスペース 3 と近い設定の javascript.formatter の
+// 幅 5 でスペース 5 になること、言語ごとのスペース 3 の上に overrides のトップのタブを重ねるとタブになること、overrides の中では
+// 言語ごとの値がトップの値より強いことなどを確かめた（PR #352 の 3 回目のレビューの必須）。
+type biomeLayer struct {
+	top, lang indentConfig
+}
+
+// merge は、l に o を重ねる（トップと言語ごとに分けて、o が勝つ）。
+func (l biomeLayer) merge(o biomeLayer) biomeLayer {
+	return biomeLayer{top: l.top.merge(o.top), lang: l.lang.merge(o.lang)}
+}
+
+// resolve は、言語ごとの値をトップの値より強くした、ファイルに当てる値を返す。
+func (l biomeLayer) resolve() indentConfig {
+	return l.top.merge(l.lang)
 }
 
 // biomeExtends は、biome の設定ファイル path（中身 doc）の extends の設定を、近い設定より先に当てる値にする。
@@ -279,15 +307,15 @@ func biomeIndent(file, ft string) (indentConfig, []string, error) {
 //
 // extends の先の設定がさらに extends を持つもの、extends の先の overrides でインデントを変えているものは、当てる順を確かめていないので
 // configError にする。
-func biomeExtends(path string, doc map[string]json.RawMessage, file, ft string) (indentConfig, []string, error) {
+func biomeExtends(path string, doc map[string]json.RawMessage, file, ft string) (biomeLayer, []string, error) {
 	raw, ok := doc["extends"]
 	if !ok {
-		return indentConfig{}, nil, nil
+		return biomeLayer{}, nil, nil
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		if s != "//" {
-			return indentConfig{}, nil, &configError{path: path, err: fmt.Errorf("extends の %q を読めない", s)}
+			return biomeLayer{}, nil, &configError{path: path, err: fmt.Errorf("extends の %q を読めない", s)}
 		}
 		var rootErr error
 		var rootDoc map[string]json.RawMessage
@@ -310,25 +338,25 @@ func biomeExtends(path string, doc map[string]json.RawMessage, file, ft string) 
 		}, nil)
 		switch {
 		case rootErr != nil:
-			return indentConfig{}, nil, rootErr
+			return biomeLayer{}, nil, rootErr
 		case middle != "":
-			return indentConfig{}, nil, &configError{path: path, err: fmt.Errorf("根の設定との間に、ほかの入れ子の設定 %s がある（3 段の入れ子は読めない）", middle)}
+			return biomeLayer{}, nil, &configError{path: path, err: fmt.Errorf("根の設定との間に、ほかの入れ子の設定 %s がある（3 段の入れ子は読めない）", middle)}
 		case !found:
-			return indentConfig{}, nil, nil
+			return biomeLayer{}, nil, nil
 		}
 		root, err := biomeBase(rootPath, rootDoc, file, ft)
 		return root, []string{rootPath}, err
 	}
 	var list []string
 	if err := json.Unmarshal(raw, &list); err != nil {
-		return indentConfig{}, nil, &configError{path: path, err: fmt.Errorf("extends を読めない: %w", err)}
+		return biomeLayer{}, nil, &configError{path: path, err: fmt.Errorf("extends を読めない: %w", err)}
 	}
-	var out indentConfig
+	var out biomeLayer
 	var srcs []string
 	for _, e := range list {
 		local := strings.HasPrefix(e, "./") || strings.HasPrefix(e, "../") || filepath.IsAbs(e)
 		if ext := filepath.Ext(e); !local || ext != ".json" && ext != ".jsonc" {
-			return indentConfig{}, nil, &configError{path: path, err: fmt.Errorf("extends の %q（共有の設定）は読めない", e)}
+			return biomeLayer{}, nil, &configError{path: path, err: fmt.Errorf("extends の %q（共有の設定）は読めない", e)}
 		}
 		target := e
 		if !filepath.IsAbs(e) {
@@ -336,24 +364,25 @@ func biomeExtends(path string, doc map[string]json.RawMessage, file, ft string) 
 		}
 		d, err := readBiome(target)
 		if err != nil {
-			return indentConfig{}, nil, err
+			return biomeLayer{}, nil, err
 		}
-		ic, err := biomeBase(target, d, file, ft)
+		l, err := biomeBase(target, d, file, ft)
 		if err != nil {
-			return indentConfig{}, nil, err
+			return biomeLayer{}, nil, err
 		}
-		out = out.merge(ic)
+		out = out.merge(l)
 		srcs = append(srcs, target)
 	}
 	return out, srcs, nil
 }
 
 // biomeBase は、extends の先の設定ファイル path（中身 doc）からインデントを読む。さらに extends を持つものは configError にする。
-func biomeBase(path string, doc map[string]json.RawMessage, file, ft string) (indentConfig, error) {
+func biomeBase(path string, doc map[string]json.RawMessage, file, ft string) (biomeLayer, error) {
 	if _, ok := doc["extends"]; ok {
-		return indentConfig{}, &configError{path: path, err: errors.New("extends の先の設定の extends は読めない")}
+		return biomeLayer{}, &configError{path: path, err: errors.New("extends の先の設定の extends は読めない")}
 	}
-	return biomeDocIndent(path, doc, file, ft, false)
+	l, _, err := biomeDocIndent(path, doc, file, ft, false)
+	return l, err
 }
 
 // readBiome は、biome の設定ファイル path を、最上位の項目から JSON への対応にする。
@@ -394,21 +423,15 @@ func biomeFormatter(where string, raw json.RawMessage) (indentConfig, error) {
 }
 
 // biomeSection は、biome の設定の部分（最上位か、overrides の 1 つ）doc の、formatter と ft の言語の formatter を読む。
-// hasIndent は、どちらかにインデントの項目（indentStyle か indentWidth）を書いたかである。
-func biomeSection(where string, doc map[string]json.RawMessage, ft string) (ic indentConfig, hasIndent bool, err error) {
-	read := func(w string, raw json.RawMessage) error {
-		x, err := biomeFormatter(w, raw)
-		if err != nil {
-			return err
-		}
-		hasIndent = hasIndent || x != (indentConfig{})
-		ic = ic.merge(x)
-		return nil
-	}
+// hasIndent は、どちらか（ft の言語でない言語を含む）にインデントの項目（indentStyle か indentWidth）を書いたかである。
+func biomeSection(where string, doc map[string]json.RawMessage, ft string) (l biomeLayer, hasIndent bool, err error) {
 	if raw, ok := doc["formatter"]; ok {
-		if err := read(where+"formatter", raw); err != nil {
-			return indentConfig{}, false, err
+		x, err := biomeFormatter(where+"formatter", raw)
+		if err != nil {
+			return biomeLayer{}, false, err
 		}
+		hasIndent = x != (indentConfig{})
+		l.top = x
 	}
 	for _, lang := range []string{"javascript", "json", "css", "graphql", "html"} {
 		raw, ok := doc[lang]
@@ -419,69 +442,71 @@ func biomeSection(where string, doc map[string]json.RawMessage, ft string) (ic i
 			Formatter json.RawMessage `json:"formatter"`
 		}
 		if err := json.Unmarshal(raw, &section); err != nil {
-			return indentConfig{}, false, fmt.Errorf("%s%s: %w", where, lang, err)
+			return biomeLayer{}, false, fmt.Errorf("%s%s: %w", where, lang, err)
 		}
 		if section.Formatter == nil {
 			continue
 		}
 		x, err := biomeFormatter(where+lang+".formatter", section.Formatter)
 		if err != nil {
-			return indentConfig{}, false, err
+			return biomeLayer{}, false, err
 		}
 		hasIndent = hasIndent || x != (indentConfig{})
 		if lang == biomeLanguage[ft] {
-			ic = ic.merge(x)
+			l.lang = x
 		}
 	}
-	return ic, hasIndent, nil
+	return l, hasIndent, nil
 }
 
 // biomeDocIndent は、biome の設定ファイル path の中身 doc から、ファイル file のインデントを読む。
-// apply が true なら、file に当たる overrides のインデントを順に重ねる（後のものが勝つ。2026-11-22 に biome 2.4.15 で確かめた）。
+// 最上位のトップと言語ごとの値（biomeLayer）と、apply が true なら file に当たる overrides の値（言語ごとの値をトップの値より強くしたもの）を
+// 順に返す（呼び出し側が後のものを勝たせて重ねる。2026-11-22 に biome 2.4.15 で確かめた。biomeLayer の doc）。
 // overrides の includes は path のディレクトリからの相対パスに当て（overrideMatch。biome の *.js はそのディレクトリの直下のファイルにだけ当たる）、
 // 当たるかを決められないもので、インデントを変えているものは configError にする。当たらないと分かるものは読み飛ばす。
 // apply が false（extends の先の設定）なら、インデントを変えている overrides は、当てる順を確かめていないので configError にする。
-func biomeDocIndent(path string, doc map[string]json.RawMessage, file, ft string, apply bool) (indentConfig, error) {
-	ic, _, err := biomeSection("", doc, ft)
+func biomeDocIndent(path string, doc map[string]json.RawMessage, file, ft string, apply bool) (biomeLayer, []indentConfig, error) {
+	l, _, err := biomeSection("", doc, ft)
 	if err != nil {
-		return indentConfig{}, &configError{path: path, err: err}
+		return biomeLayer{}, nil, &configError{path: path, err: err}
 	}
 	raw, ok := doc["overrides"]
 	if !ok {
-		return ic, nil
+		return l, nil, nil
 	}
 	var overrides []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &overrides); err != nil {
-		return indentConfig{}, &configError{path: path, err: fmt.Errorf("overrides: %w", err)}
+		return biomeLayer{}, nil, &configError{path: path, err: fmt.Errorf("overrides: %w", err)}
 	}
 	rel := relSlash(filepath.Dir(path), file)
+	var matched []indentConfig
 	for i, o := range overrides {
 		x, has, err := biomeSection(fmt.Sprintf("overrides[%d].", i), o, ft)
 		if err != nil {
-			return indentConfig{}, &configError{path: path, err: err}
+			return biomeLayer{}, nil, &configError{path: path, err: err}
 		}
 		if !has {
 			continue
 		}
 		if !apply {
-			return indentConfig{}, &configError{path: path, err: fmt.Errorf("extends の先の overrides[%d] でインデントを変えている（読めない）", i)}
+			return biomeLayer{}, nil, &configError{path: path, err: fmt.Errorf("extends の先の overrides[%d] でインデントを変えている（読めない）", i)}
 		}
 		var includes []string
 		_, legacy := o["include"]
 		if r, ok := o["includes"]; ok && !legacy {
 			if err := json.Unmarshal(r, &includes); err != nil {
-				return indentConfig{}, &configError{path: path, err: fmt.Errorf("overrides[%d].includes: %w", i, err)}
+				return biomeLayer{}, nil, &configError{path: path, err: fmt.Errorf("overrides[%d].includes: %w", i, err)}
 			}
 		}
 		match, known := overrideMatch(includes, nil, rel, false)
 		switch {
 		case !known:
-			return indentConfig{}, &configError{path: path, err: fmt.Errorf("overrides[%d] がこのファイルに当たるかを決められない（読めない）", i)}
+			return biomeLayer{}, nil, &configError{path: path, err: fmt.Errorf("overrides[%d] がこのファイルに当たるかを決められない（読めない）", i)}
 		case match:
-			ic = ic.merge(x)
+			matched = append(matched, x.resolve())
 		}
 	}
-	return ic, nil
+	return l, matched, nil
 }
 
 // relSlash は、ディレクトリ dir からファイル file への相対パスを、/ で区切って返す。求められなければ file のファイル名を返す。
@@ -704,7 +729,7 @@ func prettierOverrides(doc map[string]any, src string, jsonForm bool, rel string
 		if x == (indentConfig{}) {
 			continue
 		}
-		match, known := overrideMatch(stringList(m["files"]), stringList(m["excludeFiles"]), rel, true)
+		match, known := overrideMatch(expandBraces(stringList(m["files"])), expandBraces(stringList(m["excludeFiles"])), rel, true)
 		switch {
 		case !known:
 			return indentConfig{}, fmt.Errorf("overrides[%d] がこのファイルに当たるかを決められない（読めない）", i)
@@ -713,6 +738,65 @@ func prettierOverrides(doc map[string]any, src string, jsonForm bool, rel string
 		}
 	}
 	return out, nil
+}
+
+// maxBraceExpansion は、expandBraces が作るパターンの数の上限である。
+const maxBraceExpansion = 64
+
+// expandBraces は、パターンの列 patterns の中かっこ（*.{js,jsx} を *.js と *.jsx に）を展開する。入れ子と複数の中かっこも展開する。
+// 閉じていない中かっこと、展開すると maxBraceExpansion を超えるものは、そのまま残す（overrideMatch が決められないものとして扱う）。
+// prettier 3.6.2 は overrides の files の *.{js,jsx} を *.js と *.jsx として当てる（2026-11-22 に確かめた。PR #352 の 3 回目のレビューの推奨）。
+func expandBraces(patterns []string) []string {
+	var out []string
+	for _, p := range patterns {
+		ex := expandBrace(p)
+		if ex == nil {
+			ex = []string{p}
+		}
+		out = append(out, ex...)
+	}
+	return out
+}
+
+// expandBrace は、パターン p の最初の中かっこを展開し、残りも続けて展開する。展開できなければ nil を返す。
+// カンマの無い中かっこ（{js}）は、展開しない（そのまま残す）。
+func expandBrace(p string) []string {
+	open := strings.IndexByte(p, '{')
+	if open < 0 {
+		return []string{p}
+	}
+	depth, end := 0, -1
+	var parts []string
+	start := open + 1
+	for i := open; i < len(p) && end < 0; i++ {
+		switch p[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				parts = append(parts, p[start:i])
+				end = i
+			}
+		case ',':
+			if depth == 1 {
+				parts = append(parts, p[start:i])
+				start = i + 1
+			}
+		}
+	}
+	if end < 0 || len(parts) < 2 {
+		return nil
+	}
+	var out []string
+	for _, part := range parts {
+		ex := expandBrace(p[:open] + part + p[end+1:])
+		if ex == nil || len(out)+len(ex) > maxBraceExpansion {
+			return nil
+		}
+		out = append(out, ex...)
+	}
+	return out
 }
 
 // stringList は、JSON の文字列か文字列の配列 v を、文字列の列にする。どちらでもなければ空である。
