@@ -65,10 +65,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("vi-imitation", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
-		_, _ = fmt.Fprintln(flags.Output(), "使い方: vi-imitation [オプション] [ファイル ...]") // 使い方を書けなくても続ける
+		_, _ = fmt.Fprintln(flags.Output(), "使い方: vi-imitation [オプション] [ファイル ...]\n       vi-imitation --docs [話題 [節]]") // 使い方を書けなくても続ける
 		flags.PrintDefaults()
 	}
 	showVersion := flags.Bool("version", false, "バージョンを表示して終了する")
+	// req: FR-172
+	showDocs := flags.Bool("docs", false, "本体に埋め込んだ文書（設定、キーの割り当て、Ex コマンド、拡張機能、デバッグの案内）を出して終了する。--docs で話題の一覧、--docs <話題> [節] でその文書")
 	logPath := flags.String("log", "", "ログを追記するファイル。指定しなければログを書かない（画面を崩さないため、標準エラー出力には書かない）")
 	// req: FR-119
 	readOnly := flags.Bool("R", false, "引数のファイルを、編集を禁止した状態で開く（:readonly で解ける）")
@@ -87,6 +89,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if *showVersion {
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
+	}
+	if *showDocs {
+		// 起動の引数のファイルと名前がぶつからないよう、サブコマンド（vi-imitation docs）にせずオプションにした。
+		// 端末を使わないので、端末かどうかを確かめる前に出す。
+		return runDocs(flags.Args(), stdout)
 	}
 	if *popupView != 0 || *paneView != 0 {
 		in, inOK := stdin.(*os.File)

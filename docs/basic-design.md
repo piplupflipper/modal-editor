@@ -44,6 +44,9 @@
 
 利用者が足す拡張機能も、標準の拡張機能と同じ仕組みで起動する。
 
+`vi-imitation --docs [話題 [節]]` は、エディタを開かずに、本体に埋め込んだ文書（設定、キーの割り当て、Ex コマンド、拡張機能の参照、デバッグの案内）を標準出力に出して終わる（FR-172。7.2 の「本体に埋め込む文書（#330）」）。
+`--version` と同じく端末を使わない。
+
 段階 3 の server、client、ポップアップの client（1.4）は、どれも同じ実行ファイル `vi-imitation` を起動の引数と環境変数で動かし分ける（仮）。
 実行ファイルを分けないのは、server と client の間の取り決めを同じビルドの中で閉じ、版の食い違いを起こさないためである。
 段階 3 で足す標準の拡張機能（6.9）の実行ファイルの名前は、上の表と同じく `vi-imitation-ext-<名前>` にする（仮）。
@@ -3944,6 +3947,22 @@ README によれば、F キーは段階 2 では押しても何もしないの�
 | 拡張機能の説明文 | 宣言ファイルの `contributes` の各項目の `description`（5.1）。無ければ操作の ID を出す。拡張機能 API の版は上げない（`ext.APIVersion` の doc。古い本体は `contributes` の中の未知の項目を黙って捨てるので、動きは変わらない） |
 | `?` で絞る一覧 | `<leader>l?` と `<leader>d?` は本体の既定のキー（`internal/input` の `keyListKeys`）で、接頭辞で始まるキーに加えて、LSP と DAP の操作の分類（`input.ProviderGroup`。`debug.` と `breakpoint.` で始まる操作が DAP、他の要件定義 4.11 の操作が LSP）のキーを出す。`K`、`gq`、`<C-]>` も `<leader>l?` に出る（PR #230 のレビューを受けたオーケストレータの決定）。`g?` が Vim の rot13 と重なることは `docs/vim-differences.md` に書いた。他の接頭辞は、ノーマルモードの登録（本体、LSP と DAP、拡張機能）と利用者のキーマップの左辺の接頭辞のうち、それ自体が操作でないもの（`<Space>`、`g`、`<C-w>`、`s` など）に、起動のときに `?` を続けたキーを足す。それ自体が操作の接頭辞（`d` など）には足さない。`d?` は `d` と `?` の検索の組み合わせのまま残す |
 | 操作の扱い | `?` の操作は、LSP と DAP の操作と同じく `input.ProviderExtension` の操作にし、ID を `keys.` で始めて、提供者へ問い合わせる前に本体が受け取る。ドットリピートに記録せず、編集を禁止したバッファでも断らない。マクロの再生の途中で出したら、再生の残りは一覧のタブで続く |
+
+#### 本体に埋め込む文書（#330）
+
+#330 で、設定、キーの割り当て、Ex コマンド、拡張機能の参照の文書と、デバッグの案内を本体に埋め込み、`vi-imitation --docs` で標準出力に出すようにした（FR-172）。
+配布物（`make dist`）は `docs/` を入れないので、配布物だけを持つ利用者が、ソースを取らずに AI エージェントへ読ませるためである。
+次のとおりに決めた（どれも仮）。
+
+| 項目 | 決めたこと |
+|---|---|
+| 起動の形 | `vi-imitation --docs` で話題の一覧、`vi-imitation --docs <話題>` で話題の全体、`vi-imitation --docs <話題> <節>` で見出しが `<節>` の節だけを出して終わる（1.1）。issue の案のサブコマンド（`vi-imitation docs`）は、名前が `docs` のファイル（やディレクトリ）を開く起動とぶつかるので採らず、`--version` と同じオプションにした。端末を使わず、端末かどうかを確かめる前に出す |
+| 話題 | `config`、`keymap`、`commands`、`extensions`、`extension-types`、`debugging`、`usage`。AI エージェントが要る話題だけを読めるように分けた。拡張機能 API の型は約 73 KB あるので、宣言ファイルとメソッドの一覧（`extensions`）と分け、型の名前を節に書いて 1 つずつ読む形にした。`usage` は `docs/usage.md`（`:help` の文書）の全体で、説明が要るところは、ほかの話題から `vi-imitation --docs usage <節>` の形で指す（説明の文を重ねて書かない） |
+| 置き場所 | `docs/agent/<話題>.md`、`docs/debugging.md`、`docs/usage.md`。パッケージ `docs` が `go:embed` で埋め込み、`docs.Topics` で話題の表を返す。1 行だけの HTML のコメント（生成の印）は出すときに除く |
+| 生成 | 一覧の部分は、文書の中の印（`<!-- generated:<名前>:begin -->` と `end`）の間に、`cmd/docgen` がコードの表から書く。表は、設定の表（`option.Defs`）、設定ファイルの最上位の項目（`config.TopLevelNames`）、操作の表（`input.Actions`）と既定のキーマップ（`input.DefaultKeymapLeader`）、Ex コマンドの表（`ex.Names`）、拡張機能のコマンドの口から呼ぶ本体のコマンド（`editor.HostCommandNames`）、拡張機能 API（`ext` のソースを `go/parser` で読んだ型、定数、doc コメント）である。`ext` の型を reflect でなくソースから読むのは、項目の説明（doc コメント）を文書に写すためである。doc コメントの括弧の中の設計の文書と issue と PR への参照は除く（配布物の利用者は読めないため）。メソッドの向き、種類、params と result の型は、`Method` で始まる定数の doc コメントの最初の文と「params は」「result は」から読み、読めなければ生成を誤りにする |
+| 検査 | `make docs`（`go generate ./docs`）で生成し、`make docs-check`（`go run ./cmd/docgen -check`）を `make check` に入れた。`cmd/docgen` のテストも同じ照合をするので、`go test ./...` だけでも気づける。並行する PR が設定、操作、Ex コマンド、拡張機能 API を足したら、後からマージする PR が rebase の後に `make docs` で生成し直す |
+| 形式 | Markdown だけにした。`--format json` は足していない。表と箇条書きは AI エージェントがそのまま読め、機械向けの形を別に保つ費用に見合う使い道がまだ無いためである |
+| `:help` | デバッグの案内は `:help` の文書に足さず、`docs/usage.md` の「本体に埋め込んだ文書（`--docs`）」の節から指す。`:help` の語の引き方（説明の行の探し方）に、別の文書の見出しと語が混ざらないようにするためである |
 
 ### 7.3 設定の表と実行中の変更
 

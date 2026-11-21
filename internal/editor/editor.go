@@ -737,6 +737,20 @@ func commandLineTable(specs []exthost.Spec) (map[string]string, []error) {
 	return cmds, errs
 }
 
+// HostCommandNames は、本体のコマンドのうち、Ex コマンドの表（ex.Names）に無く、拡張機能のコマンドと同じ口から呼ぶもの
+// （:ext、:help と :h、:keys、:messages とその省略形）の名前を、名前の順に返す。
+// 拡張機能を読み込まない表（commandLineTable）から取るので、provides の操作の名前（:hover など）は含まない。
+// AI エージェント向けの文書の Ex コマンドの一覧（cmd/docgen。FR-172）が、Ex コマンドの表の後に並べる。
+func HostCommandNames() []string {
+	cmds, _ := commandLineTable(nil) // 拡張機能が無いので、重なりの誤りは起きない
+	names := make([]string, 0, len(cmds))
+	for name := range cmds {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
 // CommandAliases は、設定ファイルの別名（config.Config.CommandAliases。FR-150）を足していく Ex コマンドの別名の表と、
 // 1 件を表の最後に足す関数を返す。表は本体の別名の行（:set、:nohlsearch）から始まる。
 // 付け替える先にできる拡張機能のコマンドは、specs（Config.Extensions に渡すもの）が宣言したコマンドと、

@@ -97,8 +97,18 @@ progress: ## 要件ごとの進捗（docs/progress.md）を生成する
 progress-check: ## docs/progress.md が最新でなければ失敗する
 	go run ./cmd/reqtrace -check
 
+# 本体に埋め込む AI エージェント向けの文書（docs/agent/*.md）の一覧の部分を、コードの表から生成する（FR-172）。
+# 設定の表、操作の表、Ex コマンドの表、拡張機能 API を変えたら make docs を打つ。打ち忘れると make docs-check（make check）が失敗する。
+.PHONY: docs
+docs: ## 本体に埋め込む文書（docs/agent/*.md）の一覧を生成する
+	go generate ./docs
+
+.PHONY: docs-check
+docs-check: ## docs/agent/*.md の一覧がコードの表とずれていれば失敗する
+	go run ./cmd/docgen -check
+
 .PHONY: check
-check: fmt-check typecheck lint test tidy-check progress-check ## コミット前の検査を全て実行する（CI と同じ内容）
+check: fmt-check typecheck lint test tidy-check progress-check docs-check ## コミット前の検査を全て実行する（CI と同じ内容）
 
 # 本体を CGO_ENABLED=0 で作る（NFR-02）。make build-check が検査する。
 # 本体はシンボルとデバッグ情報を削らずに作る（-ldflags に -s -w を足さない）。デバッガーで変数を読めるようにするためで、
