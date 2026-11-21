@@ -94,6 +94,9 @@
 | `diagnostic.popup` | 真偽 | エディタ全体 | `false` |  |
 | `progress.show` | 真偽 | エディタ全体 | `true` |  |
 | `progress.doneMs` | 整数 | エディタ全体 | `3000` | 0 から 60000 |
+| `mouse.enabled` | 真偽 | エディタ全体 | `false` |  |
+| `mouse.scrollLines` | 整数 | エディタ全体 | `3` | 0 から 9999 |
+| `mouse.scrollColumns` | 整数 | エディタ全体 | `6` | 0 から 9999 |
 <!-- generated:options:end -->
 
 各項目の説明と、`:set` で使える Vim の名前は `vi-imitation --docs usage 設定の名前の一覧` にある。

@@ -251,6 +251,11 @@ func (e *Editor) handleKey(k editcmd.Key) {
 		e.op.intr.Store(false)
 		k = editcmd.Esc
 	}
+	if k.IsMouse() && (e.confirm != nil || e.prompt != nil || e.activeChoice() != nil || e.regList != nil) {
+		// 問いと一覧の窓を出している間のマウスの出来事（ホイールなど）は、答えにも一覧の操作にもせずに捨てる（FR-184）。
+		// 答えにすると、問いの間にホイールを回しただけで y でない答え（n）になるためである。
+		return
+	}
 	e.dismissFloat(k)
 	if e.confirm != nil {
 		// 答えは、問いを出したバッファの State へ渡す。問いの間は拡張機能のイベントを取っておくので、そのバッファと範囲は変わっていない。

@@ -175,6 +175,17 @@ func writeKeyNames(w *bytes.Buffer) error {
 	}
 	fmt.Fprintf(w, "`<` と `>` で囲む名前: %s（`<lt>` は `<` そのもの）。\n", strings.Join(names, "、"))
 	fmt.Fprintln(w, "修飾キー: `C-`（Ctrl）、`A-` か `M-`（Alt）、`S-`（Shift）を名前の前に付ける（`<C-w>`、`<A-x>`、`<S-Tab>`）。名前と修飾キーの大文字と小文字は区別しない。")
+	// マウスの出来事のキー（FR-184）。複数回のクリックの表記は、読めることを確かめてから書く。
+	var mouse []string
+	for c := editcmd.CodeLeftMouse; c <= editcmd.CodeScrollWheelRight; c++ {
+		mouse = append(mouse, code(editcmd.Special(c).String()))
+	}
+	clicks := "<2-LeftMouse>"
+	if _, err := editcmd.ParseKeys(clicks); err != nil {
+		return fmt.Errorf("キーの表記 %s を読めない: %w", clicks, err)
+	}
+	fmt.Fprintf(w, "マウスの出来事（設定の `mouse.enabled` が真の間だけ届く）: %s。"+
+		"続けて押したボタンの 2 回目から 4 回目は、名前の前に `2-` から `4-` を付けて書く（%s）。\n", strings.Join(mouse, "、"), code(clicks))
 	return nil
 }
 

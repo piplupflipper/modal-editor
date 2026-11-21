@@ -48,6 +48,10 @@ func (s *State) lineHeight() func(int) int {
 
 // scrollMargin は、カーソルの上下に残す余白の行数（設定の scroll.margin。FR-174）を返す。設定の口が無ければ（テスト）表の既定値である。
 func (s *State) scrollMargin() int {
+	if s.MouseDragging() {
+		// マウスでドラッグして選んでいる間は、余白を残さない（Neovim 0.12.5 と同じ。mouse.go）。
+		return 0
+	}
 	d, ok := option.Lookup(option.ScrollMargin)
 	if !ok {
 		return 0

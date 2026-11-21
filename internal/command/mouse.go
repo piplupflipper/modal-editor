@@ -99,7 +99,7 @@ func insertMouse(id string) func(*State) {
 //
 // req: FR-181
 func (s *State) mouseClick() error {
-	s.mouseAnchor = nil
+	s.mouseAnchor, s.mouseDragging = nil, false
 	if s.Mouse == nil {
 		return nil
 	}
@@ -168,6 +168,8 @@ func (s *State) mouseMove(t MouseTarget) {
 //   - 行末より右へ動かすと、その行の改行まで選ぶ（Neovim と同じ。望みの列が行の幅より右なので visualCursor が行末の後に置く）
 //   - 表示領域の上（タブの行）か下（ステータス行、コマンドラインの行）へはみ出したら、はみ出した行の数だけ表示領域を送り、
 //     表示領域の端の行へ移る（Neovim と同じ）
+//   - 選び始めてから離すまでは、上下の余白（scroll.margin）を残さない（MouseDragging。Neovim の mouse_dragging と同じく、
+//     表示領域の端の行へドラッグしても表示領域を送らない）
 //   - ボタンを押した位置がこのバッファのテキストでなければ（タブの行など）、何もしない
 //
 // req: FR-183
@@ -178,6 +180,9 @@ func (s *State) mouseDrag() error {
 	t := s.Mouse.Target(true)
 	if t.Kind != MouseText {
 		return nil
+	}
+	if s.mode.visual() {
+		s.mouseDragging = true
 	}
 	if t.Over != 0 {
 		if line, ok := s.mouseDragScroll(t.Over); ok {
@@ -195,10 +200,15 @@ func (s *State) mouseDrag() error {
 		s.mode = ModeVisual
 		s.visual.anchor = s.clampNormal(s.clampPos(anchor))
 		s.parser.SetVisual(true)
+		s.mouseDragging = true
 	}
 	s.mouseMove(t)
 	return nil
 }
+
+// MouseDragging は、マウスのボタンを押した後にドラッグで選び始め、まだ離していないかを返す（FR-183）。
+// その間は、描画もスクロールの数え方も、上下の余白（scroll.margin）を残さない（internal/editor の marginsFor と scrollMargin）。
+func (s *State) MouseDragging() bool { return s.mouseAnchor != nil && s.mouseDragging }
 
 // lineWidth は、行 l の表示幅（行末の位置の表示の列）を返す。
 func (s *State) lineWidth(l int) int {
@@ -227,7 +237,7 @@ func (s *State) mouseDragScroll(over int) (line int, ok bool) {
 //
 // req: FR-183
 func (s *State) mouseRelease() error {
-	s.mouseAnchor = nil
+	s.mouseAnchor, s.mouseDragging = nil, false
 	return nil
 }
 
@@ -240,7 +250,7 @@ func (s *State) mouseRelease() error {
 //
 // req: FR-183
 func (s *State) mouseSelect(line bool) error {
-	s.mouseAnchor = nil
+	s.mouseAnchor, s.mouseDragging = nil, false
 	if s.Mouse == nil {
 		return nil
 	}

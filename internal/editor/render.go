@@ -48,7 +48,7 @@ func (e *Editor) frame() *ui.Frame {
 	f := &ui.Frame{
 		Text:            bs.buf,
 		LineLayout:      e.lineLayout(bs, false), // 空白の記号を描くかは bufferFrame が決め直す
-		Margins:         e.margins(),
+		Margins:         e.marginsFor(bs.state),
 		Name:            bufferTitle(cur),
 		Modified:        cur.buf.Modified(),
 		ReadOnly:        cur.buf.ReadOnly(),
@@ -199,6 +199,18 @@ func (e *Editor) margins() ui.Margins {
 		Rows:    e.options.Get(option.ScrollMargin).Int(),
 		Columns: e.options.Get(option.ScrollSideMargin).Int(),
 	}
+}
+
+// marginsFor は、State st の表示領域に詰める余白を返す。マウスでドラッグして選んでいる間（command.State.MouseDragging）は、
+// Neovim 0.12.5 と同じく上下の余白を残さない（ドラッグの位置が表示領域の端の行でも、表示領域を送らない。FR-183）。
+//
+// req: FR-174, FR-183
+func (e *Editor) marginsFor(st *command.State) ui.Margins {
+	m := e.margins()
+	if st != nil && st.MouseDragging() {
+		m.Rows = 0
+	}
+	return m
 }
 
 // lineWrap は、長い行を折り返して描くかを、エディタ全体の設定の今の値（lineWrap.enabled）から返す（FR-156）。

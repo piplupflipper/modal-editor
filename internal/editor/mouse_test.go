@@ -442,6 +442,37 @@ func TestMouseKeymap(t *testing.T) {
 	}
 }
 
+// 問いと一覧の窓（レジスターの履歴の一覧）を出している間のマウスの出来事は、答えにも一覧の操作にもせずに捨てる。
+//
+// req: FR-184
+func TestMouseWhileAsking(t *testing.T) {
+	h := mouseStart(t, Config{}, map[string]string{"a.txt": mouseText}, "a.txt")
+	h.keys("yy:registers<CR>")
+	h.eventually("一覧の窓", func() bool { return h.e.regList != nil })
+	h.mouse("<ScrollWheelDown>", 3, 3)
+	h.click(3, 3)
+	var open bool
+	h.e.do(func() { open = h.e.regList != nil })
+	if !open {
+		t.Fatal("マウスの出来事で一覧の窓を閉じた")
+	}
+	h.keys("<Esc>")
+	h.settle()
+	if got := h.cursor(); got != (buffer.Position{}) {
+		t.Errorf("一覧の窓を閉じた後のカーソル = %+v", got)
+	}
+	// 逆順の範囲の確認の問いの間のホイールは、n の答えにしない。
+	h.keys(":3,1d<CR>")
+	h.eventually("問い", func() bool { return h.e.confirm != nil })
+	h.mouse("<ScrollWheelDown>", 3, 3)
+	h.click(3, 3)
+	h.keys("y")
+	h.settle()
+	if got := h.text(); got != "日本語のテキスト\nlast" {
+		t.Errorf("問いにマウスの出来事を送ってから y と答えた後 = %q", got)
+	}
+}
+
 // ペインの部品の client の画面のクリックは、その client の画面の座標で解き、部品のバッファのカーソルを移す（FR-185）。
 // 部品の client の端末にも、マウスの報告を求める。
 //

@@ -178,6 +178,8 @@ type State struct {
 	scrollAmount, scrollAmountRows int
 	// mouseAnchor は、マウスのボタンを押した位置（ドラッグで選ぶ範囲の始まり）である。ボタンを押していなければ nil である（mouse.go）。
 	mouseAnchor *buffer.Position
+	// mouseDragging は、ボタンを押した後にドラッグで選び始め、まだ離していないことを表す（MouseDragging）。
+	mouseDragging bool
 
 	parser    KeyParser
 	registers Registers

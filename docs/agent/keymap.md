@@ -46,6 +46,7 @@
 <!-- generated:key-names:begin -->
 `<` と `>` で囲む名前: `<Esc>`、`<CR>`、`<Tab>`、`<BS>`、`<Del>`、`<Up>`、`<Down>`、`<Left>`、`<Right>`、`<Home>`、`<End>`、`<PageUp>`、`<PageDown>`、`<Insert>`、`<F1>`〜`<F20>`、`<Space>`、`<lt>`、`<Bar>`、`<Bslash>`（`<lt>` は `<` そのもの）。
 修飾キー: `C-`（Ctrl）、`A-` か `M-`（Alt）、`S-`（Shift）を名前の前に付ける（`<C-w>`、`<A-x>`、`<S-Tab>`）。名前と修飾キーの大文字と小文字は区別しない。
+マウスの出来事（設定の `mouse.enabled` が真の間だけ届く）: `<LeftMouse>`、`<LeftDrag>`、`<LeftRelease>`、`<MiddleMouse>`、`<MiddleDrag>`、`<MiddleRelease>`、`<RightMouse>`、`<RightDrag>`、`<RightRelease>`、`<ScrollWheelUp>`、`<ScrollWheelDown>`、`<ScrollWheelLeft>`、`<ScrollWheelRight>`。続けて押したボタンの 2 回目から 4 回目は、名前の前に `2-` から `4-` を付けて書く（`<2-LeftMouse>`）。
 <!-- generated:key-names:end -->
 
 ## 操作の ID の一覧
@@ -177,6 +178,15 @@ LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作�
 | `diff-prev` | 操作 | normal | `[c` | 見比べで、前の差分へ |
 | `search-word-forward` | 操作 | normal、visual | `*` | カーソルの単語を前方への検索のパターンにする（移らない） |
 | `search-word-backward` | 操作 | normal、visual | `#` | カーソルの単語を後方への検索のパターンにする（移らない） |
+| `mouse.click` | 操作 | normal、visual、insert | `<LeftMouse>` `<4-LeftMouse>` | マウスの位置へ移る（タブの行ならそのタブへ移る） |
+| `mouse.drag` | 操作 | normal、visual、insert | `<LeftDrag>` | ボタンを押した位置からマウスの位置までを選ぶ |
+| `mouse.release` | 操作 | normal、visual、insert | `<LeftRelease>` | ドラッグを終える |
+| `mouse.select-word` | 操作 | normal、visual、insert | `<2-LeftMouse>` | マウスの位置の単語を選ぶ |
+| `mouse.select-line` | 操作 | normal、visual、insert | `<3-LeftMouse>` | マウスの位置の行を選ぶ |
+| `mouse.scroll-down` | 操作 | normal、visual、insert | `<ScrollWheelDown>` | 表示領域を mouse.scrollLines の行だけ下へ送る |
+| `mouse.scroll-up` | 操作 | normal、visual、insert | `<ScrollWheelUp>` | 表示領域を mouse.scrollLines の行だけ上へ送る |
+| `mouse.scroll-right` | 操作 | normal、visual、insert | `<ScrollWheelRight>` | 行を折り返さないとき、表示領域を mouse.scrollColumns の列だけ右へ送る |
+| `mouse.scroll-left` | 操作 | normal、visual、insert | `<ScrollWheelLeft>` | 行を折り返さないとき、表示領域を mouse.scrollColumns の列だけ左へ送る |
 | `insert.left` | 操作 | insert | `<Left>` | 左へ |
 | `insert.right` | 操作 | insert | `<Right>` | 右へ |
 | `insert.up` | 操作 | insert | `<Up>` | 上の行へ |
