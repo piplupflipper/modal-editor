@@ -54,6 +54,7 @@ func (r *Renderer) drawScrollbar(g *Grid, theme Theme, sb *Scrollbar, text Text,
 	x := area.width - 1
 	// マウスの位置を解く HitTest が、描いたセル（つまみと印）を引く（FR-189）。
 	r.hits.bar, r.hits.barOK = rect{top: area.top, left: x, h: h, w: 1}, true
+	r.hits.barThumb, r.hits.barLines = start, n
 	r.hits.barCells = r.hits.barCells[:0]
 	for i := range h {
 		cell := r.scrollbarCellAt(sb, i, n, h, start, end)
@@ -116,6 +117,44 @@ func (r *Renderer) scrollbarCellAt(sb *Scrollbar, i, n, h, start, end int) scrol
 		}
 	}
 	return c
+}
+
+// ScrollbarMarkLines は、直前の Render が描いたスクロールバーの i 行目（表示領域の行。Hit.Row）のセルに描いた印の種類の行
+// （ScrollbarMarks.Lines のうち、そのセルに割り付けた範囲 [Hit.Line, Hit.LineEnd) に入るもの）を、小さい順に返す。
+// 印を押してその行へ移る操作（FR-211）が、描いた印と同じ選び方の行を引く。印が無いセル、描いていない行、描いていないときは nil である。
+// 返す一覧は Frame.Scrollbar の一覧の部分の列なので、書き換えない。
+func (r *Renderer) ScrollbarMarkLines(i int) []int {
+	if !r.hits.barOK || i < 0 || i >= len(r.hits.barCells) {
+		return nil
+	}
+	c := r.hits.barCells[i]
+	if c.mark < 0 {
+		return nil
+	}
+	return c.lines
+}
+
+// ScrollbarTop は、直前の Render が描いたスクロールバーのつまみの最初の行を、表示領域の i 行目（0 から数える）へ動かすときの、
+// 表示領域の最初の行（0 から数える）を返す（つまみのドラッグ。FR-210）。スクロールバーを描いていなければ ok は false である。
+//
+// i は表示領域の行の範囲 [0, h) へ寄せ、行 round(i×(n−1)÷(h−1)) を返す（h は表示領域の行数、n はバッファの行数）。
+// 0 行目は最初の行、最後の行は最後の行（表示領域にはその行と "~" の行だけが見える）になる。
+// nvim-scrollview（コミット ce007c654e6af5f9dc5a8c92ea300e623fface1a）の simple の数え方の対応表（lua/scrollview.lua の
+// simple_topline_lookup）と同じで、本体のつまみの数え方（scrollbarThumb の floor(最初の行×h÷n)）で描き直すと、つまみの最初の行は
+// バッファの行の数が表示領域の行数以上なら i 行目になる。
+//
+// req: FR-210
+func (r *Renderer) ScrollbarTop(i int) (line int, ok bool) {
+	h, n := len(r.hits.barCells), max(r.hits.barLines, 1)
+	if !r.hits.barOK || h <= 0 {
+		return 0, false
+	}
+	i = min(max(i, 0), h-1)
+	if h == 1 {
+		return 0, true
+	}
+	// 四捨五入する（nvim-scrollview の round と同じ）。
+	return (2*i*(n-1) + (h - 1)) / (2 * (h - 1)), true
 }
 
 // overflows は、直前の buildView で、バッファの全体が表示領域（rows 行）に収まらなかったかを返す。

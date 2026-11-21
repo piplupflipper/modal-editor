@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -165,16 +166,16 @@ func TestHitTestScrollbar(t *testing.T) {
 	r := &Renderer{Width: 10, Height: 12}
 	r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 50}, Scrollbar: sb}) // つまみは 4 行目と 5 行目
 	h := r.HitTest(5, 9, HitNone)
-	want := Hit{Area: HitScrollbar, Tab: -1, Line: 50, LineEnd: 60, Thumb: true, Mark: 0, MarkFirst: 52, MarkLast: 52}
+	want := Hit{Area: HitScrollbar, Tab: -1, Line: 50, LineEnd: 60, Thumb: true, Mark: 0, MarkFirst: 52, MarkLast: 52, Row: 5, ThumbRow: 4}
 	if h != want {
 		t.Errorf("つまみの上の印 = %+v", h)
 	}
-	want = Hit{Area: HitScrollbar, Tab: -1, Line: 40, LineEnd: 50, Thumb: true, Mark: -1, MarkFirst: -1, MarkLast: -1}
+	want = Hit{Area: HitScrollbar, Tab: -1, Line: 40, LineEnd: 50, Thumb: true, Mark: -1, MarkFirst: -1, MarkLast: -1, Row: 4, ThumbRow: 4}
 	if h = r.HitTest(4, 9, HitNone); h != want {
 		t.Errorf("印の無いつまみ = %+v", h)
 	}
 	// 0 行目は、優先の大きい error の印を描いたセルで、その種類の 0 行目から 9 行目の行を返す。
-	want = Hit{Area: HitScrollbar, Tab: -1, Line: 0, LineEnd: 10, Mark: 1, MarkFirst: 3, MarkLast: 7}
+	want = Hit{Area: HitScrollbar, Tab: -1, Line: 0, LineEnd: 10, Mark: 1, MarkFirst: 3, MarkLast: 7, ThumbRow: 4}
 	if h = r.HitTest(0, 9, HitNone); h != want {
 		t.Errorf("つまみの外の印 = %+v", h)
 	}
@@ -202,6 +203,64 @@ func TestHitTestScrollbar(t *testing.T) {
 	short.Render(&Frame{Text: buffer.New("abc\n"), Scrollbar: &Scrollbar{}})
 	if h = short.HitTest(0, 9, HitNone); h.Area != HitText {
 		t.Errorf("収まるバッファ = %+v", h)
+	}
+}
+
+// つまみのドラッグ（HitTest の clamp が HitScrollbar）の間は、列に依らずスクロールバーの行として解き、表示領域の外の行もそのまま返す。
+// ScrollbarTop は、つまみの最初の行を置く表示領域の行から、nvim-scrollview の simple の数え方（round(i×(n−1)÷(h−1))）で
+// 表示領域の最初の行を返し、範囲の外の行は端の行へ寄せる。ScrollbarMarkLines は、そのセルに描いた印の種類の、割り付けた範囲の行を返す。
+//
+// req: FR-210, FR-211
+func TestScrollbarDragAndMarks(t *testing.T) {
+	var lines strings.Builder
+	for range 100 {
+		lines.WriteString("0123456789\n")
+	}
+	text := buffer.New(lines.String())
+	sb := &Scrollbar{Marks: []ScrollbarMarks{
+		{Lines: []int{5, 52}, Priority: 1, Style: StyleScrollbarSearch, Symbol: SymbolScrollbarSearch},
+		{Lines: []int{3, 7, 7, 12}, Priority: 2, Style: StyleScrollbarDiagnosticError, Symbol: SymbolScrollbarDiagnosticError},
+	}}
+	r := &Renderer{Width: 10, Height: 12}
+	if _, ok := r.ScrollbarTop(0); ok {
+		t.Errorf("描く前の ScrollbarTop が ok")
+	}
+	r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 50}, Scrollbar: sb}) // つまみは 4 行目と 5 行目
+	// 画面の外の位置は画面の端の行（HitText と同じ）にしてから、表示領域の外の行（10 行目、11 行目）もそのまま返す。
+	for _, c := range []struct{ row, col, wantRow int }{{3, 2, 3}, {0, 9, 0}, {9, 0, 9}, {11, 9, 11}, {40, 9, 11}, {-5, 9, 0}} {
+		h := r.HitTest(c.row, c.col, HitScrollbar)
+		if h.Area != HitScrollbar || h.Row != c.wantRow || h.ThumbRow != 4 {
+			t.Errorf("ドラッグの (%d,%d) = %+v, want Row %d", c.row, c.col, h, c.wantRow)
+		}
+	}
+	// h は 10 行、n は 100 行。
+	for _, c := range []struct{ i, want int }{{-3, 0}, {0, 0}, {1, 11}, {4, 44}, {5, 55}, {8, 88}, {9, 99}, {20, 99}} {
+		if got, ok := r.ScrollbarTop(c.i); !ok || got != c.want {
+			t.Errorf("ScrollbarTop(%d) = %d, %v, want %d", c.i, got, ok, c.want)
+		}
+	}
+	if got := fmt.Sprint(r.ScrollbarMarkLines(0)); got != "[3 7 7]" {
+		t.Errorf("0 行目の印の行 = %s", got)
+	}
+	if got := fmt.Sprint(r.ScrollbarMarkLines(5)); got != "[52]" {
+		t.Errorf("5 行目の印の行 = %s", got)
+	}
+	if got := r.ScrollbarMarkLines(4); got != nil {
+		t.Errorf("印の無い 4 行目の印の行 = %v", got)
+	}
+	if got := r.ScrollbarMarkLines(10); got != nil {
+		t.Errorf("範囲の外の行の印の行 = %v", got)
+	}
+	// 描いていなければ、ドラッグの位置は解かない。
+	r.Render(&Frame{Text: text, Cursor: buffer.Position{Line: 50}})
+	if h := r.HitTest(3, 9, HitScrollbar); h.Area != HitNone {
+		t.Errorf("描いていないときのドラッグ = %+v", h)
+	}
+	if _, ok := r.ScrollbarTop(3); ok {
+		t.Errorf("描いていないときの ScrollbarTop が ok")
+	}
+	if got := r.ScrollbarMarkLines(0); got != nil {
+		t.Errorf("描いていないときの印の行 = %v", got)
 	}
 }
 

@@ -180,6 +180,8 @@ type State struct {
 	mouseAnchor *buffer.Position
 	// mouseDragging は、ボタンを押した後にドラッグで選び始め、まだ離していないことを表す（MouseDragging）。
 	mouseDragging bool
+	// mouseBar は、スクロールバーのつまみを押してから離すまでの、つまみのドラッグの状態である。押していなければ nil である（mouse.go）。
+	mouseBar *mouseBarDrag
 
 	parser    KeyParser
 	registers Registers
