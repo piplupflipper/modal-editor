@@ -149,8 +149,18 @@ LSP と DAP の操作（`hover`、`debug.continue` など）は、その操作�
 | `visual-line` | 操作 | normal、visual | `V` | 行単位のビジュアルモード |
 | `visual-swap` | 操作 | visual | `o` | 選択の反対の端へ移る |
 | `select-all` | 操作 | normal、visual |  | カーソルを動かさずにバッファの全体を選ぶ |
-| `page-down` | 操作 | normal、visual | `<PageDown>` | 1 画面下へスクロールする |
-| `page-up` | 操作 | normal、visual | `<PageUp>` | 1 画面上へスクロールする |
+| `page-down` | 操作 | normal、visual | `<PageDown>` `<C-f>` | 1 画面下へスクロールする |
+| `page-up` | 操作 | normal、visual | `<PageUp>` `<C-b>` | 1 画面上へスクロールする |
+| `half-page-down` | 操作 | normal、visual | `<C-d>` | 半画面（回数があれば回数の行）下へスクロールし、カーソルも同じ行数動かす |
+| `half-page-up` | 操作 | normal、visual | `<C-u>` | 半画面（回数があれば回数の行）上へスクロールし、カーソルも同じ行数動かす |
+| `scroll-line-down` | 操作 | normal、visual | `<C-e>` | 表示領域を 1 行（回数の行）下へスクロールする |
+| `scroll-line-up` | 操作 | normal、visual | `<C-y>` | 表示領域を 1 行（回数の行）上へスクロールする |
+| `scroll-cursor-top` | 操作 | normal、visual | `zt` | カーソルの行（回数があればその行）を画面の上の端に置く |
+| `scroll-cursor-top-first-nonblank` | 操作 | normal、visual | `z<CR>` | zt の後に、行の最初の空白でない文字へ移る |
+| `scroll-cursor-center` | 操作 | normal、visual | `zz` | カーソルの行（回数があればその行）を画面の中ほどに置く |
+| `scroll-cursor-center-first-nonblank` | 操作 | normal、visual | `z.` | zz の後に、行の最初の空白でない文字へ移る |
+| `scroll-cursor-bottom` | 操作 | normal、visual | `zb` | カーソルの行（回数があればその行）を画面の下の端に置く |
+| `scroll-cursor-bottom-first-nonblank` | 操作 | normal、visual | `z-` | zb の後に、行の最初の空白でない文字へ移る |
 | `output-next` | 操作 | normal | `<C-w>P` | 出力の欄を開く、次の欄へ切り替える |
 | `output-close` | 操作 | normal | `<C-w>z` | 出力の欄を閉じる |
 | `output-scroll-up` | 操作 | normal | `<C-w><PageUp>` | 出力の欄を上へスクロールする |

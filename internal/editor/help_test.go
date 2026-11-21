@@ -111,7 +111,8 @@ func TestHelp(t *testing.T) {
 		{"toggle-case", "| `toggle-case` | オペレーター |"},
 		{"toggle-case-char", "| `toggle-case-char` | 操作 |"},
 		{"line-start", "| `line-start` | モーション |"},
-		{"page-down", "| `page-down` | 操作 |"},
+		// page-down は、#337 でスクロールの節（docs/usage.md の「スクロール」）に説明の表ができたので、その行に当たる。
+		{"page-down", "| `<C-f>` か `<PageDown>` / `<C-b>` か `<PageUp>` | `page-down` / `page-up`"},
 		{"line-end", "| `line-end` | モーション |"},
 		// main と同じ行に当たる語（再レビューで main と比べた 11 語。rename、references、definition、hover は上にある）。
 		{"delete", "| `:d`、`:delete`（`:d`） |"},
@@ -318,10 +319,11 @@ func TestKeyList(t *testing.T) {
 	if head, _ = h.listText(); !strings.HasPrefix(head, "キーの一覧（<Space>d で始まるもの。") {
 		t.Errorf(":keys <Leader>d: %q", head)
 	}
-	h.keys(":keys zz<CR>")
+	// zz は #337 で既定のキー（scroll-cursor-center）になったので、割り当ての無い zx で確かめる。
+	h.keys(":keys zx<CR>")
 	h.settle()
-	if msg := h.message(); msg != "zz で始まるキーはありません" {
-		t.Errorf(":keys zz: message %q", msg)
+	if msg := h.message(); msg != "zx で始まるキーはありません" {
+		t.Errorf(":keys zx: message %q", msg)
 	}
 
 	h.keys("x")

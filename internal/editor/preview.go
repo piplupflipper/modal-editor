@@ -18,6 +18,7 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/editcmd"
 	"github.com/piplupflipper/vi-imitation/internal/input"
 	"github.com/piplupflipper/vi-imitation/internal/option"
+	"github.com/piplupflipper/vi-imitation/internal/scroll"
 	"github.com/piplupflipper/vi-imitation/internal/ui"
 )
 
@@ -478,7 +479,7 @@ func (e *Editor) uiPreview(f *floatState) *ui.Preview {
 	if p.line >= 0 && n > 0 {
 		out.Line = min(p.line, n-1)
 	}
-	view := &ui.Frame{Text: bs.buf, LineLayout: e.lineLayout(bs, false), Decorations: bs.decoView}
+	view := &ui.Frame{Text: bs.buf, LineLayout: e.lineLayout(bs, false), Margins: e.margins(), Decorations: bs.decoView}
 	switch {
 	case p.owned:
 		st := bs.state
@@ -589,11 +590,18 @@ func (e *Editor) scrollPreview(f *floatState, how string, n int) {
 		return
 	}
 	sub.SetScroll(next, sub.Left())
-	last := max(min(next+rows, lines)-1, next)
+	// カーソルは、窓の上と下に余白（scroll.margin。FR-174）を残した範囲に入れる。窓の端に置くと、次の描画が余白を残すために
+	// スクロールを戻すためである。行を折り返すときは、描画と同じく折り返した行の高さで数える（窓の外に置くと、描画が最初の行を
+	// 動かす。PR #338 のレビューの推奨 3）。送る量（1 画面）は、#308 のとおり行の数で数える。
+	var ls scroll.Lines = uniformLines(lines)
+	if e.lineWrap() && sub.TextWidth() > 0 {
+		ls = previewLines{buf: p.bs.buf, wl: sub.WrapLines(e.lineLayout(p.bs, false))}
+	}
+	v := scroll.View{Lines: ls, Height: rows, Margin: e.margins().Rows, Top: next}
 	if p.owned {
 		cur := p.bs.state.Cursor()
-		if cur.Line < next || cur.Line > last {
-			p.bs.state.SetCursor(buffer.Position{Line: min(max(cur.Line, next), last)})
+		if l := v.CursorCorrect(cur.Line); l != cur.Line {
+			p.bs.state.SetCursor(buffer.Position{Line: l})
 		}
 		return
 	}
@@ -601,8 +609,29 @@ func (e *Editor) scrollPreview(f *floatState, how string, n int) {
 	if p.anchored {
 		cur = p.anchor
 	}
-	p.anchor, p.anchored = min(max(cur, next), last), true
+	p.anchor, p.anchored = v.CursorCorrect(cur), true
 }
+
+// previewLines は、プレビューの中身のバッファの行の高さを、折り返した見た目の行の数で数える行の並びである（scroll.Lines）。
+type previewLines struct {
+	buf *buffer.Buffer
+	wl  ui.WrapLines
+}
+
+// LineCount は、scroll.Lines の LineCount である。
+func (l previewLines) LineCount() int { return l.buf.LineCount() }
+
+// Rows は、scroll.Lines の Rows である。
+func (l previewLines) Rows(line int) int { return max(l.wl.Rows(l.buf.Line(line)), 1) }
+
+// uniformLines は、どの行の高さも 1 とした、行の数が int の値の行の並びである（scroll.Lines）。
+type uniformLines int
+
+// LineCount は、scroll.Lines の LineCount である。
+func (n uniformLines) LineCount() int { return max(int(n), 1) }
+
+// Rows は、scroll.Lines の Rows である。
+func (uniformLines) Rows(int) int { return 1 }
 
 // previewViewport は、プレビューのバッファのページ単位のスクロール（command.State.Viewport）を、プレビューの表示領域につなぐ口である。
 type previewViewport struct {
@@ -632,9 +661,16 @@ func (v previewViewport) Rows() int {
 	return 1
 }
 
-func (v previewViewport) SetTop(top int) {
+func (v previewViewport) Skip() int {
 	if s := v.sub(); s != nil {
-		s.SetScroll(top, s.Left())
+		return s.Skip()
+	}
+	return 0
+}
+
+func (v previewViewport) SetView(top, skip, hold int) {
+	if s := v.sub(); s != nil {
+		s.SetScrollHeld(top, skip, hold)
 	}
 }
 

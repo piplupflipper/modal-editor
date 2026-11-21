@@ -10,12 +10,15 @@ import (
 	"github.com/piplupflipper/vi-imitation/internal/input"
 )
 
-// fakeViewport は、テストの表示領域である。
-type fakeViewport struct{ top, rows int }
+// fakeViewport は、テストの表示領域である。hold は、最後の SetView の hold である。
+type fakeViewport struct{ top, skip, rows, hold int }
 
-func (v *fakeViewport) Top() int       { return v.top }
-func (v *fakeViewport) Rows() int      { return v.rows }
-func (v *fakeViewport) SetTop(top int) { v.top = top }
+func (v *fakeViewport) Top() int  { return v.top }
+func (v *fakeViewport) Skip() int { return v.skip }
+func (v *fakeViewport) Rows() int { return v.rows }
+func (v *fakeViewport) SetView(top, skip, hold int) {
+	v.top, v.skip, v.hold = top, skip, hold
+}
 
 // navText は、矢印キーなどの突き合わせに使ったテキストである。
 const navText = "abc def\nghijkl\n\n  mn opq\nrs"
@@ -139,11 +142,13 @@ func pageText() string {
 	return strings.Join(lines, "\n")
 }
 
-// pageCase は、Vim 9.1 と突き合わせた <PageUp> と <PageDown> のケースである。行と列は Vim と同じく 1 から数える。
+// pageCase は、Neovim 0.12.5 と突き合わせた <PageUp> と <PageDown> のケースである。行と列は Vim と同じく 1 から数える。
 //
-// 期待値は、Vim 9.1（パッチ 1-16）を `vim -Nu NONE -n --not-a-term` で起動し、'laststatus' を 2、'lines' を rows+2 にして
-// 表示領域を rows 行にし、winrestview() で最初の行を top、カーソルを line 行 col 列に置いてから keys を :normal で入力した後の、
-// line('w0')、line('.')、col('.') である。
+// 期待値は、2026-11-21 に Neovim 0.12.5 を `nvim --clean --headless` で起動し、'laststatus' を 2、'lines' を rows+2 にして
+// 表示領域を rows 行にし、winrestview() で最初の行を top、カーソルを line 行 col 列に置いてから、keys を 1 つずつ nvim_feedkeys で
+// 入力して :redraw した後の、line('w0')、line('.')、col('.') である。fails は、どれかのキーが失敗した（ビープを鳴らした）ことを表す。
+// #337 より前は Vim 9.1 の古いページ送り（onepage。'startofline' がオン）と突き合わせていた。
+// Neovim は 'startofline' がオフなので、カーソルの列は望みの列で決まる。
 type pageCase struct {
 	rows, top, line, col int
 	keys                 string
@@ -152,66 +157,66 @@ type pageCase struct {
 }
 
 var pageCases = []pageCase{
-	{10, 1, 1, 5, "<PageDown>", 9, 9, 3, false},
-	{10, 1, 5, 5, "<PageDown>", 9, 9, 3, false},
-	{10, 1, 10, 5, "<PageDown>", 9, 9, 3, false},
-	{10, 9, 9, 5, "<PageDown>", 17, 17, 1, false},
-	{10, 17, 20, 5, "<PageDown>", 25, 25, 1, false},
-	{10, 21, 25, 5, "<PageDown>", 30, 30, 3, false},
-	{10, 25, 28, 5, "<PageDown>", 30, 30, 3, false},
-	{10, 29, 29, 5, "<PageDown>", 30, 30, 3, false},
+	{10, 1, 1, 5, "<PageDown>", 9, 9, 5, false},
+	{10, 1, 5, 5, "<PageDown>", 9, 9, 5, false},
+	{10, 1, 10, 5, "<PageDown>", 9, 9, 5, false},
+	{10, 9, 9, 5, "<PageDown>", 17, 17, 5, false},
+	{10, 17, 20, 5, "<PageDown>", 25, 25, 5, false},
+	{10, 21, 25, 5, "<PageDown>", 30, 30, 5, false},
+	{10, 25, 28, 5, "<PageDown>", 30, 30, 5, false},
+	{10, 29, 29, 5, "<PageDown>", 30, 30, 5, false},
 	{10, 30, 30, 5, "<PageDown>", 30, 30, 5, true},
-	{10, 1, 1, 5, "2<PageDown>", 17, 17, 1, false},
-	{10, 1, 1, 5, "3<PageDown>", 25, 25, 1, false},
-	{10, 1, 1, 5, "9<PageDown>", 30, 30, 5, true},
+	{10, 1, 1, 5, "2<PageDown>", 17, 17, 5, false},
+	{10, 1, 1, 5, "3<PageDown>", 25, 25, 5, false},
+	{10, 1, 1, 5, "9<PageDown>", 30, 30, 5, false},
 	{10, 6, 6, 5, "<PageDown>", 14, 14, 1, false},
 	{10, 1, 1, 5, "<PageUp>", 1, 1, 5, true},
-	{10, 9, 9, 5, "<PageUp>", 1, 10, 1, false},
-	{10, 9, 15, 5, "<PageUp>", 1, 10, 1, false},
-	{10, 9, 18, 5, "<PageUp>", 1, 10, 1, false},
-	{10, 5, 7, 5, "<PageUp>", 1, 6, 3, false},
-	{10, 2, 2, 5, "<PageUp>", 1, 3, 3, false},
-	{10, 10, 10, 5, "<PageUp>", 1, 10, 1, false},
-	{10, 11, 11, 5, "<PageUp>", 3, 12, 3, false},
-	{10, 12, 12, 5, "<PageUp>", 4, 13, 1, false},
-	{10, 21, 30, 5, "<PageUp>", 13, 22, 1, false},
+	{10, 9, 9, 5, "<PageUp>", 1, 10, 5, false},
+	{10, 9, 15, 5, "<PageUp>", 1, 10, 5, false},
+	{10, 9, 18, 5, "<PageUp>", 1, 10, 5, false},
+	{10, 5, 7, 5, "<PageUp>", 1, 10, 5, false},
+	{10, 2, 2, 5, "<PageUp>", 1, 10, 5, false},
+	{10, 10, 10, 5, "<PageUp>", 2, 11, 5, false},
+	{10, 11, 11, 5, "<PageUp>", 3, 12, 5, false},
+	{10, 12, 12, 5, "<PageUp>", 4, 13, 5, false},
+	{10, 21, 30, 5, "<PageUp>", 13, 22, 5, false},
 	{10, 21, 30, 5, "2<PageUp>", 5, 14, 1, false},
-	{10, 21, 30, 5, "9<PageUp>", 1, 6, 5, true},
-	{10, 9, 12, 5, "3<PageUp>", 1, 10, 5, true},
-	{10, 30, 30, 5, "<PageUp>", 20, 29, 1, false},
-	{10, 29, 29, 5, "<PageUp>", 20, 29, 1, false},
-	{10, 28, 28, 5, "<PageUp>", 20, 29, 1, false},
-	{10, 25, 28, 5, "<PageUp>", 17, 26, 1, false},
-	{10, 1, 1, 5, "<PageDown><PageUp>", 1, 10, 1, false},
-	{10, 1, 1, 5, "<PageDown><PageDown><PageDown><PageDown>", 30, 30, 3, false},
-	{10, 9, 12, 5, "<PageDown>j<PageUp>", 9, 18, 3, false},
-	{5, 1, 1, 5, "<PageDown>", 4, 4, 1, false},
+	{10, 21, 30, 5, "9<PageUp>", 1, 10, 5, false},
+	{10, 9, 12, 5, "3<PageUp>", 1, 10, 5, false},
+	{10, 30, 30, 5, "<PageUp>", 20, 29, 5, false},
+	{10, 29, 29, 5, "<PageUp>", 20, 29, 5, false},
+	{10, 28, 28, 5, "<PageUp>", 20, 29, 5, false},
+	{10, 25, 28, 5, "<PageUp>", 17, 26, 5, false},
+	{10, 1, 1, 5, "<PageDown><PageUp>", 1, 10, 5, false},
+	{10, 1, 1, 5, "<PageDown><PageDown><PageDown><PageDown>", 30, 30, 5, false},
+	{10, 9, 12, 5, "<PageDown>j<PageUp>", 9, 18, 5, false},
+	{5, 1, 1, 5, "<PageDown>", 4, 4, 5, false},
 	{5, 1, 1, 5, "<PageUp>", 1, 1, 5, true},
-	{5, 10, 12, 5, "<PageUp>", 7, 11, 1, false},
-	{5, 3, 3, 5, "<PageUp>", 1, 4, 1, false},
-	{5, 4, 4, 5, "<PageUp>", 1, 5, 1, false},
-	{5, 27, 27, 5, "<PageUp>", 24, 28, 1, false},
-	{5, 28, 28, 5, "<PageUp>", 25, 29, 1, false},
-	{5, 29, 29, 5, "<PageUp>", 25, 29, 1, false},
-	{5, 30, 30, 5, "<PageUp>", 25, 29, 1, false},
-	{5, 26, 27, 5, "<PageDown>", 30, 30, 3, false},
-	{5, 25, 27, 5, "<PageDown>", 28, 28, 1, false},
-	{4, 1, 1, 5, "<PageDown>", 4, 4, 1, false},
-	{4, 10, 10, 5, "<PageUp>", 7, 10, 1, false},
-	{4, 28, 28, 5, "<PageUp>", 25, 28, 1, false},
-	{4, 29, 29, 5, "<PageUp>", 26, 29, 1, false},
-	{4, 30, 30, 5, "<PageUp>", 26, 29, 1, false},
-	{4, 3, 3, 5, "<PageUp>", 1, 3, 3, false},
-	{3, 1, 1, 5, "<PageDown>", 4, 4, 1, false},
-	{3, 10, 10, 5, "<PageUp>", 7, 9, 3, false},
-	{3, 30, 30, 5, "<PageUp>", 27, 29, 1, false},
-	{2, 1, 1, 5, "<PageDown>", 3, 3, 3, false},
-	{2, 10, 10, 5, "<PageUp>", 8, 9, 3, false},
-	{1, 1, 1, 5, "<PageDown>", 2, 2, 1, false},
-	{1, 10, 10, 5, "<PageUp>", 9, 9, 3, false},
-	{40, 1, 1, 5, "<PageDown>", 30, 30, 3, false},
+	{5, 10, 12, 5, "<PageUp>", 7, 11, 5, false},
+	{5, 3, 3, 5, "<PageUp>", 1, 5, 5, false},
+	{5, 4, 4, 5, "<PageUp>", 1, 5, 5, false},
+	{5, 27, 27, 5, "<PageUp>", 24, 28, 5, false},
+	{5, 28, 28, 5, "<PageUp>", 25, 29, 5, false},
+	{5, 29, 29, 5, "<PageUp>", 25, 29, 5, false},
+	{5, 30, 30, 5, "<PageUp>", 25, 29, 5, false},
+	{5, 26, 27, 5, "<PageDown>", 30, 30, 5, false},
+	{5, 25, 27, 5, "<PageDown>", 28, 28, 5, false},
+	{4, 1, 1, 5, "<PageDown>", 4, 4, 5, false},
+	{4, 10, 10, 5, "<PageUp>", 7, 10, 5, false},
+	{4, 28, 28, 5, "<PageUp>", 25, 28, 5, false},
+	{4, 29, 29, 5, "<PageUp>", 26, 29, 5, false},
+	{4, 30, 30, 5, "<PageUp>", 26, 29, 5, false},
+	{4, 3, 3, 5, "<PageUp>", 1, 4, 5, false},
+	{3, 1, 1, 5, "<PageDown>", 4, 4, 5, false},
+	{3, 10, 10, 5, "<PageUp>", 7, 9, 5, false},
+	{3, 30, 30, 5, "<PageUp>", 27, 29, 5, false},
+	{2, 1, 1, 5, "<PageDown>", 3, 3, 5, false},
+	{2, 10, 10, 5, "<PageUp>", 8, 9, 5, false},
+	{1, 1, 1, 5, "<PageDown>", 2, 2, 5, false},
+	{1, 10, 10, 5, "<PageUp>", 9, 9, 5, false},
+	{40, 1, 1, 5, "<PageDown>", 30, 30, 5, false},
 	{40, 1, 5, 5, "<PageUp>", 1, 5, 5, true},
-	{40, 1, 5, 5, "<PageDown><PageUp>", 1, 29, 1, false},
+	{40, 1, 5, 5, "<PageDown><PageUp>", 1, 30, 5, false},
 }
 
 // TestPageVim は、<PageUp> と <PageDown> のスクロールとカーソルを Vim 9.1 と突き合わせる。
@@ -247,7 +252,8 @@ func TestPageModes(t *testing.T) {
 		s := New(newBuffer(pageText()), input.NewParser(input.DefaultKeymap()))
 		s.Viewport = &fakeViewport{rows: 10}
 		feedKeys(s, "v<PageDown>d")
-		if got, want := s.Buffer().Line(0), "ine 9 abcdef"; got != want { // Vim 9.1 と同じ
+		// Neovim 0.12.5 と同じ（'nostartofline' なので、カーソルは 9 行目の先頭の空白に着く。Vim 9.1 の既定では "ine 9 abcdef"）。
+		if got, want := s.Buffer().Line(0), " line 9 abcdef"; got != want {
 			t.Errorf("1 行目 = %q, want %q", got, want)
 		}
 	})

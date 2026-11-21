@@ -3,7 +3,7 @@ package ui
 // 長い行の折り返し（FR-156。基本設計の「行の折り返し」）。
 //
 // Frame.Wrap が true なら、バッファの行を本文の幅（textWidth）で見た目の行に分けて描く（Vim の 'wrap'。'linebreak' はオフで、文字の切れ目で分ける）。
-// 分け方は wrapper の 1 か所で決め、描画（drawWrapped）、カーソルの位置（placeCursor）、スクロール（scrollWrapped）、gj と gk（WrapLines）が使う。
+// 分け方は wrapper の 1 か所で決め、描画（drawWrapped）、カーソルの位置（placeCursor）、スクロール（scroll.go）、gj と gk（WrapLines）が使う。
 // 行番号の列、印の列、構文と診断と検索の一致と範囲の色、選択の色は、見た目の行に分けた後の表示領域の行（viewRow）と、
 // バイトの範囲（span）の上に載るので、折り返しのための分岐を持たない。
 //
@@ -347,111 +347,4 @@ func (r *Renderer) cursorScreen(text Text, f *Frame, cur cursorPlace) (row, col 
 		return r.screenRow(text, f, cur.line), r.textLeft() + cur.col - r.left
 	}
 	return r.screenRow(text, f, cur.line) + cur.row, r.textLeft() + cur.x
-}
-
-// scrollWrapped は、行を折り返すとき（FR-156）の scroll で、表示領域を h 行として、カーソルが見えるように最初の行と skip を決める。
-// 横の位置は 0 にする。Vim 9.1 の update_topline と curs_columns（'scrolloff' が 0、'smoothscroll' がオフ）を、見た目の行の数で写した。
-//
-//   - カーソルの行が最初の行より上: 離れが max(h/2-1, 2) 行（バッファの行で数える）以上なら、カーソルの行を中ほどに置く（scrollHalfway）。
-//     そうでなければカーソルの行を最初の行にする
-//   - カーソルの行が最初の行より下: カーソルの行の全体が表示領域に入るまで、行の単位で下へスクロールする（Vim の w_botline の扱い）。
-//     スクロールする見た目の行の数が (h+1)/2 より多い（折り返さないときの scrollRows と同じ境目）か、離れが h 行より大きければ、中ほどに置く
-//   - カーソルの行が表示領域より高いときだけ、最初の行をカーソルの行にして、行の途中の見た目の行から見せる（skip）。
-//     カーソルの見た目の行が隠れたら、隠れなくなる最小の分だけ skip を動かす（nvim 0.12.5 で gj、gk、$ を打って確かめた）
-//
-// 折り返さないときの scrollRows と違い、表示領域の中ほどの位置は Vim の scroll_cursor_halfway と同じく、上と下の見た目の行の数をそろえて決める。
-//
-// req: FR-156
-func (r *Renderer) scrollWrapped(text Text, cur cursorPlace, h int) {
-	r.left = 0
-	if h <= 0 {
-		return
-	}
-	if r.top != cur.line {
-		r.skip = 0
-	}
-	switch {
-	case cur.line < r.top:
-		if r.top-cur.line >= max(h/2-1, 2) {
-			r.scrollHalfway(text, cur, h)
-		} else {
-			r.top = cur.line
-		}
-	case cur.line > r.top:
-		if cur.line-r.top > h {
-			r.scrollHalfway(text, cur, h)
-			break
-		}
-		used := 0
-		for n := r.top; n <= cur.line; n++ {
-			used += r.height(text, n)
-		}
-		if used <= h {
-			break
-		}
-		// カーソルの行が入るところまで、上の行を外す。
-		t, u := cur.line, r.height(text, cur.line)
-		for t > r.top && u+r.height(text, t-1) <= h {
-			t--
-			u += r.height(text, t)
-		}
-		scrolled := 0
-		for n := r.top; n < t; n++ {
-			scrolled += r.height(text, n)
-		}
-		if scrolled > (h+1)/2 {
-			r.scrollHalfway(text, cur, h)
-		} else {
-			r.top = t
-		}
-	}
-	if r.top != cur.line || r.height(text, cur.line) <= h {
-		r.skip = 0
-		return
-	}
-	if cur.row < r.skip {
-		r.skip = cur.row
-	}
-	if cur.row >= r.skip+h {
-		r.skip = cur.row - h + 1
-	}
-}
-
-// scrollHalfway は、カーソルの行を表示領域（h 行）の中ほどに置く。Vim 9.1 の scroll_cursor_halfway を見た目の行の数で写したもので、
-// カーソルの行の下と上に、交互に行を足して、上と下の見た目の行の数をそろえる。下に行が無ければ、"~" の行を 1 行ずつ数える
-// （このため、バッファの末尾の近くでは、末尾の行が表示領域の下の端に来る）。カーソルの行が表示領域より高ければ、その行を最初の行にする。
-// skip は 0 にする（scrollWrapped が決め直す）。
-func (r *Renderer) scrollHalfway(text Text, cur cursorPlace, h int) {
-	n := text.LineCount()
-	top := cur.line
-	r.skip = 0
-	used := r.height(text, cur.line)
-	above, below := 0, 0
-	lo, bo := cur.line, cur.line
-	for used <= h && top > 0 {
-		if below <= above {
-			if bo < n-1 {
-				bo++
-				hh := r.height(text, bo)
-				used += hh
-				if used > h {
-					break
-				}
-				below += hh
-			} else {
-				below++
-			}
-		}
-		if below > above {
-			lo--
-			hh := r.height(text, lo)
-			used += hh
-			if used > h {
-				break
-			}
-			above += hh
-			top = lo
-		}
-	}
-	r.top = top
 }

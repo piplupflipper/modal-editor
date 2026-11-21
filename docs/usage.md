@@ -317,6 +317,16 @@ Vim の `ggVG` と違い、カーソルは動かず、画面もスクロール�
 | `select-all` | 操作 | `normal`、`visual` | カーソルを動かさずにバッファの全体を選ぶ |
 | `page-down` | 操作 | `normal`、`visual` | 1 画面下へスクロールする |
 | `page-up` | 操作 | `normal`、`visual` | 1 画面上へスクロールする |
+| `half-page-down` | 操作 | `normal`、`visual` | 半画面（回数があれば回数の行）下へスクロールし、カーソルも同じ行数動かす |
+| `half-page-up` | 操作 | `normal`、`visual` | 半画面（回数があれば回数の行）上へスクロールし、カーソルも同じ行数動かす |
+| `scroll-line-down` | 操作 | `normal`、`visual` | 表示領域を 1 行（回数の行）下へスクロールする |
+| `scroll-line-up` | 操作 | `normal`、`visual` | 表示領域を 1 行（回数の行）上へスクロールする |
+| `scroll-cursor-top` | 操作 | `normal`、`visual` | カーソルの行（回数があればその行）を画面の上の端に置く |
+| `scroll-cursor-top-first-nonblank` | 操作 | `normal`、`visual` | zt の後に、行の最初の空白でない文字へ移る |
+| `scroll-cursor-center` | 操作 | `normal`、`visual` | カーソルの行（回数があればその行）を画面の中ほどに置く |
+| `scroll-cursor-center-first-nonblank` | 操作 | `normal`、`visual` | zz の後に、行の最初の空白でない文字へ移る |
+| `scroll-cursor-bottom` | 操作 | `normal`、`visual` | カーソルの行（回数があればその行）を画面の下の端に置く |
+| `scroll-cursor-bottom-first-nonblank` | 操作 | `normal`、`visual` | zb の後に、行の最初の空白でない文字へ移る |
 | `output-next` | 操作 | `normal` | 出力の欄を開く、次の欄へ切り替える |
 | `output-close` | 操作 | `normal` | 出力の欄を閉じる |
 | `output-scroll-up` | 操作 | `normal` | 出力の欄を上へスクロールする |
@@ -858,6 +868,7 @@ Nerd Font のグリフは 1 列と数える（記号と同じく Vim の `'ambiw
 Vim の短い名前（`ft`）、`inv` の接頭辞、`+=`、`-=`、`^=`、`&`（既定値に戻す）は `E518`（知らない設定）、引数の無い `:set` は `E471`、`:setlocal` は `E492`（コマンドではない）になる（[vim-differences.md](vim-differences.md)）。
 ただし字下げの 4 項目は、短い名前（`et`、`sw`、`ts`、`ai`）も受け付ける（`:set et sw=4 ts=4`）。
 コメントの形も、短い名前（`cms`）を受け付ける。
+カーソルの上下と左右の余白も、短い名前（`so`、`siso`）を受け付ける（`:set so=5 siso=8`）。
 `:set` の値の中の `\` は、次の 1 文字をそのまま値に入れる（Vim と同じ）。
 空白を含む値は `:set cms=//\ %s` と書き、`\` そのものは `\\` と書く。値の末尾の `\` は、そのまま値に残る（`:set cms=\` は `%s` を含まないので `E537`。Vim と同じ）。
 ただし値の末尾の空白は `:option.set` と同じく除くので、`:set cms=%s\ ` は `%s` になる（Vim は `%s ` にする）。
@@ -876,6 +887,8 @@ Vim の短い名前（`ft`）、`inv` の接頭辞、`+=`、`-=`、`^=`、`&`（
 | `lineNumber.minWidth` | 整数 | エディタ全体 | `numberwidth` | 行番号の列の最小の列数（番号の右の空けた 1 列を含む）。既定は `4`、範囲は 1 から 20。列の幅は、この値と、バッファの最後の行の番号の桁数に 1 を足した数の大きい方になる（Vim の `'numberwidth'` と同じ） |
 | `lineWrap.enabled` | 真偽 | エディタ全体 | `wrap` | 長い行を本文の幅で折り返して描くか（[長い行の折り返し](#長い行の折り返し)）。既定は `false`（折り返さずに横にスクロールする。Vim と Neovim の既定は折り返す）。同梱の `config.example.jsonc` は `true` にしている |
 | `whitespace.show` | 真偽 | エディタ全体 | `list` | タブ文字、空白、ノーブレークスペース、行末を記号で描くか（[空白の記号](#空白の記号)）。既定は `false`（描かない。Vim と同じ）。記号は `symbols` の `whitespace.` で始まる名前で変える（[記号](#記号)）。同梱の `config.example.jsonc` は `true` にしている |
+| `scroll.margin` | 整数 | エディタ全体 | `scrolloff`、`so` | カーソルの行の上と下に残す余白の行数（[スクロール](#スクロール)）。行を折り返すときは見た目の行で数える。既定は `0`（Vim と Neovim と同じ）、範囲は 0 から 9999。表示領域の半分以上にすると、カーソルの行を常に中ほどに置く。同梱の `config.example.jsonc` は `5` にしている |
+| `scroll.sideMargin` | 整数 | エディタ全体 | `sidescrolloff`、`siso` | 行を折り返さないときに、カーソルの左と右に残す余白の列数（[スクロール](#スクロール)）。既定は `0`（Vim と Neovim と同じ）、範囲は 0 から 9999。同梱の `config.example.jsonc` は `8` にしている |
 | `search.highlight` | 真偽 | エディタ全体 | `hlsearch` | 直前の検索のパターンに一致する範囲に色を付けるか（[検索の一致の色付け](#検索の一致の色付け)）。既定は `false`（付けない。Vim と同じ）。色の名前は `search` である（[配色](#配色)） |
 | `search.incrementalTimeoutMs` | 整数 | エディタ全体 | 無し | `/` と `?` でパターンを打っている間の、打つたびの検索（[打つたびの検索](#打つたびの検索)）の時間の上限のミリ秒。超えたらその回は一致を出さない。既定は `500`（Vim の `'incsearch'` が約 0.5 秒で打ち切るのと同じ）、範囲は 1 から 10000。Vim にこの設定は無いので、`:set` では変えられず、`:option.set search.incrementalTimeoutMs 1000` で変える |
 | `search.showCount` | 真偽 | エディタ全体 | 無し | 検索で動いたときに、メッセージの行の右に、一致が何件目かと件数（`[2/5]`）を出すか（[検索の一致の件数](#検索の一致の件数)）。既定は `false`（出さない。Vim と同じ）。同梱の `config.example.jsonc` は `true` にしている。Vim の `'shortmess'` の `S` に当たるが、`:set shortmess` の別名は無いので、`:option.set search.showCount true` か `:option.toggle search.showCount` で変える |
@@ -973,7 +986,7 @@ Vim の短い名前（`ft`）、`inv` の接頭辞、`+=`、`-=`、`^=`、`&`（
 折り返さないときは、`j` と `k` と同じに動く（オペレーターの後は行単位）。
 `j` と `k` は、折り返していても実際の 1 行ずつ動き、`$`、`0`、`^` は実際の行の端へ動く（Vim と同じ）。
 `j` と `k` を見た目の行で動かすには、`keymap` に `"normal": { "j": { "action": "display-down" }, "k": { "action": "display-up" } }` と書く（ビジュアルモードでも使うなら `visual` にも書く）。
-`<PageDown>` と `<PageUp>` は、折り返した行の高さを数えて 1 画面ずつ動く。
+スクロールのキー（[スクロール](#スクロール)）は、折り返した行の高さ（見た目の行の数）を数えて動く。
 
 ### 空白の記号
 
@@ -1027,6 +1040,46 @@ Vim の `:set listchars=...` と違い、書かなかった項目は無くなら
 診断の下線、検索の一致、選択の色は、記号の上に重ねて付く。
 検索の一致の文字の色は記号の色より上に出る（Vim と同じ。Neovim は記号の色を出す。[vim-differences.md](vim-differences.md)）。
 記号を描くのはバッファの表示領域だけで、浮かべた窓（ホバーの説明、ファインダー、プレビュー）と出力の欄には描かない。
+
+### スクロール
+
+Vim のスクロールのキーは、次のとおりである。
+どれもノーマルモードとビジュアルモードで使え、オペレーターの後では誤りになる（`d<C-d>` は何も消さない）。
+動きは Neovim の既定に合わせてあり、カーソルの列は、`j` と `k` と同じく望みの列で決まる（Neovim の既定の `'nostartofline'`）。
+
+| キー | 操作の ID | 動き |
+|---|---|---|
+| `<C-e>` / `<C-y>` | `scroll-line-down` / `scroll-line-up` | 表示領域を 1 行（回数があればその行数）下 / 上へ送る。カーソルは、画面から出るときだけ画面の端の行へ動く。バッファの端では何もしない（誤りにしない） |
+| `<C-d>` / `<C-u>` | `half-page-down` / `half-page-up` | 表示領域とカーソルを、半画面（Vim の `'scroll'`）だけ下 / 上へ送る。回数を付けると、送る行数をその回数にし、端末の大きさが変わるまで、回数の無い `<C-d>` と `<C-u>` もその行数で送る（Vim と同じ）。下へは、最後の行の後に `~` の行が出るほどは送らない。バッファの端で何も動かなければ誤りになる |
+| `<C-f>` か `<PageDown>` / `<C-b>` か `<PageUp>` | `page-down` / `page-up` | 1 画面（回数があればその画面数）下 / 上へ送る。前の画面の 2 行を重ねて残す。カーソルは、下へなら画面の最初の行、上へなら最後の行へ移る |
+| `zt` / `zz` / `zb` | `scroll-cursor-top` / `scroll-cursor-center` / `scroll-cursor-bottom` | カーソルの行を、画面の上の端 / 中ほど / 下の端に置く。回数を付けると、カーソルをその行へ移してから置く（移る前の位置はジャンプリストに残る） |
+| `z<CR>` / `z.` / `z-` | `scroll-cursor-top-first-nonblank` / `scroll-cursor-center-first-nonblank` / `scroll-cursor-bottom-first-nonblank` | `zt` / `zz` / `zb` と同じに置き、カーソルを行の最初の空白でない文字へ移す |
+
+行を折り返すとき（[長い行の折り返し](#長い行の折り返し)）は、`<C-d>`、`<C-u>`、`<C-f>`、`<C-b>` が送る量を見た目の行で数え、`<C-d>` と `<C-u>` はカーソルも見た目の行で動かす（`gj` と `gk` と同じ）。
+`<C-e>` と `<C-y>` は、折り返していても実際の行で送る（Neovim の既定の `'nosmoothscroll'` と同じ）。
+フォーカスを入れたポップアップ（[ポップアップ](#ポップアップ)）と、フォーカスを移したプレビュー（[項目のプレビュー](#項目のプレビュー)）の中でも、同じキーで同じに動く。
+キーは、設定の `keymap` に操作の ID を書いて変えられる（[操作の ID](#操作の-id)）。
+
+カーソルの上下に余白を残してスクロールさせるには、`scroll.margin`（Vim の `'scrolloff'`）に行数を書く。
+行を折り返さないときに、カーソルの左右に余白を残して横にスクロールさせるには、`scroll.sideMargin`（Vim の `'sidescrolloff'`）に列数を書く。
+本体の既定はどちらも `0` で、余白を残さない（Vim と Neovim と同じ）。
+同梱の `config.example.jsonc` は次の値にしている。
+
+```jsonc
+{
+  "scroll": { "margin": 5, "sideMargin": 8 },
+}
+```
+
+実行中は `:set scrolloff=5`（`:set so=5`）と `:set sidescrolloff=8`（`:set siso=8`）で変える。
+`:option.set scroll.margin 5` も同じである。
+変えた値は、次に画面を描くときから効く。
+
+余白は、カーソルをどのキーで動かしたとき（`j`、`k`、`/` と `n`、`G`、`<C-o>`、`gj`、スクロールのキー）も同じに効く。
+バッファの先頭と末尾の近くでは、残せる分だけ残す。
+行を折り返すときは、見た目の行で数える。
+表示領域の半分以上の値（`999` など）を書くと、カーソルの行を常に画面の中ほどに置く（Vim と同じ）。
+横の余白は、カーソルが余白から出たら、カーソルを画面の幅の半分の位置まで送る（Vim の既定の `'sidescroll'` が `0` のときと同じ。Neovim の既定の `1` と違い、1 列ずつは送らない）。
 
 ### 検索の一致の色付け
 

@@ -286,6 +286,9 @@ type Frame struct {
 	// 描画の中のほかのタブ幅も TabStop を使う（Renderer.tabStop）。空白の記号は、client の画面のバッファの表示領域の Frame でだけ描く。
 	// ポップアップとプレビューの中身（Float.View、Preview.View）は、それぞれの Frame の値で描く。
 	LineLayout
+	// Margins は、カーソルの上下と左右に残す余白である（FR-174。Vim の 'scrolloff' と 'sidescrolloff'）。ゼロ値は残さない。
+	// internal/editor が、描くたびに設定の今の値（scroll.margin、scroll.sideMargin）を詰める。数え方は internal/scroll にある。
+	Margins Margins
 	// Search は、一致に色（StyleSearch）を付けるパターンである（FR-137）。nil なら色を付けない。
 	// internal/editor が、描くたびに設定の今の値（search.highlight）と直前の検索のパターンから詰める。
 	// 描き方は searchSpans の doc にある。
@@ -309,6 +312,14 @@ type Frame struct {
 	// ステータス行とタブ行の並び（Renderer.StatusLine、Renderer.TabLineParts）に書いた ID のうち、本体の部品でないものをここで引く。
 	// 対応に無い部品と、中身の Text が空の部品は出さない。
 	ExtParts map[string]ExtPart
+}
+
+// Margins は、カーソルの上下と左右に残す余白である（Frame.Margins。FR-174）。
+type Margins struct {
+	// Rows は、カーソルの行の上と下に残す見た目の行の数である（Vim の 'scrolloff'）。行を折り返すときも見た目の行で数える。
+	Rows int
+	// Columns は、行を折り返さないときに、カーソルの左と右に残す列の数である（Vim の 'sidescrolloff'）。
+	Columns int
 }
 
 // ExtPart は、拡張機能が足した部品の中身である（ext.StatusLineSetParams）。

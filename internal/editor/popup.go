@@ -194,9 +194,16 @@ func (v floatViewport) Rows() int {
 	return 1
 }
 
-func (v floatViewport) SetTop(top int) {
+func (v floatViewport) Skip() int {
 	if s := v.sub(); s != nil {
-		s.SetScroll(top, s.Left())
+		return s.Skip()
+	}
+	return 0
+}
+
+func (v floatViewport) SetView(top, skip, hold int) {
+	if s := v.sub(); s != nil {
+		s.SetScrollHeld(top, skip, hold)
 	}
 }
 
@@ -1448,6 +1455,7 @@ func (e *Editor) floatFrame(f *floatState) *ui.Float {
 	view := &ui.Frame{
 		Text:        f.bs.buf,
 		LineLayout:  e.lineLayout(f.bs, false),
+		Margins:     e.margins(),
 		Cursor:      st.Cursor(),
 		Decorations: f.bs.decoView,
 		Diagnostics: f.bs.uiDiagnostics(),
