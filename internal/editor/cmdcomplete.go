@@ -105,7 +105,7 @@ func (e *Editor) wildFlags() [4]wimFlags {
 	for i := range out {
 		if i >= len(parts) {
 			if i > 0 {
-				out[i] = out[i-1]
+				out[i] = out[i-1] //nolint:gosec // i は 1 から 3 で、out の長さは 4 である
 			}
 			continue
 		}
@@ -583,7 +583,7 @@ func (e *Editor) completionExtArgs(id, word string) (items []string, ok bool) {
 		}
 		slices.Sort(head)
 		slices.Sort(rest)
-		items = append(head, rest...)
+		items = slices.Concat(head, rest)
 		return items[:min(len(items), helpCompletionLimit)], true
 	case extManagerExtension:
 		return withPrefix([]string{"sync", "update"}, word), true
@@ -627,11 +627,14 @@ func (e *Editor) startWildFiles(w *wildMenu, reverse bool) {
 		word: w.orig, workDir: e.workDir(), home: home, env: envLookup(e.childEnv()),
 		ignoreCase: e.options.Get(option.CommandLineCompleteIgnoreCase).Bool(),
 	}
-	c, stop := e.view, e.stop
+	c, stop, collect := e.view, e.stop, e.wildCollect
+	if collect == nil {
+		collect = collectFiles
+	}
 	go func() {
 		defer e.recoverPanic()
 		defer cancel()
-		items, shown, err := collectFiles(ctx, q)
+		items, shown, err := collect(ctx, q)
 		select {
 		case e.inspect <- func() { e.wildFilesDone(c, w, job, items, shown, err) }:
 		case <-stop:
@@ -745,6 +748,8 @@ const fileReadChunk = 1024
 //   - 名前のバイトの順に並べ、末尾が fileSuffixes に当たるファイルを後ろへ回す
 //
 // 読む途中で ctx が終わったら、ctx.Err() を返す。
+//
+// req: FR-199
 func collectFiles(ctx context.Context, q fileQuery) (items, shown []string, err error) {
 	if q.word == "~" && q.home != "" {
 		// "~" だけなら、ホームディレクトリの絶対パスを補う（Neovim 0.12.5 の :e ~<Tab> と同じ。"~/" で始まる語は "~" を残す）。
@@ -774,7 +779,7 @@ func collectFiles(ctx context.Context, q fileQuery) (items, shown []string, err 
 	if err != nil {
 		return nil, nil, err
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // 読むだけのディレクトリなので、閉じる誤りで候補は変わらない
 	hidden := strings.HasPrefix(base, ".")
 	matches := func(name string) bool {
 		if len(name) < len(base) {

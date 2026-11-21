@@ -144,6 +144,14 @@
   // 使っている間に端末の側でテキストを選ぶ操作は、端末ごとに決まっている。説明は docs/usage.md の「マウス」にある
   "mouse": { "enabled": true },
 
+  // コマンドラインの <Tab> で、1 回目は候補の共通の先頭まで補って候補の一覧を出し、2 回目から候補を順に入れる
+  // （nvim の wildmode=longest:full,full に当たる。本体の既定は Vim と同じく full で、1 回目から最初の候補を入れる）。
+  // ファイルの名前は大文字と小文字を区別せずに補い（nvim の wildignorecase）、一覧は 12 行まで出す（nvim の pumheight=12。本体の既定は 0 で、
+  // 画面に収まるだけ出す）。一覧の間は <C-n>、<C-p>、<Up>、<Down> で選び、<C-e> で取り消し、<C-y> で決める。
+  // 説明は docs/usage.md の「コマンドラインの補完」にある
+  "commandLine": { "completeMode": "longest:full,full", "completeIgnoreCase": true },
+  "completionMenu": { "height": 12 },
+
   // 直前の検索のパターンに一致する範囲に色を付ける（:set hlsearch に当たる。本体の既定は Vim と同じく付けない）。
   // 色は :nohlsearch で次の検索まで消せる。<C-l> で消すには、keymap の normal に "<C-l>": { "command": "search.clearHighlight" } と書く
   // / と ? は、打つたびに次の一致へ画面を動かして色を付ける（:set incsearch に当たり、常に行う）。

@@ -413,6 +413,8 @@ type Editor struct {
 	wildMenuID uint64
 	// helpWordCache は、:help の語の補完の候補（cmdcomplete.go の helpWords）である。最初に補うときに作る。
 	helpWordCache []string
+	// wildCollect は、ファイルの補完の候補を集める関数である。nil なら collectFiles を使う。テストが、集め終えない関数に差し替える。
+	wildCollect func(ctx context.Context, q fileQuery) (items, shown []string, err error)
 	// statFn は、外での変更の確認で使う stat である。テストが、戻らない stat に差し替える。
 	statFn func(string) (fileStamp, error)
 	// checkStart は、外での変更の確認を別の goroutine で始めた時刻、checkWarned はその確認が長引いていると知らせたかである。

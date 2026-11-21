@@ -4090,6 +4090,7 @@ nvim-scrollview の既定のリンク先は、`ScrollView` が `Visual`、診断
 後に拡張機能が足す印の種類の色と記号は、`scrollbar.` の後に `scrollbar.marks` に書ける形の名前（空でなく、コンマと空白を含まない）が続く名前で書け、本体の表に無くても設定の誤りにしない（`ui.IsScrollbarMarkName`。`ui.IsStyleName` と `ui.CheckSymbol` が通す。PR #351 のレビューの推奨 4）。拡張機能の種類の名前を拡張機能が起動する前の設定に書けるようにするためで、`scrollbar.marks` が知らない名前を読み飛ばすのと同じ考え方である。記号を書かなかった拡張機能の種類は、既定の記号が無い（空）ので描かない。
 ただし、`scrollbar.` の後の最初の点までの部分が、本体の種類（本体の色の名前の表にある `diagnostic` と `search`）と同じか、編集距離が 2 以下で、本体の表に無い名前（`scrollbar.diagnostics.error`、`scrollbar.diagnostic.err`、`scrollbar.serch`）は、書き間違いとして受け付けず、今までどおり「未知の色の名前」「未知の記号の名前」の設定の誤りにする（PR #351 の再レビューの推奨 3）。
 拡張機能の種類の名前は、本体の種類の名前と似ないもの（`git`、`todo`、`mark`。`search` との距離は 4 以上）にする。拡張機能が起動した後に、どの種類にも使われていない名前を知らせる形は、拡張機能が種類を足す口（#317 の第 3 弾）と一緒に考える。
+#350 で、コマンドラインの補完の候補の一覧（7.4）の色の名前 `popup.match`（打った語に当たる文字。`popup` か `popup.selected` の上に重ねる。Neovim 0.12.5 の `PmenuMatch`）、`popup.scrollbar`、`popup.thumb`（スクロールバーの溝とつまみ。Vim の `PmenuSbar` と `PmenuThumb`）を足した。項目と選んでいる項目は、`:registers` の一覧と同じ `popup` と `popup.selected` で描く（Vim の `Pmenu` と `PmenuSel` に当たる）。既定の色は 7.4 の「一覧の描き方」にある。同梱の iceberg には、iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の dark の側の `PmenuSbar` と `PmenuThumb` の背景の色を写した。iceberg.vim に `PmenuMatch` は無いので、`popup.match` は本体の既定（太字）のままにした。
 
 ```jsonc
 {
@@ -4355,6 +4356,9 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `scrollbar.currentOnly` | 真偽 | エディタ全体 | `false` | 無し | 操作中の client の画面にだけ出すか（FR-186。nvim-scrollview の `current_only`）。既定は nvim-scrollview の既定と同じ。同梱の `config.example.jsonc` では `true` |
 | `scrollbar.marks` | 文字列 | エディタ全体 | `diagnostic,search` | 無し | 出す印の種類の名前をコンマで区切ったもの（FR-187。nvim-scrollview の `signs_on_startup`）。知らない名前は読み飛ばす。既定はオーナーの nvim と同じ（nvim-scrollview の既定は、これに `marks` を足したもの） |
 | `scrollbar.excludedFileTypes` | 文字列 | エディタ全体 | 空 | 無し | 出さないバッファのファイルの種類をコンマで区切ったもの（FR-186。nvim-scrollview の `excluded_filetypes`）。既定は nvim-scrollview と同じく空 |
+| `commandLine.completeMode` | 文字列（`full`、`longest`、`noselect` の語の列） | エディタ全体 | `full` | `wildmode` | コマンドラインの `<Tab>` の補い方（7.4。FR-196）。書き方は Vim の `'wildmode'` と同じで、語の列として読めない値は表の欄 `option.Def.Words` で断る（`:set` と `:option.set` は `E474`。Neovim 0.12.5 の `:set wildmode=foo` と同じ番号）。既定は Vim と Neovim と同じ。`<Tab>` を打つたびに読む。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `longest:full,full` |
+| `commandLine.completeIgnoreCase` | 真偽 | エディタ全体 | `false` | `wildignorecase` | コマンドラインの補完で、ファイルとディレクトリの名前の大文字と小文字を区別しないか（7.4。FR-196）。既定は Vim と同じく区別する。候補を集めるたびに読む。同梱の `config.example.jsonc` では `true` |
+| `completionMenu.height` | 整数（0 から 9999） | エディタ全体 | `0` | `pumheight` | 補完の候補の一覧の行の数の上限（7.4。FR-197）。0 なら画面に収まるだけ出す（Vim と同じ）。描くたびに読む。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `12` |
 
 `lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で、`progress.show` と `progress.doneMs` は #340 で、`scrollbar.*` の 4 つは #348 で足した。
 #348 の名前は、nvim-scrollview の設定の名前を camelCase にして `scrollbar.` の下に置いた（`signs_on_startup` は、起動の後に変えても効くので `marks` にした）。
@@ -4366,6 +4370,7 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 #328 の名前は issue の案のとおりにした。記号の名前（7.1）も `whitespace.` の下に置き、設定と記号が同じ機能のものと名前で分かるようにした。
 `scroll.margin` と `scroll.sideMargin` は #337 で足した。名前は issue の案のとおりにした。
 `mouse.enabled`、`mouse.scrollLines`、`mouse.scrollColumns` は #343 で足した。issue は名前を実装者に任せていた。Neovim の `'mousescroll'` の 2 つの値を、行と列の 2 つの項目に分けた。
+`commandLine.completeMode`、`commandLine.completeIgnoreCase`、`completionMenu.height` は #350 で足した。issue は名前を実装者に任せていた。補い方と大文字と小文字の区別はコマンドラインの補完のものなので `commandLine.`（設定の `keymap` のモードの名前と同じ）の下に置き、一覧の高さは後に作るインサートモードの補完の一覧も同じ上限を使う（Vim の `'pumheight'` と同じ）ので、補完の一覧の名前の `completionMenu.` の下に置いた。`:set` の別名は、オーナーの nvim の設定が長い名前で書いているので、長い名前（`wildmode`、`wildignorecase`、`pumheight`）だけを受け付ける。
 #318 の 4 つの名前は、issue の案のとおりにした。インデントの文字と幅は `indent.` の下に、タブ文字の表示幅は字下げに限らない（行の途中のタブ文字も描く）ので `tab.` の下に置いた。
 `preview.*` の名前は、何の窓の何の値かが分かるように、窓の幅の境目（`minWindowWidth`）、プレビューの割合（`widthPercent`）、窓の割合（`windowWidthPercent`）にした（fzf-lua の `flip_columns` は、何を反転するのかが名前から分からないため写さなかった）。
 
@@ -4413,6 +4418,11 @@ Vim 9.1 は、下限が 0 の項目の負の値（`:set textwidth=-1`）も `E48
 #327 で、文字列の項目の空でない値が含まなければならない文字列を表の欄（`option.Def.Contains`。空なら制約を置かない）にし、`Check` が含まない値を `option.ErrMissingContains` で断るようにした（`comment.string` の `%s`）。
 `:option.set` と `:set` では `E537`（Vim 9.1 と Neovim 0.12.5 の `:set commentstring=//` と同じ番号。2026-11-21 に確かめた）にし、設定ファイルでは「の値が正しくない」の位置付きの誤りにする。
 検査は項目の名前で分けない。
+
+#350 で、文字列の項目の値を語の列として読む規則を表の欄（`option.Def.Words`。`option.WordList` で、語の候補と部分の数の上限を持つ。nil なら制約を置かない）にし、`Check` が読めない値を `option.ErrInvalidWords` で断るようにした（`commandLine.completeMode`）。
+読み方は Vim 9.1 と Neovim 0.12.5 の `'wildmode'`（`check_opt_wim`）と同じで、コンマで区切った部分（4 つまで）をコロンで区切った語の列として読み、末尾の区切りは受け付け、空の語と 5 つ目の部分は断る（2026-11-22 に Neovim 0.12.5 の `:set wildmode=full:` が通り、`:set wildmode=:full`、`full,,full`、`full,full,full,full,` が `E474` になることを確かめた）。
+`:option.set` と `:set` では `E474` にし、設定ファイルでは語の一覧を添えた位置付きの誤りにする。
+読んだ部分の列は、コマンドラインの補完（7.4）が `option.WordList.Parse` で読み直す。補完で値の候補を出すとき（`:set wildmode=<Tab>`）も、この欄の語を候補にする。
 
 整数の値の文字列は、コマンドラインからも設定ファイルの JSON の数からも、同じ `option.ParseInt` で読む。
 数字だけの文字列が Go の `int` に収まらなければ、正なら `option.ErrAboveMax`、負なら `option.ErrBelowMin` を返し、範囲の外の値と同じ誤りにする（PR #272 のレビューの推奨 2）。
@@ -4644,7 +4654,97 @@ Vim 9.1 の `:tabe` を引数なしで打つと、`:tabnew` と同じく空の�
 - コマンドラインを画面の上部の窓に描く issue が、描く位置の項目を表に足す
 - この一連の作業の後に、既存の Ex コマンドへ正規の名前を付け、今の名前を別名へ移す。そのとき、Vim に合わせた名前を本体の別名の表に残すか、設定ファイルの別名（#291）に移すかを決める
 - コマンドの一覧（`ex.Names`。`editor/list` の `commands` と `:finder.commands`。6.9）は、Ex コマンドの表の行の後に、別名の表の行（`:set`（`:se`）、`:nohlsearch`（`:noh`）、設定ファイルの別名）を表の順に並べる。名前を付け替えるだけの別名に付け替えた先の名前を持たせる欄は、既存の Ex コマンドを別名へ移す issue で決める（#291 の `:help` の節は、`ex.Aliases.Added` から付け替えた先を出す）
-- 後に作るコマンドラインの補完（拡張機能として作る予定）は、上のコマンドの一覧と、設定の表（`option.Defs`）から一覧を作る。設定の名前の一覧を返す口は #264 では作っていない
+- コマンドラインの補完は、2026-11-21 のオーナーとの相談（#317）で、拡張機能でなく本体で作ることにした（#264 の時点では拡張機能として作る予定だった）。#350 で、上のコマンドの一覧と、設定の表（`option.Defs`）と、`:set` の Vim の名前の対応（`vimOptionNames`）から候補を作るようにした（7.4）
+
+### 7.4 コマンドラインの補完
+
+#350 で、Ex コマンドのコマンドライン（`:`）の `<Tab>` と `<S-Tab>` の補完を本体に作った（FR-195〜FR-200）。
+補い方は Neovim 0.12.5 の `command_line_wildchar_complete` と `nextwild`（`src/nvim/ex_getln.c`、`src/nvim/cmdexpand.c`）に、一覧の描き方は `pum_display`（`src/nvim/popupmenu.c`）に倣った（2026-11-22 に v0.12.5 のタグのソースを読み、tmux の中で同じキーを送って比べた）。
+表に無い点はどれも仮である。
+
+#### 部品と層
+
+| 部品 | 置き場所 | 内容 |
+|---|---|---|
+| どこから何を補うか | `internal/command/ex` の `Complete` | コマンドライン（先頭の `:` を除く）を、`Execute` と同じ表（Ex コマンドの表、別名の表、`State.ExtCommand`）で読み、行末の語の位置と種類（`ex.CompletionKind`）を返す。範囲は評価せずに読み飛ばし（`skipRange`）、`|` で引数を終えるコマンドの後は、最後のコマンドを読む。引数の位置に何を補うかは、Ex コマンドの表と別名の表の欄（`complete`）に持つ。設定の名前と値は、このパッケージが表を持つので、候補まで返す |
+| 候補を集めることと補う状態 | `internal/editor` の `cmdcomplete.go` | コマンドの名前（`ex.Names` と `exCommands`）、ファイル、バッファ、`:help` の語（`listHelpWords`）、`:ext` の引数を集め、`<Tab>` を打った回数と `commandLine.completeMode` で補う。状態は client ごとに持つ（`viewFields.wild`） |
+| 一覧の描画 | `internal/ui` の `completion.go`（`ui.Frame.Completion`） | 項目、選んでいる項目、項目を並べ始めるコマンドラインの中の位置を受け取り、位置と大きさとスクロールの位置を決めて描く。窓の重なりの表（`layers.go`）の 7.1 である |
+| 設定 | `internal/option` の表（7.3） | `commandLine.completeMode`、`commandLine.completeIgnoreCase`、`completionMenu.height` |
+
+一覧の中身（`wildMenu`）を描く位置から分けて持つのは、コマンドラインと検索の入力を画面の上の中央のポップアップに出す表示（noice.nvim の `command_palette`。別の issue）が、同じ中身を別の場所に描けるようにするためである。
+そのときは `ui` の描く位置だけを変え、`ui.CompletionMenu` の `Start`（コマンドラインの中のバイト位置）を、入力の行を描く列から数え直す。
+インサートモードの補完（6.3 の未決）の候補の一覧も、`ui.CompletionMenu` と `completionMenu.height` と色の名前（`popup`、`popup.selected`、`popup.match`、`popup.scrollbar`、`popup.thumb`）を使い、位置だけをカーソルの近くにする想定である。
+
+#### 補う語と候補
+
+| 語の位置 | 候補 | 並び |
+|---|---|---|
+| 範囲の後のコマンドの名前の途中（`:e`、`:%s`、`:finder.f`、`:w\|e`） | 本体の Ex コマンドと別名の省略しない名前、設定ファイルの別名、拡張機能のコマンド、`provides` の操作の名前、`:help`、`:keys`、`:ext`、`:messages`。本体が同じコマンドのために足した短い名前（`:h`、`:mes`〜`:message`）は出さない | 名前のバイトの順（Neovim の `:b<Tab>` が `bNext` を先に出すのと同じ） |
+| `:e`、`:w`、`:wq`、`:x`、`:tab.new`、`:diffsplit`（と、それらへの別名）の引数の、最後の空白の後 | ファイルとディレクトリ（下の「ファイルの候補」） | 同じ節 |
+| `:b`、`:bd` の引数の全体 | `:ls` の名前（`bufferName`）。ファイルの無いバッファとポップアップのバッファは出さない | 名前かファイルの名前が語で始まるものを番号の順に、その後に名前が語を含むものを番号の順に（`:b` の名前の引き方 `bufferByName` と同じ段の順） |
+| `:set` の引数の最後の語 | 長い Vim の名前。長い名前か短い名前（`ts` など）が語で始まる項目を出す。`no` の後は真偽の項目だけ。`=` の後は値（下の行）。`?`、`!`、`&` を含む語は補わない | 名前の順 |
+| `:option.get`、`:option.set` の最初の引数、`:option.toggle` の引数 | 正規の名前（`:option.toggle` は真偽の項目だけ） | 名前の順 |
+| `:set 名前=` と `:option.set 名前 ` の後の値 | 真偽は `true` と `false`（`:set` では補わない）。語の列の項目は、最後のコンマかコロンの後の語。値が空なら、今の値を最初の候補にする。ほかの項目は、値が空のときだけ今の値（Vim の `:set ts=<Tab>` と同じ）。`:set` の値は `\` を付けた形にする | 語の表の順 |
+| `:help` と `:h` の引数 | `:help` で引ける語（`listHelpWords`。起動した後に変わらないので、最初に求めたものを使い回す） | 語で始まるものを名前の順に、その後に語を大文字と小文字を区別せずに含むものを名前の順に、300 個まで（Neovim の `:help` の補完の上限と同じ） |
+| `:ext` の引数 | `sync`、`update` | この順 |
+
+issue は「`:ext` の拡張機能の ID」としていたが、`:ext` の引数は `sync` と `update` なので、それを補う。
+`:r`（ファイルの読み込みは無い）、`:!`、`:terminal.popup`、`:s`、`:g`、`:v` の引数と、拡張機能のコマンドと `provides` の操作の引数は補わない。
+補わない所の `<Tab>` は、Neovim の `EXPAND_NOTHING` と同じく、タブ文字として入る（`:q <Tab>`、`:s/a/b<Tab>`）。
+補う所で候補が無ければ、何も入れない（Neovim は音を鳴らす）。
+
+#### 補い方
+
+`commandLine.completeMode` を、コンマで区切った 4 つの部分にし（書いた部分より後ろは最後の部分と同じ。Vim の `check_opt_wim`）、`<Tab>` を打った回数で部分を選ぶ（`wildFlags`）。
+
+| 時点 | 動き |
+|---|---|
+| 1 回目の `<Tab>` | 候補を集める。部分に `longest` があれば候補の共通の先頭を入れる（今の語より短くなるなら入れない。共通の先頭は大文字と小文字を区別して数える。Neovim は `'fileignorecase'` のときだけ区別しない）。`longest` が無く `noselect` があれば何も入れない。どちらも無ければ最初の候補を入れる。候補が 1 つなら、入れて補う状態を終える（次の `<Tab>` はその後から補い始めるので、`:e dir/` の後の `<Tab>` は `dir` の中を補う）。候補が 2 つ以上なら、`full` か `noselect` で一覧を出す。`longest` で語が伸びず、部分に `full` が無ければ、次の部分の `full` で最初の候補を入れる |
+| 2 回目からの `<Tab>` | 今の部分に `longest` があれば共通の先頭を入れ、`full` があれば次の候補を入れる。どちらも無ければ何もしない |
+| `<S-Tab>`（候補が無いとき） | 最初の候補を入れてから一覧を出し、2 回前へ戻して最後の候補にする（Neovim と同じ）。部分の番号は進めない |
+
+候補を入れるたびに、最後の候補の次と最初の候補の前は、補い始めたときの語に戻る（Neovim の `get_next_or_prev_match`）。
+一覧を出していないときに次と前の候補を入れたら、一覧を出す。
+一覧を出している間のキーは FR-198 の表のとおりで、`<Up>` と `<Down>` は、オーナーの nvim の割り当て（`wildmenumode()` の間だけ `<C-p>` と `<C-n>`）に合わせた。
+Neovim 0.12.5 の既定では、ファイルの補完の間の `<Up>` と `<Down>` は親と子のディレクトリへ移り、一覧を出していない間は履歴を辿る（2026-11-22 に確かめた）。
+本体のコマンドラインには履歴とカーソルの移動が無いので、補完のキーでないときの `<C-n>`、`<C-p>`、矢印のキーは、これまでどおり何もしない。
+
+補った文字は、語と候補の共通の先頭を残し、残りを `<BS>` で消して、候補の残りを文字のキーで `State` に渡す（`wildSetWord`）。
+このため、マクロを記録している間に補うと、補った後の文字が記録に入り、再生すると同じコマンドラインになる（Vim は `<Tab>` を記録し、再生の `<Tab>` は補わずにタブ文字を入れる）。
+マクロとドットリピートの再生のキーは `State` の中で解釈するので補完を通らず、`<Tab>` はタブ文字として入る（Vim の `'wildchar'` が再生の中で効かないのと同じ）。
+補完のキーは `internal/editor` の `feedKey` が `State` へ渡す前に読むので、キーマップの展開で入った `<Tab>` も補う（Vim は `'wildcharm'` に書いたキーだけで補う）。
+補う状態は、キーを処理するたびと描くたびに、作ったときのバッファとコマンドラインが今のものと同じかを確かめ、違えば捨てる（`currentWild`。実行した、`<Esc>` で抜けた、別のバッファへ移った）。
+
+#### ファイルの候補
+
+| 項目 | 扱い |
+|---|---|
+| 語の読み方 | `\ ` と `\\|` を戻し（`ex.UnescapeFileArg`。`fileArg` と `splitBar` が戻す形）、先頭の `~` と環境変数を展開する（`expandFilePath`）。語の最後の `/` までをディレクトリ（無ければ client の作業ディレクトリ、相対パスなら作業ディレクトリから）にし、その中の、`/` の後で始まる名前を集める |
+| `~` と環境変数 | 候補は打った語の `~` を残し（`:e ~/.con<Tab>` は `~/.config/`）、環境変数は展開したパスにする（`:e $HOME/.con<Tab>` は絶対パス）。`~` だけの語は、ホームディレクトリの絶対パスにする。どれも Neovim 0.12.5 と同じ（2026-11-22 に確かめた）。環境変数は、client の外部のコマンドに足す環境変数（`childEnv`）を先に、server のプロセスの環境変数を後に引く |
+| 隠しファイル | `/` の後が `.` で始まるときだけ集め、そのときは `.` と `..` も集める（Neovim の `:e .<Tab>` が `./`、`../` を出すのと同じ） |
+| 大文字と小文字 | `commandLine.completeIgnoreCase` が真なら区別しない |
+| 並び | 名前のバイトの順。ディレクトリを先にはしない。末尾が Vim の `'suffixes'` の既定（`.bak`、`~`、`.o`、`.h`、`.info`、`.swp`、`.obj`）に当たるファイルを後ろへ回す |
+| 入れる形 | ディレクトリの名前の後に `/` を付け、空白と `\|` の前に `\` を付ける（`ex.EscapeFileArg`）。一覧には、名前（パスの最後の部分）だけを出し、一覧の項目はコマンドラインのパスの最後の部分の列から並べる（Neovim の `showmatches_gettail`。選んでいない一覧を出すときは最後の `/` の後、選んで出すときは、後に文字が続く最後の `/` の後） |
+
+ファイルの候補は、大きなディレクトリでも入力を止めないよう、イベントループの外の goroutine で、1024 項目ずつ読んで取り消されたかを確かめながら集める（`startWildFiles`、`collectFiles`。FR-199）。
+集めている間に打った補完のキー（`wildQueued`）は取っておき、集め終えて補った後に打った順に処理する。
+キーがまとめて届いたとき（`<Tab><Tab><C-y>` の貼り付けや速い打鍵）に、集め終える前の `<Tab>` が捨てられないためである。
+ほかのキーは、集めるのを取り消してから、その場で処理する。取り消した後に届いた候補は捨てる。
+ほかの種類の候補は、本体が持つ一覧から作るので、その場で集める。
+
+#### 一覧の描き方
+
+| 項目 | 扱い（Neovim 0.12.5 の `pum_display` の、コマンドラインで枠線の無いときと同じ） |
+|---|---|
+| 縦の位置 | コマンドラインの行の真上に詰める。項目が収まらなければ画面の一番上の行から。`completionMenu.height` が 0 でなければ、下からその行の数だけにする。1 行しか取れないのに 2 項目以上なら出さない |
+| 横の位置 | 項目の文字を、項目を並べ始める位置の文字の列から並べ、その 1 列左に空白を置く。コマンドラインの先頭を隠しているときは、隠した分だけ左へずらす |
+| 幅 | 項目の幅の最大と 15（Vim の `'pumwidth'` の既定）の大きい方。項目が 15 列以上なら、後ろに 1 列を足す。右の端に収まらなければ、15 列より広く取れる限り右の端までにし、取れなければ 16 列にして右の端に寄せる。それも取れなければ画面の幅にする |
+| 収まらない項目 | 収まる所まで描き、右の端の列に `>` を描く（Neovim の `'fillchars'` の `trunc` の既定） |
+| 送り方 | 選んだ項目の上と下に、行の数の半分と 3 の小さい方の行を残す。跳んだときは 1 画面ぶん送る（`pum_set_selected` と同じ式。`scrollCompletion`）。一覧の番号（`ID`）が替わったら先頭から出す |
+| スクロールバー | 項目が行の数より多ければ、右の端の 1 列に溝（`popup.scrollbar`）とつまみ（`popup.thumb`）を描く。つまみの高さと位置は `pum_redraw` と同じ式 |
+| 色 | 項目は `popup`、選んでいる項目は `popup.selected`。項目の先頭が補い始めたときの語と大文字と小文字を区別せずに同じなら、その部分に `popup.match` を重ねる（Neovim の `PmenuMatch`。既定は太字） |
+
+`popup.scrollbar` の既定は `popup` と同じ背景の色（Neovim の `PmenuSbar` は `Pmenu` へのリンク）、`popup.thumb` の既定は 7 番の背景の色（Vim 9.1 の暗い背景の `PmenuSbar` の `ctermbg=248` に近い明るい灰色）にした。
 
 ## 8. エラーの扱い
 

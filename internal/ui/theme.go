@@ -56,7 +56,7 @@ const (
 	StyleDiagnosticWarning = "diagnostic.warning"
 	StyleDiagnosticInfo    = "diagnostic.info"
 	StyleDiagnosticHint    = "diagnostic.hint"
-	// StylePopup は、カーソルの近くに浮かべる popup/show の本文である（Vim の Pmenu に当たる）。
+	// StylePopup は、カーソルの近くに浮かべる popup/show の本文と、補完の候補の一覧（Frame.Completion）の項目である（Vim の Pmenu に当たる）。
 	StylePopup = "popup"
 	// StylePopupSelected は、浮かべる一覧（Frame.List）と補完の候補の一覧（Frame.Completion）の選んでいる項目である（Vim の PmenuSel に当たる）。
 	StylePopupSelected = "popup.selected"

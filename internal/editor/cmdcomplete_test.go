@@ -294,6 +294,45 @@ func TestEditExpandsHome(t *testing.T) {
 	h.keys("<Esc>")
 }
 
+// ファイルの候補を集めている間は入力を止めない。集めている間に打った補完のキーは、集め終えてから打った順に効き、
+// ほかのキーは集めるのを取り消してから働く（取り消した後に届いた候補は使わない）。
+//
+// req: FR-199
+func TestCmdlineCompleteSlowFiles(t *testing.T) {
+	h := startCompletion(t, completionFiles, nil)
+	release := make(chan struct{})
+	started := make(chan struct{}, 4)
+	h.e.do(func() {
+		h.e.wildCollect = func(ctx context.Context, q fileQuery) ([]string, []string, error) {
+			started <- struct{}{}
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return collectFiles(context.Background(), q)
+		}
+	})
+	h.keys(":e al<Tab><Tab><C-y>")
+	<-started
+	h.settle()
+	if got := h.cmdline(); got != "e al" {
+		t.Fatalf("集めている間のコマンドライン = %q", got)
+	}
+	release <- struct{}{}
+	h.waitCmdline("集め終えた後", "e alpine.md", "")
+	h.keys("<Esc>:e al<Tab>")
+	<-started
+	h.keys("x")
+	h.waitCmdline("集めている間に打った x", "e alx", "")
+	close(release)
+	h.settle()
+	h.e.do(func() {})
+	if got, menu := h.cmdline(), h.menu(); got != "e alx" || menu != "" {
+		t.Errorf("取り消した後 = %q、一覧 = %q", got, menu)
+	}
+	h.keys("<Esc>")
+}
+
 // ファイルの候補を集める途中で取り消されたら、誤りを返して候補を返さない。読めないディレクトリも誤りにする。
 //
 // req: FR-199

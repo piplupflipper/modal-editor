@@ -6,7 +6,7 @@
 // 同じリポジトリの lightline と airline のテーマの色は、配色そのものの色ではないので入れていない
 // （lightline に近いステータス行の色は、config.example.jsonc の colors にある）。
 // 端末の背景を透過させる前提の調整は入れていない。本体には本文の文字と背景の色を指す名前が無いので、Normal の色は写していない。
-// colors/iceberg.vim に対応するハイライトグループが無い名前（message.info、popup.border、statusline. で始まる部品の色、
+// colors/iceberg.vim に対応するハイライトグループが無い名前（message.info、popup.border、popup.match、statusline. で始まる部品の色、
 // sign.executionPoint、sign.breakpoint、sign.breakpointUnverified、progress）は書いていない。書いていない名前は本体の既定の色になる。
 {
   // 構文の色。本体の名前は tree-sitter の捕捉の名前に当たるので、Neovim の tree-sitter のグループ（TS...）から写した
@@ -38,6 +38,8 @@
   "message.error": { "fg": "#e27878", "bg": "#161821" }, // ErrorMsg
   "popup": { "fg": "#c6c8d1", "bg": "#3d425b" }, // Pmenu
   "popup.selected": { "fg": "#eff0f4", "bg": "#5b6389" }, // PmenuSel
+  "popup.scrollbar": { "bg": "#3d425b" }, // PmenuSbar
+  "popup.thumb": { "bg": "#c6c8d1" }, // PmenuThumb
   "finder.match": { "fg": "#e2a478" }, // CtrlPMatch、deniteMatchedChar → Title
   // 項目のプレビューの、項目の指す行。iceberg.vim に専用のグループは無く、fzf-lua のプレビューの FzfLuaCursorLine が既定で
   // リンクする CursorLine の背景を写した（文字の色は持たず、構文の色を残す）

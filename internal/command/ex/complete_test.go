@@ -1,6 +1,7 @@
 package ex
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -136,6 +137,33 @@ func TestCompleteOptions(t *testing.T) {
 	for _, line := range []string{"set nu!", "set nu?", "set number=", "set nosuch=", "option.set nosuch ", "option.get a b", "set ts&"} {
 		if c := Complete(st, line); c.Kind != CompleteNothing {
 			t.Errorf("Complete(%q) = %+v, want 補うものが無い", line, c)
+		}
+	}
+}
+
+// :set wildmode と :option.set commandLine.completeMode は、語の列として読める値だけを入れ、読めない値は E474 にする
+// （Neovim 0.12.5 の :set wildmode=foo と同じ番号）。:set wildignorecase と :set pumheight も別名で使える。
+//
+// req: FR-196
+func TestSetCompleteMode(t *testing.T) {
+	opts := &fakeOptions{}
+	st := &State{Options: opts}
+	for _, line := range []string{"set wildmode=longest:full,full", "option.set commandLine.completeMode noselect:full", "set wildignorecase pumheight=12"} {
+		if _, err := Execute(buffer.New("x\n"), st, 0, line); err != nil {
+			t.Errorf("%s: %v", line, err)
+		}
+	}
+	want := []string{
+		option.CommandLineCompleteMode + "=longest:full,full", option.CommandLineCompleteMode + "=noselect:full",
+		option.CommandLineCompleteIgnoreCase + "=true", option.CompletionMenuHeight + "=12",
+	}
+	if !slices.Equal(opts.sets, want) {
+		t.Errorf("sets = %q, want %q", opts.sets, want)
+	}
+	for _, line := range []string{"set wildmode=list:full", "option.set commandLine.completeMode full,,full"} {
+		_, err := Execute(buffer.New("x\n"), st, 0, line)
+		if e := (*Error)(nil); !errors.As(err, &e) || e.Code != codeInvalidArg {
+			t.Errorf("%s = %v, want E474", line, err)
 		}
 	}
 }

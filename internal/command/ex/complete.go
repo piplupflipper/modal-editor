@@ -129,7 +129,11 @@ func Complete(st *State, line string) Completion {
 // 拡張機能のコマンドの ID は空白、"|"、"!" の手前までを名前として読むが（extCommandName）、補うときは :s/a/b のような
 // 名前の後に引数が続く形を名前の途中とみなさないため、名前に使われる文字に限る。
 func notNameRune(r rune) bool {
-	return !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || r == '.' || r == '-' || r == '_')
+	switch {
+	case 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z', '0' <= r && r <= '9', r == '.', r == '-', r == '_':
+		return false
+	}
+	return true
 }
 
 // extCommandCompletion は、s の位置の名前 id が拡張機能のコマンドの口から呼ぶコマンドなら、その引数を補う Completion と true を返す。
@@ -280,8 +284,8 @@ func withPrefix(words []string, prefix string) []string {
 // optionNames は、設定の表の正規の名前のうち prefix で始まるものを、名前の順に返す。boolOnly なら真偽の項目だけにする。
 func optionNames(prefix string, boolOnly bool) []string {
 	var out []string
-	for _, d := range option.Defs() {
-		if d, ok := optionLookup(d.Name); ok && (!boolOnly || d.Type == option.Bool) && strings.HasPrefix(d.Name, prefix) {
+	for _, def := range option.Defs() {
+		if d, ok := optionLookup(def.Name); ok && (!boolOnly || d.Type == option.Bool) && strings.HasPrefix(d.Name, prefix) {
 			out = append(out, d.Name)
 		}
 	}

@@ -251,7 +251,7 @@ func TestParseYankHighlightOption(t *testing.T) {
 // コマンドラインの補完の 3 項目は、"commandLine" と "completionMenu" の下に書ける（オーナーの nvim の値）。
 // 補い方の値が語の列として読めなければ、位置付きの誤りとして知らせて既定値を使う。
 //
-// req: FR-196, FR-197
+// req: FR-196
 func TestParseCompletionOptions(t *testing.T) {
 	cfg, errs := Parse("config.jsonc", []byte(`{ "commandLine": { "completeMode": "longest:full,full", "completeIgnoreCase": true }, "completionMenu": { "height": 12 } }`))
 	if len(errs) != 0 {
