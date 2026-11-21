@@ -70,7 +70,59 @@ func TestFindCommand(t *testing.T) {
 	}
 }
 
-// findUp は、根に着くまで上へたどり、各ディレクトリで rels を列の順に試す。
+// プロジェクトの依存は、Git の根（.git のディレクトリか、worktree の .git のファイルのあるディレクトリ）より上へは探さない。
+// 有効にした Python の仮想環境（VIRTUAL_ENV）の bin は、プロジェクトの依存より先に探す（PR #341 のレビューの推奨 5）。
+// まだ無いディレクトリのファイルでも、上の在るディレクトリの依存を探す。
+//
+// req: FR-175
+func TestFindCommandGitRootAndVirtualEnv(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PATH", filepath.Join(root, "bin"))
+	t.Setenv("VIRTUAL_ENV", "")
+	writeScript(t, root, "outer/node_modules/.bin/above", "cat")
+	inRepo := writeScript(t, root, "outer/repo/node_modules/.bin/inrepo", "cat")
+	// worktree の形の .git のファイル。
+	writeScript(t, root, "outer/repo/.git", "")
+	writeScript(t, root, "outer/dirrepo/.git/HEAD", "")
+	writeScript(t, root, "outer/node_modules/.bin/above2", "cat")
+	src := filepath.Join(root, "outer/repo/src/not/yet")
+
+	if got, err := findCommand("inrepo", src, defaultLocalBinDirs); err != nil || got != inRepo {
+		t.Errorf("Git の根の依存: %q, %v; want %q", got, err, inRepo)
+	}
+	for _, dir := range []string{src, filepath.Join(root, "outer/dirrepo/a")} {
+		if got, err := findCommand("above", dir, defaultLocalBinDirs); !errors.Is(err, errNotFound) {
+			t.Errorf("%s から Git の根の上の依存: %q, %v; want errNotFound", dir, got, err)
+		}
+	}
+	// Git の作業ツリーの外では、ファイルシステムの根までたどる。
+	if got, err := findCommand("above2", filepath.Join(root, "outer/plain/a"), defaultLocalBinDirs); err != nil || got != filepath.Join(root, "outer/node_modules/.bin/above2") {
+		t.Errorf("Git の作業ツリーの外: %q, %v", got, err)
+	}
+
+	venv := writeScript(t, root, "env/bin/inrepo", "cat")
+	t.Setenv("VIRTUAL_ENV", filepath.Join(root, "env"))
+	if got, err := findCommand("inrepo", src, defaultLocalBinDirs); err != nil || got != venv {
+		t.Errorf("VIRTUAL_ENV: %q, %v; want %q", got, err, venv)
+	}
+	t.Setenv("VIRTUAL_ENV", "env")
+	if got, err := findCommand("inrepo", src, defaultLocalBinDirs); err != nil || got != inRepo {
+		t.Errorf("相対パスの VIRTUAL_ENV は使わない: %q, %v; want %q", got, err, inRepo)
+	}
+}
+
+// existingDir は、無いディレクトリなら在る一番近い上のディレクトリを返す。
+func TestExistingDir(t *testing.T) {
+	root := t.TempDir()
+	if got := existingDir(filepath.Join(root, "a", "b")); got != root {
+		t.Errorf("existingDir = %q, want %q", got, root)
+	}
+	if got := existingDir(root); got != root {
+		t.Errorf("existingDir(在る) = %q, want %q", got, root)
+	}
+}
+
+// findUp は、根に着くまで上へたどり、各ディレクトリで rels を列の順に試す。stop が true を返したディレクトリより上へはたどらない。
 func TestFindUp(t *testing.T) {
 	root := t.TempDir()
 	for _, rel := range []string{"a/b.json", "a/x/c.json", "a/x/b.json"} {
@@ -86,13 +138,28 @@ func TestFindUp(t *testing.T) {
 		{"a/x/y", []string{"c.json", "b.json"}, "a/x/c.json"},
 		{"a", []string{"c.json", "b.json"}, "a/b.json"},
 	} {
-		got, ok := findUp(filepath.Join(root, c.dir), c.rels, exists)
+		got, ok := findUp(filepath.Join(root, c.dir), c.rels, exists, nil)
 		if !ok || got != filepath.Join(root, c.want) {
 			t.Errorf("findUp(%s, %v) = %q, %v; want %s", c.dir, c.rels, got, ok, c.want)
 		}
 	}
-	if got, ok := findUp(filepath.Join(root, "a"), []string{"nosuch.json"}, exists); ok {
+	if got, ok := findUp(filepath.Join(root, "a"), []string{"nosuch.json"}, exists, nil); ok {
 		t.Errorf("findUp = %q, want 見つからない", got)
+	}
+	// a/x で止めると、a の b.json には届かない。止めたディレクトリそのものは調べる。
+	stopX := func(d string) bool { return d == filepath.Join(root, "a", "x") }
+	if got, ok := findUp(filepath.Join(root, "a/x/y"), []string{"c.json"}, exists, stopX); !ok || got != filepath.Join(root, "a/x/c.json") {
+		t.Errorf("止めたディレクトリの c.json = %q, %v", got, ok)
+	}
+	if got, ok := findUp(filepath.Join(root, "a/x/y"), []string{"b.json"}, exists, stopX); !ok || got != filepath.Join(root, "a/x/b.json") {
+		t.Errorf("止めたディレクトリの b.json = %q, %v", got, ok)
+	}
+	writeScript(t, root, "a/top.json", "")
+	if got, ok := findUp(filepath.Join(root, "a/x/y"), []string{"top.json"}, exists, stopX); ok {
+		t.Errorf("止めたディレクトリの上の top.json = %q, want 見つからない", got)
+	}
+	if _, ok := findUp(filepath.Join(root, "a/x/y"), []string{"top.json"}, exists, nil); !ok {
+		t.Error("止めなければ上の top.json に届く")
 	}
 }
 
@@ -112,6 +179,7 @@ func TestRunFormatter(t *testing.T) {
 	writeScript(t, root, "bin/slow", `sleep 10`)
 	writeScript(t, root, "bin/empty", `cat >/dev/null`)
 	writeScript(t, root, "bin/binary", `printf '\377\n'`)
+	t.Setenv("VIRTUAL_ENV", "")
 	cfg, err := parseSettings(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +198,13 @@ func TestRunFormatter(t *testing.T) {
 	out, err = runFormatter(ctx, cfg, formatterConfig{Name: "args", Command: "args", Args: []string{"--stdin-file-path={path}", "x"}}, path, "")
 	if want := "--stdin-file-path=" + path + "\nx\n" + filepath.Dir(path) + "\n"; err != nil || out != want {
 		t.Errorf("args = %q, %v; want %q", out, err, want)
+	}
+	// まだ無いディレクトリの新しいファイル（保存の流れは、親のディレクトリを作る前に整形を問い合わせる）では、
+	// 在る一番近い上のディレクトリで走らせる（PR #341 のレビューの必須 2）。
+	newPath := filepath.Join(root, "src", "new", "deeper", "n.txt")
+	out, err = runFormatter(ctx, cfg, formatterConfig{Name: "args", Command: "args", Args: []string{"{path}"}}, newPath, "")
+	if want := newPath + "\n" + filepath.Dir(path) + "\n"; err != nil || out != want {
+		t.Errorf("無いディレクトリの args = %q, %v; want %q", out, err, want)
 	}
 
 	for _, c := range []struct {

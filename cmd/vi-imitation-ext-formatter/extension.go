@@ -73,7 +73,7 @@ func (x *extension) formatText(ctx context.Context, s snapshot) (string, error) 
 		}
 		in = out
 	}
-	return bufferText(in, s.finalNewline), nil
+	return bufferText(in), nil
 }
 
 // report は、整形ツールの失敗 err を利用者へ知らせる。本体の取り消し（ctx の誤り）は知らせない。

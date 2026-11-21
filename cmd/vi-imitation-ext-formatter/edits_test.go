@@ -143,7 +143,8 @@ func TestFormatTransactionRange(t *testing.T) {
 	}
 }
 
-// 整形ツールに渡す中身は、本体が書き出すときと同じく、末尾に改行が付くバッファでは改行を足し、出力の末尾の改行は 1 つ除いて本文にする。
+// 整形ツールに渡す中身は、本体が書き出すときと同じく、末尾に改行が付くバッファでは改行を足す。
+// 出力の末尾の改行は、末尾に改行の無いバッファ（fixendofline が false）でも 1 つ除いて本文にし、最後に空の行を足さない。
 //
 // req: FR-175
 func TestFileText(t *testing.T) {
@@ -153,18 +154,13 @@ func TestFileText(t *testing.T) {
 	if got := fileText("a\nb", false); got != "a\nb" {
 		t.Errorf("fileText(!finalNewline) = %q", got)
 	}
-	for _, c := range []struct {
-		out   string
-		final bool
-		want  string
-	}{
-		{"a\nb\n", true, "a\nb"},
-		{"a\nb\n\n", true, "a\nb\n"},
-		{"a\nb", true, "a\nb"},
-		{"a\nb\n", false, "a\nb\n"},
-	} {
-		if got := bufferText(c.out, c.final); got != c.want {
-			t.Errorf("bufferText(%q, %v) = %q, want %q", c.out, c.final, got, c.want)
+	for out, want := range map[string]string{"a\nb\n": "a\nb", "a\nb\n\n": "a\nb\n", "a\nb": "a\nb", "": ""} {
+		if got := bufferText(out); got != want {
+			t.Errorf("bufferText(%q) = %q, want %q", out, got, want)
 		}
+	}
+	// 末尾に改行の無い本文を、末尾に改行を付ける整形ツールで整形しても、本文は空の行で終わらない。
+	if tx := formatTransaction("x=1", bufferText("x = 1\n"), 1, nil); tx == nil || apply(t, "x=1", tx) != "x = 1" {
+		t.Errorf("末尾に改行の無い本文の整形 = %+v", tx)
 	}
 }

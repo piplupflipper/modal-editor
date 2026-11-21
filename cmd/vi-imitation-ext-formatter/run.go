@@ -25,10 +25,13 @@ const maxGist = 200
 
 // findUp は、dir から根へ向かって 1 つずつ上のディレクトリへたどり、各ディレクトリの下の rels の相対パスを列の順に match に渡して、
 // match が true を返した最初のパスを返す。見つからなければ ok が false である。
+// stop が nil でなければ、stop が true を返したディレクトリを調べた後で、それより上へはたどらない（isGitRoot で Git の根に止める）。
+// dir は無くてもよい（まだ無いディレクトリの新しいファイル）。無いディレクトリでは match が当たらないだけで、上へたどり続ける。
 //
 // 実行ファイルの探し方（findCommand）が使う。整形ツールの設定ファイル（biome.json、pyproject.toml など）を
-// ファイルのディレクトリから上へ探す処理（#339 の「この上に何が載るか」）も、この関数で書ける。
-func findUp(dir string, rels []string, match func(path string) bool) (path string, ok bool) {
+// ファイルのディレクトリから上へ探す処理（#339 の「この上に何が載るか」）も、rels に候補を優先の順に並べ、
+// match に中身の確かめ（pyproject.toml の [tool.ruff] の有無など）を渡して書ける。
+func findUp(dir string, rels []string, match func(path string) bool, stop func(dir string) bool) (path string, ok bool) {
 	for d := filepath.Clean(dir); ; {
 		for _, r := range rels {
 			if p := filepath.Join(d, r); match(p) {
@@ -36,8 +39,30 @@ func findUp(dir string, rels []string, match func(path string) bool) (path strin
 			}
 		}
 		parent := filepath.Dir(d)
-		if parent == d {
+		if parent == d || (stop != nil && stop(d)) {
 			return "", false
+		}
+		d = parent
+	}
+}
+
+// isGitRoot は、dir が Git の作業ツリーの根（.git のディレクトリか、worktree と submodule の .git のファイルがあるディレクトリ）かを返す。
+func isGitRoot(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
+// existingDir は、dir が在ればそのまま、無ければ在る一番近い上のディレクトリを返す。
+// 整形ツールの作業ディレクトリに使う。保存の流れは、親のディレクトリを作る（FR-78）より先に buffer/willSave を送る（基本設計 6.7）ので、
+// まだ無いディレクトリの新しいファイルの最初の :w では、ファイルのディレクトリが無い。
+func existingDir(dir string) string {
+	for d := filepath.Clean(dir); ; {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return d
 		}
 		d = parent
 	}
@@ -45,7 +70,7 @@ func findUp(dir string, rels []string, match func(path string) bool) (path strin
 
 // isExecutable は、path が実行できる通常のファイル（シンボリックリンクの先を含む）かを返す。
 func isExecutable(path string) bool {
-	fi, err := os.Stat(path)
+	fi, err := os.Stat(path) //nolint:gosec // G703: 利用者の環境（VIRTUAL_ENV）と設定から作った実行ファイルの候補のパスを、読まずに調べるだけ
 	return err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0
 }
 
@@ -54,10 +79,16 @@ var errNotFound = errors.New("not found")
 
 // findCommand は、整形ツールの実行ファイルを探して、そのパスを返す（FR-175）。
 //
-// command が絶対パスか ~/ で始まるパスなら、そのパスを使う。
-// 名前なら、ファイルのディレクトリ fileDir から根へ向かって、各ディレクトリの下の localBinDirs（node_modules/.bin、.venv/bin）を探し、
-// 無ければ PATH から探す（conform.nvim の util.from_node_modules と同じく、近いプロジェクトの依存を先に使う）。
-// fileDir が空（ファイルの無いバッファ）なら PATH だけを探す。見つからなければ errNotFound を返す。
+// command が絶対パスか ~/ で始まるパスなら、そのパスを使う。名前なら、次の順に探す。
+//
+//  1. 環境変数 VIRTUAL_ENV（有効にした Python の仮想環境。絶対パスのときだけ）の bin
+//  2. ファイルのディレクトリ fileDir から上へ、各ディレクトリの下の localBinDirs（node_modules/.bin、.venv/bin）。
+//     Git の根（isGitRoot）より上へはたどらない。Git の作業ツリーの外のファイルでは、ファイルシステムの根までたどる
+//  3. PATH
+//
+// 近いプロジェクトの依存を先に使うのは conform.nvim の util.from_node_modules と同じで、1 と 2 の Git の根で止めることは、
+// オーナーの nvim の conform.nvim の command の解き方に合わせた（PR #341 のレビューの推奨 5）。
+// fileDir が空（ファイルの無いバッファ）なら 2 を飛ばす。見つからなければ errNotFound を返す。
 //
 // req: FR-175
 func findCommand(command, fileDir string, localBinDirs []string) (string, error) {
@@ -74,12 +105,17 @@ func findCommand(command, fileDir string, localBinDirs []string) (string, error)
 		}
 		return "", errNotFound
 	}
+	if venv := os.Getenv("VIRTUAL_ENV"); filepath.IsAbs(venv) {
+		if p := filepath.Join(venv, "bin", command); isExecutable(p) {
+			return p, nil
+		}
+	}
 	if fileDir != "" && len(localBinDirs) > 0 {
 		rels := make([]string, len(localBinDirs))
 		for i, d := range localBinDirs {
 			rels[i] = filepath.Join(d, command)
 		}
-		if p, ok := findUp(fileDir, rels, isExecutable); ok {
+		if p, ok := findUp(fileDir, rels, isExecutable, isGitRoot); ok {
 			return p, nil
 		}
 	}
@@ -100,8 +136,12 @@ func failf(format string, args ...any) error { return &formatError{msg: fmt.Spri
 // runFormatter は、整形ツール f に input を標準入力で渡して走らせ、標準出力を返す（FR-175）。
 //
 // path はバッファのファイルの絶対パスで、Args の {path} を置き換え、そのディレクトリを作業ディレクトリにする（設定ファイルを
-// ファイルの近くから探す整形ツールのため）。path が空なら作業ディレクトリは拡張機能のもの（本体の作業ディレクトリ）で、
-// {path} を含む Args の整形ツールは走らせずに失敗にする。
+// ファイルの近くから探す整形ツールのため）。ディレクトリがまだ無ければ、在る一番近い上のディレクトリにする（existingDir）。
+// path が空なら作業ディレクトリは拡張機能のもの（本体の作業ディレクトリ）で、{path} を含む Args の整形ツールは走らせずに失敗にする。
+//
+// 整形ツールは自分のプロセスグループで起動し（startFormatter）、時間の上限か ctx の取り消しで止めるときは、グループ全体に SIGKILL を送る
+// （killFormatter）。node_modules/.bin/biome のように、整形ツールの本体が整形ツールの子プロセス（拡張機能の孫プロセス）になるものも止めるためである
+// （PR #341 のレビューの必須 1）。
 //
 // 失敗は *formatError で返す。見つからない、起動できない、終了コードが 0 でない、時間の上限（cfg.timeout）を超えた、
 // 正しくない UTF-8 を出力した、空でない入力に空白だけの出力を返した（conform.nvim と同じく、対象外のファイルで何も出さない整形ツールのため）
@@ -115,11 +155,15 @@ func runFormatter(ctx context.Context, cfg *config, f formatterConfig, path, inp
 	}
 	exe, err := findCommand(f.Command, dir, cfg.localBinDirs)
 	if err != nil {
-		where := "PATH"
-		if dir != "" && len(cfg.localBinDirs) > 0 {
-			where = strings.Join(cfg.localBinDirs, "、") + "、PATH"
+		var where []string
+		if filepath.IsAbs(os.Getenv("VIRTUAL_ENV")) {
+			where = append(where, "$VIRTUAL_ENV/bin")
 		}
-		return "", failf("整形ツール %s が見つからない（%s を探した）", f.Name, where)
+		if dir != "" {
+			where = append(where, cfg.localBinDirs...)
+		}
+		where = append(where, "PATH")
+		return "", failf("整形ツール %s が見つからない（%s を探した）", f.Name, strings.Join(where, "、"))
 	}
 	args := make([]string, len(f.Args))
 	for i, a := range f.Args {
@@ -132,17 +176,28 @@ func runFormatter(ctx context.Context, cfg *config, f formatterConfig, path, inp
 	runCtx, cancel := context.WithTimeout(ctx, cfg.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, exe, args...) //nolint:gosec // 利用者が設定に書いた整形ツールを走らせる
-	cmd.Dir = dir
+	if dir != "" {
+		cmd.Dir = existingDir(dir)
+	}
 	cmd.Stdin = strings.NewReader(input)
 	var stdout bytes.Buffer
 	stderr := &limitedBuffer{max: maxStderr}
 	cmd.Stdout = &stdout
 	cmd.Stderr = stderr
 	cmd.WaitDelay = waitDelay
+	cmd.Cancel = func() error {
+		killFormatter(cmd)
+		return nil
+	}
 	if err = startFormatter(cmd); err != nil {
 		return "", failf("整形ツール %s を起動できない: %v", f.Name, err)
 	}
 	err = cmd.Wait()
+	// 止めたとき（Cancel はグループに送り済み）と、整形ツールが終わっても子プロセスが標準出力を持ったまま残ったとき（ErrWaitDelay）は、
+	// 残った子プロセスをグループごと止める。グループに誰も残っていなければ何もしない。
+	if runCtx.Err() != nil || errors.Is(err, exec.ErrWaitDelay) {
+		killFormatter(cmd)
+	}
 	switch {
 	case ctx.Err() != nil:
 		return "", ctx.Err()

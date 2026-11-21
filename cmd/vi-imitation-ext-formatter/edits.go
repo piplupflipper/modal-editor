@@ -16,14 +16,15 @@ func fileText(text string, finalNewline bool) string {
 	return text
 }
 
-// bufferText は、整形ツールの出力 out（ファイルの中身）を、バッファの本文にする（fileText の逆）。
-// 書き出すと末尾に改行が付くバッファ（finalNewline）では、out の末尾の改行を 1 つ除く。
-// out の末尾に改行が無くても、そのまま本文にする（書き出すときに本体が改行を補う）。
-func bufferText(out string, finalNewline bool) string {
-	if finalNewline {
-		return strings.TrimSuffix(out, "\n")
-	}
-	return out
+// bufferText は、整形ツールの出力 out（ファイルの中身）を、バッファの本文にする。
+// finalNewline に依らず、out の末尾の改行を 1 つ除く（conform.nvim が出力の最後の空の行を除いてから適用するのと同じ）。
+//
+// 末尾の改行の記録（buffer/edit の endOfLine）は変えない。このため、末尾に改行の無いファイル（fixendofline が false）では、
+// 整形ツールが末尾に改行を付けても、本文の最後に空の行を足さず、書き出したファイルも末尾に改行の無いままになる
+// （PR #341 のレビューの推奨 2。除かないと、画面の最後に空の行が出た）。
+// out の末尾に改行が無くても、そのまま本文にする（finalNewline なら、書き出すときに本体が改行を補う）。
+func bufferText(out string) string {
+	return strings.TrimSuffix(out, "\n")
 }
 
 // lineRange は、gq{モーション} の範囲の行の番号（両端を含む）である。

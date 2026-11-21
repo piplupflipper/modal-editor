@@ -20,7 +20,8 @@ type settings struct {
 	// FormatOnSave は、保存の前に整形するかどうかである。省くと true である。false でも format（gq と :format）は使える。
 	FormatOnSave *bool `json:"formatOnSave,omitempty"`
 	// LocalBinDirs は、整形ツールの実行ファイルを PATH より先に探す、プロジェクトの依存の置き場所である。
-	// ファイルのディレクトリから根へ向かって、各ディレクトリの下のこれらの相対パスを、列の順に探す。
+	// ファイルのディレクトリから Git の根（Git の作業ツリーの外ならファイルシステムの根）へ向かって、
+	// 各ディレクトリの下のこれらの相対パスを、列の順に探す（findCommand）。
 	// 省くと defaultLocalBinDirs で、空の列を書くとプロジェクトの依存を探さない。
 	LocalBinDirs []string `json:"localBinDirs,omitempty"`
 	// TimeoutMs は、1 つの整形ツールの実行を待つ時間の上限のミリ秒である。省くか 0 なら defaultTimeout である。

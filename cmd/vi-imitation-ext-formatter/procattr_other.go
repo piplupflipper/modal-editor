@@ -9,3 +9,10 @@ import "os/exec"
 func startFormatter(cmd *exec.Cmd) error {
 	return cmd.Start()
 }
+
+// killFormatter は、整形ツールのプロセスを強制終了する。Linux 以外では、整形ツールの子プロセスまでは止めない。
+func killFormatter(cmd *exec.Cmd) {
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+}

@@ -117,6 +117,29 @@ func TestStandardFormatter(t *testing.T) {
 	})
 }
 
+// まだ無いディレクトリの新しいファイルも、最初の :w で整形してから、ディレクトリを作って書き出す。
+// 保存の流れは親のディレクトリを作る前に整形を問い合わせる（基本設計 6.7）ので、整形ツールは在る一番近い上のディレクトリで走る
+// （PR #341 のレビューの必須 2）。
+//
+// req: FR-175
+func TestStandardFormatterNewDirectory(t *testing.T) {
+	dir := t.TempDir()
+	squeeze := formatterScript(t, dir, "squeeze", "tr -s ' '")
+	spec := formatterSpec(t, []map[string]any{{"command": squeeze, "fileTypes": []string{"python"}}})
+	py := filepath.Join(dir, "pkg", "newdir", "deeper", "n.py")
+	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, py)
+	h.eventually("整形ツールの拡張機能の起動", func() bool { return h.state("formatter") == exthost.StateRunning })
+	h.keys("ix  =  1<Esc>:w<CR>")
+	h.eventually("整形して書き出した新しいファイル", func() bool {
+		b, err := os.ReadFile(py)
+		return err == nil && string(b) == "x = 1\n"
+	})
+	h.settle()
+	if slices.ContainsFunc(h.e.msgHistory, func(m ui.Message) bool { return strings.Contains(m.Text, "整形ツール") }) {
+		t.Errorf("整形ツールの誤りの知らせ: %v", h.e.msgHistory)
+	}
+}
+
 // 保存の流れで buffer/willSave の応答を待つ期限（extensions.willSaveTimeoutMs を写した exthost.Config.WillSaveTimeout）を超えた整形は、
 // 待たずに整形せずに書き出し、そのことを知らせる。期限が整形にかかる時間より長ければ、整形してから書き出す。
 //
