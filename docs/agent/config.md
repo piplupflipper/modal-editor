@@ -86,6 +86,8 @@
 | `undo.persist` | 真偽 | エディタ全体 | `false` |  |
 | `cursor.restore` | 真偽 | エディタ全体 | `false` |  |
 | `comment.string` | 文字列 | バッファごと | `""` |  |
+| `cursorHold.delayMs` | 整数 | エディタ全体 | `4000` | 0 から 60000 |
+| `diagnostic.popup` | 真偽 | エディタ全体 | `false` |  |
 <!-- generated:options:end -->
 
 各項目の説明と、`:set` で使える Vim の名前は `vi-imitation --docs usage 設定の名前の一覧` にある。
