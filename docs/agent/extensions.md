@@ -163,8 +163,6 @@ JSON の文字列である。
 
 起動の契機の種類である。
 
-起動の契機の種類。
-
 ActivationOperator（operator）、ActivationMotion（motion）、ActivationTextObject（textObject）、ActivationCommand（command） は、
 同じ拡張機能が追加した、その種類の操作が呼ばれたときに成り立つ。
 ActivationFileType（filetype） は、Pattern と一致する種類のファイルを開いたときに成り立つ。
@@ -243,8 +241,6 @@ JSON の文字列である。
 
 本体の操作の名前である（名前は仮）。
 本体は LSP と DAP のプロトコルを知らず、操作の名前と引数だけを提供者へ渡す。
-
-本体の操作。
 
 移動の操作（OpDefinition（definition）、OpImplementation（implementation）、OpTypeDefinition（typeDefinition））は、Args の peek が true なら、
 移らずに移動先の周りをポップアップに出す。

@@ -54,6 +54,10 @@ func run(args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// 生成しない手書きの文のうち、コードと食い違いうるもの（yaegi の版）を照合する
+	if err = checkYaegiVersion(*root); err != nil {
+		return err
+	}
 	files, err := filepath.Glob(filepath.Join(*root, agentDir, "*.md"))
 	if err != nil {
 		return err

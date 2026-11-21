@@ -10,28 +10,60 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
-	"github.com/traefik/yaegi/stdlib"
-	"github.com/traefik/yaegi/stdlib/unrestricted"
+	"github.com/piplupflipper/vi-imitation/cmd/vi-imitation-ext-script/stdsym"
 )
+
+// yaegiModRE は、go.mod の yaegi の require の行である。
+var yaegiModRE = regexp.MustCompile(`(?m)^\s*github\.com/traefik/yaegi (v\S+)`)
+
+// checkYaegiVersion は、docs/usage.md の「yaegi の制限」の節が、go.mod の yaegi の版（yaegi v0.16.3 の形）を書いているかを確かめる。
+// 制限の一覧は版ごとに手で確かめた文なので、生成せずに照合する。版を上げたら、制限を確かめ直して節を直す。
+func checkYaegiVersion(root string) error {
+	mod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return err
+	}
+	m := yaegiModRE.FindSubmatch(mod)
+	if m == nil {
+		return fmt.Errorf("go.mod に yaegi の require が無い")
+	}
+	usage, err := os.ReadFile(filepath.Join(root, "docs", "usage.md"))
+	if err != nil {
+		return err
+	}
+	_, sec, ok := strings.Cut(string(usage), "\n### yaegi の制限\n")
+	if !ok {
+		return fmt.Errorf("docs/usage.md に「yaegi の制限」の節が無い")
+	}
+	sec, _, _ = strings.Cut(sec, "\n#")
+	if want := "yaegi " + string(m[1]); !strings.Contains(sec, want) {
+		return fmt.Errorf("docs/usage.md の「yaegi の制限」が go.mod の版（%s）を書いていない。制限を確かめ直して版を直す", want)
+	}
+	return nil
+}
 
 // scriptPackages は、スクリプトの拡張機能（cmd/vi-imitation-ext-script）が yaegi に渡す標準ライブラリの記号の表を、
 // import のパスから記号の名前の一覧への対応にする。
-// 表は stdlib.Symbols と unrestricted.Symbols で、cmd/vi-imitation-ext-script の newInterpreter が Use するものと同じである。
+// 表の並びは、cmd/vi-imitation-ext-script の newInterpreter が Use するものと同じ stdsym.Tables である。
 // 表のキーは yaegi の決まりで「import のパス/パッケージ名」である。
 // 記号の名前のうち _ で始まるもの（yaegi がインターフェースを包む型）は、スクリプトから書かないので除く。
+// yaegi 自身のパッケージ（github.com/traefik/yaegi/stdlib など。記号の表を持つためにある）は、スクリプトが使う物ではないので除く。
 func scriptPackages() map[string][]string {
 	out := map[string][]string{}
-	for _, table := range []map[string]map[string]reflect.Value{stdlib.Symbols, unrestricted.Symbols} {
-		for key, syms := range table {
+	for _, table := range stdsym.Tables() {
+		for key, syms := range table.Symbols {
 			i := strings.LastIndex(key, "/")
 			if i < 0 {
 				continue // パッケージでない項目（yaegi の内部で使う表）
 			}
 			path := key[:i]
+			if strings.HasPrefix(path, "github.com/traefik/yaegi/") {
+				continue
+			}
 			if _, ok := out[path]; !ok {
 				out[path] = []string{} // 記号の無いパッケージ（型の引数を取る関数だけの slices など）も、import できるので並べる
 			}

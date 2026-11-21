@@ -600,9 +600,16 @@ func (api *extAPI) writeType(w *bytes.Buffer, name string) {
 				continue
 			}
 			if c.group != "" && c.group != group {
-				// 定数をまとめた宣言の説明（起動の契機の種類ごとの意味など）を、その定数の並びの前に書く
+				// 定数をまとめた宣言の説明（起動の契機の種類ごとの意味など）を、その定数の並びの前に書く。
+				// 宣言の説明の最初の段落が 1 行だけ（「メッセージの重要度。」）なら、型の説明と重なる見出しなので書かない
 				group = c.group
-				fmt.Fprintf(w, "%s\n\n", api.text(group))
+				body := group
+				if first, rest, _ := strings.Cut(group, "\n\n"); !strings.Contains(first, "\n") {
+					body = rest
+				}
+				if body = strings.TrimSpace(body); body != "" {
+					fmt.Fprintf(w, "%s\n\n", api.text(body))
+				}
 			}
 			api.item(w, code(strconv.Quote(c.value))+"（"+c.name+"）", dropSubject(c.doc, c.name))
 		}

@@ -639,8 +639,6 @@ JSON の文字列である。
 
 診断の重要度である。
 
-診断の重要度。
-
 - `"error"`（SeverityError）
 - `"warning"`（SeverityWarning）
 - `"info"`（SeverityInfo）
@@ -729,8 +727,6 @@ editor/list の params である。
 JSON の文字列である。
 
 editor/list で問い合わせる一覧の種類である。
-
-editor/list で問い合わせられる一覧。
 
 - `"tabs"`（ListTabs）: すべての編集の client のタブである（EditorListResult.Tabs）。
 - `"commands"`（ListCommands）: コマンドラインから呼べるコマンド（本体の Ex コマンドと拡張機能のコマンド）である（EditorListResult.Commands）。
@@ -858,8 +854,6 @@ JSON の文字列である。
 
 本体のモードの名前である。
 
-モードの名前。
-
 - `"normal"`（ModeNormal）
 - `"insert"`（ModeInsert）
 - `"visual"`（ModeVisual）
@@ -892,8 +886,6 @@ message/show の params である。
 JSON の文字列である。
 
 利用者へのメッセージの重要度である。
-
-メッセージの重要度。
 
 - `"info"`（MessageInfo）
 - `"warning"`（MessageWarning）
@@ -963,8 +955,6 @@ JSON の文字列である。
 
 表示の部品の種類である。
 
-表示の部品の種類。
-
 - `"text"`（ViewText）: テキストのバッファである。本体は、編集を禁止したファイルでないバッファとして出し、通常のノーマルモードのキー
   （移動、検索、ヤンク）が効く。
 - `"list"`（ViewList）: 項目の一覧である。1 項目を 1 行に出し、<CR> で選ぶと view/select で項目の ID を知らせる。
@@ -984,8 +974,6 @@ JSON の文字列である。
 JSON の文字列である。
 
 popup/show の本文の形式である。
-
-本文の形式。
 
 - `"plaintext"`（PopupPlainText）
 - `"markdown"`（PopupMarkdown）: Markdown である。
@@ -1056,8 +1044,6 @@ JSON の文字列である。
 
 pane/open で部品を出す場所である（API 0.10.0 で足した）。
 
-pane/open で部品を出す場所。
-
 - `"split"`（PaneSplit）: 元の client のペインを端末多重化ソフトで分割したペインである（既定）。
   端末多重化ソフトの外と、ペインを開けなかったときは、中央のポップアップに出す。
 - `"center"`（PaneCenter）: 中央のポップアップである。popup/open の PopupCenter（center） と同じく、tmux と herdr の中では端末多重化ソフトの
@@ -1068,8 +1054,6 @@ pane/open で部品を出す場所。
 JSON の文字列である。
 
 pane/open でペインを分割する向きである。
-
-ペインを分割する向き。新しいペインは、元の client のペインの右か下に開く。
 
 - `"right"`（PaneRight）: 元の client のペインの右に開く（既定）。
 - `"down"`（PaneDown）: 元の client のペインの下に開く。
@@ -1095,8 +1079,6 @@ popup/open の params である。
 JSON の文字列である。
 
 ポップアップの置き場所である。
-
-ポップアップの置き場所。
 
 - `"cursor"`（PopupAtCursor）: 編集の client の画面の中の、カーソルの近くに浮かべる窓である（既定）。
   Focus が false なら、ホバーと同じく次のキーかカーソルの移動で閉じ、<C-w>w でフォーカスを入れられる。
@@ -1146,8 +1128,6 @@ sign/set の params である。
 JSON の文字列である。
 
 行に付ける印の種類である。名前は仮である。
-
-印の種類。
 
 - `"breakpoint"`（SignBreakpoint）: ブレークポイントである。
 - `"breakpointUnverified"`（SignBreakpointUnverified）: デバッグアダプターが検証できなかったブレークポイントである。

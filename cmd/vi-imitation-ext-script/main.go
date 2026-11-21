@@ -49,7 +49,8 @@
 // 利用者が当たる違いの一覧は、docs/usage.md の「yaegi の制限」に 1 つだけ置き、本体の vi-imitation --docs usage 'yaegi の制限' で読める。
 // 一覧を変えるときは、そちらを直す。
 // ハンドラーの引数に名前を付けないと panic になる違いは、testdata/faulty/faulty.go のテストが確かめる。
-// 使える標準ライブラリの記号の一覧は、cmd/docgen が下の newInterpreter と同じ記号の表から生成する（vi-imitation --docs script-symbols）。
+// 使える標準ライブラリの記号の一覧は、cmd/docgen が newInterpreter と同じ記号の表の並び（stdsym.Tables）から生成する（vi-imitation --docs script-symbols）。
+// yaegi の版を上げたら、制限の一覧を確かめ直し、docs/usage.md の「yaegi の制限」の版を直す（make docs-check が go.mod の版と照合する）。
 //
 // yaegi が読み込みで返す誤りには、一覧を読むコマンドを添えて標準エラー出力に書く。
 //
@@ -89,9 +90,8 @@ import (
 	"path/filepath"
 
 	"github.com/traefik/yaegi/interp"
-	"github.com/traefik/yaegi/stdlib"
-	"github.com/traefik/yaegi/stdlib/unrestricted"
 
+	"github.com/piplupflipper/vi-imitation/cmd/vi-imitation-ext-script/stdsym"
 	"github.com/piplupflipper/vi-imitation/ext"
 )
 
@@ -187,7 +187,7 @@ func checkScript(path string) error {
 }
 
 // newInterpreter は、スクリプトを実行する yaegi のインタープリターを返す。
-// 制限なしのモード（Unrestricted）で動かし、使わせる記号の表は、標準ライブラリ（os/exec と os.Exit を含む）と、ext と ext/server（Symbols）である。
+// 制限なしのモード（Unrestricted）で動かし、使わせる記号の表は、標準ライブラリ（os/exec と os.Exit を含む。stdsym.Tables）と、ext と ext/server（Symbols）である。
 // スクリプトの os.Stdin は stdin（os.DevNull）にし、os.Stdout は stderr へ向ける（パッケージの doc の「標準入出力」）。
 // yaegi が os.Stdin と os.Stdout を置き換えるのは、渡した値が *os.File のときだけである。
 func newInterpreter(path string, stdin *os.File, stderr io.Writer) (*interp.Interpreter, error) {
@@ -199,11 +199,11 @@ func newInterpreter(path string, stdin *os.File, stderr io.Writer) (*interp.Inte
 		Args:         []string{path},
 		Unrestricted: true,
 	})
-	if err := i.Use(stdlib.Symbols); err != nil {
-		return nil, fmt.Errorf("load stdlib symbols: %w", err)
-	}
-	if err := i.Use(unrestricted.Symbols); err != nil {
-		return nil, fmt.Errorf("load unrestricted symbols: %w", err)
+	// 標準ライブラリの表の並びは stdsym に置き、文書の生成器（cmd/docgen）と共有する
+	for _, t := range stdsym.Tables() {
+		if err := i.Use(t.Symbols); err != nil {
+			return nil, fmt.Errorf("load %s symbols: %w", t.Name, err)
+		}
 	}
 	if err := i.Use(Symbols); err != nil {
 		return nil, fmt.Errorf("load ext symbols: %w", err)

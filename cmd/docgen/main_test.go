@@ -58,24 +58,13 @@ func TestDocsUpToDate(t *testing.T) {
 //
 // req: FR-172
 func TestCheckDetectsStale(t *testing.T) {
-	dir := t.TempDir()
-	abs, err := filepath.Abs(filepath.Join(root, "ext"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Symlink(abs, filepath.Join(dir, "ext")); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.MkdirAll(filepath.Join(dir, agentDir), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	dir := linkedRoot(t)
 	path := filepath.Join(dir, agentDir, "a.md")
 	stale := "# 例\n\n<!-- generated:options:begin -->\n| 古い表 |\n<!-- generated:options:end -->\n"
-	if err = os.WriteFile(path, []byte(stale), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = run([]string{"-root", dir, "-check"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "make docs") {
+	if err := run([]string{"-root", dir, "-check"}, io.Discard); err == nil || !strings.Contains(err.Error(), "make docs") {
 		t.Fatalf("ずれた文書の -check の誤り = %v, want make docs の案内", err)
 	}
 	if data, _ := os.ReadFile(path); string(data) != stale {
@@ -91,6 +80,66 @@ func TestCheckDetectsStale(t *testing.T) {
 	if err := run([]string{"-root", dir, "-check"}, io.Discard); err != nil {
 		t.Errorf("生成し直した後の -check = %v", err)
 	}
+}
+
+// linkedRoot は、リポジトリの ext、go.mod、docs/usage.md を symlink で置き、空の docs/agent を作った一時のルートを返す。
+// usage.md を書き換えるテストのために、usage を true にすると docs/usage.md を写しにする。
+func linkedRoot(t *testing.T, usage ...bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, agentDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"ext", "go.mod", "docs/usage.md"} {
+		abs, err := filepath.Abs(filepath.Join(root, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p == "docs/usage.md" && len(usage) > 0 && usage[0] {
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, p), data, 0o600); err != nil { //nolint:gosec // テストの一時ディレクトリの中の決まったパスである
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.Symlink(abs, filepath.Join(dir, p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// docs/usage.md の「yaegi の制限」が go.mod の yaegi の版を書いていなければ、生成も -check も失敗する。
+func TestYaegiVersionChecked(t *testing.T) {
+	if err := checkYaegiVersion(root); err != nil {
+		t.Fatalf("リポジトリの docs/usage.md: %v", err)
+	}
+	dir := linkedRoot(t, true)
+	path := filepath.Join(dir, "docs", "usage.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := yaegiModRE.FindSubmatch(mustRead(t, filepath.Join(root, "go.mod")))
+	old := strings.ReplaceAll(string(data), "yaegi "+string(m[1]), "yaegi v0.0.1")
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil { //nolint:gosec // テストの一時ディレクトリの中の決まったパスである
+		t.Fatal(err)
+	}
+	if err := run([]string{"-root", dir, "-check"}, io.Discard); err == nil || !strings.Contains(err.Error(), "yaegi") {
+		t.Errorf("版の違う usage.md の -check = %v, want yaegi の版の誤り", err)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 // 印の誤り（知らない名前、終わりの無い始まり、始まりの無い終わり、入れ子）は誤りにする。印の外はそのまま残す。

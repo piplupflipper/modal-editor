@@ -251,14 +251,6 @@ Arg Args Bool BoolFunc BoolVar CommandLine ContinueOnError Duration DurationVar 
 
 Append Appendf Appendln Errorf FormatString Formatter Fprint Fprintf Fprintln Fscan Fscanf Fscanln GoStringer Print Printf Println Scan ScanState Scanf Scanln Scanner Sprint Sprintf Sprintln Sscan Sscanf Sscanln State Stringer
 
-### github.com/traefik/yaegi/stdlib
-
-Symbols
-
-### github.com/traefik/yaegi/stdlib/unrestricted
-
-Symbols
-
 ### go/ast
 
 ArrayType AssignStmt Bad BadDecl BadExpr BadStmt BasicLit BinaryExpr BlockStmt BranchStmt CallExpr CaseClause ChanDir ChanType CommClause Comment CommentGroup CommentMap CompositeLit Con Decl DeclStmt DeferStmt Ellipsis EmptyStmt Expr ExprStmt Field FieldFilter FieldList File FileExports Filter FilterDecl FilterFile FilterFuncDuplicates FilterImportDuplicates FilterPackage FilterUnassociatedComments ForStmt Fprint Fun FuncDecl FuncLit FuncType GenDecl GoStmt Ident IfStmt ImportSpec Importer IncDecStmt IndexExpr IndexListExpr Inspect InterfaceType IsExported IsGenerated KeyValueExpr LabeledStmt Lbl MapType MergeMode MergePackageFiles NewCommentMap NewIdent NewObj NewPackage NewScope Node NotNilFilter ObjKind Object Package PackageExports ParenExpr Pkg Print RECV RangeStmt ReturnStmt SEND Scope SelectStmt SelectorExpr SendStmt SliceExpr SortImports Spec StarExpr Stmt StructType SwitchStmt Typ TypeAssertExpr TypeSpec TypeSwitchStmt UnaryExpr Unparen ValueSpec Var Visitor Walk
