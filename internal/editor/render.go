@@ -47,7 +47,7 @@ func (e *Editor) frame() *ui.Frame {
 	st := cur.state
 	f := &ui.Frame{
 		Text:            bs.buf,
-		TabStop:         bs.tabWidth(),
+		LineLayout:      ui.LineLayout{TabStop: bs.tabWidth()},
 		Name:            bufferTitle(cur),
 		Modified:        cur.buf.Modified(),
 		ReadOnly:        cur.buf.ReadOnly(),
@@ -112,15 +112,16 @@ func (e *Editor) frame() *ui.Frame {
 // / か ? でパターンを打っている間は、打つたびの検索で出す一致を足す（incSearchFrame。FR-153）。
 //
 // 行を折り返すか（ui.Frame.Wrap）も、描くたびに設定の今の値（lineWrap.enabled）から詰める（FR-156）。
-// 空白の記号を描くか（ui.Frame.Whitespace）も、描くたびに設定の今の値（whitespace.show）から詰める（FR-170）。行番号の列と同じく、
-// 描くのは client の画面のバッファの表示領域だけである（ポップアップとプレビューの中には描かない）。
+// 行の文字の並べ方（ui.Frame.LineLayout。タブ文字の幅と、空白の記号を描くか）は、gj と gk と望みの列と同じ lineLayout で作る（FR-170）。
+// 行番号の列と同じく、空白の記号を描くのは client の画面のバッファの表示領域だけである（ポップアップとプレビューの中には描かない）。
 //
 // req: FR-135, FR-140, FR-153, FR-156, FR-170
 func (e *Editor) bufferFrame() *ui.Frame {
 	f := e.frame()
 	f.LineNumbers = e.uiLineNumbers()
 	f.Wrap = e.lineWrap()
-	f.Whitespace = e.showWhitespace()
+	bs := e.tab()
+	f.LineLayout = e.lineLayout(bs, bs.state)
 	f.Search = e.uiSearch()
 	f.Highlights = e.flashHighlights(e.tab())
 	e.incSearchFrame(f)
@@ -192,10 +193,21 @@ func (e *Editor) lineWrap() bool {
 	return e.options.Get(option.LineWrapEnabled).Bool()
 }
 
-// showWhitespace は、空白の記号を描くかを、エディタ全体の設定の今の値（whitespace.show）から返す（FR-170）。
-// 描くたびと、カーソルの列を数えるたびに読むので、:set list などで値を変えたときに呼ぶ処理は無い（基本設計 7.3）。
-func (e *Editor) showWhitespace() bool {
-	return e.options.Get(option.WhitespaceShow).Bool()
+// lineLayout は、State st のバッファ bs の行の文字の並べ方（ui.LineLayout）を、設定の今の値（tab.width と whitespace.show）から作る。
+// 描画（bufferFrame とポップアップとプレビューの中身の Frame）、gj と gk（screenLines）、望みの列（wrapColumns）は、どれもこの 1 か所で作るので、
+// 並べ方に項目を足しても、描き方と列の数え方が食い違わない（PR #334 のレビューの推奨 3）。
+// 描くたびと、列を数えるたびに読むので、:set list や :set tabstop= で値を変えたときに呼ぶ処理は無い（基本設計 7.3）。
+//
+// 空白の記号を描くのは client の画面のバッファの表示領域（State の Viewport が viewport）だけで、ポップアップとプレビューの中のバッファには
+// 描かない（FR-170）。記号を描くときは、タブ文字の上のカーソルの列と望みの列が、タブの最初の列になる（ui.Columns の doc）。
+//
+// req: FR-161, FR-170
+func (e *Editor) lineLayout(bs *bufferState, st *command.State) ui.LineLayout {
+	_, onScreen := st.Viewport.(viewport)
+	return ui.LineLayout{
+		TabStop:    bs.tabWidth(),
+		Whitespace: onScreen && e.options.Get(option.WhitespaceShow).Bool(),
+	}
 }
 
 // screenLines は、行を折り返して描くときの見た目の行の数え方（command.State.ScreenLines。gj と gk、ページ単位のスクロール）を、
@@ -231,17 +243,7 @@ func (s screenLines) lines() (l ui.WrapLines, ok bool) {
 	if r == nil || r.TextWidth() <= 0 {
 		return l, false
 	}
-	return r.WrapLines(s.bs.tabWidth(), s.whitespace()), true
-}
-
-// whitespace は、State のバッファを空白の記号を描いて描くか（ui.Frame.Whitespace。FR-170）を返す。
-// 描くのは client の画面のバッファの表示領域（viewport）だけなので（bufferFrame）、ポップアップとプレビューの中のバッファは数えない。
-// 空白の記号を描くときは、タブ文字の上のカーソルの列と望みの列が、タブの最初の列になる（ui.Columns の doc）。
-//
-// req: FR-170
-func (s screenLines) whitespace() bool {
-	_, ok := s.st.Viewport.(viewport)
-	return ok && s.e.showWhitespace()
+	return r.WrapLines(s.e.lineLayout(s.bs, s.st)), true
 }
 
 // Wrap は、行を折り返して数えるかを返す。
@@ -277,7 +279,7 @@ type wrapColumns struct {
 
 // plain は、行を折り返さないときの数え方を返す。
 func (c wrapColumns) plain() ui.Columns {
-	cols := ui.Columns{TabStop: c.sl.bs.tabWidth(), Whitespace: c.sl.whitespace()}
+	cols := ui.Columns{LineLayout: c.sl.e.lineLayout(c.sl.bs, c.sl.st)}
 	if r := c.sl.e.renderer; r != nil {
 		cols.Symbols = r.Symbols
 	}

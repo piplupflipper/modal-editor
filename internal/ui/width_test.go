@@ -159,7 +159,7 @@ func TestColumns(t *testing.T) {
 		}
 	}
 
-	if got := (Columns{TabStop: 4}).Column("\tx", 1); got != 4 {
+	if got := (Columns{LineLayout: LineLayout{TabStop: 4}}).Column("\tx", 1); got != 4 {
 		t.Errorf("TabStop 4: Column = %d, want 4", got)
 	}
 }

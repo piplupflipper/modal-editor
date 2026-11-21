@@ -3126,8 +3126,8 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 |---|---|
 | 本文の描画、カーソルの位置、折り返し、ルーラーの列、ステータス行とポップアップの窓の幅 | `ui.Frame.TabStop`。`internal/editor` が描くたびに、表示領域に描くバッファの今の値を詰める（`Editor.frame`）。`Renderer.Render` が描く間の値（`Renderer.tabStop`）にし、描画の中でタブ幅を使う箇所が読む。公開していた `Renderer.TabStop` は無くした |
 | ポップアップとプレビューの中身 | それぞれの中身のバッファの値を `Float.View.TabStop`、`Preview.View.TabStop` に詰める（`Editor.floatFrame`、`Editor.uiPreview`）。プレビューに開いたファイルは、ファイルの種類ごとの値で描く（プレビューのバッファは名前を持たないので、`.editorconfig` は読まない） |
-| `gj` と `gk`、ページ単位のスクロール（`command.State.ScreenLines`） | `ui.Renderer.WrapLines(tabStop, whitespace)` の引数。`internal/editor` の `screenLines` が State のバッファの今の値を渡す。次の描画の前に `:set tabstop=` で変えても、今の値で数える。2 つ目の引数は空白の記号を描くか（#328。次の節） |
-| 望みの列（`command.State.Columns`） | `internal/editor` の `wrapColumns` が、そのつど `ui.Columns{TabStop: …}` を作る（#328 で、空白の記号を描くかと記号の対応も詰めるようにした）。それまでは State を作るときに `Renderer.Columns()` で写した値を使い続けていた |
+| `gj` と `gk`、ページ単位のスクロール（`command.State.ScreenLines`） | `ui.Renderer.WrapLines` の引数の `ui.LineLayout`（#328 で、タブ文字の幅と空白の記号を描くかを 1 つの値にした。次の節）。`internal/editor` の `screenLines` が State のバッファの今の値を渡す。次の描画の前に `:set tabstop=` で変えても、今の値で数える |
+| 望みの列（`command.State.Columns`） | `internal/editor` の `wrapColumns` が、そのつど `ui.Columns{LineLayout: …}` を作る。それまでは State を作るときに `Renderer.Columns()` で写した値を使い続けていた |
 | 字下げの幅（3.2） | `command.State.TextWidth`（`ui.StringWidth`）の引数 |
 | ホバーとヘルプのポップアップの中身を窓の幅で折り返すとき（`ui.WrapText`） | 名前もファイルの種類も無いバッファの初めの値（`Editor.scratchTabWidth`。設定ファイルの最上位の `tab.width`）。そのバッファを描くときと同じ幅で数える |
 
@@ -3144,23 +3144,28 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 | タブ文字 | タブ幅のセルを `whitespace.tab` で埋める。2 文字（`xy`）なら最初のセルが `x`、ほかが `y`。3 文字（`xyz`）なら最後のセルが `z`、それより前の最初のセルが `x`、ほかが `y` で、幅 1 のタブ文字は `z` だけになる（Vim の `tab:xy` と `tab:xyz`）。記号が空なら `^I` の 2 列で描き（色は `specialkey`）、タブ文字の幅は 2 列として数える |
 | 空白（U+0020） | 行頭の空白（行の先頭から続く空白とタブ文字の中の空白）は `whitespace.lead`、行末の空白（空白でもタブ文字でもない最後の文字より後ろの空白）は `whitespace.trail`、ほかは `whitespace.space`。`lead` と `trail` が空なら `space` を使う。空白とタブ文字だけの行は、全体を行末の空白として扱い、`lead` を使わない（Vim と同じ） |
 | ノーブレークスペース（U+00A0 と U+202F） | `whitespace.nbsp`。行頭と行末の判定では空白として数えない（Vim の `VIM_ISWHITE` と同じ） |
-| 行末 | 行末の 1 セル（選択と検索の一致が行の区切りに色を付けるセル）に `whitespace.eol` を描く。色は `nontext`。行を折り返すときは、このセルも見た目の行の数に数える（ちょうど本文の幅で終わる行は、行末の記号だけの見た目の行を 1 行足す。Vim の `plines_win_nofold` と同じ） |
+| 行末 | 行末の 1 セル（選択と検索の一致が行の区切りに色を付けるセル）に `whitespace.eol` を描く。色は `nontext`。行を折り返すときは、このセルも見た目の行の数に数える（ちょうど本文の幅で終わる行は、行末の記号だけの見た目の行を 1 行足す。Vim の `plines_win_nofold` と同じ）。折り返さずに横にスクロールしたとき、画面の左の端より短い行（空の行を含む）の行末のセルは画面の 0 列目に描く。行末に掛かる選択の色も同じで、記号を描かないときも 0 列目に出す（2026-11-21 に nvim と Vim で、`'list'` の有無の両方で確かめた。PR #334 のレビューの必須 2） |
 | カーソル | ノーマルモードとビジュアルモードでも、タブ文字の上のカーソルはタブの最初の列に置き、望みの列（`j` と `k` の列）とルーラーの表示の列もその列にする（Vim 9.1 の `getvcol` の `'list'` の扱い。nvim と Vim の両方で、`"\tabc"` の 1 文字目から `j` で下の行の 1 文字目へ移った） |
-| 色 | 行末以外の記号の色の名前は `whitespace`（Neovim の `Whitespace`。7.1）。記号の色は `^A` などの表記（`specialkey`）と同じく下地の色で、構文、診断、検索の一致、範囲の色、選択の色をこの上に重ねる（`internal/ui` の `layers.go`）。空白の記号のための重ね方は作らない |
-| 描く場所 | client の画面のバッファの表示領域だけ（`Editor.bufferFrame` が `ui.Frame.Whitespace` を詰める）。ポップアップ、プレビュー、出力の欄には描かない。望みの列も、client の画面のバッファの State だけをタブの最初の列で数える（`internal/editor` の `screenLines.whitespace`） |
+| 色 | 行末以外の記号の色の名前は `whitespace`（Neovim の `Whitespace`。7.1）。記号の色は `^A` などの表記（`specialkey`）と同じ「文字の表記の色」の層で、構文の色の上、診断、検索の一致、範囲の色、選択の色の下に重ねる（`internal/ui` の `layers.go` の `glyphOrder`）。コメントや文字列の中の記号も、構文の色でなく記号の色で描く（2026-11-21 に nvim と Vim で、Go のファイルの行末の空白、生の文字列とブロックコメントの中の行頭の空白とタブ文字を確かめた。PR #334 のレビューの必須 1）。空白の記号のためだけの重ね方は作らず、層の表の 1 行として足した |
+| 描く場所 | client の画面のバッファの表示領域だけ（`Editor.lineLayout` が、State の表示領域が client の画面のもの（`viewport`）のときだけ `ui.LineLayout.Whitespace` を真にする）。ポップアップ、プレビュー、出力の欄には描かない。望みの列も、client の画面のバッファの State だけをタブの最初の列で数える |
 
 描き方は、`internal/ui` の行を列に並べる規則 `lineRule`（`whitespace.go`）の 1 か所で決める。
-`lineRule` はタブ文字の幅（`tab.width`）と空白の記号の設定を持ち、本文の描画（折り返す `drawWrapped` と折り返さない `drawLine`）、カーソルの位置、折り返しの分け方（`wrapper`）、検索の一致を集める範囲、望みの列（`ui.Columns`、`ui.WrapLines`）が、どれもこの規則で文字を並べる。
+`lineRule` の入力は公開の値 `ui.LineLayout`（タブ文字の幅 `TabStop` と、空白の記号を描くか `Whitespace`）で、描画（`ui.Frame` に埋め込む）、望みの列（`ui.Columns` に埋め込む）、折り返したときの数え方（`ui.Renderer.WrapLines` の引数）が同じ値を受け取る。
+`internal/editor` では `Editor.lineLayout` の 1 か所でこの値を作る。並べ方に項目を足すときは `ui.LineLayout` と `Editor.lineLayout` に足せば、描画と列の数え方に同時に届く（PR #334 のレビューの推奨 3）。
+`lineRule` は `ui.LineLayout` と記号の対応から作り、本文の描画（折り返す `drawWrapped` と折り返さない `drawLine`）、カーソルの位置、折り返しの分け方（`wrapper`）、検索の一致を集める範囲、望みの列（`ui.Columns`、`ui.WrapLines`）が、どれもこの規則で文字を並べる。
 `lineRule` は空白の記号を描くときに、タブ文字をセルごとに記号を描く種類（`glyphWhitespace`）か `^I` の種類にする。どちらもタブ文字の種類（`glyphTab`）でないので、タブの最後の列にカーソルを置く分岐を通らず、カーソルと望みの列がタブの最初の列になる。
 空白とノーブレークスペースは、行頭と行末の位置で記号が変わるので、本文を描く 2 つの関数が共通に呼ぶ `drawer.look` で記号に替える。
-`drawer.look` は、それまで 2 つの関数に重複していた「`^A` などの表記の下地を `specialkey` にする」分岐も引き受けた。
+`drawer.look` は、それまで 2 つの関数に重複していた「`^A` などの表記を `specialkey` の色にする」分岐も引き受け、文字の表記の色を返す。
+表記の色は文字ごとに決まるので範囲（`span`）にせず、`drawer.attrAt` が受け取って層の表の順（`glyphOrder`）に重ねる。
+#328 より前の `^A` などの表記は、構文の色より下の下地の色だったので、コメントの中の `^A` はコメントの色で描かれていた。Vim 9.1 と Neovim 0.12.5 はどちらも `SpecialKey` の色で描くので、空白の記号と同じ層へ移した。
 行末のセルは、2 つの関数が共通に呼ぶ `drawer.eolCell` で描く。
 
-nvim 0.12.5 は、記号（`Whitespace`）と `^A` などの表記（`SpecialKey`）の文字の色を、検索の一致（`Search`）の色の上に出す。
-本体は今までの重ねる順のまま、一致の文字の色を記号の上に出す（Vim 9.1 と同じ。[Vim との違い](vim-differences.md)）。
+nvim 0.12.5 は、記号（`Whitespace`）と `^A` などの表記（`SpecialKey`）の文字の色を、検索の一致（`Search`）の色の上にも出す。
+本体は層の表の順のまま、一致の文字の色を記号の上に出す（Vim 9.1 と同じ。[Vim との違い](vim-differences.md)）。
 
 この上に、markdown の描画（別の相談）が描画している間だけ行末の記号を消す切り替えと、単語の切れ目での折り返し（Vim の `'linebreak'`）が載る。
-どちらも、文字を列に並べる規則 `lineRule` に項目を足す形になる見込みである。
+行末の記号を消す切り替えは、`ui.LineLayout` に項目を足す形になる見込みである（行末の記号の有無は見た目の行の数を変えるので、描画と `gj`、`gk`、ページ単位のスクロールに同時に届く必要がある）。
+`'linebreak'` の切る位置は、1 文字ずつの配置（`lineRule.glyph`）ではなく、見た目の行に分ける側（`wrapper.place`、`rows`、`span`）の仕事になる見込みである。`'list'` との組み合わせ（`tab:` が無いときの `^I` など）は、そのときに Vim 9.1 で確かめる。
 
 
 

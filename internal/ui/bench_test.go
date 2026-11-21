@@ -78,7 +78,7 @@ func BenchmarkWrapLinesHugeLine(b *testing.B) {
 	line := strings.Repeat("abc\tあいうえお日本語 ", 20000)
 	r := &Renderer{Width: 200, Height: 60}
 	r.Render(&Frame{Text: sameLines{line, 1}, Wrap: true})
-	l := r.WrapLines(DefaultTabStop, false)
+	l := r.WrapLines(LineLayout{TabStop: DefaultTabStop})
 	b.ResetTimer()
 	n := l.Column(line, len(line))
 	for i := range b.N {

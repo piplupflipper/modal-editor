@@ -239,7 +239,7 @@ func (r *Renderer) render(f *Frame) Screen {
 		theme = DefaultTheme()
 	}
 	r.tabStop = f.TabStop
-	r.rule = newLineRule(f.TabStop, f.Whitespace, r.symbol)
+	r.rule = newLineRule(f.LineLayout, r.symbol)
 	text := f.Text
 	if text == nil {
 		text = emptyText{}
@@ -671,16 +671,25 @@ func (w *sweep) advance(off, size int) {
 	w.active = w.active[:k]
 }
 
-// attr は、いまの文字に掛かる範囲の属性を、base の上に重ねる順に重ねて返す。
-func (w *sweep) attr(base Attr) Attr {
+// attr は、いまの文字に掛かる範囲の属性を、重ねる順に重ねて返す。
+// mark は、その文字の表記の色（^A などの表記と空白の記号。layers.go の glyphOrder）で、glyphOrder の順に重ねる。空なら重ねない。
+func (w *sweep) attr(mark Attr) Attr {
 	if w.dirty {
 		slices.SortFunc(w.active, func(a, b span) int { return cmp.Compare(a.order, b.order) })
 		w.dirty = false
 	}
+	var a Attr
+	pending := mark != (Attr{})
 	for _, sp := range w.active {
-		base = base.Over(sp.attr)
+		if pending && sp.order > glyphOrder {
+			a, pending = a.Over(mark), false
+		}
+		a = a.Over(sp.attr)
 	}
-	return base
+	if pending {
+		a = a.Over(mark)
+	}
+	return a
 }
 
 // prepare は、表示領域の row 行目（バッファの line 行目、テキスト s）の構文の色、見比べの色、診断、検索の一致、
@@ -717,10 +726,11 @@ func (d *drawer) prepare(row, line int, s string, visible func() (from, to int))
 }
 
 // attrAt は、バッファの line 行目の、バイトの範囲 [off, off+size) の文字の属性を返す。size が 0 なら行末のセルを表す。
+// mark は、その文字の表記の色（drawer.look。^A などの表記と空白の記号）で、構文の色の上、診断の下に重ねる（layers.go）。
 // 同じ行の中では、off の小さい順に呼ぶ必要がある。
-func (d *drawer) attrAt(row, line, off, size int, base Attr) Attr {
+func (d *drawer) attrAt(row, line, off, size int, mark Attr) Attr {
 	d.sweep.advance(off, size)
-	a := d.sweep.attr(base)
+	a := d.sweep.attr(mark)
 	sp := d.sel[row]
 	covers := sp.start < off+max(size, 1) && sp.end > off
 	// カーソルの文字は反転しない。端末のカーソルが反転で描かれても文字が読めるようにするためで、Vim と同じ。
@@ -785,12 +795,17 @@ func (d *drawer) drawLine(row, line, k, n int) {
 			}
 		}
 	}
-	if col >= left && col < left+w {
+	// 行末のセルは、行が画面の左の端より短ければ（横にスクロールしたとき）画面の 0 列目に描く。Vim 9.1 と Neovim 0.12.5 も、
+	// その行の 0 列目に行末の記号と、行末に掛かる選択の色を描く（2026-11-21 に tmux で、'list' の有無の両方で確かめた。PR #334 のレビューの必須 2）。
+	// 見比べの行の色は行末のセルの次から埋める。0 列目に行末のセルを描いたときは、そのセルを残す。
+	fill := col + 1 - left
+	if col < left+w {
 		if c, ok := d.eolCell(idx, line, len(s)); ok {
-			put(col-left, c)
+			put(max(col-left, 0), c)
+			fill = max(fill, 1)
 		}
 	}
-	d.diffFillRest(row, line, col+1-left)
+	d.diffFillRest(row, line, fill)
 }
 
 // drawWrapped は、行を折り返すとき（FR-156）の drawLine である。バッファの line 行目の見た目の行のうち、k 番目から n 行を、

@@ -253,18 +253,16 @@ func tabStopOr(tabStop int) int {
 //
 // ゼロ値は、タブ幅を DefaultTabStop で数え、空白の記号を描かないときの数え方である。
 type Columns struct {
-	// TabStop はタブ幅である。0 以下なら DefaultTabStop を使う。
-	TabStop int
-	// Whitespace は、空白の記号を描くとき（Frame.Whitespace。FR-170）の数え方にするかである。
-	// true なら、タブの上の列はタブの最初の列にし、タブ文字の記号（Symbols の SymbolWhitespaceTab）が空ならタブ文字を ^I の 2 列で数える（lineRule）。
-	Whitespace bool
+	// LineLayout は、行の文字の並べ方（タブ幅と、空白の記号を描くか。FR-161、FR-170）である。描く Frame の LineLayout と同じ値を渡す。
+	// Whitespace が true なら、タブの上の列はタブの最初の列にし、タブ文字の記号（Symbols の SymbolWhitespaceTab）が空ならタブ文字を ^I の 2 列で数える（lineRule）。
+	LineLayout
 	// Symbols は、記号の対応（Renderer.Symbols と同じもの）である。Whitespace が true のときだけ読む。
 	Symbols Symbols
 }
 
 // rule は、c の数え方の規則を返す。
 func (c Columns) rule() lineRule {
-	return newLineRule(c.TabStop, c.Whitespace, c.Symbols.value)
+	return newLineRule(c.LineLayout, c.Symbols.value)
 }
 
 // Column は、行 line の byteOff の位置の文字の列を、表示幅で数えて返す。

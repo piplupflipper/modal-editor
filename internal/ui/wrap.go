@@ -259,14 +259,12 @@ type WrapLines struct {
 	w wrapper
 }
 
-// WrapLines は、直前の Render の本文の幅と、タブ文字の幅 tabStop（0 以下なら DefaultTabStop）と、空白の記号を描くか whitespace
-// （Frame.Whitespace。FR-170）で、行を折り返す数え方を返す。
-// 画面の大きさがまだ届いていなければ、幅を 1 列として数える。
-// タブ文字の幅と空白の記号を引数で受けるのは、次の Render の前に設定（tab.width、whitespace.show）が変わっても、
-// 使う側が今の値で数えられるようにするためである（FR-161）。
-func (r *Renderer) WrapLines(tabStop int, whitespace bool) WrapLines {
+// WrapLines は、直前の Render の本文の幅と、行の文字の並べ方 l（タブ文字の幅と、空白の記号を描くか。描く Frame の LineLayout と同じ値）で、
+// 行を折り返す数え方を返す。画面の大きさがまだ届いていなければ、幅を 1 列として数える。
+// 並べ方を引数で受けるのは、次の Render の前に設定（tab.width、whitespace.show）が変わっても、使う側が今の値で数えられるようにするためである（FR-161）。
+func (r *Renderer) WrapLines(l LineLayout) WrapLines {
 	w := r.wrapper()
-	w.rule = newLineRule(tabStop, whitespace, r.symbol)
+	w.rule = newLineRule(l, r.symbol)
 	return WrapLines{w: w}
 }
 
