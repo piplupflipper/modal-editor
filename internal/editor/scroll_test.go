@@ -608,6 +608,97 @@ var scrollCases = []scrollCase{
 	}},
 }
 
+// 表示領域（6 行）より高い行（scrollFileWrap2 の 7 行目。41 列で 10 行の高さ）の中で動いたときの、最初の行の途中から見せる位置
+// （隠す見た目の行の数）を、余白が 0 と 2 で Neovim 0.12.5 と突き合わせる。期待値は scrollCases と同じ取り方で、winsaveview() の
+// skipcol を本文の幅（41）で割った値である。余白があると、カーソルの見た目の行の上下にも余白を残して隠す行を決める（curs_columns）。
+//
+// req: FR-174
+func TestScrollTallLineNeovim(t *testing.T) {
+	type step struct {
+		keys                 string
+		top, line, col, skip int
+	}
+	tests := []struct {
+		so    int
+		steps []step
+	}{
+		{0, []step{
+			{"6j", 7, 7, 0, 0},
+			{"gj", 7, 7, 41, 0},
+			{"gj", 7, 7, 82, 0},
+			{"gj", 7, 7, 123, 0},
+			{"gj", 7, 7, 164, 0},
+			{"gj", 7, 7, 205, 0},
+			{"gj", 7, 7, 246, 1},
+			{"gj", 7, 7, 287, 2},
+			{"gj", 7, 7, 328, 3},
+			{"gj", 7, 7, 369, 4},
+			{"gk", 7, 7, 328, 4},
+			{"gk", 7, 7, 287, 4},
+			{"gk", 7, 7, 246, 4},
+			{"gk", 7, 7, 205, 4},
+			{"gk", 7, 7, 164, 4},
+			{"gk", 7, 7, 123, 3},
+			{"gk", 7, 7, 82, 2},
+			{"gk", 7, 7, 41, 1},
+			{"j", 8, 8, 4, 0},
+			{"k", 7, 7, 41, 0},
+		}},
+		{2, []step{
+			{"6j", 7, 7, 0, 0},
+			{"gj", 7, 7, 41, 0},
+			{"gj", 7, 7, 82, 0},
+			{"gj", 7, 7, 123, 0},
+			{"gj", 7, 7, 164, 1},
+			{"gj", 7, 7, 205, 1},
+			{"gj", 7, 7, 246, 2},
+			{"gj", 7, 7, 287, 2},
+			{"gj", 7, 7, 328, 3},
+			{"gj", 7, 7, 369, 4},
+			{"gk", 7, 7, 328, 4},
+			{"gk", 7, 7, 287, 4},
+			{"gk", 7, 7, 246, 4},
+			{"gk", 7, 7, 205, 3},
+			{"gk", 7, 7, 164, 2},
+			{"gk", 7, 7, 123, 1},
+			{"gk", 7, 7, 82, 0},
+			{"gk", 7, 7, 41, 0},
+			{"j", 8, 8, 4, 0},
+			{"k", 7, 7, 41, 0},
+			{"<C-e>", 8, 9, 41, 0},
+			{"<C-y>", 7, 7, 41, 0},
+			{"<C-d>", 8, 9, 0, 0},
+			{"<C-u>", 7, 7, 82, 0},
+			{"zt", 7, 7, 82, 0},
+			{"zb", 7, 7, 82, 0},
+			{"zz", 7, 7, 82, 0},
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("so%d", tc.so), func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": scrollFileText(scrollFileWrap2)})
+			term := newFakeTerm()
+			term.w, term.h = 41, 6+3
+			opts := map[string]option.Value{option.ScrollMargin: option.IntValue(tc.so), option.LineWrapEnabled: option.BoolValue(true)}
+			h := startTerm(t, term, Config{WorkDir: dir, Options: opts}, "a.txt")
+			h.settle()
+			for i, st := range tc.steps {
+				h.keys(st.keys)
+				h.settle()
+				want := fmt.Sprintf("%d %d:%d skip %d", st.top, st.line, st.col, st.skip)
+				var got string
+				h.e.do(func() {
+					c := h.e.cur.state.Cursor()
+					got = fmt.Sprintf("%d %d:%d skip %d", h.e.renderer.Top()+1, c.Line+1, c.Byte, h.e.renderer.Skip())
+				})
+				if got != want {
+					t.Fatalf("%d 番目の %s の後: 最初の行 カーソル 隠す行 = %s, want %s", i+1, st.keys, got, want)
+				}
+			}
+		})
+	}
+}
+
 // フォーカスを入れたポップアップの中と、プレビューへフォーカスを移した中でも、スクロールのキーと余白が効く（FR-173、FR-174）。
 // 窓の中を描く子の Renderer の最初の行と、窓のバッファのカーソルが、同じ数え方で動く。
 //

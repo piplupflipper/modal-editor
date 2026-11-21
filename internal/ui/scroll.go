@@ -30,7 +30,8 @@ func (r *Renderer) setView(v scroll.View) {
 
 // topKey は、縦の位置をカーソルに合わせて決めたときの入力である（Renderer.valid）。次の描画でどれかが変わっていれば、決め直す。
 // Vim の w_valid の VALID_TOPLINE が、カーソルの行の移動（check_cursor_moved）、テキストの変更、窓の大きさと表示の設定の変更で
-// 消えるのに当たる。
+// 消えるのに当たる。余白（Margins）は入れない。Neovim 0.12.5 も、:set scrolloff= の後はカーソルの行が動くまで決め直さない
+// （2026-11-21 に tmux で、表示領域の最後の行にカーソルがある画面で :set so=5 を打って確かめた）。
 type topKey struct {
 	ok      bool
 	line    int    // カーソルの行
@@ -40,7 +41,6 @@ type topKey struct {
 	width   int    // 本文の幅
 	wrap    bool
 	rule    lineRule // 行の文字の並べ方（タブ文字の幅と空白の記号。見た目の行の数を変える）
-	margins Margins
 }
 
 // versioned は、バージョン番号を持つ Text（buffer.Buffer）である。
@@ -50,7 +50,7 @@ type versioned interface{ Version() uint64 }
 func (r *Renderer) topKeyOf(text Text, line int) topKey {
 	k := topKey{
 		ok: true, line: line, lines: text.LineCount(), rows: r.textRows(), width: r.textWidth(),
-		wrap: r.wrap, rule: r.rule, margins: r.margins,
+		wrap: r.wrap, rule: r.rule,
 	}
 	if v, ok := text.(versioned); ok {
 		k.version = v.Version()
@@ -81,7 +81,7 @@ func (r *Renderer) Skip() int { return r.skip }
 // scroll は、カーソルが余白（Frame.Margins）を残して表示領域に入るように、縦と横のスクロールの位置を更新する。
 //
 // 縦は internal/scroll の View.Follow（Neovim 0.12.5 の update_topline）で決める。行を折り返すときは、行の高さを見た目の行の数で数える。
-// 前の描画から、カーソルの行、テキスト、表示領域の大きさ、表示の設定がどれも変わっていなければ（行の中だけでカーソルが動いたとき）、
+// 前の描画から、カーソルの行、テキスト、表示領域の大きさ、行の並べ方がどれも変わっていなければ（行の中だけでカーソルが動いたとき）、
 // 最初の行は決め直さず、最初の行の途中から見せる位置だけを決め直す（View.KeepTop。Neovim は VALID_TOPLINE が立っている間、
 // update_topline を飛ばして curs_columns だけで w_skipcol を決める）。SetScrollHeld で決めた位置も同じく決め直さない。
 //

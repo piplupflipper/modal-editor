@@ -3214,7 +3214,7 @@ Neovim 0.12.5 の `src/nvim/move.c` の関数を、行の番号を 0 から数�
 
 | 項目 | 決めたこと |
 |---|---|
-| 最初の行を決め直す契機 | 描画は、前の描画からカーソルの行、テキスト（バッファのバージョン番号）、表示領域の大きさ、行の並べ方、余白のどれも変わっていなければ、最初の行を決め直さず、隠す見た目の行だけを決め直す（`ui.Renderer` の `valid`、`scroll.View.KeepTop`）。Neovim の `VALID_TOPLINE` に当たる。行の中だけでカーソルが動いたとき（表示領域より高い行の中の `gk`）に、隠す見た目の行を余白に合わせて減らす動きが Neovim と同じになる（`internal/ui` の `TestGoldenWrapSkip`） |
+| 最初の行を決め直す契機 | 描画は、前の描画からカーソルの行、テキスト（バッファのバージョン番号）、表示領域の大きさ、行の並べ方のどれも変わっていなければ、最初の行を決め直さず、隠す見た目の行だけを決め直す（`ui.Renderer` の `valid`、`scroll.View.KeepTop`）。Neovim の `VALID_TOPLINE` に当たる。行の中だけでカーソルが動いたとき（表示領域より高い行の中の `gk`）に、隠す見た目の行を余白に合わせて減らす動きが Neovim と同じになる（`internal/ui` の `TestGoldenWrapSkip`）。余白の値の変更では決め直さない（Neovim 0.12.5 も、表示領域の最後の行にカーソルがある画面で `:set so=5` を打っても、カーソルの行が動くまで画面を動かさない。2026-11-21 に tmux で確かめた） |
 | 決めた位置を保つ | 余白のある `<C-e>`、`<C-y>`、ページ単位のスクロールは、決めた位置を、カーソルがその行にある間は描画で決め直させない（`command.Viewport.SetView` の hold、`ui.Renderer.SetScrollHeld`）。バッファの末尾の近くで、余白をすべては残せない位置に決めたとき（`G<C-e>` の後に表示領域の半分以上の余白で決め直すと、最初の行が戻る）に効く（Neovim の `scroll_redraw` の「the screen jumps back at the end of the file」）。`zt`、`zz`、`zb` の後は決め直す（Neovim 0.12.5 でも、100 行のファイルの 95 行目で余白が 5 の `zz` は、最初の行を 91 行目にせず 90 行目のままにする） |
 | 描画の前に続けて動いたとき | マクロの再生などで、描画の前にカーソルが表示領域から出ていれば、操作は、描画と同じくカーソルを表示領域に入れた位置（`Follow`）から数える（`command.State.scrollView`） |
 | ページ単位のスクロールの列 | Neovim の `pagescroll` は、一時的に `'smoothscroll'` をオンにした間に、カーソルが最初の行にあれば望みの列を最初の行の見えている部分へ動かす（`cursor_correct_sms`）。`<C-f>` と `<C-b>` の後のカーソルの列はその望みの列で決まるので、同じく写した（`command.State.smoothCursor`。`scroll.View.SmoothCursor`）。行を折り返すときだけ働く |
