@@ -597,6 +597,16 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":w | q", modified: true, cmdline: "w foo | q!", want: []Action{{Kind: ActionWrite, File: "foo"}, {Kind: ActionQuit, Force: true}}},
 		{name: ":e foo|q", cmdline: "e foo|q", want: []Action{{Kind: ActionEdit, File: "foo"}, {Kind: ActionQuit}}},
 		{name: "ファイル名の \\|", cmdline: `w a\|b`, want: []Action{{Kind: ActionWrite, File: "a|b"}}},
+		// ファイル名の末尾の "\ " は名前の空白で、除かない（#354）。期待値は、Vim 9.1 と Neovim 0.12.5 の :e と :w が
+		// 開いたバッファと書いたファイルの名前で確かめた（2026-11-22。両者は同じ結果だった）。
+		{name: ":e ファイル名の末尾の \\ ", cmdline: `e tail\ `, want: []Action{{Kind: ActionEdit, File: "tail "}}},
+		{name: ":e! ファイル名の前後の空白", cmdline: "e!   tail\\ \t ", want: []Action{{Kind: ActionEdit, File: "tail ", Force: true}}},
+		{name: ":e ファイル名の末尾の \\ を 2 つ", cmdline: `e tail\ \ `, want: []Action{{Kind: ActionEdit, File: "tail  "}}},
+		{name: ":e ファイル名の末尾の \\\\ と空白", cmdline: `e tail\\ `, want: []Action{{Kind: ActionEdit, File: `tail\ `}}},
+		{name: ":w ファイル名の末尾の \\ ", cmdline: `w new\ `, want: []Action{{Kind: ActionWrite, File: "new "}}},
+		{name: ":w ファイル名の末尾の \\  の後の空白", cmdline: `w new\  `, want: []Action{{Kind: ActionWrite, File: "new "}}},
+		{name: ":w ファイル名の末尾の \\ の後の |", cmdline: `w new\ |q`, want: []Action{{Kind: ActionWrite, File: "new "}, {Kind: ActionQuit}}},
+		{name: ":x ファイル名の末尾の \\ ", cmdline: `x new\ `, want: []Action{{Kind: ActionWrite, File: "new "}, {Kind: ActionQuit}}},
 		{name: ":q|q の余分な文字", cmdline: "q x|q", wantCode: "E488"},
 		{name: ":output", cmdline: "output", want: []Action{{Kind: ActionOutput, Output: OutputOpen}}},
 		{name: ":out acp", cmdline: "out  acp ", want: []Action{{Kind: ActionOutput, Output: OutputOpen, Text: "acp"}}},
@@ -611,6 +621,14 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":b は未保存の変更を呼び出し側が確かめる", modified: true, cmdline: "b 2", want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Count: 2}}},
 		{name: ":bu は :buffer", cmdline: "bu3", want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Count: 3}}},
 		{name: ":buffer! 名前", cmdline: `buffer! a\ b.txt`, want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Text: "a b.txt", Force: true}}},
+		// 末尾の "\ " は名前の空白で、除かない（#354）。名前の読み方は、Vim 9.1 と Neovim 0.12.5 の :b で、
+		// "sp a.txt" と "spx.txt" があるときに "sp a.txt" へ移ることで確かめた（2026-11-22）。
+		{name: ":b 名前の末尾の \\ ", cmdline: `b sp\ `, want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Text: "sp "}}},
+		{name: ":b 名前の前の空白", cmdline: `b   sp\ `, want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Text: "sp "}}},
+		{name: ":b 名前の末尾の \\  の後の空白は除く", cmdline: "b sp\\ \t ", want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Text: "sp "}}},
+		{name: ":b 名前の後の空白は除く", cmdline: `b sp\ a.txt   `, want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Text: "sp a.txt"}}},
+		{name: ":b 名前の末尾の \\ を 2 つ", cmdline: `b sp\ \ `, want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Text: "sp  "}}},
+		{name: ":b 名前の末尾の \\ の後の |", cmdline: `b sp\ |q`, want: []Action{{Kind: ActionBuffer, Buffer: BufferGo, Text: "sp "}, {Kind: ActionQuit}}},
 		{name: ":b 引数なし", cmdline: "b", want: []Action{{Kind: ActionBuffer, Buffer: BufferGo}}},
 		{name: ":b 1 2 は E488", cmdline: "b 1 2", wantCode: "E488"},
 		{name: ":3b は範囲を取らない", cmdline: "3b", wantCode: "E481"},
@@ -630,6 +648,11 @@ func TestExecuteActions(t *testing.T) {
 		{name: ":bd", cmdline: "bd", want: []Action{{Kind: ActionBufferDelete}}},
 		{name: ":bdelete! 3", cmdline: "bdelete! 3", want: []Action{{Kind: ActionBufferDelete, Count: 3, Force: true}}},
 		{name: ":bd 名前", cmdline: "bd a.txt", want: []Action{{Kind: ActionBufferDelete, Text: "a.txt"}}},
+		{name: ":bd 名前の末尾の \\ ", cmdline: `bd sp\ `, want: []Action{{Kind: ActionBufferDelete, Text: "sp "}}},
+		{name: ":bd! 名前の末尾の \\  の後の空白", cmdline: `bd! tail\  `, want: []Action{{Kind: ActionBufferDelete, Text: "tail ", Force: true}}},
+		// Vim 9.1 の :bd は空白で区切った複数のバッファを閉じるが、ここでは 1 つの名前として読む（docs/vim-differences.md）。
+		{name: ":bd 1 2 は E488", cmdline: "bd 1 2", wantCode: "E488"},
+		{name: ":bd の名前の空白は区切りにしない", cmdline: `bd spx sp\ a`, want: []Action{{Kind: ActionBufferDelete, Text: "spx sp a"}}},
 		{name: ":jumps の余分な文字", cmdline: "jumps 1", wantCode: "E488"},
 		// req: FR-54
 		{name: ":reg", cmdline: "reg", want: []Action{{Kind: ActionRegisterList}}},

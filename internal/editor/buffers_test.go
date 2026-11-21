@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -207,6 +208,126 @@ func TestBufferSwitchVim(t *testing.T) {
 				t.Errorf("%s: message = %q, want it to contain %q", st.keys, h.e.message.Text, st.msg)
 			}
 		})
+	}
+}
+
+// :b と :bd の引数の "\ " は名前の空白で、末尾の "\ " も除かない（#354）。"\ " の後に続けて打った空白は除く。
+// 期待値は、同じ名前のバッファを置いた Vim 9.1 と Neovim 0.12.5 で同じコマンドを打って得た（2026-11-22。両者は同じ結果だった）。
+// 補った名前（"\" で逃がした形。FR-195）を <CR> で開くと、名前の末尾が空白でもそのバッファへ移る（Vim と Neovim も同じ）。
+//
+// req: FR-08, FR-195
+func TestBufferArgEscapedSpace(t *testing.T) {
+	names := []string{"sp a.txt", "spx.txt", "a|b.txt", "tail ", "other.txt"}
+	files := map[string]string{}
+	for _, n := range names {
+		files[n] = n + "\n"
+	}
+	h := start(t, Config{WorkDir: writeFiles(t, files)}, names...)
+	listed := func() string {
+		var s []string
+		h.e.do(func() {
+			for _, bs := range h.e.bufs {
+				s = append(s, "["+h.e.bufferName(bs)+"]")
+			}
+		})
+		return strings.Join(s, ",")
+	}
+	all := "[sp a.txt],[spx.txt],[a|b.txt],[tail ],[other.txt]"
+	for _, st := range []struct {
+		keys   string
+		cur    string // 移った先のバッファの中身（名前と同じ）
+		msg    string // メッセージに含まれる文字列。空ならメッセージが無いこと
+		listed string // 空なら all
+	}{
+		{keys: `:b sp\ <CR>`, cur: "sp a.txt"},
+		{keys: `:b   sp\ <CR>`, cur: "sp a.txt"},
+		{keys: `:b sp\  <CR>`, cur: "sp a.txt"},
+		{keys: `:b sp\ a.txt   <CR>`, cur: "sp a.txt"},
+		{keys: `:b sp\ a<CR>`, cur: "sp a.txt"},
+		{keys: `:b sp a<CR>`, cur: "sp a.txt"},
+		{keys: `:b! sp\ <CR>`, cur: "sp a.txt"},
+		{keys: `:b sp\ |ls<CR>`, cur: "sp a.txt", msg: `"tail "`},
+		{keys: `:b sp\ \ <CR>`, cur: "other.txt", msg: "E94"},
+		{keys: `:b sp\\ <CR>`, cur: "other.txt", msg: "E94"},
+		{keys: `:b a\|b<CR>`, cur: "a|b.txt"},
+		{keys: `:b tail\ <CR>`, cur: "tail "},
+		{keys: `:b tail\  <CR>`, cur: "tail "},
+		{keys: `:b tail <CR>`, cur: "tail "},
+		// 補った候補を入れる形と、:b の読み方が往復する。
+		{keys: `:b sp<Tab><CR>`, cur: "sp a.txt"},
+		{keys: `:b tai<Tab><CR>`, cur: "tail "},
+		{keys: `:bd sp\ |ls<CR>`, cur: "other.txt", msg: `"spx.txt"`, listed: "[spx.txt],[a|b.txt],[tail ],[other.txt]"},
+		{keys: `:bd! tail\  <CR>`, cur: "other.txt", listed: "[spx.txt],[a|b.txt],[other.txt]"},
+		{keys: `:bd a\|b<CR>`, cur: "other.txt", listed: "[spx.txt],[other.txt]"},
+	} {
+		h.keys(`<Esc>:b other<CR>`)
+		h.settle()
+		h.e.do(func() { h.e.message = infoMessage("") })
+		h.keys(st.keys)
+		h.settle()
+		if got := h.text(); got != st.cur {
+			t.Errorf("%s: バッファ = %q, want %q", st.keys, got, st.cur)
+		}
+		if got := h.message(); (st.msg == "" && got != "") || !strings.Contains(got, st.msg) {
+			t.Errorf("%s: メッセージ = %q, want %q", st.keys, got, st.msg)
+		}
+		if got, want := listed(), cmp.Or(st.listed, all); got != want {
+			t.Errorf("%s: バッファの一覧 = %s, want %s", st.keys, got, want)
+		}
+	}
+}
+
+// :e と :w のファイルの名前の末尾の "\ " も名前の空白で、除かない（#354）。"\ " の後に続けて打った空白は除く。
+// 補ったファイルの名前（末尾が空白の "tail " は "tail\ " と入る）を <CR> で開くと、そのファイルを開く。
+// :w は打った名前のファイルだけを作り、"\" で終わる名前のファイルを作らない。
+// 期待値は、同じファイルを置いた Vim 9.1 と Neovim 0.12.5 で同じコマンドを打って得た（2026-11-22。両者は同じ結果だった）。
+//
+// req: FR-195, FR-200
+func TestFileArgEscapedSpace(t *testing.T) {
+	tail := "tail " // 名前の末尾が空白のファイル
+	h := startCompletion(t, map[string]string{tail: "tail\n", "other.txt": "other\n"}, nil)
+	var dir string
+	h.e.do(func() { dir = h.e.workDir() })
+	files := func() string {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var s []string
+		for _, ent := range ents {
+			data, _ := os.ReadFile(filepath.Join(dir, ent.Name()))
+			s = append(s, fmt.Sprintf("[%s]=%q", ent.Name(), data))
+		}
+		return strings.Join(s, ",")
+	}
+	for _, st := range []struct {
+		keys  string
+		cur   string // 開いているバッファの中身
+		files string // 空なら、最初の 2 つのファイルのまま
+	}{
+		{keys: `:e tail\ <CR>`, cur: "tail"},
+		{keys: `:e   tail\  <CR>`, cur: "tail"},
+		{keys: `:e tai<Tab><CR>`, cur: "tail"},
+		{keys: `:w new\ <CR>`, cur: "other", files: `[new ]="other\n",[other.txt]="other\n",[tail ]="tail\n"`},
+		{keys: `:w! new\  <CR>`, cur: "other", files: `[new ]="other\n",[other.txt]="other\n",[tail ]="tail\n"`},
+	} {
+		h.keys(`<Esc>:e other.txt<CR>`)
+		h.settle()
+		h.e.do(func() { h.e.message = infoMessage("") })
+		h.keys(st.keys)
+		h.settle()
+		if got := h.text(); got != st.cur {
+			t.Errorf("%s: バッファ = %q, want %q", st.keys, got, st.cur)
+		}
+		var msg ui.Message
+		h.e.do(func() { msg = h.e.message })
+		if msg.Level == ui.MessageError {
+			t.Errorf("%s: 誤りのメッセージ %q", st.keys, msg.Text)
+		}
+		want := cmp.Or(st.files, `[other.txt]="other\n",[tail ]="tail\n"`)
+		if got := files(); got != want {
+			t.Errorf("%s: ファイル = %s, want %s", st.keys, got, want)
+		}
 	}
 }
 

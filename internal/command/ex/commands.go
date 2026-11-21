@@ -276,12 +276,13 @@ func runBufferList(c *execCtx, inv *invocation) error {
 
 // runBuffer は :b[uffer][!] [N|名前] を実行する。引数が数字なら番号、そうでなければ名前として、ActionBuffer の BufferGo を返す。
 // 番号の後に文字が続けば E488 にする（:b 1 2。Vim 9.1 と同じ）。
+// 名前は、前後の空白を除き（"\" を付けた末尾の空白は除かない。trimEscapedArg）、"\ " を空白に戻したものである。
 // 番号と名前からバッファを探すこと、未保存の変更の確認（"!" が無ければ E37）は、呼び出し側が行う。
 // Vim の範囲で番号を書く形（:2b）は使えず、E481 にする。
 //
 // req: FR-08
 func runBuffer(c *execCtx, inv *invocation) error {
-	arg := strings.TrimSpace(inv.arg)
+	arg := trimEscapedArg(inv.arg)
 	a := Action{Kind: ActionBuffer, Buffer: BufferGo, Force: inv.bang}
 	if arg != "" && isDigit(arg[0]) {
 		s := &scanner{src: inv.arg, base: inv.argPos}
@@ -297,6 +298,21 @@ func runBuffer(c *execCtx, inv *invocation) error {
 	}
 	c.actions = append(c.actions, a)
 	return nil
+}
+
+// trimEscapedArg は、名前を取る引数 arg（:b と :bd のバッファの名前、:e や :w のファイルの名前）の前後の空白とタブを除く。
+// ただし、"\" の直後の末尾の空白は名前の一部なので残す（:b sp\ は "sp " を探し、:w new\ は "new " に書く。
+// Vim 9.1 の del_trailing_spaces と同じ。#354）。
+// "\ " の後に続けて打った空白は除く（"sp\" の後に空白を 2 つ打った :b は "sp " を探す。Vim 9.1 と Neovim 0.12.5 も同じ）。
+func trimEscapedArg(arg string) string {
+	arg = strings.TrimLeft(arg, " \t")
+	for n := len(arg); n > 0 && (arg[n-1] == ' ' || arg[n-1] == '\t'); n-- {
+		if n >= 2 && arg[n-2] == '\\' {
+			break
+		}
+		arg = arg[:n-1]
+	}
+	return arg
 }
 
 // runBufferStep は、:bn[ext][!] [N] と :bp[revious][!] [N]（:bN[ext]）を実行する関数を返す。
@@ -392,12 +408,12 @@ func (c *execCtx) wholeRange(inv *invocation) error {
 	return nil
 }
 
-// fileArg は、:w や :e の引数のファイル名を返す。"\" を付けた文字を戻し、先頭の "~" と環境変数を State.FileEnv で展開する
-// （ExpandFileArg。FR-200）。
+// fileArg は、:w や :e の引数のファイル名を返す。前後の空白を除き（"\" を付けた末尾の空白は除かない。trimEscapedArg）、
+// "\" を付けた文字を戻し、先頭の "~" と環境変数を State.FileEnv で展開する（ExpandFileArg。FR-200）。
 //
 // req: FR-200
 func (c *execCtx) fileArg(inv *invocation) (string, error) {
-	arg := strings.TrimSpace(inv.arg)
+	arg := trimEscapedArg(inv.arg)
 	if strings.HasPrefix(arg, "!") || strings.HasPrefix(arg, ">>") {
 		return "", errAt(inv.argPos, codeNotAvailable, "%s の !cmd と >> は使えません", inv.name)
 	}
