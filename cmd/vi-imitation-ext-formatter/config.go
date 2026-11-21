@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// settings は、利用者の設定のうち、この拡張機能に向けた部分（extensions.settings.format）である（基本設計 6.10）。
+// settings は、利用者の設定のうち、この拡張機能に向けた部分（extensions.settings.formatter）である（基本設計 6.10）。
 // 項目の名前は仮である。知らない項目は誤りにする（綴りの誤りで整形ツールが黙って走らないのを避ける）。
 type settings struct {
 	// Formatters は、整形ツールの列である。保存の前と format では、バッファのファイルの種類を FileTypes に含むものを、
@@ -69,11 +69,11 @@ func parseSettings(raw json.RawMessage) (*config, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&s); err != nil {
-		return nil, fmt.Errorf("extensions.settings.format を読めない: %w", err)
+		return nil, fmt.Errorf("extensions.settings.formatter を読めない: %w", err)
 	}
 	var errs []error
 	for i, f := range s.Formatters {
-		where := fmt.Sprintf("extensions.settings.format.formatters[%d]", i)
+		where := fmt.Sprintf("extensions.settings.formatter.formatters[%d]", i)
 		switch {
 		case f.Command == "":
 			errs = append(errs, fmt.Errorf("%s の command が空", where))
@@ -89,11 +89,11 @@ func parseSettings(raw json.RawMessage) (*config, error) {
 	}
 	for _, d := range s.LocalBinDirs {
 		if d == "" || filepath.IsAbs(d) {
-			errs = append(errs, fmt.Errorf("extensions.settings.format.localBinDirs の %q は、空でない相対パスにする", d))
+			errs = append(errs, fmt.Errorf("extensions.settings.formatter.localBinDirs の %q は、空でない相対パスにする", d))
 		}
 	}
 	if s.TimeoutMs < 0 {
-		errs = append(errs, errors.New("extensions.settings.format.timeoutMs は 0 以上の整数にする"))
+		errs = append(errs, errors.New("extensions.settings.formatter.timeoutMs は 0 以上の整数にする"))
 	}
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)

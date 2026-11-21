@@ -24,7 +24,7 @@ type extension struct {
 
 // newExtension は、ハンドラーを登録した拡張機能を作る。
 func newExtension() *extension {
-	x := &extension{srv: server.New(), cfg: &config{}, ctx: context.Background(), log: log.New(os.Stderr, "vi-imitation-ext-format: ", 0)}
+	x := &extension{srv: server.New(), cfg: &config{}, ctx: context.Background(), log: log.New(os.Stderr, "vi-imitation-ext-formatter: ", 0)}
 	x.srv.OnInitialize(func(_ context.Context, e *server.InitializeEvent) error {
 		cfg, err := parseSettings(e.Settings)
 		if err != nil {

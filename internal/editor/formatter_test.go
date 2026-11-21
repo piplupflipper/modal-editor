@@ -18,7 +18,7 @@ import (
 // 設定のファイルの種類の契機の展開（internal/config の LoadExtensions）を、ここで写す。
 func formatterSpec(t *testing.T, formatters []map[string]any) exthost.Spec {
 	t.Helper()
-	spec := buildStdExt(t, "vi-imitation-ext-format")
+	spec := buildStdExt(t, "vi-imitation-ext-formatter")
 	raw, err := json.Marshal(map[string]any{"formatters": formatters, "localBinDirs": []string{}})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestStandardFormatter(t *testing.T) {
 	}
 
 	h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}}, py)
-	h.eventually("整形ツールの拡張機能の起動", func() bool { return h.state("format") == exthost.StateRunning })
+	h.eventually("整形ツールの拡張機能の起動", func() bool { return h.state("formatter") == exthost.StateRunning })
 
 	h.keys("3G:w<CR>")
 	h.eventually("整形して書き出したファイル", func() bool { return readFile(py) == "keep\nx = 1\nkeep\nkeep\ny = 2\n" })
@@ -137,7 +137,7 @@ func TestStandardFormatterWillSaveTimeout(t *testing.T) {
 			t.Fatal(err)
 		}
 		h := start(t, Config{WorkDir: dir, Extensions: []exthost.Spec{spec}, Host: exthost.Config{WillSaveTimeout: c.timeout}}, py)
-		h.eventually("整形ツールの拡張機能の起動", func() bool { return h.state("format") == exthost.StateRunning })
+		h.eventually("整形ツールの拡張機能の起動", func() bool { return h.state("formatter") == exthost.StateRunning })
 		h.keys(":w<CR>")
 		h.eventually("書き出し", func() bool {
 			return strings.Contains(h.e.message.Text, "を書き込みました") || strings.Contains(h.e.message.Text, "保存の前の処理が失敗しました")
@@ -150,7 +150,7 @@ func TestStandardFormatterWillSaveTimeout(t *testing.T) {
 		if string(got) != c.want {
 			t.Errorf("期限 %v: ファイル = %q, want %q（message=%q）", c.timeout, got, c.want, h.message())
 		}
-		if c.want == "x  =  1\n" && !strings.Contains(h.message(), "拡張機能 format の保存の前の処理が失敗しました") {
+		if c.want == "x  =  1\n" && !strings.Contains(h.message(), "拡張機能 formatter の保存の前の処理が失敗しました") {
 			t.Errorf("期限 %v: message = %q, want 期限を超えた知らせ", c.timeout, h.message())
 		}
 	}

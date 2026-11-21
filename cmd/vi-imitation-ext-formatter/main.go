@@ -1,4 +1,4 @@
-// Command vi-imitation-ext-format は、外部の整形ツール（biome、ruff、stylua、shfmt など）で整形する標準の拡張機能である
+// Command vi-imitation-ext-formatter は、外部の整形ツール（biome、ruff、stylua、shfmt など）で整形する標準の拡張機能である
 // （要件定義 4.3。FR-175、FR-176。基本設計 6.10）。
 //
 // 本体（internal/exthost）が子プロセスとして起動し、標準入出力で JSON-RPC のメッセージをやり取りする。
@@ -23,9 +23,10 @@
 //
 // # 設定
 //
-// 設定は extensions.settings.format に書く（形は settings の doc）。例:
+// 拡張機能の ID は formatter である。本体の操作の名前 format と分け、:help format が操作の説明に当たるようにした。
+// 設定は extensions.settings.formatter に書く（形は settings の doc）。例:
 //
-//	"format": {
+//	"formatter": {
 //	  "formatters": [
 //	    { "command": "ruff", "args": ["format", "--stdin-filename", "{path}", "-"], "fileTypes": ["python"] },
 //	    { "command": "shfmt", "args": ["-filename", "{path}"], "fileTypes": ["sh", "bash"] }
@@ -37,7 +38,7 @@
 // 同じファイルの種類で LSP の拡張機能も format と saveHook を名乗るときの扱いは次のとおりである（基本設計 6.10）。
 //
 //   - format（gq）: 本体は、名乗った拡張機能のうち宣言ファイルを先に読んだものを使う（基本設計 5.5）。
-//     同梱の拡張機能はディレクトリの名前の順に読むので、format（この拡張機能）が lsp より先になる。
+//     同梱の拡張機能はディレクトリの名前の順に読むので、formatter（この拡張機能）が lsp より先になる。
 //     設定の formatters に書いたファイルの種類では、整形ツールで整形し、書いていないファイルの種類では LSP で整形する
 //   - 保存の前: 保存の流れは saveHook の拡張機能すべてに順に問い合わせるので、この拡張機能の後に LSP の拡張機能も整形する。
 //     整形ツールだけを使うには、LSP の拡張機能の設定の言語サーバーに "formatOnSave": false を書く
@@ -53,7 +54,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("vi-imitation-ext-format: %v", err)
+		log.Fatalf("vi-imitation-ext-formatter: %v", err)
 	}
 }
 

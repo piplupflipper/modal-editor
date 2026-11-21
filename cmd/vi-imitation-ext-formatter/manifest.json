@@ -1,6 +1,6 @@
 {
-  "id": "format",
-  "command": "./vi-imitation-ext-format",
+  "id": "formatter",
+  "command": "./vi-imitation-ext-formatter",
   "saveHook": true,
   "activation": [
     { "on": "settingsFileType", "pattern": "/formatters/*/fileTypes" }

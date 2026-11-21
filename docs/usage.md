@@ -111,7 +111,7 @@ Ex コマンドの別名（`commandAliases`）の書き方は、[Ex コマンド
 | `autoread` | 未変更のバッファのファイルが外で変わったときに、問わずに読み直すか。既定は `true`（Vim の `'autoread'` と同じ） |
 | `checkIntervalMs` | 開いているバッファのファイルが外で変わっていないかを確かめる間隔のミリ秒。既定は `1000`。`0` は定期的に確かめない |
 | `fileTypes` | 拡張子（`.tmpl`）かファイル名（`Justfile`）から、ファイルの種類の名前への対応 |
-| `extensions` | 拡張機能の設定（`settings`）、起動の契機の追加（`activation`）、取得する拡張機能（`install`。[拡張機能の取得](#拡張機能の取得ext-sync)）、問い合わせの期限（`syncTimeoutMs`、`startSyncTimeoutMs`）、メモリの上限（`memoryLimitMb`） |
+| `extensions` | 拡張機能の設定（`settings`）、起動の契機の追加（`activation`）、取得する拡張機能（`install`。[拡張機能の取得](#拡張機能の取得ext-sync)）、問い合わせの期限（`syncTimeoutMs`、`startSyncTimeoutMs`）、保存の前の処理（整形）の期限（`willSaveTimeoutMs`。既定は `1000`。[整形ツール](#整形ツール)）、メモリの上限（`memoryLimitMb`） |
 | `registers` | レジスターの履歴の件数（`historySize`）、1 件の最大のバイト数（`maxEntryBytes`）、削除を履歴に積むか（`deleteToHistory`）、ホストのクリップボードへ送る手段（`clipboard`）（[レジスターと履歴](#レジスターと履歴)） |
 | `readonlyPaths` | 開いた時点で編集を禁止にするファイルの置き場所（[編集の禁止](#編集の禁止)） |
 | `colorscheme` | 使う配色の名前（[配色の選択](#配色の選択)） |
@@ -1312,7 +1312,7 @@ LSP と DAP の操作（定義へ移動、ホバー、ブレークポイント�
 | `<leader>ls`、`<leader>lS` | `documentSymbols`、`workspaceSymbols` | シンボルの一覧（ファイル、ワークスペース）から選んで移る。ワークスペースはカーソルの位置の単語か `:workspaceSymbols 名前` の名前で探す |
 | `<leader>le`、`<leader>lE` | （本体） | 診断の一覧（ファイル、開いているすべてのファイル）をポップアップで出す |
 | `<leader>lj`、`<leader>lk` | （本体） | 次の診断、前の診断へ移る。端で折り返す |
-| `gq{モーション}` | `format` | 範囲を整形する。言語サーバーが範囲の整形に対応しなければ、全体を整形する |
+| `gq{モーション}` | `format` | 範囲を整形する。言語サーバーが範囲の整形に対応しなければ、全体を整形する。整形ツールを設定したファイルの種類では、整形ツールで全体を整形し、範囲と重なるところだけを書き換える（[整形ツール](#整形ツール)） |
 | `<leader>dc` | `debug.continue` | 続行。デバッグが始まっていなければ始める |
 | `<leader>dp`、`<leader>dt`、`<leader>dr` | `debug.pause`、`debug.terminate`、`debug.restart` | 一時停止、終了、終了してから前回の設定で始め直す |
 | `<leader>db` / `<leader>dB` | `breakpoint.toggle` / `breakpoint.conditional` | ブレークポイントの切り替え / 条件付きのブレークポイント。条件は `:breakpoint.conditional 式` で渡す |
@@ -1883,6 +1883,7 @@ vi-imitation --docs --headings usage                 # 話題の文書の見出�
 | `git` | バッファのファイルを git の HEAD の版と見比べる | コマンドを呼んだとき | `<Leader>gd`、`:git.diffHead` | PATH の `git`、端末多重化ソフト（tmux、herdr） |
 | `finder` | ファジーファインダー（ファイル、検索、タブ、行、キー、コマンド、レジスター、ジャンプリスト） | コマンドを呼んだとき | [ファジーファインダー](#ファジーファインダー) | 検索には PATH の `rg`。ファイルの一覧には `fd`（`fdfind`）か `rg` があれば使う |
 | `filer` | ツリー型のファイラ | コマンドを呼んだとき | `<Leader>e`、`<Leader>E`、[ファイラ](#ファイラ) | gitignore されたものを隠すには PATH の `git`。分割したペインに出すには端末多重化ソフト（tmux、herdr） |
+| `formatter` | 外部の整形ツールで、保存の前と `gq`、`:format` で整形する | 設定に整形ツールを書いたファイルの種類のファイルを開いたとき | `:w`、`gq`、`:format`（[整形ツール](#整形ツール)） | 設定に書いた整形ツール（biome、ruff など） |
 
 ### tree-sitter による構文ハイライト
 
@@ -2086,6 +2087,79 @@ mise の shim のディレクトリを PATH に置いていると、その道具
 vi-imitation は上のとおり、そのような shim を使わずに `mise exec` で起動する。
 入れるのに失敗したとき（ネットワークに出られない、プロジェクトの `mise.toml` を信頼していない、など）は、mise と、mise が起動した npm などの誤りの行をメッセージの行に出す。
 信頼していない `mise.toml` で止まったときは、内容を確かめてから `mise trust` を打つ。vi-imitation は、利用者の代わりに信頼しない。
+
+### 整形ツール
+
+外部の整形ツール（biome、ruff、stylua、shfmt など）で、`:w` の前と、`gq{モーション}`、`:format` で整形する（nvim の conform.nvim に当たる）。
+整形ツールは、`extensions.settings.formatter.formatters` に、コマンド、引数、使うファイルの種類を書いて足す。
+既定では何も書いていないので、設定を書くまでは何もしない。
+同梱の `config.example.jsonc` に、biome、taplo、ruff、stylua、shfmt、fish_indent、clang-format、rustfmt の例がある。
+
+```jsonc
+{
+  "extensions": {
+    // 保存の前の整形を待つ時間の上限のミリ秒（既定は 1000）。超えたら整形せずに書き出す
+    "willSaveTimeoutMs": 2000,
+    "settings": {
+      "formatter": {
+        "formatters": [
+          { "command": "ruff", "args": ["format", "--force-exclude", "--stdin-filename", "{path}", "-"], "fileTypes": ["python"] },
+          { "command": "shfmt", "args": ["-filename", "{path}"], "fileTypes": ["sh", "bash"] },
+        ],
+      },
+    },
+  },
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `formatters[].command` | 整形ツールの実行ファイルの名前か絶対パス（`~/` で始めてよい） |
+| `formatters[].args` | 引数の列。引数の中の `{path}` は、ファイルの絶対パスになる |
+| `formatters[].fileTypes` | この整形ツールを使うファイルの種類の名前（`:set filetype?` で出る名前）の列。ここに書いたファイルの種類のファイルを開くと、拡張機能を起動する |
+| `formatters[].name` | 知らせに使う名前。省くと `command` のファイル名 |
+| `formatOnSave` | `false` にすると、`:w` の前に整形しない（`gq` と `:format` は使える）。既定は `true` |
+| `localBinDirs` | 実行ファイルを PATH より先に探す、プロジェクトの依存の置き場所の相対パスの列。既定は `["node_modules/.bin", ".venv/bin"]`。`[]` にすると PATH だけを探す |
+| `timeoutMs` | 1 つの整形ツールを待つ時間の上限のミリ秒。既定は `10000`。`:w` の前の整形は、`extensions.willSaveTimeoutMs` でも打ち切る |
+
+整形ツールには、ファイルに書き出すときと同じ中身を標準入力で渡し、標準出力を整形の結果にする。
+作業ディレクトリはファイルのディレクトリなので、整形ツールはファイルの近くから自分の設定ファイル（`biome.json`、`pyproject.toml` など）を探す。
+実行ファイルの名前は、ファイルのディレクトリから上へたどって、各ディレクトリの `node_modules/.bin` と `.venv/bin` を先に探し、無ければ PATH から探す。
+同じファイルの種類に整形ツールを 2 つ以上書くと、書いた順に走らせ、前の出力を次の入力にする。
+
+| 操作 | 結果 |
+|---|---|
+| `:w` | 整形してから書き出す。変わった行だけを書き換えるので、変わっていない行のカーソルはその行に残る。`u` 1 回で整形の前に戻る |
+| `gqq`、`gqip` など | 整形ツールは範囲を受け取らないので、全体を整形し、範囲の行と重なる差分の塊だけを書き換える。離れた行の整形は書き換えない。コマンドラインの `:format` は全体を書き換える |
+| 整形ツールが失敗した | 書き換えずに書き出し、メッセージの行に `整形ツール biome が失敗した（終了コード 1）: × Code formatting aborted due to parsing errors. …` のように、標準エラー出力の `error` を含む最初の行（無ければ最初の行）を出す |
+| 整形ツールが見つからない | 書き換えずに書き出し、`整形ツール clang-format が見つからない（node_modules/.bin、.venv/bin、PATH を探した）` と出す。そのファイルの種類を保存するたびに出る |
+| `willSaveTimeoutMs` を超えた | 待たずに書き換えずに書き出し、`拡張機能 formatter の保存の前の処理が失敗しました: …` と出す |
+
+2026-11-21 に、同梱の `config.example.jsonc` の設定で、biome 2.4.15、taplo 0.10.0、ruff 0.15.16、stylua 2.5.2、shfmt v3.12.0、fish_indent 4.9.3、rustfmt 1.9.0 を tmux の中で使い、`:w` で整形されることを確かめた。
+
+#### LSP の整形との関係
+
+LSP の拡張機能も、`gq`、`:format`、`:w` の前に整形する。
+同じファイルの種類で両方を使うと、次のとおりになる。
+
+- `gq` と `:format` は、`formatters` に書いたファイルの種類では整形ツールで、書いていないファイルの種類（Go など）では言語サーバーで整形する
+- `:w` の前は、整形ツールで整形した後に、言語サーバーも整形する。整形ツールだけで整形するには、その言語サーバーの設定に `"formatOnSave": false` を書く（同梱の `config.example.jsonc` の Python の pyright がこの形である）
+
+```jsonc
+{
+  "extensions": {
+    "settings": {
+      "lsp": { "servers": { "python": { "command": "pyright-langserver", "args": ["--stdio"], "formatOnSave": false } } },
+    },
+  },
+}
+```
+
+nvim の conform.nvim と違う点は次のとおりである。
+
+- 範囲を受け取る整形ツール（ruff の `--range`、clang-format の `--offset` など）にも範囲を渡さず、全体を整形して範囲と重なるところだけを書き換える（conform.nvim は `range_args` のある整形ツールに範囲を渡す）
+- 作業ディレクトリは、いつもファイルのディレクトリである（conform.nvim は整形ツールごとに `biome.json` などのある上のディレクトリを探し、無ければ nvim の作業ディレクトリにする）
+- rustfmt の `--edition` は設定に書いた値で、`Cargo.toml` から読まない
 
 ### DAP によるデバッグ
 
