@@ -370,9 +370,10 @@ func TestDiagnosticPopupLines(t *testing.T) {
 }
 
 // 診断の範囲の向きをそろえ、掛かる行を決めるのは diagnosticSpanOf の 1 か所で、行の先頭で終わる複数の行の範囲は終わりの行に掛からない。
-// メッセージの行の 1 行の表示（FR-30）と次の診断へ移る操作も、同じ関数を使う。
+// メッセージの行の 1 行の表示（FR-30）と次の診断へ移る操作も、同じ関数を使う。メッセージの行の表示も、行の先頭で終わる範囲を
+// 終わりの行には出さない（Neovim 0.12.5 の open_float の scope = "line" と "cursor" と同じ。PR #333 の再レビューで確かめた）。
 //
-// req: FR-171
+// req: FR-30, FR-171
 func TestDiagnosticSpanOf(t *testing.T) {
 	pos := func(l, b int) ext.Position { return ext.Position{Line: l, Byte: b} }
 	for _, tt := range []struct {
@@ -413,13 +414,26 @@ func TestCursorHoldInsertListener(t *testing.T) {
 	h, ft := startDiagPopup(t, diagPopupOpts, Config{}, map[string]string{"a.txt": "abc\ndef\n"}, "a.txt")
 	setDiags(h, "lsp", []ext.Diagnostic{{Range: diagRange(0, 0, 3), Severity: ext.SeverityError, Message: "bad"}})
 	var calls []string
+	// ready を書かないものは、共通の条件だけで（どのモードでも）受ける。
+	var anyMode int
 	h.e.do(func() {
 		h.e.holdListeners = append(h.e.holdListeners, holdListener{
 			wants: func(*Editor) bool { return true },
 			ready: func(e *Editor) bool { return e.cur.state.Mode() == command.ModeInsert },
 			held:  func(e *Editor) { calls = append(calls, e.cur.buf.Text()) },
+		}, holdListener{
+			wants: func(*Editor) bool { return true },
+			held:  func(*Editor) { anyMode++ },
 		})
 	})
+	defer func() {
+		var n int
+		h.e.do(func() { n = anyMode })
+		// インサートモード、ノーマルモードの 2 回で受け、問いの間は受けない。
+		if n != 2 {
+			t.Errorf("ready の無いものを呼んだ回数 = %d, want 2", n)
+		}
+	}()
 	h.keys("ix")
 	holdFire(h, ft)
 	var got []string
@@ -515,6 +529,66 @@ func TestDiagnosticPopupPaneKeys(t *testing.T) {
 	h.e.do(func() { shown = viewDiagFloat(h, pc) })
 	if shown != "1. bad" {
 		t.Errorf("元の client のキーの後 = %q", shown)
+	}
+}
+
+// フォーカスを入れてペインの部品を開く（<Space>E のファイラ）と、ペインを開いたキーで掛けたタイマーの時間が来ても、元の client の画面に
+// 診断のポップアップを出さない。元の client の端末でキーを打てば、また出す（PR #333 の再レビューの推奨 1）。
+// 出ていた診断のポップアップを閉じることは、同じ leaveFocus を通るペインのキーの試験（TestDiagnosticPopupPaneKeys）で確かめる。
+// フォーカスを入れずに開いたときは、今までどおり出す。
+//
+// req: FR-171
+func TestDiagnosticPopupPaneFocus(t *testing.T) {
+	var calls muxCalls
+	cfg := Config{Extensions: fakeSpecs(t), Options: diagPopupOpts}
+	calls.config(&cfg)
+	h := start(t, cfg)
+	ft := &fakeTimers{}
+	h.e.do(func() { h.e.afterFunc = ft.after })
+	peer := h.attach(ClientInfo{ID: 2, Pane: "%9"})
+	var pc *clientView
+	h.e.do(func() {
+		pc = h.clientOf(peer.term)
+		bs := h.e.viewOf(pc).cur
+		h.e.setDiagnostics("lsp", ext.DiagnosticSetParams{Buffer: bs.id, Version: ext.Version(bs.buf.Version()), Diagnostics: []ext.Diagnostic{
+			{Range: diagRange(0, 0, 0), Severity: ext.SeverityError, Message: "bad"},
+		}})
+	})
+	shown := func() string {
+		var s string
+		h.e.do(func() { s = viewDiagFloat(h, pc) })
+		return s
+	}
+	// ペインを開いたキーで掛けたタイマーの時間が来ても出さない。
+	peer.keys("0")
+	holdFire(h, ft)
+	if got := shown(); got != "1. bad" {
+		t.Fatalf("ペインを開く前 = %q", got)
+	}
+	peer.keys(":fake.pane focus tree<CR>")
+	h.eventually("OpenPane", func() bool { _, ok := calls.last(true); return ok })
+	call, _ := calls.last(true)
+	if !call.opts.Focus {
+		t.Fatalf("OpenPane = %+v, want Focus", call)
+	}
+	h.waitPaneOpened(call.view)
+	holdFire(h, ft)
+	if got := shown(); got != "" {
+		t.Errorf("フォーカスを入れてペインを開いた後に、元の client に出した: %q", got)
+	}
+	peer.keys("0")
+	holdFire(h, ft)
+	if got := shown(); got != "1. bad" {
+		t.Errorf("元の client のキーの後 = %q", got)
+	}
+	// フォーカスを入れずに開いたペインでは、元の client が見えているままなので出す。
+	peer.keys(":fake.pane list<CR>")
+	h.eventually("2 つ目の OpenPane", func() bool { c, ok := calls.last(true); return ok && c.view != call.view })
+	second, _ := calls.last(true)
+	h.waitPaneOpened(second.view)
+	holdFire(h, ft)
+	if got := shown(); got != "1. bad" {
+		t.Errorf("フォーカスを入れずにペインを開いた後 = %q", got)
 	}
 }
 

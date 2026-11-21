@@ -21,15 +21,17 @@ import (
 //     入力を続けたときも掛け直す（resumeInput）。キーでない出来事（端末の大きさの変更、拡張機能の応答での移動（gd の結果）、
 //     拡張機能の診断と編集、別の client の編集、ファイルの読み直し）では掛け直さない。Neovim 0.12.5 の CursorHold も、キーを打たずに
 //     nvim_win_set_cursor でカーソルを動かしても来直さない（PR #333 のレビューで確かめた）
-//   - ペインの部品の client（拡張機能の pane/open。component.go）のキーでは掛け直さず、元の client のタイマーを止める。ペインのキーは
-//     元の client の操作として扱うが、利用者が見ているのはペインなので、元の client の画面に診断のポップアップを出さないためである
-//     （Neovim も、別の窓へ移ると open_float の窓を閉じる。paneInput）
+//   - 端末多重化ソフトのフォーカスが client のペインから離れたら（フォーカスを入れたペインの部品を開いた、ペインの部品の client で
+//     キーを受けた、別の client のペインへ移した）、その client のタイマーを止め、診断のポップアップを閉じ、その client の端末で
+//     次のキーを受けるまで知らせない（leaveFocus）。ペインのキーは元の client の操作として扱うが、利用者が見ているのはペインなので、
+//     元の client の画面に診断のポップアップを出さないためである（Neovim も、別の窓へ移ると open_float の窓を閉じる）。
+//     ペインのキーでは、タイマーも掛け直さない（afterKey）
 //   - Vim と同じく、止まったと 1 回知らせたら、次のキーを打つまでは知らせ直さない（起動した直後もキーを打つまでは知らせない。
 //     2026-11-21 に Neovim 0.12.5 の CursorHold で確かめた）
 //   - 時間の待ちはイベントループの外のタイマー（Editor.afterFunc）で行い、時間が来たら inspect でイベントループに戻して知らせる
 //     （基本設計 2.1。編集の状態はイベントループの goroutine だけが触る）。止める前に来たタイマーは、世代（clientView.holdGen）が
 //     違うので捨てる
-//   - 知らせてよいかの条件は 2 段に分ける。どの契機を待つものにも共通の条件（holdReady）は、終わる途中でなく、確認の問い、選択肢の問い、
+//   - 知らせてよいかの条件は 2 段に分ける。どの契機を待つものにも共通の条件（holdReady）は、終わる途中でなく、フォーカスが離れておらず、確認の問い、選択肢の問い、
 //     hit-enter の問い、レジスターの一覧、外部のコマンドと再生中の拡張機能の待ち、先打ちのキー、キーマップの続きの待ちが無いことである。
 //     モードなどの条件は、契機を待つものごとに持つ（holdListener.ready）。診断のポップアップは、ノーマルモードでキーの列の途中でなく、
 //     マクロを記録していないとき（Neovim 0.12.5 の :help CursorHold の条件）だけ受ける。インサートモードで受けるもの（CursorHoldI に当たる）も足せる。
@@ -41,6 +43,7 @@ type holdListener struct {
 	// wants は、契機を待つかを返す。false なら、この契機のためのタイマーを掛けない。キーを打つたびと、時間が来たときに読む。
 	wants func(e *Editor) bool
 	// ready は、止まった client の今の状態（モードなど）で知らせを受けるかを返す。共通の条件（holdReady）を満たしたときだけ読む。
+	// nil なら、共通の条件だけで受ける（どのモードでも受ける）。
 	ready func(e *Editor) bool
 	// held は、カーソルが止まったときに、止まった client を読み込んだ状態で呼ぶ。
 	held func(e *Editor)
@@ -122,7 +125,7 @@ func (e *Editor) fireHold(c *clientView, gen uint64) {
 			return
 		}
 		for _, l := range e.holdListeners {
-			if l.wants(e) && l.ready(e) {
+			if l.wants(e) && (l.ready == nil || l.ready(e)) {
 				l.held(e)
 			}
 		}
@@ -133,6 +136,28 @@ func (e *Editor) fireHold(c *clientView, gen uint64) {
 // （パッケージの doc の上の節）。モードの条件は、契機を待つものごとに持つ（holdListener.ready）。
 func (e *Editor) holdReady() bool {
 	c := e.view
-	return e.cur != nil && !e.quit && !e.asking() && e.activeChoice() == nil && !e.hitEnter() && e.regList == nil &&
+	return e.cur != nil && !e.quit && !c.focusAway && !e.asking() && e.activeChoice() == nil && !e.hitEnter() && e.regList == nil &&
 		e.suspension() == nil && !e.keys.has(c) && !e.remap.pendingKeys()
+}
+
+// leaveFocus は、端末多重化ソフトのフォーカスが、読み込んでいる client のペインから離れるときに呼ぶ（フォーカスを入れたペインの部品を
+// 開いた（paneOpenRequest）、ペインの部品の client でキーを受けた（paneInput）、別の client のペインへ移した（focusOwner））。
+// その client のカーソルが止まった契機のタイマーを止め、フォーカスの無い診断のポップアップを閉じ、その client の端末で次のキーを
+// 受けるまで知らせない（clientView.focusAway）。利用者が見ているのは移った先のペインだからである。
+// Neovim 0.12.5 も、別の窓へ移ると open_float の窓を閉じる（PR #333 のレビューの推奨 1）。
+// ペインやポップアップごとの分岐にせず、フォーカスが client から離れる経路のどれもがこれを呼ぶ。
+// フォーカスが戻るのは、その client の端末でキーを受けたときだけと見る（ペインで選んだ後の focusAfterPane でフォーカスが戻っても、
+// キーを打つまでは知らせない。Vim と同じく、契機はキーを打ってから来る）。
+//
+// req: FR-171
+func (e *Editor) leaveFocus() {
+	c := e.view
+	if c == nil {
+		return
+	}
+	c.focusAway = true
+	e.stopHold(c)
+	if f := e.float; f != nil && f.diagnostic && !f.focused {
+		e.closeFloat(true)
+	}
 }

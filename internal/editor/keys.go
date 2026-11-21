@@ -152,6 +152,10 @@ func (e *Editor) handleKeys() {
 	// この client の前の選択への editor/execute は、次のキーを打った時点で無効にする（list.go の revokeExecute）。
 	// 部品の client（端末多重化ソフトのポップアップとペイン）で打ったキーも、元の client（in.c）のキーとして数える。
 	e.revokeExecute(in.c)
+	if in.comp == nil {
+		// この client の端末でキーを受けたので、フォーカスはこの client のペインに戻っている（cursorhold.go の leaveFocus）。
+		in.c.focusAway = false
+	}
 	if in.comp != nil {
 		e.componentInput(in)
 		return
