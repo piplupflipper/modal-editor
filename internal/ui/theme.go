@@ -29,6 +29,10 @@ const (
 	StyleNonText = "nontext"
 	// StyleSpecialKey は、^A や <80> の形で出した文字である。
 	StyleSpecialKey = "specialkey"
+	// StyleWhitespace は、空白の記号（FR-170）のうち、タブ文字、空白、ノーブレークスペースの記号である（Neovim 0.12.5 の Whitespace）。
+	// 行末の記号は StyleNonText で描く（Neovim と同じ）。Vim 9.1 は空白の記号に SpecialKey を使うが、^A などの表記と分けて色を付けられるよう、
+	// Neovim に合わせて名前を分けた。^A などの表記と同じく下地の色にし、構文、診断、検索の一致、範囲の色、選択の色をこの上に重ねる（layers.go）。
+	StyleWhitespace = "whitespace"
 	// StyleLineNr は、行番号の列（Frame.LineNumbers。FR-135）である。数字と、右の空けた 1 列を含む列の全体に付ける（Vim の LineNr）。
 	StyleLineNr = "linenr"
 	// StyleSearch は、直前の検索のパターンに一致する範囲（Frame.Search。FR-137）である（Vim の Search）。
@@ -103,7 +107,7 @@ const (
 var styleNames = []string{
 	StyleComment, StyleKeyword, StyleString, StyleNumber, StyleConstant, StyleFunction, StyleType, StyleVariable,
 	StyleOperator, StylePunctuation,
-	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleLineNr, StyleSearch, StyleIncSearch, StyleYank,
+	StyleVisual, StyleStatusLine, StyleStatusLineNC, StyleNonText, StyleSpecialKey, StyleWhitespace, StyleLineNr, StyleSearch, StyleIncSearch, StyleYank,
 	StyleMessageInfo, StyleMessageWarning, StyleMessageError,
 	StyleDiagnosticError, StyleDiagnosticWarning, StyleDiagnosticInfo, StyleDiagnosticHint,
 	StylePopup, StylePopupSelected, StylePopupBorder, StyleFinderMatch, StylePreviewLine,
@@ -160,6 +164,8 @@ func DefaultTheme() Theme {
 		StyleStatusLine: {Reverse: true, Bold: true},
 		StyleNonText:    {Fg: Indexed(12)},
 		StyleSpecialKey: {Fg: Indexed(12)},
+		// 空白の記号は、Neovim 0.12.5 の既定（Whitespace は NonText へのリンク）と同じく nontext と同じ色にした。
+		StyleWhitespace: {Fg: Indexed(12)},
 		// 行番号は、Vim 9.1 の暗い背景の既定（2026-11-20 に TERM=xterm-256color、background=dark の :hi LineNr で確かめた ctermfg=11）と同じ番号にした。
 		StyleLineNr: {Fg: Indexed(11)},
 		// 検索の一致は、Vim 9.1 の暗い背景の既定（2026-11-20 に同じ起動の :hi Search で確かめた ctermfg=0 ctermbg=11）と同じ番号にした。

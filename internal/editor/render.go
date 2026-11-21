@@ -47,7 +47,7 @@ func (e *Editor) frame() *ui.Frame {
 	st := cur.state
 	f := &ui.Frame{
 		Text:            bs.buf,
-		TabStop:         bs.tabWidth(),
+		LineLayout:      e.lineLayout(bs, false), // 空白の記号を描くかは bufferFrame が決め直す
 		Name:            bufferTitle(cur),
 		Modified:        cur.buf.Modified(),
 		ReadOnly:        cur.buf.ReadOnly(),
@@ -112,12 +112,16 @@ func (e *Editor) frame() *ui.Frame {
 // / か ? でパターンを打っている間は、打つたびの検索で出す一致を足す（incSearchFrame。FR-153）。
 //
 // 行を折り返すか（ui.Frame.Wrap）も、描くたびに設定の今の値（lineWrap.enabled）から詰める（FR-156）。
+// 行の文字の並べ方（ui.Frame.LineLayout。タブ文字の幅と、空白の記号を描くか）は、gj と gk と望みの列と同じ lineLayout で作る（FR-170）。
+// 行番号の列と同じく、空白の記号を描くのは client の画面のバッファの表示領域だけである（ポップアップとプレビューの中には描かない）。
 //
-// req: FR-135, FR-140, FR-153, FR-156
+// req: FR-135, FR-140, FR-153, FR-156, FR-170
 func (e *Editor) bufferFrame() *ui.Frame {
 	f := e.frame()
 	f.LineNumbers = e.uiLineNumbers()
 	f.Wrap = e.lineWrap()
+	bs := e.tab()
+	f.LineLayout = e.lineLayout(bs, true)
 	f.Search = e.uiSearch()
 	f.Highlights = e.flashHighlights(e.tab())
 	e.incSearchFrame(f)
@@ -189,6 +193,31 @@ func (e *Editor) lineWrap() bool {
 	return e.options.Get(option.LineWrapEnabled).Bool()
 }
 
+// lineLayout は、バッファ bs の行の文字の並べ方（ui.LineLayout）を、設定の今の値（tab.width と whitespace.show）から作る。
+// onScreen は、client の画面のバッファの表示領域に描く（または、そこに描くバッファの列を数える）かである。
+// 描画（frame、bufferFrame、ポップアップとプレビューの中身の Frame）、gj と gk（screenLines）、望みの列（wrapColumns）は、どれもこの 1 か所で作るので、
+// 並べ方に項目を足しても、描き方と列の数え方が食い違わない（PR #334 のレビューの推奨 3 と再レビューの推奨）。
+// 描くたびと、列を数えるたびに読むので、:set list や :set tabstop= で値を変えたときに呼ぶ処理は無い（基本設計 7.3）。
+//
+// 空白の記号を描くのは client の画面のバッファの表示領域（onScreen）だけで、ポップアップとプレビューの中のバッファには描かない（FR-170）。
+// プレビューに開いているバッファを出すときも、そのバッファの State の表示領域でなく、描く先（プレビュー）で決める。
+// 記号を描くときは、タブ文字の上のカーソルの列と望みの列が、タブの最初の列になる（ui.Columns の doc）。
+//
+// req: FR-161, FR-170
+func (e *Editor) lineLayout(bs *bufferState, onScreen bool) ui.LineLayout {
+	return ui.LineLayout{
+		TabStop:    bs.tabWidth(),
+		Whitespace: onScreen && e.options.Get(option.WhitespaceShow).Bool(),
+	}
+}
+
+// onScreen は、State st の表示領域が client の画面のバッファの表示領域（viewport）かを返す（lineLayout の onScreen）。
+// ポップアップ（floatViewport）とプレビュー（previewViewport）の中の State では false である。
+func onScreen(st *command.State) bool {
+	_, ok := st.Viewport.(viewport)
+	return ok
+}
+
 // screenLines は、行を折り返して描くときの見た目の行の数え方（command.State.ScreenLines。gj と gk、ページ単位のスクロール）を、
 // その State の表示領域（State.Viewport）を描く描画の部品につなぐ口である（FR-157）。
 // client の画面のバッファ（viewport）と、ポップアップのプレビューの中身（previewViewport）は、設定（lineWrap.enabled）が true なら折り返して数える。
@@ -222,7 +251,7 @@ func (s screenLines) lines() (l ui.WrapLines, ok bool) {
 	if r == nil || r.TextWidth() <= 0 {
 		return l, false
 	}
-	return r.WrapLines(s.bs.tabWidth()), true
+	return r.WrapLines(s.e.lineLayout(s.bs, onScreen(s.st))), true
 }
 
 // Wrap は、行を折り返して数えるかを返す。
@@ -258,7 +287,11 @@ type wrapColumns struct {
 
 // plain は、行を折り返さないときの数え方を返す。
 func (c wrapColumns) plain() ui.Columns {
-	return ui.Columns{TabStop: c.sl.bs.tabWidth()}
+	cols := ui.Columns{LineLayout: c.sl.e.lineLayout(c.sl.bs, onScreen(c.sl.st))}
+	if r := c.sl.e.renderer; r != nil {
+		cols.Symbols = r.Symbols
+	}
+	return cols
 }
 
 // Column は、target.Columns の Column である。

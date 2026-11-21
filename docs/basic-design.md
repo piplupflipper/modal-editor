@@ -3126,12 +3126,46 @@ result は、選んだ選択肢の `id` を `selected` に、取り消した場�
 |---|---|
 | 本文の描画、カーソルの位置、折り返し、ルーラーの列、ステータス行とポップアップの窓の幅 | `ui.Frame.TabStop`。`internal/editor` が描くたびに、表示領域に描くバッファの今の値を詰める（`Editor.frame`）。`Renderer.Render` が描く間の値（`Renderer.tabStop`）にし、描画の中でタブ幅を使う箇所が読む。公開していた `Renderer.TabStop` は無くした |
 | ポップアップとプレビューの中身 | それぞれの中身のバッファの値を `Float.View.TabStop`、`Preview.View.TabStop` に詰める（`Editor.floatFrame`、`Editor.uiPreview`）。プレビューに開いたファイルは、ファイルの種類ごとの値で描く（プレビューのバッファは名前を持たないので、`.editorconfig` は読まない） |
-| `gj` と `gk`、ページ単位のスクロール（`command.State.ScreenLines`） | `ui.Renderer.WrapLines(tabStop)` の引数。`internal/editor` の `screenLines` が State のバッファの今の値を渡す。次の描画の前に `:set tabstop=` で変えても、今の値で数える |
-| 望みの列（`command.State.Columns`） | `internal/editor` の `wrapColumns` が、そのつど `ui.Columns{TabStop: …}` を作る。それまでは State を作るときに `Renderer.Columns()` で写した値を使い続けていた |
+| `gj` と `gk`、ページ単位のスクロール（`command.State.ScreenLines`） | `ui.Renderer.WrapLines` の引数の `ui.LineLayout`（#328 で、タブ文字の幅と空白の記号を描くかを 1 つの値にした。次の節）。`internal/editor` の `screenLines` が State のバッファの今の値を渡す。次の描画の前に `:set tabstop=` で変えても、今の値で数える |
+| 望みの列（`command.State.Columns`） | `internal/editor` の `wrapColumns` が、そのつど `ui.Columns{LineLayout: …}` を作る。それまでは State を作るときに `Renderer.Columns()` で写した値を使い続けていた |
 | 字下げの幅（3.2） | `command.State.TextWidth`（`ui.StringWidth`）の引数 |
 | ホバーとヘルプのポップアップの中身を窓の幅で折り返すとき（`ui.WrapText`） | 名前もファイルの種類も無いバッファの初めの値（`Editor.scratchTabWidth`。設定ファイルの最上位の `tab.width`）。そのバッファを描くときと同じ幅で数える |
 
 記号、アイコン、続きの行の記号の幅のように、バッファのテキストでない文字列は、今までどおり `DefaultTabStop` で数える。
+
+#### 空白の記号
+
+#328 で、タブ文字、空白、ノーブレークスペース、行末を記号で描けるようにした（FR-170。Vim の `'list'` と `'listchars'`）。
+描くかどうかは、設定の表（7.3）のエディタ全体の項目 `whitespace.show` で決め（既定は描かない）、記号は `symbols`（7.1）の `whitespace.` で始まる 6 つの名前で決める。
+見せ方は、2026-11-21 に tmux の上で Neovim 0.12.5（`--clean`）と Vim 9.1（`-Nu NONE`）を動かし、`'listchars'` を変えた画面を `capture-pane -e -p` で比べて合わせた。比べたどの場合も、nvim と Vim の画面の文字は同じだった。
+
+| 対象 | 描き方 |
+|---|---|
+| タブ文字 | タブ幅のセルを `whitespace.tab` で埋める。2 文字（`xy`）なら最初のセルが `x`、ほかが `y`。3 文字（`xyz`）なら最後のセルが `z`、それより前の最初のセルが `x`、ほかが `y` で、幅 1 のタブ文字は `z` だけになる（Vim の `tab:xy` と `tab:xyz`）。記号が空なら `^I` の 2 列で描き（色は `specialkey`）、タブ文字の幅は 2 列として数える |
+| 空白（U+0020） | 行頭の空白（行の先頭から続く空白とタブ文字の中の空白）は `whitespace.lead`、行末の空白（空白でもタブ文字でもない最後の文字より後ろの空白）は `whitespace.trail`、ほかは `whitespace.space`。`lead` と `trail` が空なら `space` を使う。空白とタブ文字だけの行は、全体を行末の空白として扱い、`lead` を使わない（Vim と同じ） |
+| ノーブレークスペース（U+00A0 と U+202F） | `whitespace.nbsp`。行頭と行末の判定では空白として数えない（Vim の `VIM_ISWHITE` と同じ） |
+| 行末 | 行末の 1 セル（選択と検索の一致が行の区切りに色を付けるセル）に `whitespace.eol` を描く。色は `nontext`。行を折り返すときは、このセルも見た目の行の数に数える（ちょうど本文の幅で終わる行は、行末の記号だけの見た目の行を 1 行足す。Vim の `plines_win_nofold` と同じ）。折り返さずに横にスクロールしたとき、画面の左の端より短い行（空の行を含む）の行末のセルは画面の 0 列目に描く。行末に掛かる選択の色も同じで、記号を描かないときも 0 列目に出す（2026-11-21 に nvim と Vim で、`'list'` の有無の両方で確かめた。PR #334 のレビューの必須 2） |
+| カーソル | ノーマルモードとビジュアルモードでも、タブ文字の上のカーソルはタブの最初の列に置き、望みの列（`j` と `k` の列）とルーラーの表示の列もその列にする（Vim 9.1 の `getvcol` の `'list'` の扱い。nvim と Vim の両方で、`"\tabc"` の 1 文字目から `j` で下の行の 1 文字目へ移った） |
+| 色 | 行末以外の記号の色の名前は `whitespace`（Neovim の `Whitespace`。7.1）。記号の色は `^A` などの表記（`specialkey`）と同じ「文字の表記の色」の層で、構文の色の上、診断、検索の一致、範囲の色、選択の色の下に重ねる（`internal/ui` の `layers.go` の `glyphOrder`）。コメントや文字列の中の記号も、構文の色でなく記号の色で描く（2026-11-21 に nvim と Vim で、Go のファイルの行末の空白、生の文字列とブロックコメントの中の行頭の空白とタブ文字を確かめた。PR #334 のレビューの必須 1）。空白の記号のためだけの重ね方は作らず、層の表の 1 行として足した |
+| 描く場所 | client の画面のバッファの表示領域だけ（`Editor.lineLayout` が、描く先が client の画面のバッファの表示領域のときだけ `ui.LineLayout.Whitespace` を真にする。列を数えるときは、State の表示領域が client の画面のもの（`viewport`）かで決める）。ポップアップ、プレビュー、出力の欄には描かない。望みの列も、client の画面のバッファの State だけをタブの最初の列で数える |
+
+描き方は、`internal/ui` の行を列に並べる規則 `lineRule`（`whitespace.go`）の 1 か所で決める。
+`lineRule` の入力は公開の値 `ui.LineLayout`（タブ文字の幅 `TabStop` と、空白の記号を描くか `Whitespace`）で、描画（`ui.Frame` に埋め込む）、望みの列（`ui.Columns` に埋め込む）、折り返したときの数え方（`ui.Renderer.WrapLines` の引数）が同じ値を受け取る。
+`internal/editor` では `Editor.lineLayout` の 1 か所でこの値を作る（client の画面、ポップアップ、プレビューの中身の `Frame` も同じ関数を通す）。並べ方に項目を足すときは `ui.LineLayout` と `Editor.lineLayout` に足せば、描画と列の数え方に同時に届く（PR #334 のレビューの推奨 3）。
+`lineRule` は `ui.LineLayout` と記号の対応から作り、本文の描画（折り返す `drawWrapped` と折り返さない `drawLine`）、カーソルの位置、折り返しの分け方（`wrapper`）、検索の一致を集める範囲、望みの列（`ui.Columns`、`ui.WrapLines`）が、どれもこの規則で文字を並べる。
+`lineRule` は空白の記号を描くときに、タブ文字をセルごとに記号を描く種類（`glyphWhitespace`）か `^I` の種類にする。どちらもタブ文字の種類（`glyphTab`）でないので、タブの最後の列にカーソルを置く分岐を通らず、カーソルと望みの列がタブの最初の列になる。
+空白とノーブレークスペースは、行頭と行末の位置で記号が変わるので、本文を描く 2 つの関数が共通に呼ぶ `drawer.look` で記号に替える。
+`drawer.look` は、それまで 2 つの関数に重複していた「`^A` などの表記を `specialkey` の色にする」分岐も引き受け、文字の表記の色を返す。
+表記の色は文字ごとに決まるので範囲（`span`）にせず、`drawer.attrAt` が受け取って層の表の順（`glyphOrder`）に重ねる。
+#328 より前の `^A` などの表記は、構文の色より下の下地の色だったので、コメントの中の `^A` はコメントの色で描かれていた。Vim 9.1 と Neovim 0.12.5 はどちらも `SpecialKey` の色で描くので、空白の記号と同じ層へ移した。
+行末のセルは、2 つの関数が共通に呼ぶ `drawer.eolCell` で描く。
+
+nvim 0.12.5 は、記号（`Whitespace`）と `^A` などの表記（`SpecialKey`）の文字の色を、検索の一致（`Search`）の色の上にも出す。
+本体は層の表の順のまま、一致の文字の色を記号の上に出す（Vim 9.1 と同じ。[Vim との違い](vim-differences.md)）。
+
+この上に、markdown の描画（別の相談）が描画している間だけ行末の記号を消す切り替えと、単語の切れ目での折り返し（Vim の `'linebreak'`）が載る。
+行末の記号を消す切り替えは、`ui.LineLayout` に項目を足す形になる見込みである（行末の記号の有無は見た目の行の数を変えるので、描画と `gj`、`gk`、ページ単位のスクロールに同時に届く必要がある）。
+`'linebreak'` の切る位置は、1 文字ずつの配置（`lineRule.glyph`）ではなく、見た目の行に分ける側（`wrapper.place`、`rows`、`span`）の仕事になる見込みである。`'list'` との組み合わせ（`tab:` が無いときの `^I` など）は、そのときに Vim 9.1 で確かめる。
 
 
 
@@ -3757,6 +3791,10 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 ただし `IncSearch` の色は写さない。Vim 9.1 の暗い背景の既定（2026-11-20 に同じ起動の `:highlight IncSearch` で `cterm=reverse`）も iceberg.vim の dark の側も反転だけで、選択と重なったところで反転が残り、選択の色が上に見えないためである（6.7 の「一時的な色付け」の重ねる順。PR #287 のレビューの推奨 1）。
 既定は背景が端末の 16 色の 6 で、Vim 9.1 の暗い背景の `MatchParen` の既定（2026-11-20 に同じ起動の `:highlight MatchParen` で `ctermbg=6`）の番号を借りた。既定の選択（反転）と重なったところは、この色が文字の色になるので、選択だけのところとも、ヤンクの色だけのところとも違って見える。
 同梱の iceberg には、iceberg.vim（同じコミット）の dark の側の `PmenuSel` の色（文字 `#eff0f4`、背景 `#5b6389`）を写した。`visual`（背景 `#272c42`）と `search`（背景 `#e4aa80`）と見分けられ、選択と重なったところでは選択の背景の上に明るい文字が出る。
+#328 で、空白の記号（6.7 の「空白の記号」）のうち、行末を除く記号の色の名前 `whitespace` を足した（Neovim 0.12.5 の `Whitespace` に当たる。行末の記号は Neovim と同じく `nontext`）。
+Vim 9.1 は空白の記号に `SpecialKey` を使うが、`^A` などの表記と分けて色を付けられるよう、Neovim に合わせて名前を分けた。
+既定は Neovim の既定（`Whitespace` は `NonText` へのリンク）と同じく `nontext` と同じ端末の 16 色の 12 である。
+同梱の iceberg には、iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の dark の側の `Whitespace` の色（文字 `#242940`。`NonText` と同じ）を写した。
 #288 で、項目のプレビュー（1.4 の「#288 のプレビュー」）の、項目の指す行（grep の一致した行など）の色の名前 `preview.line` を足した（fzf-lua のプレビューの `FzfLuaCursorLine` に当たる）。
 行の全体に付け、構文の色をその上に重ねる。既定は背景が端末の 16 色の 0 で、窓の色（`popup` の背景の 8）の上で見分けられ、構文の色（文字の色）を消さない色として選んだ。
 同梱の iceberg には、iceberg.vim（コミット 23835d5ed696436f716cbfdb56a93a7850fe3b18）の dark の側の `CursorLine` の背景 `#1e2132` を写した（PR #298 のレビューの推奨 1）。iceberg.vim に専用のグループは無く、オーナーの nvim の fzf-lua の `FzfLuaCursorLine` が既定で `CursorLine` にリンクする（fzf-lua の `lua/fzf-lua/init.lua`）ためである。文字の色は持たず、構文の色を残す。
@@ -3839,6 +3877,11 @@ gopls v0.24.0 で `gopls check internal/exthost/process.go`（このリポジト
 枠線は 8 文字（左上、上、右上、右、右下、下、左下、左。Neovim の `border` の配列と同じ並び）の 1 つの文字列で書き、既定は空（枠線なし。段階 2 までと同じ見た目）である。
 印は表示幅が 1 か 2、枠線の文字は表示幅が 1 で、守らない値は設定の誤りとして使わない（`internal/ui` の `CheckSymbol`）。
 #300 で、長い行を折り返したときに続きの見た目の行の頭に付ける記号 `lineWrap.showBreak`（Vim の `'showbreak'`。6.7 の「行の折り返し」）を足した。既定は空（付けない。Vim と Neovim の既定と同じ）で、色は `nontext` である。
+#328 で、空白の記号（6.7 の「空白の記号」。FR-170）の `whitespace.tab`、`whitespace.space`、`whitespace.lead`、`whitespace.trail`、`whitespace.nbsp`、`whitespace.eol` を足した（Vim の `'listchars'` の `tab`、`space`、`lead`、`trail`、`nbsp`、`eol`）。
+既定は Neovim 0.12.5 の `'listchars'` の既定（`tab:> ,trail:-,nbsp:+`）と同じで、ほかの 3 つは空（描かない）である。
+値は Vim と同じく幅 1 の文字だけにし、`whitespace.tab` は空か 2 文字か 3 文字、ほかは空か 1 文字にする（2026-11-21 に nvim 0.12.5 で、`tab:>` と `tab:<-->` と `trail:--` が `E1511`、`eol:全` が `E1512` になることを確かめた）。
+`'listchars'` の項目のうち、`multispace`、`leadmultispace`、`extends`、`precedes`、`conceal` は持たない（要件定義の FR-170 の注）。
+`'listchars'` と違い、`symbols` の値は名前ごとの上書きなので、書かない名前は既定の値のままである。Vim の `:set listchars=...` のように書かない項目を無くすには、空の値を書く。
 
 #295 で、一覧と木の項目のファイルの種類のアイコン（1.4 の「#295 のアイコン」。FR-152）の表を、設定の `icons` で書き換えられるようにした。
 記号と違い、既定は ASCII にせず、Nerd Font のグリフで出す（#295 のオーナーの決め）。
@@ -3984,6 +4027,7 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `lineNumber.show` | 真偽 | エディタ全体 | `false` | `number` | バッファの表示領域の左に行番号の列を出すか（6.7 の「行番号の列」。FR-135）。既定は Vim と同じく出さない |
 | `lineNumber.minWidth` | 整数（1 から 20） | エディタ全体 | `4` | `numberwidth` | 行番号の列の最小の列数（FR-136）。範囲は Vim の `'numberwidth'` と同じ |
 | `lineWrap.enabled` | 真偽 | エディタ全体 | `false` | `wrap` | 長い行を本文の幅で折り返して描くか（6.7 の「行の折り返し」。FR-156）。既定は折り返さない（Vim と Neovim の既定は折り返す。#300 のオーナーの決め）。同梱の `config.example.jsonc` では折り返す。単語の切れ目で折り返す設定（Vim の `'linebreak'`）を後で足すときは `lineWrap.` の下に足す |
+| `whitespace.show` | 真偽 | エディタ全体 | `false` | `list` | タブ文字、空白、ノーブレークスペース、行末を記号で描くか（6.7 の「空白の記号」。FR-170）。既定は Vim と Neovim と同じく描かない。同梱の `config.example.jsonc` では描く。Vim の `'list'` は窓ごとの設定だが、本体には窓が無いので、同じく窓ごとの `'number'` と `'wrap'` に当たる `lineNumber.show` と `lineWrap.enabled` と同じくエディタ全体にした |
 | `search.highlight` | 真偽 | エディタ全体 | `false` | `hlsearch` | 直前の検索のパターンの一致に色を付けるか（6.7 の「検索の一致の色付け」。FR-137）。既定は Vim と同じく付けない |
 | `search.incrementalTimeoutMs` | 整数（1 から 10000） | エディタ全体 | `500` | 無し（Vim の `'incsearch'` の時間の上限は設定にない） | `/` と `?` でパターンを打っている間の、打つたびの検索の時間の上限のミリ秒（6.7 の「打つたびの検索」。FR-153）。超えたらその回は一致を出さない。既定は Vim 9.1 の `'incsearch'` が検索を約 0.5 秒で打ち切る（`:help 'incsearch'`）のに合わせた。Vim の `'redrawtime'`（既定 2000）は `'hlsearch'` の色付けなどの上限で、打つたびの検索には使わない（2026-11-20 に Vim 9.1 の `:set redrawtime?` と `:help 'redrawtime'` で確かめた）。打つたびの検索をしない設定は持たない（#296 のオーナーの決め）ので、下限は 0 でなく 1 にした |
 | `search.showCount` | 真偽 | エディタ全体 | `false` | 無し（Vim の `'shortmess'` の `S` に当たるが、`'shortmess'` は多くのフラグをまとめた設定なので別名を作らない） | 検索で動いたときに、メッセージの行の右に一致の件数を出すか（6.7 の「検索の一致の件数」。FR-167）。既定は Vim 9.1 の既定（`'shortmess'` に `S` があり、出さない）に合わせて出さない。同梱の `config.example.jsonc` では出す（オーナーの nvim は Neovim の既定のまま出している）。検索するたびに読む |
@@ -4003,11 +4047,12 @@ Vim の短い名前（`number`）は、何の設定かが名前で分からな�
 | `cursorHold.delayMs` | 整数（0 から 60000） | エディタ全体 | `4000` | 無し（`'updatetime'` の別名は、`:set` の別名の表が `internal/command/ex` にあり、#329 では足していない） | 利用者がキーを打たずにこのミリ秒が経ったら、カーソルが止まったとする時間（6.7 の「カーソルが止まった契機」。FR-171）。既定と下限は Vim と Neovim の `'updatetime'` と同じ（2026-11-21 に Neovim 0.12.5 の `:set ut=0` が通り、`:set ut=-1` が `E487` になることを確かめた）。上限は 1 分にした。キーを打つたびに読む。同梱の `config.example.jsonc` では、オーナーの nvim と同じ `100` |
 | `diagnostic.popup` | 真偽 | エディタ全体 | `false` | 無し | カーソルが止まったときに、カーソルの行の診断をカーソルの近くの浮かべた窓に出すか（6.7 の「診断のポップアップ」。FR-171）。既定は Vim と Neovim と同じく出さない。真なら、メッセージの行に診断の本文を出さない。同梱の `config.example.jsonc` では `true` |
 
-`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で足した。
+`lineNumber.show` と `lineNumber.minWidth` は #268 で、`search.highlight` は #275 で、`yank.highlightMs` は #283 で、`preview.*` の 3 つは #288 で、`icons.show` は #295 で、`lineWrap.enabled` は #300 で、`search.showCount` は #320 で、`indent.*` の 3 つと `tab.width` と `editorConfig.enabled` は #318 で、`undo.persist` と `cursor.restore` は #319 で、`comment.string` は #327 で、`whitespace.show` は #328 で、`cursorHold.delayMs` と `diagnostic.popup` は #329 で足した。
 #319 の 2 つの名前は、issue の案のとおりにした。`cursor.restore` には Vim の名前が無い（Vim は設定でなく `defaults.vim` の自動コマンドで戻す）ので、`:set` では受け付けない。
 `comment.string` の名前は、#327 の本文の案のとおりにした。
 #329 の issue の案は、時間を `diagnostic.popupDelayMs` としていた。時間を待つ仕組みを汎用の契機にしたので、時間は「止まってから時間が経った」契機（Vim の `CursorHold` と `CursorHoldI`。どちらも `'updatetime'` で動く）の設定として、`cursorHold.` の下に 1 つだけ置いた。
 表示の変化を拡張機能に知らせる口（#317 の第 3 弾）は、この契機に載せず、この時間も使わない（PR #333 のレビューの裁定要へのオーケストレータの決定。6.7 の「カーソルが止まった契機」）。
+#328 の名前は issue の案のとおりにした。記号の名前（7.1）も `whitespace.` の下に置き、設定と記号が同じ機能のものと名前で分かるようにした。
 #318 の 4 つの名前は、issue の案のとおりにした。インデントの文字と幅は `indent.` の下に、タブ文字の表示幅は字下げに限らない（行の途中のタブ文字も描く）ので `tab.` の下に置いた。
 `preview.*` の名前は、何の窓の何の値かが分かるように、窓の幅の境目（`minWindowWidth`）、プレビューの割合（`widthPercent`）、窓の割合（`windowWidthPercent`）にした（fzf-lua の `flip_columns` は、何を反転するのかが名前から分からないため写さなかった）。
 
@@ -4190,7 +4235,7 @@ Vim との完全な互換は目指さない（オーナーの方針。設計の�
 | `:set <Vim の名前>?` | `option.get <正規の名前>` |
 | `:set <名前> <名前> …` | 空白で区切った引数ごとに上のどれかへ変換し、左から順に実行する。途中の引数が誤りなら止め、前の引数の設定は残す（Vim 9.1 の `:set ts=4 foo ts=8` と同じ） |
 
-- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を、#275 で `hlsearch` から `search.highlight` を、#300 で `wrap` から `lineWrap.enabled` を、#318 で `expandtab`（`et`）、`shiftwidth`（`sw`）、`tabstop`（`ts`）、`autoindent`（`ai`）を足した。#327 で `commentstring`（`cms`）から `comment.string` を足した
+- Vim の名前から正規の名前への対応は、`:set` の別名（`internal/command/ex` の `vimOptionNames`）が持つ。#264 で持つ対応は `filetype` から `filetype` だけで、#268 で `number` から `lineNumber.show`、`numberwidth` から `lineNumber.minWidth` を、#275 で `hlsearch` から `search.highlight` を、#300 で `wrap` から `lineWrap.enabled` を、#318 で `expandtab`（`et`）、`shiftwidth`（`sw`）、`tabstop`（`ts`）、`autoindent`（`ai`）を足した。#327 で `commentstring`（`cms`）から `comment.string` を、#328 で `list` から `whitespace.show` を足した
 - `inv` の接頭辞、`+=`、`-=`、`^=`、`&`（既定値に戻す）、短い名前（`nu`、`ft`）は受け付けず、知らない設定のエラー（`E518`）にする。ただし字下げの 4 項目の短い名前（`et`、`sw`、`ts`、`ai`）は、`:set et sw=4 ts=4` の形で書くことが多いので、#318 の決めで受け付ける。Vim の `'softtabstop'`（`sts`）と `'smarttab'`（`sta`）は、別の設定にしない（3.2）ので `E518` になる
 - 引数の無い `:set` は `E471` にする
 - `:setlocal` は、別名の表に行が無いので、知らないコマンドのエラー（`E492`）になる（#264 の本文は「知らない設定のエラーにする」としたが、`:setlocal` は設定でなくコマンドの名前なので、他の知らないコマンドと同じにした）
@@ -4258,6 +4303,7 @@ Vim 9.1 の `:tabe` を引数なしで打つと、`:tabnew` と同じく空の�
 - 検索の一致の色付け（#275）は、`search.highlight` を表に足し、正規の Ex コマンド `search.clearHighlight` を Ex コマンドの表に、その別名 `:nohlsearch`（`:noh` まで省略できる）を別名の表に足した（名前を付け替えるだけの項目。名前を付け替える項目は、これが最初の行である）。描画は描くたびに今の値を読む（6.7 の「検索の一致の色付け」）
 - ヤンクした範囲の色付け（#283）は、`yank.highlightMs` を表に足し、ヤンクのたびに今の値を読む形で入った（6.7 の「一時的な色付け」）。Vim の名前が無いので、`vimOptionNames` には行を足していない（`:set` では変えられず、`:option.set` で変える）
 - 行の折り返し（#300）は、`lineWrap.enabled` を表に足し、描画が描くたびに、gj と gk が見た目の行を数えるたびに今の値を読む形で入った（6.7 の「行の折り返し」）。`:set wrap` は、`vimOptionNames` に 1 行を足して使えるようにした
+- 空白の記号（#328）は、`whitespace.show` を表に足し、描画が描くたびに、望みの列を数えるたびに今の値を読む形で入った（6.7 の「空白の記号」）。`:set list` は、`vimOptionNames` に 1 行を足して使えるようにした
 - 打つたびの検索（#296）は、`search.incrementalTimeoutMs` を表に足し、検索を始めるたびに今の値を読む形で入った（6.7 の「打つたびの検索」）。Vim に対応する設定が無いので、`vimOptionNames` には行を足していない。`:set incsearch` に当たる真偽の項目は、常に行うので作っていない
 - 検索の一致の件数（#320）は、`search.showCount` を表に足し、検索するたびに今の値を読む形で入った（6.7 の「検索の一致の件数」）。`'shortmess'` は多くのフラグをまとめた設定で、別名にするとほかのフラグの意味まで受け付けることになるので、`vimOptionNames` には行を足していない（#320 のオーナーの決め）
 - 字下げとタブの表示幅（#318）は、範囲がバッファごとの 4 項目と `editorConfig.enabled` を表に足し、バッファごとの項目を設定ファイルに書けるようにして、初めの値の段（「バッファごとの項目の初めの値」）を足した。使う側（3.2、6.7 の「タブ文字の表示幅」）は、使うたびにバッファの今の値を読む

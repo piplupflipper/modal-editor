@@ -36,23 +36,24 @@ const (
 
 // wrapper は、バッファの 1 行を見た目の行に分ける規則である。
 type wrapper struct {
-	width   int // 見た目の行の列数（本文の幅）。1 以上
-	sbw     int // 続きの見た目の行の頭に描く記号の列数。width-2 以下（全角文字を 1 つは置ける）
-	tabStop int
+	width int // 見た目の行の列数（本文の幅）。1 以上
+	sbw   int // 続きの見た目の行の頭に描く記号の列数。width-2 以下（全角文字を 1 つは置ける）
+	// rule は、文字を列に並べる規則（タブ文字の幅と、空白の記号。whitespace.go）である。
+	rule lineRule
 }
 
 // wrapPos は、行を折り返したときのセルの位置である。row は行の見た目の行のうち何番目か（0 から数える）、
 // x はその見た目の行の左の端（本文の左の端）からの列である。続きの見た目の行は、記号の列（sbw）から文字を置く。
 type wrapPos struct{ row, x int }
 
-// wrapper は、直前の layout の本文の幅と、記号の設定で、行の分け方を返す。
+// wrapper は、直前の layout の本文の幅と、記号の設定と、描いている Frame の規則（r.rule）で、行の分け方を返す。
 func (r *Renderer) wrapper() wrapper {
 	w := max(r.textWidth(), 1)
 	sbw := StringWidth(r.symbol(SymbolShowBreak), DefaultTabStop)
 	if sbw > w-2 {
 		sbw = 0
 	}
-	return wrapper{width: w, sbw: sbw, tabStop: tabStopOr(r.tabStop)}
+	return wrapper{width: w, sbw: sbw, rule: r.rule}
 }
 
 // rowStart は、見た目の row 行目の、文字を置き始める列を返す。
@@ -128,11 +129,12 @@ func (w wrapper) vcol(p wrapPos) int {
 
 // next は、行 s の off から始まる文字を、p から置いたときの配置を返す（タブの幅は、置く位置の表示の列で決める）。
 func (w wrapper) next(s string, off int, p wrapPos) glyph {
-	return nextGlyph(s, off, w.vcolAt(p), w.tabStop)
+	return w.rule.glyph(s, off, w.vcolAt(p))
 }
 
 // rows は、行 s を折り返した見た目の行の数（1 以上）を返す。空の行は 1 行である。
 // 行末の位置が次の見た目の行に出る（ちょうど幅で終わる）ときも、その行は数えない。
+// ただし行末の記号を描くとき（FR-170）は、行末の位置も 1 セルとして数える（lastRow）。
 func (w wrapper) rows(s string) int {
 	p := wrapPos{}
 	for off := 0; off < len(s); {
@@ -140,7 +142,18 @@ func (w wrapper) rows(s string) int {
 		w.place(&p, gl)
 		off += gl.size
 	}
-	return p.row + 1
+	return w.lastRow(p) + 1
+}
+
+// lastRow は、行の最後の文字を置いた後の p から、行の最後の見た目の行の番号を返す。
+// 行末の記号を描くとき（lineRule.eolCell）は、行末の位置（eol）の見た目の行にする。Vim の plines_win_nofold も、'list' で eol の記号があれば
+// 行末の 1 列を足して数える（2026-11-21 に nvim 0.12.5 と Vim 9.1 で、20 列の画面のちょうど 20 文字の行が、行末の記号を 2 行目に出して
+// 2 行を使うことを確かめた）。
+func (w wrapper) lastRow(p wrapPos) int {
+	if w.rule.eolCell() {
+		return w.eol(p).row
+	}
+	return p.row
 }
 
 // column は、行 s の byteOff の文字の表示の列（vcol）を返す。タブは最後のセルの列（Vim のノーマルモードのカーソルの列）、
@@ -211,7 +224,7 @@ func (w wrapper) cursorRows(s string, byteOff int, tabLast bool) (at int, cur wr
 	if at < 0 {
 		at, cur = len(s), w.eol(p)
 	}
-	return at, cur, p.row + 1
+	return at, cur, w.lastRow(p) + 1
 }
 
 // span は、行 s のうち、見た目の k0 行目から k1 行目の手前までに掛かる文字のバイトの範囲 [from, to) を返す。
@@ -246,12 +259,12 @@ type WrapLines struct {
 	w wrapper
 }
 
-// WrapLines は、直前の Render の本文の幅と、タブ文字の幅 tabStop（0 以下なら DefaultTabStop）で、行を折り返す数え方を返す。
-// 画面の大きさがまだ届いていなければ、幅を 1 列として数える。
-// タブ文字の幅を引数で受けるのは、次の Render の前に設定（tab.width）が変わっても、使う側が今の値で数えられるようにするためである（FR-161）。
-func (r *Renderer) WrapLines(tabStop int) WrapLines {
+// WrapLines は、直前の Render の本文の幅と、行の文字の並べ方 l（タブ文字の幅と、空白の記号を描くか。描く Frame の LineLayout と同じ値）で、
+// 行を折り返す数え方を返す。画面の大きさがまだ届いていなければ、幅を 1 列として数える。
+// 並べ方を引数で受けるのは、次の Render の前に設定（tab.width、whitespace.show）が変わっても、使う側が今の値で数えられるようにするためである（FR-161）。
+func (r *Renderer) WrapLines(l LineLayout) WrapLines {
 	w := r.wrapper()
-	w.tabStop = tabStopOr(tabStop)
+	w.rule = newLineRule(l, r.symbol)
 	return WrapLines{w: w}
 }
 

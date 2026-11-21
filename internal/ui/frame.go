@@ -280,11 +280,12 @@ type Frame struct {
 	// Wrap は、長い行を本文の幅で折り返して描くかである（FR-156。Vim の 'wrap'）。false なら折り返さずに横にスクロールする。
 	// internal/editor が、描くたびに設定の今の値（lineWrap.enabled）を詰める。描き方は wrap.go の doc にある。
 	Wrap bool
-	// TabStop は、Text のタブ文字の表示幅である（FR-161。Vim の 'tabstop'）。0 以下なら DefaultTabStop を使う。
-	// internal/editor が、描くたびに Text のバッファの設定の今の値（tab.width）を詰める。本文、カーソルの位置、折り返し、ルーラーの列は、
-	// どれもこの幅で数える。ステータス行とポップアップの窓の幅など、描画の中のほかのタブ幅もこの値を使う（Renderer.tabStop）。
+	// LineLayout は、Text の行の文字を画面の列に並べるときの入力（タブ文字の表示幅 TabStop と、空白の記号を描くか Whitespace）である
+	// （FR-161、FR-170。whitespace.go）。internal/editor が、描くたびに Text のバッファの設定の今の値（tab.width、whitespace.show）を詰める。
+	// 本文、カーソルの位置、折り返し、ルーラーの列は、どれもこの並べ方で数える。ステータス行とポップアップの窓の幅など、
+	// 描画の中のほかのタブ幅も TabStop を使う（Renderer.tabStop）。空白の記号は、client の画面のバッファの表示領域の Frame でだけ描く。
 	// ポップアップとプレビューの中身（Float.View、Preview.View）は、それぞれの Frame の値で描く。
-	TabStop int
+	LineLayout
 	// Search は、一致に色（StyleSearch）を付けるパターンである（FR-137）。nil なら色を付けない。
 	// internal/editor が、描くたびに設定の今の値（search.highlight）と直前の検索のパターンから詰める。
 	// 描き方は searchSpans の doc にある。

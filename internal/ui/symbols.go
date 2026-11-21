@@ -28,6 +28,22 @@ const (
 	// SymbolShowBreak は、行を折り返したとき（FR-156）に、続きの見た目の行の頭に付ける記号である（Vim の 'showbreak'）。
 	// 空なら付けない（既定。Vim と Neovim の既定と同じ）。本文の幅から 2 を引いた列数より広ければ付けない（wrapper）。
 	SymbolShowBreak = "lineWrap.showBreak"
+	// SymbolWhitespaceTab などは、空白の記号を描くとき（Frame.Whitespace。設定の whitespace.show。FR-170）に、空白の文字の代わりに描く記号である
+	// （Vim の 'listchars' の項目。描き方は whitespace.go の doc）。空ならその項目を描かない。既定は Neovim 0.12.5 の 'listchars' の既定
+	// （tab:> ,trail:-,nbsp:+）に合わせた。
+	//
+	//   - SymbolWhitespaceTab: タブ文字（'listchars' の tab）。2 文字か 3 文字。空ならタブ文字を ^I で描く（Vim と同じ）
+	//   - SymbolWhitespaceSpace: 行頭と行末でない空白（space）
+	//   - SymbolWhitespaceLead: 行頭の空白（lead）。空なら SymbolWhitespaceSpace を使う
+	//   - SymbolWhitespaceTrail: 行末の空白（trail）。空なら SymbolWhitespaceSpace を使う
+	//   - SymbolWhitespaceNbsp: ノーブレークスペース（U+00A0 と U+202F。nbsp）
+	//   - SymbolWhitespaceEOL: 行末（eol）。行末の 1 セルに描く
+	SymbolWhitespaceTab   = "whitespace.tab"
+	SymbolWhitespaceSpace = "whitespace.space"
+	SymbolWhitespaceLead  = "whitespace.lead"
+	SymbolWhitespaceTrail = "whitespace.trail"
+	SymbolWhitespaceNbsp  = "whitespace.nbsp"
+	SymbolWhitespaceEOL   = "whitespace.eol"
 )
 
 // borderChars は、SymbolPopupBorder の文字の数である。
@@ -50,6 +66,12 @@ var defaultSymbols = Symbols{
 	SymbolModified:                 "[+]",
 	SymbolPopupBorder:              "",
 	SymbolShowBreak:                "",
+	SymbolWhitespaceTab:            "> ",
+	SymbolWhitespaceSpace:          "",
+	SymbolWhitespaceLead:           "",
+	SymbolWhitespaceTrail:          "-",
+	SymbolWhitespaceNbsp:           "+",
+	SymbolWhitespaceEOL:            "",
 }
 
 // DefaultSymbols は、既定の記号の対応を返す。返す対応は呼び出しごとに作り直す。
@@ -66,11 +88,13 @@ func SymbolNames() []string {
 //
 //   - 印の列の印（"sign." で始まる名前）: 表示幅が 1 か 2 の文字列。印の列は 2 列なので、1 列の印は右に空白を置いて描く
 //   - 枠線（SymbolPopupBorder）: 空か、表示幅が 1 の文字をちょうど 8 つ並べた文字列
+//   - タブ文字の記号（SymbolWhitespaceTab）: 空か、表示幅が 1 の文字を 2 つか 3 つ並べた文字列（Vim の 'listchars' の tab と同じ）
+//   - ほかの空白の記号（"whitespace." で始まる名前）: 空か、表示幅が 1 の文字 1 つ（Vim の 'listchars' と同じ。空白 1 つのセルに描くため）
 //   - それ以外（SymbolReadOnly、SymbolModified、SymbolShowBreak）: 任意の文字列。空ならその部品（続きの行の記号）を出さない
 //
 // どれも、タブと制御文字を含めない（描くと ^I の形になり、幅が変わるため）。
 //
-// req: FR-93
+// req: FR-93, FR-170
 func CheckSymbol(name, value string) error {
 	if _, ok := defaultSymbols[name]; !ok {
 		return fmt.Errorf("未知の記号の名前 %s", name)
@@ -83,6 +107,9 @@ func CheckSymbol(name, value string) error {
 		}
 		if name == SymbolPopupBorder && gl.width != 1 {
 			return fmt.Errorf("枠線の文字 %q の表示幅が 1 でない", gl.text)
+		}
+		if isWhitespaceSymbol(name) && gl.width != 1 {
+			return fmt.Errorf("空白の記号の文字 %q の表示幅が 1 でない", gl.text)
 		}
 		n++
 		w += gl.width
@@ -97,6 +124,14 @@ func CheckSymbol(name, value string) error {
 		if w < 1 || w > signColumnWidth {
 			return fmt.Errorf("印の表示幅は 1 か 2 にする（%d ある）", w)
 		}
+	case name == SymbolWhitespaceTab:
+		if n != 0 && n != 2 && n != 3 {
+			return fmt.Errorf("タブ文字の記号は空か 2 文字か 3 文字にする（%d 文字ある）", n)
+		}
+	case isWhitespaceSymbol(name):
+		if n > 1 {
+			return fmt.Errorf("空白の記号は空か 1 文字にする（%d 文字ある）", n)
+		}
 	}
 	return nil
 }
@@ -106,12 +141,22 @@ func isSignSymbol(name string) bool {
 	return strings.HasPrefix(name, "sign.")
 }
 
-// symbol は、記号の名前 name の文字列を返す。r.Symbols に無ければ既定の値を使う。
-func (r *Renderer) symbol(name string) string {
-	if s, ok := r.Symbols[name]; ok {
-		return s
+// isWhitespaceSymbol は、name が空白の記号（FR-170）かを返す。
+func isWhitespaceSymbol(name string) bool {
+	return strings.HasPrefix(name, "whitespace.")
+}
+
+// value は、記号の名前 name の文字列を返す。s に無ければ既定の値を使う。
+func (s Symbols) value(name string) string {
+	if v, ok := s[name]; ok {
+		return v
 	}
 	return defaultSymbols[name]
+}
+
+// symbol は、記号の名前 name の文字列を返す。r.Symbols に無ければ既定の値を使う。
+func (r *Renderer) symbol(name string) string {
+	return r.Symbols.value(name)
 }
 
 // border は、浮かべる窓の枠線の 8 文字を返す。枠線を描かないなら ok が false である。

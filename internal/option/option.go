@@ -163,6 +163,11 @@ const (
 	// LineWrapEnabled は、長い行を本文の幅で折り返して描くかである（FR-156。Vim の 'wrap'）。
 	// 本体の既定は折り返さない（Vim と Neovim の既定は折り返す。#300 のオーナーの決め）。描画が、描くたびにこの値を読む。
 	LineWrapEnabled = "lineWrap.enabled"
+	// WhitespaceShow は、タブ文字、空白、ノーブレークスペース、行末を記号で描くかである（FR-170。Vim の 'list'）。
+	// 記号は設定の symbols の "whitespace." で始まる名前で決まる。本体の既定は Vim と Neovim の既定と同じく描かない（#328 のオーナーの決め）。
+	// Vim の 'list' は窓ごとの設定だが、本体には窓が無く、同じく窓ごとの 'number' と 'wrap' に当たる項目と同じくエディタ全体の範囲にした。
+	// 描画と、カーソルの列の数え方が、使うたびにこの値を読む。
+	WhitespaceShow = "whitespace.show"
 	// SearchHighlight は、直前の検索のパターンに一致する範囲に色を付けるかである（FR-137。Vim の 'hlsearch'）。
 	// 描画が、描くたびにこの値と直前の検索のパターンを読む。
 	SearchHighlight = "search.highlight"
@@ -242,6 +247,7 @@ var defs = []Def{
 	{Name: LineNumberShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: LineNumberMinWidth, Type: Int, Scope: ScopeEditor, Default: IntValue(4), Range: &IntRange{Min: 1, Max: 20}},
 	{Name: LineWrapEnabled, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
+	{Name: WhitespaceShow, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	{Name: SearchHighlight, Type: Bool, Scope: ScopeEditor, Default: BoolValue(false)},
 	// 下限は、打つたびの検索をしない値（0）を作らないため 1 にした。上限は yank.highlightMs と同じ 10 秒にした。
 	{Name: SearchIncrementalTimeoutMs, Type: Int, Scope: ScopeEditor, Default: IntValue(500), Range: &IntRange{Min: 1, Max: 10000}},

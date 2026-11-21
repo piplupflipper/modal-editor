@@ -216,6 +216,7 @@ var vimOptionNames = map[string]string{
 	"numberwidth":   option.LineNumberMinWidth,
 	"hlsearch":      option.SearchHighlight,
 	"wrap":          option.LineWrapEnabled,
+	"list":          option.WhitespaceShow,
 	"expandtab":     option.IndentUseSpaces,
 	"et":            option.IndentUseSpaces,
 	"shiftwidth":    option.IndentWidth,

@@ -25,6 +25,7 @@
   "visual": { "bg": "#272c42" }, // Visual
   "nontext": { "fg": "#242940" }, // NonText
   "specialkey": { "fg": "#515e97" }, // SpecialKey（Neovim の側。Vim では Whitespace へのリンク）
+  "whitespace": { "fg": "#242940" }, // Whitespace（空白の記号。NonText と同じ色）
   "linenr": { "fg": "#444b71", "bg": "#1e2132" }, // LineNr
   "search": { "fg": "#392313", "bg": "#e4aa80" }, // Search
   // 打つたびの検索の今の一致。IncSearch は gui=reverse だけで、nvim は Search の色を重ねずに Normal の文字と背景の色を入れ替えて出す。

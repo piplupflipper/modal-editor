@@ -141,7 +141,7 @@ func TestWrapToggle(t *testing.T) {
 //
 // req: FR-156, FR-157
 func TestWrapper(t *testing.T) {
-	w := wrapper{width: 10, tabStop: 8}
+	w := wrapper{width: 10, rule: lineRule{tabStop: 8}}
 	tests := []struct {
 		s    string
 		rows int
@@ -193,7 +193,7 @@ func TestWrapper(t *testing.T) {
 		t.Errorf("Column(タブ) = %d, want 15（最後のセル）", c)
 	}
 
-	sb := wrapper{width: 10, sbw: 2, tabStop: 8}
+	sb := wrapper{width: 10, sbw: 2, rule: lineRule{tabStop: 8}}
 	// 続きの行は 2 列目から 8 列ずつ。表示の列は記号の列も数える。
 	if got := sb.rows("0123456789abcdefghij"); got != 3 {
 		t.Errorf("記号ありの rows = %d, want 3", got)

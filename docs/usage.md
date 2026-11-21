@@ -566,8 +566,9 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 | `statusline.<部品の ID>` | ステータス行の部品（`statusline.mode`、`statusline.name`、`statusline.modified`、`statusline.readonly`、`statusline.filetype`、`statusline.recording`、`statusline.ruler`、`statusline.position`）。`statusline` の上に重ねる | なし |
 | `statusline.mode.normal`、`statusline.mode.insert`、`statusline.mode.visual`、`statusline.mode.commandline` | モードごとのモードの部品。`statusline.mode` の上に重ねる。`visual` は文字単位と行単位の両方 | なし |
 | `statusline.ext` | 拡張機能が足した部品。`statusline`（タブの行では `tabline.fill`）の上に重ね、その上に拡張機能が部品ごとに選んだ色を重ねる | なし |
-| `nontext` | バッファの最終行より後の `~`。長い行を折り返したときの `>`、`@@@`、`<<<` と続きの行の記号（[長い行の折り返し](#長い行の折り返し)） | 端末の 16 色の 12 |
-| `specialkey` | `^A` や `<80>` の形で出した文字 | 端末の 16 色の 12 |
+| `nontext` | バッファの最終行より後の `~`。長い行を折り返したときの `>`、`@@@`、`<<<` と続きの行の記号（[長い行の折り返し](#長い行の折り返し)）。行末の記号 `whitespace.eol`（[空白の記号](#空白の記号)） | 端末の 16 色の 12 |
+| `specialkey` | `^A` や `<80>` の形で出した文字。空白の記号を描くときに、タブ文字の記号が空なら描く `^I` | 端末の 16 色の 12 |
+| `whitespace` | 空白の記号（[空白の記号](#空白の記号)）のうち、タブ文字、空白、ノーブレークスペースの記号（Neovim の `Whitespace`） | 端末の 16 色の 12 |
 | `linenr` | 行番号の列（[行番号](#行番号)）。番号の右の空けた 1 列を含む列の全体 | 端末の 16 色の 11（Vim の暗い背景の既定と同じ番号） |
 | `search` | 直前の検索のパターンに一致する範囲（[検索の一致の色付け](#検索の一致の色付け)）。構文の色と診断の上、`visual` の下に重ねる | 文字は端末の 16 色の 0、背景は 11（Vim の暗い背景の既定と同じ番号） |
 | `incsearch` | `/` と `?` でパターンを打っている間の、今の一致（[打つたびの検索](#打つたびの検索)）。`search` と `yank` の上、`visual` の下に重ねる | 反転（Vim の暗い背景の既定と同じ）。`search.highlight` が `true` のときは、下の `search` の文字と背景を入れ替えた色に見える。同梱の iceberg では iceberg.vim の `Normal` の文字と背景を入れ替えた色 |
@@ -600,6 +601,12 @@ Vim の `mapleader` は、マッピングを定義した時点の値で置き換
 | `modified` | ステータス行の未保存の印 | `[+]` | 任意の文字列 |
 | `popup.border` | 浮かべる窓（編集の画面の中に描く窓。端末多重化ソフトのポップアップの枠線は端末多重化ソフトが描くので効かない）の枠線 | 空（枠線なし） | 空か、表示幅が 1 の文字を 8 つ。並びは左上、上、右上、右、右下、下、左下、左 |
 | `lineWrap.showBreak` | 長い行を折り返したとき（[長い行の折り返し](#長い行の折り返し)）に、続きの見た目の行の頭に付ける記号（Vim の `'showbreak'`）。色は `nontext` | 空（付けない） | 任意の文字列。本文の幅から 2 を引いた列数より広ければ付けない |
+| `whitespace.tab` | 空白の記号を描くとき（[空白の記号](#空白の記号)）の、タブ文字の記号（Vim の `'listchars'` の `tab`）。色は `whitespace` | `> ` | 空か、表示幅が 1 の文字を 2 つか 3 つ。空ならタブ文字を `^I` で描く |
+| `whitespace.space` | 行頭と行末でない空白の記号（`space`）。色は `whitespace` | 空（描かない） | 空か、表示幅が 1 の文字を 1 つ |
+| `whitespace.lead` | 行頭の空白の記号（`lead`）。空なら `whitespace.space` を使う。色は `whitespace` | 空 | 同上 |
+| `whitespace.trail` | 行末の空白の記号（`trail`）。空なら `whitespace.space` を使う。色は `whitespace` | `-` | 同上 |
+| `whitespace.nbsp` | ノーブレークスペース（U+00A0 と U+202F）の記号（`nbsp`）。色は `whitespace` | `+` | 同上 |
+| `whitespace.eol` | 行末の記号（`eol`）。色は `nontext` | 空（描かない） | 同上 |
 
 どの記号にも、タブと制御文字は書けない。
 印の列は 2 列なので、表示幅が 1 の印は右に空白を置いて描く。
@@ -868,6 +875,7 @@ Vim の短い名前（`ft`）、`inv` の接頭辞、`+=`、`-=`、`^=`、`&`（
 | `lineNumber.show` | 真偽 | エディタ全体 | `number` | バッファの表示領域の左に行番号の列を出すか。既定は `false`（出さない。Vim と同じ）。列は印の列の右、本文の左に置き、色の名前は `linenr` である（[配色](#配色)） |
 | `lineNumber.minWidth` | 整数 | エディタ全体 | `numberwidth` | 行番号の列の最小の列数（番号の右の空けた 1 列を含む）。既定は `4`、範囲は 1 から 20。列の幅は、この値と、バッファの最後の行の番号の桁数に 1 を足した数の大きい方になる（Vim の `'numberwidth'` と同じ） |
 | `lineWrap.enabled` | 真偽 | エディタ全体 | `wrap` | 長い行を本文の幅で折り返して描くか（[長い行の折り返し](#長い行の折り返し)）。既定は `false`（折り返さずに横にスクロールする。Vim と Neovim の既定は折り返す）。同梱の `config.example.jsonc` は `true` にしている |
+| `whitespace.show` | 真偽 | エディタ全体 | `list` | タブ文字、空白、ノーブレークスペース、行末を記号で描くか（[空白の記号](#空白の記号)）。既定は `false`（描かない。Vim と同じ）。記号は `symbols` の `whitespace.` で始まる名前で変える（[記号](#記号)）。同梱の `config.example.jsonc` は `true` にしている |
 | `search.highlight` | 真偽 | エディタ全体 | `hlsearch` | 直前の検索のパターンに一致する範囲に色を付けるか（[検索の一致の色付け](#検索の一致の色付け)）。既定は `false`（付けない。Vim と同じ）。色の名前は `search` である（[配色](#配色)） |
 | `search.incrementalTimeoutMs` | 整数 | エディタ全体 | 無し | `/` と `?` でパターンを打っている間の、打つたびの検索（[打つたびの検索](#打つたびの検索)）の時間の上限のミリ秒。超えたらその回は一致を出さない。既定は `500`（Vim の `'incsearch'` が約 0.5 秒で打ち切るのと同じ）、範囲は 1 から 10000。Vim にこの設定は無いので、`:set` では変えられず、`:option.set search.incrementalTimeoutMs 1000` で変える |
 | `search.showCount` | 真偽 | エディタ全体 | 無し | 検索で動いたときに、メッセージの行の右に、一致が何件目かと件数（`[2/5]`）を出すか（[検索の一致の件数](#検索の一致の件数)）。既定は `false`（出さない。Vim と同じ）。同梱の `config.example.jsonc` は `true` にしている。Vim の `'shortmess'` の `S` に当たるが、`:set shortmess` の別名は無いので、`:option.set search.showCount true` か `:option.toggle search.showCount` で変える |
@@ -966,6 +974,59 @@ Vim の短い名前（`ft`）、`inv` の接頭辞、`+=`、`-=`、`^=`、`&`（
 `j` と `k` は、折り返していても実際の 1 行ずつ動き、`$`、`0`、`^` は実際の行の端へ動く（Vim と同じ）。
 `j` と `k` を見た目の行で動かすには、`keymap` に `"normal": { "j": { "action": "display-down" }, "k": { "action": "display-up" } }` と書く（ビジュアルモードでも使うなら `visual` にも書く）。
 `<PageDown>` と `<PageUp>` は、折り返した行の高さを数えて 1 画面ずつ動く。
+
+### 空白の記号
+
+タブ文字、空白、ノーブレークスペース（U+00A0 と U+202F）、行末を、記号で描ける（Vim の `'list'` と `'listchars'`）。
+本体の既定は描かない（Vim と同じ）。
+設定ファイルに次のように書くと、起動したときから描く。
+同梱の `config.example.jsonc` もこの値にしている。
+
+```jsonc
+{
+  "whitespace": { "show": true },
+  "symbols": {
+    "whitespace.tab": "→ ",
+    "whitespace.lead": "·",
+    "whitespace.trail": "·",
+    "whitespace.eol": "↲",
+    "whitespace.nbsp": "",
+  },
+}
+```
+
+実行中は `:set list`（描く）、`:set nolist`（描かない）、`:set list!`（切り替える）で変える。
+`:option.set whitespace.show true` と `:option.toggle whitespace.show` も同じである。
+変えた値は、次に画面を描くときから効く。
+
+記号は `symbols` の 6 つの名前で変える（[記号](#記号)）。
+書かなかった名前は既定の記号（Neovim の `'listchars'` の既定の `tab:> ,trail:-,nbsp:+` と同じ）のままである。
+Vim の `:set listchars=...` と違い、書かなかった項目は無くならないので、描きたくない項目には空の文字列を書く（上の例の `whitespace.nbsp`）。
+
+| 名前 | Vim の `'listchars'` | 描くもの |
+|---|---|---|
+| `whitespace.tab` | `tab` | タブ文字。2 文字（`→ `）なら、最初の列に 1 文字目、残りの列に 2 文字目を描く。3 文字（`<->`）なら、最後の列に 3 文字目、最初の列に 1 文字目、間に 2 文字目を描く。空ならタブ文字を `^I` で描き、タブ文字の幅を 2 列として数える（Vim と同じ） |
+| `whitespace.lead` | `lead` | 行頭の空白（行の先頭から続く空白とタブ文字の中の空白）。空なら `whitespace.space` を使う |
+| `whitespace.trail` | `trail` | 行末の空白（空白でもタブ文字でもない最後の文字より後ろの空白）。空なら `whitespace.space` を使う。空白とタブ文字だけの行の空白は、行末の空白として描く |
+| `whitespace.space` | `space` | ほかの空白 |
+| `whitespace.nbsp` | `nbsp` | ノーブレークスペース |
+| `whitespace.eol` | `eol` | 行末（行の最後の文字の右の 1 列）。空の行にも描く |
+
+どの記号も、表示幅が 1 の文字で書く（Vim と同じ）。
+`·`、`→`、`↲` のような、Unicode で幅が曖昧と定められた文字は、本体は 1 列と数える（[記号](#記号)の注意と同じ）。
+端末がそれらの文字を 2 列で描く設定だと、列がずれる。
+
+記号を描いている間は、次のように動く（Vim と同じ）。
+
+- ノーマルモードでも、タブ文字の上のカーソルはタブの最初の列に出る（描かないときは最後の列に出る）。`j` と `k` で動くときの列と、ルーラーの列もその列になる
+- 長い行を折り返すとき（[長い行の折り返し](#長い行の折り返し)）は、行末の記号も 1 列として数える。ちょうど本文の幅で終わる行は、行末の記号を次の見た目の行に描き、その行を使う
+- 折り返さずに横にスクロールしたときは、画面の左の端より短い行（空の行を含む）の行末の記号を、画面の左の端に描く
+
+色の名前は、行末の記号が `nontext`、ほかの記号が `whitespace`、`^I` が `specialkey` である（[配色](#配色)）。
+コメントや文字列の中の記号も、構文の色でなく記号の色で描く（Vim と Neovim と同じ）。
+診断の下線、検索の一致、選択の色は、記号の上に重ねて付く。
+検索の一致の文字の色は記号の色より上に出る（Vim と同じ。Neovim は記号の色を出す。[vim-differences.md](vim-differences.md)）。
+記号を描くのはバッファの表示領域だけで、浮かべた窓（ホバーの説明、ファインダー、プレビュー）と出力の欄には描かない。
 
 ### 検索の一致の色付け
 
