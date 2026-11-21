@@ -50,7 +50,7 @@ func scrollbarOpts(extra map[string]option.Value) map[string]option.Value {
 	return opts
 }
 
-// rightColumn は、term の最後の画面の表示領域（タブの行の下の 9 行）の右端の列を、つまみのセル（既定の配色の scrollbar の背景の色）は "#"、
+// rightColumn は、term の最後の画面の表示領域（タブの行の下の 9 行）の右端の列を、つまみのセル（既定の配色の scrollbar の属性が掛かったセル）は "#"、
 // 印のセルはその文字、ほかは "." にして並べた文字列を返す。
 func rightColumn(term *fakeTerm) string {
 	term.mu.Lock()
@@ -59,7 +59,7 @@ func rightColumn(term *fakeTerm) string {
 	if g == nil {
 		return ""
 	}
-	bg := ui.DefaultTheme()[ui.StyleScrollbar].Bg
+	thumb := ui.DefaultTheme()[ui.StyleScrollbar]
 	x := g.Width() - 1
 	var b strings.Builder
 	for row := 1; row <= 9; row++ {
@@ -67,7 +67,7 @@ func rightColumn(term *fakeTerm) string {
 		switch {
 		case len(c.Text) == 1 && strings.ContainsAny(c.Text, "EWIH="):
 			b.WriteString(c.Text)
-		case c.Attr.Bg == bg:
+		case c.Attr.Over(thumb) == c.Attr && c.Attr != (ui.Attr{}):
 			b.WriteByte('#')
 		default:
 			b.WriteByte('.')

@@ -106,12 +106,16 @@ func TestRenderScrollbarThumb(t *testing.T) {
 
 // スクロールバーの印の色と記号の名前は、本体の種類に加えて、"scrollbar." の後に scrollbar.marks に書ける形の名前が続くものを、
 // 決まった表に頼らずに受け付ける（後に拡張機能が足す種類）。受け付けた名前の色と記号で、その種類の印を描ける。
+// 本体の種類と同じか似た名前（編集距離が 2 以下）で本体の表に無い名前は、書き間違いとして受け付けない。
 //
 // req: FR-187
 func TestScrollbarMarkNames(t *testing.T) {
 	for name, want := range map[string]bool{
 		"scrollbar.git": true, "scrollbar.diagnostic.error": true, "scrollbar": true, "scrollbar.": false,
 		"scrollbar.a,b": false, "scrollbar.a b": false, "scrollbarx": false, "gitsigns.add": false,
+		// 本体の種類（diagnostic、search）と同じか似た名前で、本体の表に無いものは書き間違いとして受け付けない。
+		"scrollbar.diagnostics.error": false, "scrollbar.diagnostic.err": false, "scrollbar.serch": false, "scrollbar.saerch": false,
+		"scrollbar.search.x": false, "scrollbar.todo": true, "scrollbar.mark": true, "scrollbar.stash": true,
 	} {
 		if got := IsStyleName(name); got != want {
 			t.Errorf("IsStyleName(%q) = %v, want %v", name, got, want)
@@ -125,6 +129,9 @@ func TestScrollbarMarkNames(t *testing.T) {
 	}
 	if err := CheckSymbol("scrollbar.", "+"); err == nil {
 		t.Error("種類の名前の無い記号を受け付けた")
+	}
+	if err := CheckSymbol("scrollbar.diagnostics.error", "X"); err == nil {
+		t.Error("本体の種類の書き間違いの記号を受け付けた")
 	}
 
 	var lines strings.Builder

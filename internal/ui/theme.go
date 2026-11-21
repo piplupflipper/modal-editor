@@ -166,11 +166,69 @@ const scrollbarMarkPrefix = StyleScrollbar + "."
 
 // IsScrollbarMarkName は、name が、スクロールバーの印の種類の色と記号の名前の形（"scrollbar." の後に、空でなく、
 // コンマと空白を含まない名前が続く）かを返す（FR-187）。後の名前は、設定の scrollbar.marks に書ける種類の名前と同じ規則である
-// （コンマで区切り、前後の空白を除いた空でない名前）。本体の種類（diagnostic.error、search）と、後に拡張機能が足す種類（git など）を
-// 名前の表に頼らずに受け付ける。
+// （コンマで区切り、前後の空白を除いた空でない名前）。後に拡張機能が足す種類（git など）を、名前の表に頼らずに受け付ける。
+//
+// ただし、"scrollbar." の後の最初の点までの部分が、本体の種類の名前（本体の色の名前の表の "scrollbar.<種類>" と
+// "scrollbar.<種類>.<…>" の <種類>。diagnostic と search）と同じか、編集距離が scrollbarTypoDistance 以下で、本体の表に無い名前は
+// 受け付けない（scrollbar.diagnostics.error、scrollbar.serch などの書き間違いを、設定の誤りとして知らせるため。PR #351 の再レビューの推奨 3）。
+//
+// req: FR-187
 func IsScrollbarMarkName(name string) bool {
 	rest, ok := strings.CutPrefix(name, scrollbarMarkPrefix)
-	return ok && rest != "" && !strings.ContainsFunc(rest, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+	if !ok || rest == "" || strings.ContainsFunc(rest, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		return false
+	}
+	if slices.Contains(styleNames, name) {
+		return true
+	}
+	kind, _, _ := strings.Cut(rest, ".")
+	for _, b := range builtinScrollbarKinds() {
+		if editDistance(kind, b) <= scrollbarTypoDistance {
+			return false
+		}
+	}
+	return true
+}
+
+// scrollbarTypoDistance は、IsScrollbarMarkName が本体の種類の名前の書き間違いとみなす編集距離の上限である。
+// 本体の種類の名前に 1 文字か 2 文字を足した、消した、替えた名前（diagnostics は 1、隣の 2 文字を入れ替えた名前は 2）を書き間違いとし、
+// git、todo、mark などの短い名前（search との距離は 4 以上）は書き間違いにしない。
+const scrollbarTypoDistance = 2
+
+// builtinScrollbarKinds は、本体の色の名前の表（styleNames）にある、スクロールバーの印の種類の名前（"scrollbar." の後の最初の点まで）を返す。
+func builtinScrollbarKinds() []string {
+	var out []string
+	for _, n := range styleNames {
+		if rest, ok := strings.CutPrefix(n, scrollbarMarkPrefix); ok {
+			kind, _, _ := strings.Cut(rest, ".")
+			if !slices.Contains(out, kind) {
+				out = append(out, kind)
+			}
+		}
+	}
+	return out
+}
+
+// editDistance は、a と b の文字の編集距離（Levenshtein 距離）を返す。
+func editDistance(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	cur := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(rb)]
 }
 
 // Theme は、色の種類の名前から属性への対応である。
@@ -240,19 +298,22 @@ func DefaultTheme() Theme {
 		StyleProgressDone:  {Fg: Indexed(13)},
 		// 失敗して終わった進み具合は、印の列の誤りの診断の印（sign.diagnostic.error）と同じ赤にした。fidget.nvim に対応するものは無い。
 		StyleProgressFailed: {Fg: Indexed(9)},
-		// スクロールバーのつまみは、背景の色だけを持ち、下の文字を残す。nvim-scrollview の既定は Visual へのリンクを winblend で透かすが、
-		// 端末のセルでは透かせず、本体の既定の visual は反転で下の文字が読みにくくなるので、主張を抑えた暗い灰色の背景にした。
-		// 16 色の 8 番（xterm の既定の色で #7f7f7f）は、上に重ねる 9 番の赤（#ff0000）とのコントラスト比が 1.00 で誤りの印が見えないので、
-		// 256 色の 236 番（#303030）にした。黒の背景との比は 1.59 で、帯として見分けられる（WCAG の相対輝度で計算した。PR #351 のレビューの推奨 5）。
-		StyleScrollbar: {Bg: Indexed(236)},
+		// スクロールバーのつまみは、反転だけを持つ（下の文字を残し、その文字と背景の色を入れ替える）。nvim-scrollview の既定の ScrollView は
+		// Visual へのリンクで、本体の既定の visual も反転なので、それに合わせた。端末の背景が暗くても明るくても、反転した文字は端末の文字の色と
+		// 背景の色の組で読めるので、背景の明暗を前提にしない（PR #351 の再レビューの推奨 2）。winblend の透かしは端末のセルでは出せないので、
+		// 主張を抑えた色にしたいときは、配色か colors で背景の色を書く（同梱の iceberg は Visual の背景）。
+		// #351 の途中では背景の色を固定していたが、16 色の 8 番（xterm の既定の色で #7f7f7f）は 9 番の赤との比が 1.00、256 色の 236 番（#303030）は
+		// 明るい背景の端末で下の黒の文字との比が 1.59 で、どちらかの端末で読めなかった（WCAG の相対輝度で計算した）。
+		StyleScrollbar: {Reverse: true},
 		// スクロールバーの診断の印は、印の列の診断の印（sign.diagnostic.*）と同じ番号にした（nvim-scrollview の既定も、印の列の
-		// DiagnosticSign* の色へのリンク）。ただし hint は、sign.diagnostic.hint の 8 番が灰色の背景で見えにくいので 7 番にした。
-		// 検索の一致の印は、nvim-scrollview の既定の ScrollViewSearch（NonText へのリンク）の nontext の 12 番では、つまみの上の比が 2.78 と
-		// 低いので、診断の印と重ならない 14 番（シアン）にした。つまみの上の比は 10.53、黒の背景の上は 16.75 である（xterm の既定の色で計算した）。
+		// DiagnosticSign* の色へのリンク）。つまみの上の印は、反転で、印の色の地に端末の背景の色の記号として出るので、印と端末の背景の色の比は
+		// つまみの外と同じで、印の列の印とも同じである。
+		// 検索の一致の印は、nvim-scrollview の既定の ScrollViewSearch（NonText へのリンク）の nontext の 12 番だと情報の診断の印と同じ色になるので、
+		// 診断の印と重ならない 14 番（シアン）にした。
 		StyleScrollbarDiagnosticError:   {Fg: Indexed(9)},
 		StyleScrollbarDiagnosticWarning: {Fg: Indexed(11)},
 		StyleScrollbarDiagnosticInfo:    {Fg: Indexed(12)},
-		StyleScrollbarDiagnosticHint:    {Fg: Indexed(7)},
+		StyleScrollbarDiagnosticHint:    {Fg: Indexed(8)},
 		StyleScrollbarSearch:            {Fg: Indexed(14)},
 		StyleSignBreakpoint:             {Fg: Indexed(9), Bold: true},
 		StyleSignBreakpointUnverified:   {Fg: Indexed(8)},
