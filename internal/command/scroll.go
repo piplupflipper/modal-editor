@@ -394,6 +394,7 @@ func actScrollCursor(kind scrollCursorKind, firstNonBlank bool) actionFunc {
 		if !ok {
 			return failf("no viewport")
 		}
+		startLine := s.cursor.Line
 		if cmd.CountGiven && cmd.Count > 0 && cmd.Count-1 != s.cursor.Line {
 			if s.Navigator != nil {
 				s.Navigator.MarkJump(s.cursor)
@@ -431,8 +432,10 @@ func actScrollCursor(kind scrollCursorKind, firstNonBlank bool) actionFunc {
 		// Neovim 0.12.5 も、zt、zz、zb は VALID_TOPLINE を立て、描いた後の w_botline が描く前と違うときだけ update_topline で
 		// 数え直す（src/nvim/drawscreen.c の win_update の末尾）。100 行のファイルで so=5 の 95zt の後の zz は、最後まで見える行の次の行が
 		// 変わるので数え直して最初の行を 90 行目に戻し、G の後の zz は変わらないので 96 行目のままにする（2026-11-21 に確かめた。PR #338 のレビューの必須 1）。
+		// 回数でカーソルの行を変えたときは、最後まで見える行の次の行によらず数え直させる。Neovim 0.12.5 でも、so=5 で G の後の 99zz は
+		// 最初の行を 94 行目にする（数え直さないと 95 行目。表示領域が 7 行なら 96 行目。zt、zb、z<CR>、z.、z- も同じ。PR #338 の再レビューの必須 1）。
 		bot, _ := v.Botline()
-		s.setView(v, bot == oldBot)
+		s.setView(v, bot == oldBot && s.cursor.Line == startLine)
 		return nil
 	}
 }

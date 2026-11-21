@@ -834,6 +834,55 @@ func TestPreviewPageWrapMargin(t *testing.T) {
 	}
 }
 
+// 回数でカーソルの行を変える zt、z<CR>、zz、z.、zb、z- は、最後まで見える行の次の行が変わらなくても、描画で余白を数え直す
+// （PR #338 の再レビューの必須 1）。100 行のファイル（scrollFileMixed）、余白 5、折り返さない。期待値は、2026-11-21 に
+// Neovim 0.12.5 で scrollCases と同じ取り方で取った最初の行とカーソルの行（1 から数える）である。
+//
+// req: FR-173, FR-174
+func TestScrollCountZNeovim(t *testing.T) {
+	type tcase struct {
+		rows        int
+		first, z    string
+		top, line   int
+		startTopNum int // first の後の最初の行
+	}
+	var tests []tcase
+	for _, z := range []string{"zt", "z<CR>", "zz", "z."} {
+		tests = append(tests,
+			tcase{10, "G", "99" + z, 94, 99, 91}, tcase{10, "50G", "97" + z, 92, 97, 46}, tcase{10, "G", "3" + z, 1, 3, 91},
+			tcase{7, "G", "99" + z, 94, 99, 94}, tcase{7, "50G", "97" + z, 94, 97, 47}, tcase{7, "G", "3" + z, 1, 3, 94})
+	}
+	for _, z := range []string{"zb", "z-"} {
+		tests = append(tests,
+			tcase{10, "G", "99" + z, 91, 99, 91}, tcase{10, "50G", "97" + z, 91, 97, 46}, tcase{10, "G", "3" + z, 1, 3, 91},
+			tcase{7, "G", "99" + z, 94, 99, 94}, tcase{7, "50G", "97" + z, 94, 97, 47}, tcase{7, "G", "3" + z, 1, 3, 94})
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%d行_%s_%s", tc.rows, tc.first, tc.z), func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{"a.txt": scrollFileText(scrollFileMixed)})
+			term := newFakeTerm()
+			term.w, term.h = 41, tc.rows+3
+			h := startTerm(t, term, Config{WorkDir: dir, Options: map[string]option.Value{option.ScrollMargin: option.IntValue(5)}}, "a.txt")
+			h.settle()
+			state := func() string {
+				var s string
+				h.e.do(func() { s = fmt.Sprintf("%d %d", h.e.renderer.Top()+1, h.e.cur.state.Cursor().Line+1) })
+				return s
+			}
+			h.keys(tc.first)
+			h.settle()
+			if got := state(); !strings.HasPrefix(got, fmt.Sprintf("%d ", tc.startTopNum)) {
+				t.Fatalf("%s の後: 最初の行 カーソル = %s, want 最初の行 %d", tc.first, got, tc.startTopNum)
+			}
+			h.keys(tc.z)
+			h.settle()
+			if got, want := state(), fmt.Sprintf("%d %d", tc.top, tc.line); got != want {
+				t.Errorf("%s の後: 最初の行 カーソル = %s, want %s", tc.z, got, want)
+			}
+		})
+	}
+}
+
 // フォーカスを入れたポップアップの中と、プレビューへフォーカスを移した中でも、スクロールのキーと余白が効く（FR-173、FR-174）。
 // 窓の中を描く子の Renderer の最初の行と、窓のバッファのカーソルが、同じ数え方で動く。
 //
