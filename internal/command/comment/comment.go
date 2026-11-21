@@ -14,8 +14,10 @@ package comment
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // space は、Lua のパターンの %s（空白）と同じ文字の集合である。
@@ -27,6 +29,10 @@ var ErrEmpty = errors.New("comment: comment string is empty")
 // ErrInvalid は、コメントの形が空でなく、%s を含まないことを表す。設定の表の検査（option.Def.Contains）が断るので、ふつうは起きない。
 var ErrInvalid = errors.New("comment: comment string does not contain %s")
 
+// ErrInvalidUTF8 は、コメントの形に不正な UTF-8 のバイトがあることを表す。Go の regexp は不正な UTF-8 のパターンを作れないので、
+// その形では切り替えない（PR #331 のレビューの推奨 2。2026-11-21 の時点で、画面と設定ファイルからは不正なバイトが値に入らない）。
+var ErrInvalidUTF8 = errors.New("comment: comment string is not valid UTF-8")
+
 // Parts は、コメントの形を、%s の前（Left）と後ろ（Right）に分けたものである（Neovim の vim._comment.Parts）。
 // ゼロ値は、前と後ろが空の形で、Neovim の 'commentstring' が空のときの形と同じである。
 type Parts struct {
@@ -35,12 +41,16 @@ type Parts struct {
 
 // Parse は、コメントの形 cs を、最初の %s の前と後ろに分ける（"// %s" は "// " と ""、"# %s %s" は "# " と " %s"）。
 // cs が空なら、ゼロ値と ErrEmpty を返す。Neovim は、空の 'commentstring' で警告を出し、前と後ろを空として続けるので、
-// 呼び出し側は ErrEmpty のときも返った Parts で続けてよい。cs が %s を含まなければ ErrInvalid を返す。
+// 呼び出し側は ErrEmpty のときも返った Parts で続けてよい。cs が %s を含まなければ ErrInvalid を、
+// 不正な UTF-8 のバイトを含めば ErrInvalidUTF8 を返す。
 //
 // req: FR-169
 func Parse(cs string) (Parts, error) {
 	if cs == "" {
 		return Parts{}, ErrEmpty
+	}
+	if !utf8.ValidString(cs) {
+		return Parts{}, ErrInvalidUTF8
 	}
 	left, right, ok := strings.Cut(cs, "%s")
 	if !ok {
@@ -58,18 +68,33 @@ func (p Parts) HasMarker() bool {
 // trim は、Neovim の vim.trim と同じく、両端の空白（space）を除く。
 func trim(s string) string { return strings.Trim(s, " \t\n\v\f\r") }
 
+// compile は、正規表現を作る。前と後ろに不正な UTF-8 のバイトがあると regexp.QuoteMeta はそのまま通し、Go の regexp は作れないので、
+// panic させずに ErrInvalidUTF8 を返す（PR #331 のレビューの推奨 2。Parse が先に断るが、Parts を直に作ったときのために残す）。
+func compile(expr string) (*regexp.Regexp, error) {
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidUTF8, err)
+	}
+	return re, nil
+}
+
 // checker は、コメントの行かを確かめる正規表現を返す（Neovim の make_comment_check）。
 // コメントの行は、空白、両端の空白を除いた前、任意の文字、両端の空白を除いた後ろ、空白の並びである。
-func (p Parts) checker() *regexp.Regexp {
-	return regexp.MustCompile(`(?s)^` + space + `*?` + regexp.QuoteMeta(trim(p.Left)) + `.*` + regexp.QuoteMeta(trim(p.Right)) + space + `*?$`)
+func (p Parts) checker() (*regexp.Regexp, error) {
+	return compile(`(?s)^` + space + `*?` + regexp.QuoteMeta(trim(p.Left)) + `.*` + regexp.QuoteMeta(trim(p.Right)) + space + `*?$`)
 }
 
 // Checker は、行がコメントの行かを返す関数を返す（Neovim の make_comment_check）。
 // 前と後ろが空の形（HasMarker が false）では、どの行もコメントの行である。
+// 前か後ろに不正な UTF-8 のバイトがあれば、ErrInvalidUTF8 を返す。
 //
 // req: FR-169
-func (p Parts) Checker() func(line string) bool {
-	return p.checker().MatchString
+func (p Parts) Checker() (func(line string) bool, error) {
+	re, err := p.checker()
+	if err != nil {
+		return nil, err
+	}
+	return re.MatchString, nil
 }
 
 // blank は、行が空白だけ（空を含む）かを返す。
@@ -90,9 +115,14 @@ func leading(line string) int { return len(line) - len(strings.TrimLeft(line, " 
 //     両端の空白を除いた前と後ろで外す（"// %s" で "//a" を外す）。どちらにも当たらない行はそのまま残す。
 //     外した後が空白だけなら、字下げと行末の空白も除く
 //
+// 前か後ろに不正な UTF-8 のバイトがあれば、行を変えずに ErrInvalidUTF8 を返す。行の不正な UTF-8 のバイトは、そのまま保つ。
+//
 // req: FR-169
-func (p Parts) Toggle(lines []string) []string {
-	check := p.checker()
+func (p Parts) Toggle(lines []string) ([]string, error) {
+	check, err := p.checker()
+	if err != nil {
+		return nil, err
+	}
 	indent, commented := "", true
 	minIndent := -1
 	for _, l := range lines {
@@ -108,12 +138,18 @@ func (p Parts) Toggle(lines []string) []string {
 	}
 	out := make([]string, len(lines))
 	if commented {
-		exact := uncommenter(p.Left, p.Right)
-		trimmed := uncommenter(trim(p.Left), trim(p.Right))
+		exact, err := uncommenter(p.Left, p.Right)
+		if err != nil {
+			return nil, err
+		}
+		trimmed, err := uncommenter(trim(p.Left), trim(p.Right))
+		if err != nil {
+			return nil, err
+		}
 		for i, l := range lines {
 			out[i] = uncomment(l, exact, trimmed)
 		}
-		return out
+		return out, nil
 	}
 	blankLine := indent + trim(p.Left) + trim(p.Right)
 	for i, l := range lines {
@@ -123,13 +159,13 @@ func (p Parts) Toggle(lines []string) []string {
 		}
 		out[i] = indent + p.Left + l[len(indent):] + p.Right
 	}
-	return out
+	return out, nil
 }
 
 // uncommenter は、前 left と後ろ right のコメントを外す正規表現を返す（Neovim の make_uncomment_function の regex）。
 // 部分一致は、字下げ、中身、行末の空白の 3 つである。
-func uncommenter(left, right string) *regexp.Regexp {
-	return regexp.MustCompile(`(?s)^(` + space + `*)` + regexp.QuoteMeta(left) + `(.*)` + regexp.QuoteMeta(right) + `(` + space + `*?)$`)
+func uncommenter(left, right string) (*regexp.Regexp, error) {
+	return compile(`(?s)^(` + space + `*)` + regexp.QuoteMeta(left) + `(.*)` + regexp.QuoteMeta(right) + `(` + space + `*?)$`)
 }
 
 // uncomment は、行 line のコメントを、exact か、当たらなければ trimmed で外す。どちらにも当たらなければ line を返す。

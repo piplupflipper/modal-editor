@@ -152,8 +152,8 @@ type Request struct {
 	SearchSteps int
 	// CommentString は、位置 at で使う行のコメントの形（設定 comment.string。"// %s" など）を返す関数である（FR-169）。
 	// コメントのまとまりのテキストオブジェクト（gc）だけが、カーソルの位置で呼ぶ。nil なら空の形として扱う。
-	// 形を決めるのは呼び出し側（internal/command の State.commentString）で、後に tree-sitter の拡張機能がカーソルの位置の言語の形を
-	// 決めるときも、この関数の中身を変えるだけで済むように、位置を渡す。
+	// 形を決めるのは呼び出し側（internal/command の State.commentString）で、後に tree-sitter の拡張機能でカーソルの位置の言語の形を
+	// 使うときのために位置を渡す。そのときに前もって要る口（言語の範囲を先に持っておく口と、別の種類の形を段から決める口）は、基本設計 3.3 にある。
 	CommentString func(at buffer.Position) string
 }
 

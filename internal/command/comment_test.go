@@ -125,6 +125,23 @@ func TestCommentStringLive(t *testing.T) {
 	}
 }
 
+// 不正な UTF-8 のバイトを含む comment.string では、gc は panic せずに失敗し、テキストを変えない。オペレーターの後の gc も失敗する。
+// PR #331 のレビューの推奨 2 の再現（setupComment(t, "|a", "\xff %s") の後の gcc が regexp.MustCompile で panic した）。
+//
+// req: FR-169
+func TestCommentInvalidUTF8String(t *testing.T) {
+	for _, keys := range []string{"gcc", "Vgc", "dgc"} {
+		s := setupComment(t, "|// a\nb", "\xff %s")
+		rs := feedKeys(s, keys)
+		if got := s.buf.Text(); got != "// a\nb" {
+			t.Errorf("%s: text = %q", keys, got)
+		}
+		if rs[len(rs)-1].Err == nil {
+			t.Errorf("%s: 誤りにならない", keys)
+		}
+	}
+}
+
 // gc はテキストを変えるので、編集を禁止したバッファでは断る（FR-85）。
 //
 // req: FR-169

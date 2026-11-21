@@ -24,8 +24,10 @@ const commentEmptyMessage = "comment.string が空です"
 // コメントの形を決めるのはここだけである。今はバッファの設定 comment.string の今の値を、Ex.Options（internal/editor が差し込む設定の口）から読む。
 // 口が無ければ（internal/command のテスト）、表の既定値（空）を使う。形が空なら、Neovim と同じく警告を Result.Message に入れる。
 //
-// at は、後に tree-sitter の拡張機能がカーソルの位置の言語の形（Markdown のコードの囲みの中の言語など）を決めるときのために受け取る。
+// at は、後に tree-sitter の拡張機能でカーソルの位置の言語の形（Markdown のコードの囲みの中の言語など）を使うときのために受け取る。
 // Neovim はオペレーターではカーソルの位置（範囲の始まり）、テキストオブジェクトではカーソルの位置の言語で決める。
+// ここはイベントループの上から同期に呼ばれ、拡張機能の応答を待てないので、そのときは言語の範囲を前もって本体に持ち、
+// 別の種類の形を fileTypeOptions まで含めて決める口を internal/editor から差し込む（基本設計 3.3。PR #331 のレビューの推奨 1）。
 //
 // req: FR-169
 func (s *State) commentString(at buffer.Position) string {
@@ -63,8 +65,12 @@ func opComment(s *State, _ editcmd.Command, rg region, _ opOptions) error {
 	for l := first; l <= last; l++ {
 		lines = append(lines, s.line(l))
 	}
+	toggled, err := parts.Toggle(lines)
+	if err != nil {
+		return fmt.Errorf("comment.string の値が正しくない: %w", err)
+	}
 	var edits []buffer.Edit
-	for i, text := range parts.Toggle(lines) {
+	for i, text := range toggled {
 		if text != lines[i] {
 			l := first + i
 			edits = append(edits, buffer.Edit{Range: buffer.Range{Start: pos(l, 0), End: pos(l, len(lines[i]))}, Text: text})

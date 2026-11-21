@@ -251,7 +251,7 @@ func vimOption(name string) (option.Def, bool) {
 // 途中の引数が誤りなら、そこで止め、前の引数の設定は残す（Vim 9.1 の :set ts=4 foo ts=8 と同じ）。
 //
 // 引数の中の \ は、次の 1 文字をそのまま値に入れ、\ を除く（:set cms=//\ %s は "// %s"、\\ は \）。
-// \ の後の空白は引数を区切らない。Vim 9.1 と Neovim 0.12.5 の :set の文字列の値と同じである（2026-11-21 に確かめた）。
+// \ の後の空白は引数を区切らない。末尾の \ は値に残す。Vim 9.1 と Neovim 0.12.5 の :set の文字列の値と同じである（2026-11-21 に確かめた）。
 // ただし値の末尾の空白は、:option.set が除くので残らない（:set cms=%s\  は "%s"。Vim は "%s " にする）。
 //
 // req: FR-133, FR-155
@@ -284,18 +284,17 @@ func expandSet(x *aliasCtx, inv *invocation) error {
 	return nil
 }
 
-// unescapeSetValue は、:set の値の \ を除き、\ の次の 1 文字をそのまま残す（expandSet の doc）。末尾の \ は除く。
+// unescapeSetValue は、:set の値の \ を除き、\ の次の 1 文字をそのまま残す（expandSet の doc）。
+// 末尾の \ は、続く文字が無いのでそのまま残す（:set cms=%s\ は "%s\"、:set cms=\ は "\" で E537。
+// Vim 9.1 と Neovim 0.12.5 と同じ。2026-11-21 に確かめた。PR #331 のレビューの推奨 3）。
 func unescapeSetValue(value string) string {
 	if !strings.Contains(value, `\`) {
 		return value
 	}
 	var sb strings.Builder
 	for i := 0; i < len(value); i++ {
-		if value[i] == '\\' {
+		if value[i] == '\\' && i+1 < len(value) {
 			i++
-			if i == len(value) {
-				break
-			}
 		}
 		sb.WriteByte(value[i])
 	}

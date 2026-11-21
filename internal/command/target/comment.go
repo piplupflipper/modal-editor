@@ -11,6 +11,7 @@ import (
 //
 // カーソルの行がコメントの行でなければ ErrNoTarget を返す。Neovim は何もせずにオペレーターを終える（ビープも鳴らさない）が、
 // 本体では他のテキストオブジェクト（範囲の無い di( など）と同じく失敗にする。
+// コメントの形が正しくない（%s が無い、不正な UTF-8 のバイトがある）ときも ErrNoTarget を返す。
 // コメントの形が空か、前と後ろが空白だけ（"%s"）のときも ErrNoTarget を返す。Neovim はどの行もコメントの行として扱い、
 // dgc でバッファの全体を消すが、設定していないことで全体を消さないように変えた（docs/vim-differences.md）。
 //
@@ -27,7 +28,10 @@ func commentedLines(b *buffer.Buffer, req Request) (Span, error) {
 	if err != nil || !parts.HasMarker() {
 		return Span{}, ErrNoTarget
 	}
-	commented := parts.Checker()
+	commented, err := parts.Checker()
+	if err != nil {
+		return Span{}, ErrNoTarget
+	}
 	line := req.Cursor.Line
 	if !commented(b.Line(line)) {
 		return Span{}, ErrNoTarget
